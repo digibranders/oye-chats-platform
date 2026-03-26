@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import sys
 from urllib.parse import urljoin, urlparse
@@ -151,12 +152,33 @@ def extract_colors_from_html(html_content):
     return [c for c, _ in sorted_colors[:6]]
 
 
-async def crawl_recursive(start_url, max_depth=3, max_pages=100):
+async def crawl_single(crawler, url, depth, js_code, semaphore, page_timeout):
+    """Crawl a single URL with semaphore-controlled concurrency."""
+    async with semaphore:
+        try:
+            result = await asyncio.wait_for(
+                crawler.arun(url=url, js_code=js_code),
+                timeout=page_timeout,
+            )
+            return {"url": url, "depth": depth, "result": result, "error": None}
+        except TimeoutError:
+            return {"url": url, "depth": depth, "result": None, "error": "timeout"}
+        except Exception as e:
+            return {"url": url, "depth": depth, "result": None, "error": str(e)}
+
+
+async def crawl_recursive(start_url, max_depth=3, max_pages=None):
     try:
         from crawl4ai import AsyncWebCrawler
     except ImportError:
         print(json.dumps({"error": "crawl4ai not installed"}))
         return
+
+    # Read config from env
+    if max_pages is None:
+        max_pages = int(os.getenv("MAX_CRAWL_PAGES", "25"))
+    concurrency = int(os.getenv("CRAWL_CONCURRENCY", "3"))
+    page_timeout = int(os.getenv("CRAWL_PAGE_TIMEOUT", "15"))
 
     # Helper to normalize domain (ignore www.)
     def get_base_domain(netloc):
@@ -277,30 +299,45 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
     })();
     """
 
+    semaphore = asyncio.Semaphore(concurrency)
+
     async with AsyncWebCrawler(verbose=False) as crawler:
         while queue and len(visited) < max_pages:
-            current_url, depth = queue.pop(0)
+            # Collect a batch of URLs to crawl
+            batch_tasks = []
+            batch_info = []
 
-            # Normalize URL for visited check (remove trailing slash and www.)
-            parsed_current = urlparse(current_url)
-            norm_netloc = parsed_current.netloc.replace("www.", "")
-            current_url_norm = parsed_current._replace(netloc=norm_netloc).geturl().rstrip("/")
+            while queue and len(batch_tasks) < concurrency and len(visited) + len(batch_tasks) < max_pages:
+                current_url, depth = queue.pop(0)
 
-            if current_url_norm in visited:
-                continue
+                # Normalize URL for visited check (remove trailing slash and www.)
+                parsed_current = urlparse(current_url)
+                norm_netloc = parsed_current.netloc.replace("www.", "")
+                current_url_norm = parsed_current._replace(netloc=norm_netloc).geturl().rstrip("/")
 
-            visited.add(current_url_norm)
-            print(json.dumps({"log": f"Crawling: {current_url} (Depth: {depth})"}))
+                if current_url_norm in visited:
+                    continue
 
-            try:
-                # Run JS extraction on the first page primarily, or every page and collect
-                result = await crawler.arun(
-                    url=current_url,
-                    js_code=js_extraction_code if depth == 0 else None,  # Save time by only doing on root mostly
-                )
+                visited.add(current_url_norm)
+                js_code = js_extraction_code if depth == 0 else None
+                batch_tasks.append(crawl_single(crawler, current_url, depth, js_code, semaphore, page_timeout))
+                batch_info.append({"url": current_url, "url_norm": current_url_norm, "depth": depth})
 
+            if not batch_tasks:
+                break
+
+            print(json.dumps({"log": f"Crawling batch of {len(batch_tasks)} pages..."}))
+            batch_results = await asyncio.gather(*batch_tasks)
+
+            # Process results
+            for info, crawl_result in zip(batch_info, batch_results, strict=False):
+                if crawl_result["error"]:
+                    print(json.dumps({"log": f"Error crawling {info['url']}: {crawl_result['error']}"}))
+                    continue
+
+                result = crawl_result["result"]
                 if result and result.markdown:
-                    results.append({"url": current_url_norm, "content": result.markdown})
+                    results.append({"url": info["url_norm"], "content": result.markdown})
 
                     # If we got colors from JS execution
                     if hasattr(result, "js_execution_result") and result.js_execution_result:
@@ -321,7 +358,7 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
                                             extracted_colors.add(c.lower())
 
                     # Python fallback: extract colors from HTML if JS extraction found nothing
-                    if depth == 0 and not extracted_colors and hasattr(result, "html") and result.html:
+                    if info["depth"] == 0 and not extracted_colors and hasattr(result, "html") and result.html:
                         print(json.dumps({"log": "JS color extraction returned nothing, using Python HTML fallback"}))
                         fallback_colors = extract_colors_from_html(result.html)
                         for c in fallback_colors:
@@ -330,7 +367,7 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
                             print(json.dumps({"log": f"Python fallback extracted {len(extracted_colors)} colors"}))
 
                     # If not at max depth, find more links
-                    if depth < max_depth:
+                    if info["depth"] < max_depth:
                         links = []
 
                         # Method 1: Try built-in result.links (crawl4ai dict)
@@ -344,8 +381,6 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
 
                         # Method 2: Fallback to HTML parsing if Method 1 found nothing
                         if not links and hasattr(result, "html"):
-                            import re
-
                             found_hrefs = re.findall(r'<a\s+(?:[^>]*?\s+)?href="([^"]*)"', result.html)
                             links.extend(found_hrefs)
                             print(json.dumps({"log": f"Fallback: Found {len(found_hrefs)} links via regex"}))
@@ -354,7 +389,7 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
                             if not href:
                                 continue
 
-                            full_url = urljoin(current_url, href)
+                            full_url = urljoin(info["url"], href)
                             parsed_url = urlparse(full_url)
 
                             # Compare base domains
@@ -364,10 +399,7 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
                                 # Normalize URL (remove fragment)
                                 clean_url = full_url.split("#")[0].rstrip("/")
                                 if clean_url not in visited:
-                                    queue.append((clean_url, depth + 1))
-
-            except Exception as e:
-                print(json.dumps({"log": f"Error crawling {current_url}: {str(e)}"}))
+                                    queue.append((clean_url, info["depth"] + 1))
 
     # Output results
     print("---CRAWLER_JSON_OUTPUT---")
@@ -380,4 +412,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
     url = sys.argv[1]
-    asyncio.run(crawl_recursive(url))
+    max_pages = int(os.getenv("MAX_CRAWL_PAGES", "25"))
+    asyncio.run(crawl_recursive(url, max_pages=max_pages))

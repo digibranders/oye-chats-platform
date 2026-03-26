@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 
 DB_URL = os.getenv("DB_URL")
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
-CHUNK_SIZE = 1200
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "2000"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "300"))
 
 # Directory Paths
 DOCUMENTS_DIR = "documents"
@@ -52,3 +52,8 @@ else:
 SENTRY_DSN = os.getenv("SENTRY_DSN") or os.getenv("SENTRY_DSN_BACKEND")
 SENTRY_ENABLED = bool(SENTRY_DSN)
 APP_ENV = os.getenv("APP_ENV", "development")
+
+# Crawler Config
+MAX_CRAWL_PAGES = int(os.getenv("MAX_CRAWL_PAGES", "25"))
+CRAWL_CONCURRENCY = int(os.getenv("CRAWL_CONCURRENCY", "3"))
+CRAWL_PAGE_TIMEOUT = int(os.getenv("CRAWL_PAGE_TIMEOUT", "15"))
