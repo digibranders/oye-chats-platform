@@ -114,7 +114,7 @@ export const uploadDocuments = async (files, botId) => {
 export const crawlWebsite = async (url, botId) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
-        const response = await api.post(endpoint, { url });
+        const response = await api.post(endpoint, { url }, { timeout: 300000 });
         return response.data;
     } catch (error) {
         console.error('API Error during website crawl:', error);
