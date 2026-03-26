@@ -1,11 +1,11 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app.config import DB_URL
+from contextlib import contextmanager
 
 # Create the SQLAlchemy engine
 # pool_pre_ping=True handles broken connections
-from sqlalchemy import text
-from contextlib import contextmanager
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
+from app.config import DB_URL
 
 # Create the SQLAlchemy engine
 engine = create_engine(DB_URL, pool_pre_ping=True)
@@ -21,6 +21,7 @@ except Exception as e:
 # Create a SessionLocal class for instantiating sessions
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
 def get_db():
     """Dependency for FastAPI routes to get a DB session."""
     db = SessionLocal()
@@ -28,6 +29,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 @contextmanager
 def get_session():

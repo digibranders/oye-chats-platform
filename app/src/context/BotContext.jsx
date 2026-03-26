@@ -68,6 +68,7 @@ export function BotProvider({ children }) {
     );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useBotContext() {
     const ctx = useContext(BotContext);
     if (!ctx) {

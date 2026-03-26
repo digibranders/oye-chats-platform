@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
-from pydantic import BaseModel
-from typing import Optional, List
-from sqlalchemy import select
-from app.db.session import get_session
-from app.db.models import Client, Bot
-from app.api.auth import get_current_client, get_current_bot
-import uuid
 import logging
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
+from sqlalchemy import select
+
+from app.api.auth import get_current_bot, get_current_client
+from app.db.models import Bot, Client
+from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -15,42 +16,45 @@ router = APIRouter(prefix="/bots", tags=["bots"])
 
 # ── Request / Response Models ──
 
+
 class CreateBotRequest(BaseModel):
     name: str = "AI Assistant"
-    website: Optional[str] = None
-    system_prompt: Optional[str] = None
+    website: str | None = None
+    system_prompt: str | None = None
     bant_enabled: bool = True
 
+
 class UpdateBotRequest(BaseModel):
-    name: Optional[str] = None
-    system_prompt: Optional[str] = None
-    website: Optional[str] = None
-    bot_logo: Optional[str] = None
-    launcher_name: Optional[str] = None
-    launcher_logo: Optional[str] = None
-    primary_color: Optional[str] = None
-    background_color: Optional[str] = None
-    header_color: Optional[str] = None
-    bant_enabled: Optional[bool] = None
-    avatar_type: Optional[str] = None
-    orb_color: Optional[str] = None
+    name: str | None = None
+    system_prompt: str | None = None
+    website: str | None = None
+    bot_logo: str | None = None
+    launcher_name: str | None = None
+    launcher_logo: str | None = None
+    primary_color: str | None = None
+    background_color: str | None = None
+    header_color: str | None = None
+    bant_enabled: bool | None = None
+    avatar_type: str | None = None
+    orb_color: str | None = None
+
 
 class BotResponse(BaseModel):
     id: int
     bot_key: str
     name: str
-    website: Optional[str]
-    system_prompt: Optional[str]
-    bot_logo: Optional[str]
+    website: str | None
+    system_prompt: str | None
+    bot_logo: str | None
     launcher_name: str
-    launcher_logo: Optional[str]
+    launcher_logo: str | None
     primary_color: str
     background_color: str
     header_color: str
-    recommended_colors: Optional[list]
+    recommended_colors: list | None
     bant_enabled: bool
     avatar_type: str
-    orb_color: Optional[str]
+    orb_color: str | None
     is_active: bool
     created_at: str
 
@@ -63,6 +67,7 @@ class BotResponse(BaseModel):
 # IMPORTANT: Static sub-paths MUST be defined before /{bot_id} dynamic routes
 # to prevent FastAPI from trying to parse "settings" as an integer bot_id.
 
+
 @router.get("/settings/public")
 def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot)):
     """
@@ -71,11 +76,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     """
     # Construct backend file URL for relative logos
     logo_url = bot.bot_logo
-    if logo_url and not logo_url.startswith('http'):
+    if logo_url and not logo_url.startswith("http"):
         logo_url = f"{str(request.base_url).rstrip('/')}/files/{logo_url}"
-        
+
     launcher_logo_url = bot.launcher_logo
-    if launcher_logo_url and not launcher_logo_url.startswith('http'):
+    if launcher_logo_url and not launcher_logo_url.startswith("http"):
         launcher_logo_url = f"{str(request.base_url).rstrip('/')}/files/{launcher_logo_url}"
 
     return {
@@ -89,11 +94,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "recommended_colors": bot.recommended_colors or [],
         "bant_enabled": bot.bant_enabled,
         "avatar_type": bot.avatar_type or "upload",
-        "orb_color": bot.orb_color
+        "orb_color": bot.orb_color,
     }
 
 
-@router.get("", response_model=List[BotResponse])
+@router.get("", response_model=list[BotResponse])
 def list_bots(request: Request, client: Client = Depends(get_current_client)):
     """List all bots for the authenticated client."""
     with get_session() as session:
@@ -102,31 +107,33 @@ def list_bots(request: Request, client: Client = Depends(get_current_client)):
         bots_response = []
         for b in bots:
             bl = b.bot_logo
-            if bl and not bl.startswith('http'):
+            if bl and not bl.startswith("http"):
                 bl = f"{str(request.base_url).rstrip('/')}/files/{bl}"
             ll = b.launcher_logo
-            if ll and not ll.startswith('http'):
+            if ll and not ll.startswith("http"):
                 ll = f"{str(request.base_url).rstrip('/')}/files/{ll}"
-            
-            bots_response.append(BotResponse(
-                id=b.id,
-                bot_key=b.bot_key,
-                name=b.name,
-                website=b.website,
-                system_prompt=b.system_prompt,
-                bot_logo=bl,
-                launcher_name=b.launcher_name or "Have Questions?",
-                launcher_logo=ll,
-                primary_color=b.primary_color or "#ba68c8",
-                background_color=b.background_color or "#ffffff",
-                header_color=b.header_color or "#3A0CA3",
-                recommended_colors=b.recommended_colors or [],
-                bant_enabled=b.bant_enabled,
-                avatar_type=b.avatar_type or "upload",
-                orb_color=b.orb_color,
-                is_active=b.is_active,
-                created_at=b.created_at.isoformat() if b.created_at else ""
-            ))
+
+            bots_response.append(
+                BotResponse(
+                    id=b.id,
+                    bot_key=b.bot_key,
+                    name=b.name,
+                    website=b.website,
+                    system_prompt=b.system_prompt,
+                    bot_logo=bl,
+                    launcher_name=b.launcher_name or "Have Questions?",
+                    launcher_logo=ll,
+                    primary_color=b.primary_color or "#ba68c8",
+                    background_color=b.background_color or "#ffffff",
+                    header_color=b.header_color or "#3A0CA3",
+                    recommended_colors=b.recommended_colors or [],
+                    bant_enabled=b.bant_enabled,
+                    avatar_type=b.avatar_type or "upload",
+                    orb_color=b.orb_color,
+                    is_active=b.is_active,
+                    created_at=b.created_at.isoformat() if b.created_at else "",
+                )
+            )
         return bots_response
 
 
@@ -135,14 +142,12 @@ def create_bot(request: CreateBotRequest, client: Client = Depends(get_current_c
     """Create a new bot for the authenticated client. Enforces max_bots limit."""
     with get_session() as session:
         # Check limit
-        count = session.execute(
-            select(Bot.id).where(Bot.client_id == client.id)
-        ).all()
-        max_bots = getattr(client, 'max_bots', 1) or 1
+        count = session.execute(select(Bot.id).where(Bot.client_id == client.id)).all()
+        max_bots = getattr(client, "max_bots", 1) or 1
         if len(count) >= max_bots:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Bot limit reached ({max_bots}). Upgrade your plan to create more bots."
+                detail=f"Bot limit reached ({max_bots}). Upgrade your plan to create more bots.",
             )
 
         new_bot = Bot(
@@ -163,7 +168,7 @@ def create_bot(request: CreateBotRequest, client: Client = Depends(get_current_c
             "message": "Bot created successfully",
             "bot_id": new_bot.id,
             "bot_key": new_bot.bot_key,
-            "name": new_bot.name
+            "name": new_bot.name,
         }
 
 
@@ -176,12 +181,12 @@ def get_bot(bot_id: int, request: Request, client: Client = Depends(get_current_
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found.")
         bl = bot.bot_logo
-        if bl and not bl.startswith('http'):
+        if bl and not bl.startswith("http"):
             bl = f"{str(request.base_url).rstrip('/')}/files/{bl}"
         ll = bot.launcher_logo
-        if ll and not ll.startswith('http'):
+        if ll and not ll.startswith("http"):
             ll = f"{str(request.base_url).rstrip('/')}/files/{ll}"
-            
+
         return BotResponse(
             id=bot.id,
             bot_key=bot.bot_key,
@@ -199,7 +204,7 @@ def get_bot(bot_id: int, request: Request, client: Client = Depends(get_current_
             avatar_type=bot.avatar_type or "upload",
             orb_color=bot.orb_color,
             is_active=bot.is_active,
-            created_at=bot.created_at.isoformat() if bot.created_at else ""
+            created_at=bot.created_at.isoformat() if bot.created_at else "",
         )
 
 
@@ -217,10 +222,10 @@ def update_bot(bot_id: int, request: UpdateBotRequest, client: Client = Depends(
             logger.info(f"Updating bot {bot_id} | fields: {list(update_data.keys())}")
 
             # Sync logos
-            if 'bot_logo' in update_data:
-                update_data['launcher_logo'] = update_data['bot_logo']
-            elif 'launcher_logo' in update_data:
-                update_data['bot_logo'] = update_data['launcher_logo']
+            if "bot_logo" in update_data:
+                update_data["launcher_logo"] = update_data["bot_logo"]
+            elif "launcher_logo" in update_data:
+                update_data["bot_logo"] = update_data["launcher_logo"]
 
             for key, value in update_data.items():
                 setattr(bot, key, value)
@@ -232,7 +237,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, client: Client = Depends(
         raise
     except Exception as e:
         logger.error(f"Failed to update bot {bot_id}: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}") from e
 
 
 @router.delete("/{bot_id}")
@@ -245,13 +250,10 @@ def delete_bot(bot_id: int, client: Client = Depends(get_current_client)):
             raise HTTPException(status_code=404, detail="Bot not found.")
 
         # Don't allow deleting the last bot
-        total_bots = len(session.execute(
-            select(Bot.id).where(Bot.client_id == client.id)
-        ).all())
+        total_bots = len(session.execute(select(Bot.id).where(Bot.client_id == client.id)).all())
         if total_bots <= 1:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot delete your only bot. Create another one first."
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your only bot. Create another one first."
             )
 
         session.delete(bot)

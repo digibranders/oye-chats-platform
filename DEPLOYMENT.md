@@ -183,7 +183,7 @@ crontab -e
 ## Step 2: Cloudflare R2 (Widget CDN)
 
 1. Go to **Cloudflare Dashboard → R2**
-2. Create bucket: `oyechat-cdn`
+2. Create bucket: `oyechats-cdn`
 3. Enable **public access** on the bucket
 4. Go to **Settings → Custom Domains** → add `cdn.oyechats.com`
 5. Set CORS policy:
@@ -197,8 +197,8 @@ cd widget
 VITE_API_URL=https://api.oyechats.com npm run build
 # Upload dist/oyechat-widget.js and dist/oyechat-widget.css via Cloudflare dashboard
 # Or use wrangler CLI:
-npx wrangler r2 object put oyechat-cdn/oyechat-widget.js --file dist/oyechat-widget.js
-npx wrangler r2 object put oyechat-cdn/oyechat-widget.css --file dist/oyechat-widget.css
+npx wrangler r2 object put oyechats-cdn/oyechat-widget.js --file dist/oyechat-widget.js
+npx wrangler r2 object put oyechats-cdn/oyechat-widget.css --file dist/oyechat-widget.css
 ```
 
 After this, GitHub Actions handles subsequent deploys automatically.

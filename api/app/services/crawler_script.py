@@ -1,51 +1,51 @@
-import sys
 import asyncio
 import json
-import os
-import io
 import re
-from urllib.parse import urlparse, urljoin
+import sys
+from urllib.parse import urljoin, urlparse
 
 # Force stdin, stdout, stderr to use UTF-8 safely
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Force Windows Proactor Policy
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+
 def rgb_to_hex(r, g, b):
     """Convert RGB values to hex color string."""
-    return "#{:02x}{:02x}{:02x}".format(int(r), int(g), int(b))
+    return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
+
 
 def hex_to_hsl(hex_color):
     """Convert hex color to HSL values."""
-    hex_color = hex_color.lstrip('#')
+    hex_color = hex_color.lstrip("#")
     if len(hex_color) == 3:
-        hex_color = ''.join(c * 2 for c in hex_color)
+        hex_color = "".join(c * 2 for c in hex_color)
     r, g, b = int(hex_color[0:2], 16) / 255, int(hex_color[2:4], 16) / 255, int(hex_color[4:6], 16) / 255
     mx, mn = max(r, g, b), min(r, g, b)
-    l = (mx + mn) / 2
+    lightness = (mx + mn) / 2
     if mx == mn:
         s = 0
     else:
         d = mx - mn
-        s = d / (2 - mx - mn) if l > 0.5 else d / (mx + mn)
-    return s * 100, l * 100
+        s = d / (2 - mx - mn) if lightness > 0.5 else d / (mx + mn)
+    return s * 100, lightness * 100
+
 
 def is_brand_worthy(hex_color):
     """Check if a color is likely a brand color (not white/black/gray)."""
     try:
-        s, l = hex_to_hsl(hex_color)
-        if l > 95 or l < 5:
+        s, lightness = hex_to_hsl(hex_color)
+        if lightness > 95 or lightness < 5:
             return False
-        if s < 5 and 20 < l < 80:
-            return False
-        return True
+        return not (s < 5 and 20 < lightness < 80)
     except Exception:
         return False
+
 
 def extract_colors_from_html(html_content):
     """
@@ -58,8 +58,8 @@ def extract_colors_from_html(html_content):
         hex_color = hex_color.lower().strip()
         # Normalize 3-char hex to 6-char
         if len(hex_color) == 4:  # e.g. #f0a
-            hex_color = '#' + ''.join(c * 2 for c in hex_color[1:])
-        if len(hex_color) != 7 or not hex_color.startswith('#'):
+            hex_color = "#" + "".join(c * 2 for c in hex_color[1:])
+        if len(hex_color) != 7 or not hex_color.startswith("#"):
             return
         if not is_brand_worthy(hex_color):
             return
@@ -67,7 +67,7 @@ def extract_colors_from_html(html_content):
 
     def parse_rgb(match_str):
         """Convert rgb(r,g,b) or rgba(r,g,b,a) to hex."""
-        nums = re.findall(r'[\d.]+', match_str)
+        nums = re.findall(r"[\d.]+", match_str)
         if len(nums) >= 3:
             try:
                 return rgb_to_hex(float(nums[0]), float(nums[1]), float(nums[2]))
@@ -76,12 +76,12 @@ def extract_colors_from_html(html_content):
         return None
 
     # 1. Extract all hex colors from the HTML
-    hex_colors = re.findall(r'#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b', html_content)
+    hex_colors = re.findall(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b", html_content)
     for c in hex_colors:
         add_color(c, 1)
 
     # 2. Extract rgb/rgba colors
-    rgb_matches = re.findall(r'rgba?\s*\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+)?\s*\)', html_content)
+    rgb_matches = re.findall(r"rgba?\s*\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+)?\s*\)", html_content)
     for m in rgb_matches:
         hex_c = parse_rgb(m)
         if hex_c:
@@ -89,20 +89,22 @@ def extract_colors_from_html(html_content):
 
     # 3. Higher weight for colors in brand-related contexts
     # Extract style blocks
-    style_blocks = re.findall(r'<style[^>]*>(.*?)</style>', html_content, re.DOTALL | re.IGNORECASE)
-    style_content = ' '.join(style_blocks)
+    style_blocks = re.findall(r"<style[^>]*>(.*?)</style>", html_content, re.DOTALL | re.IGNORECASE)
+    style_content = " ".join(style_blocks)
 
     # Colors in CSS variables (--primary, --brand, --accent, etc.)
     css_var_colors = re.findall(
-        r'--[\w-]*(?:primary|brand|accent|theme|main|color)[\w-]*\s*:\s*(#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b)',
-        style_content, re.IGNORECASE
+        r"--[\w-]*(?:primary|brand|accent|theme|main|color)[\w-]*\s*:\s*(#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b)",
+        style_content,
+        re.IGNORECASE,
     )
     for c in css_var_colors:
         add_color(c, 10)
 
     css_var_rgb = re.findall(
-        r'--[\w-]*(?:primary|brand|accent|theme|main|color)[\w-]*\s*:\s*(rgba?\s*\([^)]+\))',
-        style_content, re.IGNORECASE
+        r"--[\w-]*(?:primary|brand|accent|theme|main|color)[\w-]*\s*:\s*(rgba?\s*\([^)]+\))",
+        style_content,
+        re.IGNORECASE,
     )
     for m in css_var_rgb:
         hex_c = parse_rgb(m)
@@ -111,29 +113,36 @@ def extract_colors_from_html(html_content):
 
     # 4. Colors in header/nav/button elements (higher weight)
     brand_patterns = [
-        (r'<(?:header|nav)[^>]*(?:style|class)[^>]*>.*?</(?:header|nav)>', 8),
-        (r'<(?:button|a)[^>]*(?:style|class)[^>]*>.*?</(?:button|a)>', 7),
-        (r'class="[^"]*(?:brand|logo|accent|primary|cta|hero|banner)[^"]*"[^>]*style="[^"]*(?:background|color)\s*:\s*([^;"]+)', 9),
+        (r"<(?:header|nav)[^>]*(?:style|class)[^>]*>.*?</(?:header|nav)>", 8),
+        (r"<(?:button|a)[^>]*(?:style|class)[^>]*>.*?</(?:button|a)>", 7),
+        (
+            r'class="[^"]*(?:brand|logo|accent|primary|cta|hero|banner)[^"]*"[^>]*style="[^"]*(?:background|color)\s*:\s*([^;"]+)',
+            9,
+        ),
     ]
     for pattern, weight in brand_patterns:
         matches = re.findall(pattern, html_content, re.DOTALL | re.IGNORECASE)
         for match_text in matches:
             block = match_text if isinstance(match_text, str) else str(match_text)
-            block_hex = re.findall(r'#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b', block)
+            block_hex = re.findall(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b", block)
             for c in block_hex:
                 add_color(c, weight)
-            block_rgb = re.findall(r'rgba?\s*\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+)?\s*\)', block)
+            block_rgb = re.findall(r"rgba?\s*\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+)?\s*\)", block)
             for m in block_rgb:
                 hex_c = parse_rgb(m)
                 if hex_c:
                     add_color(hex_c, weight)
 
     # 5. Colors in background-color and color properties (medium weight)
-    bg_colors = re.findall(r'background(?:-color)?\s*:\s*(#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b)', style_content, re.IGNORECASE)
+    bg_colors = re.findall(
+        r"background(?:-color)?\s*:\s*(#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b)", style_content, re.IGNORECASE
+    )
     for c in bg_colors:
         add_color(c, 5)
 
-    fg_colors = re.findall(r'(?<!background-)color\s*:\s*(#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b)', style_content, re.IGNORECASE)
+    fg_colors = re.findall(
+        r"(?<!background-)color\s*:\s*(#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b)", style_content, re.IGNORECASE
+    )
     for c in fg_colors:
         add_color(c, 3)
 
@@ -155,11 +164,15 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
 
     start_domain = get_base_domain(urlparse(start_url).netloc)
     visited = set()
-    queue = [(start_url, 0)] # (url, depth)
+    queue = [(start_url, 0)]  # (url, depth)
     results = []
     extracted_colors = set()
 
-    print(json.dumps({"log": f"Starting recursive crawl on {start_url} (Base Domain: {start_domain}, Max Depth: {max_depth})"}))
+    print(
+        json.dumps(
+            {"log": f"Starting recursive crawl on {start_url} (Base Domain: {start_domain}, Max Depth: {max_depth})"}
+        )
+    )
 
     js_extraction_code = """
     (() => {
@@ -267,15 +280,15 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
     async with AsyncWebCrawler(verbose=False) as crawler:
         while queue and len(visited) < max_pages:
             current_url, depth = queue.pop(0)
-            
+
             # Normalize URL for visited check (remove trailing slash and www.)
             parsed_current = urlparse(current_url)
-            norm_netloc = parsed_current.netloc.replace('www.', '')
-            current_url_norm = parsed_current._replace(netloc=norm_netloc).geturl().rstrip('/')
-            
+            norm_netloc = parsed_current.netloc.replace("www.", "")
+            current_url_norm = parsed_current._replace(netloc=norm_netloc).geturl().rstrip("/")
+
             if current_url_norm in visited:
                 continue
-            
+
             visited.add(current_url_norm)
             print(json.dumps({"log": f"Crawling: {current_url} (Depth: {depth})"}))
 
@@ -283,14 +296,11 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
                 # Run JS extraction on the first page primarily, or every page and collect
                 result = await crawler.arun(
                     url=current_url,
-                    js_code=js_extraction_code if depth == 0 else None # Save time by only doing on root mostly
+                    js_code=js_extraction_code if depth == 0 else None,  # Save time by only doing on root mostly
                 )
-                
+
                 if result and result.markdown:
-                    results.append({
-                        "url": current_url_norm,
-                        "content": result.markdown
-                    })
+                    results.append({"url": current_url_norm, "content": result.markdown})
 
                     # If we got colors from JS execution
                     if hasattr(result, "js_execution_result") and result.js_execution_result:
@@ -303,7 +313,7 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
                         elif isinstance(js_result, dict):
                             # Some crawl4ai versions wrap results in a dict
                             for val in js_result.values():
-                                if isinstance(val, str) and val.startswith('#'):
+                                if isinstance(val, str) and val.startswith("#"):
                                     extracted_colors.add(val.lower())
                                 elif isinstance(val, list):
                                     for c in val:
@@ -318,56 +328,56 @@ async def crawl_recursive(start_url, max_depth=3, max_pages=100):
                             extracted_colors.add(c.lower())
                         if extracted_colors:
                             print(json.dumps({"log": f"Python fallback extracted {len(extracted_colors)} colors"}))
-                    
+
                     # If not at max depth, find more links
                     if depth < max_depth:
                         links = []
-                        
+
                         # Method 1: Try built-in result.links (crawl4ai dict)
                         if hasattr(result, "links") and isinstance(result.links, dict):
                             links_internal = result.links.get("internal", [])
-                            for l in links_internal:
-                                if isinstance(l, dict):
-                                    links.append(l.get('href'))
-                                elif isinstance(l, str):
-                                    links.append(l)
+                            for link in links_internal:
+                                if isinstance(link, dict):
+                                    links.append(link.get("href"))
+                                elif isinstance(link, str):
+                                    links.append(link)
 
                         # Method 2: Fallback to HTML parsing if Method 1 found nothing
                         if not links and hasattr(result, "html"):
                             import re
+
                             found_hrefs = re.findall(r'<a\s+(?:[^>]*?\s+)?href="([^"]*)"', result.html)
                             links.extend(found_hrefs)
                             print(json.dumps({"log": f"Fallback: Found {len(found_hrefs)} links via regex"}))
-                        
+
                         for href in links:
-                            if not href: continue
-                            
+                            if not href:
+                                continue
+
                             full_url = urljoin(current_url, href)
                             parsed_url = urlparse(full_url)
-                            
+
                             # Compare base domains
                             link_base_domain = get_base_domain(parsed_url.netloc)
-                            
-                            if link_base_domain == start_domain and parsed_url.scheme in ['http', 'https']:
+
+                            if link_base_domain == start_domain and parsed_url.scheme in ["http", "https"]:
                                 # Normalize URL (remove fragment)
-                                clean_url = full_url.split('#')[0].rstrip('/')
+                                clean_url = full_url.split("#")[0].rstrip("/")
                                 if clean_url not in visited:
                                     queue.append((clean_url, depth + 1))
-                                        
+
             except Exception as e:
                 print(json.dumps({"log": f"Error crawling {current_url}: {str(e)}"}))
-                
+
     # Output results
     print("---CRAWLER_JSON_OUTPUT---")
-    print(json.dumps({
-        "results": results,
-        "recommended_colors": list(extracted_colors)
-    }))
+    print(json.dumps({"results": results, "recommended_colors": list(extracted_colors)}))
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(json.dumps({"error": "No URL provided"}))
         sys.exit(1)
-        
+
     url = sys.argv[1]
     asyncio.run(crawl_recursive(url))

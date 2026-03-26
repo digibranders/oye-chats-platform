@@ -1,4 +1,5 @@
 """Tests for Sentry error tracking configuration."""
+
 import os
 from unittest.mock import patch
 

@@ -33,7 +33,7 @@ const MessageBubble = ({
                                 ) : (
                                     <ReactMarkdown
                                         components={{
-                                            a: ({ node, ...props }) => (
+                                            a: ({ ...props }) => (
                                                 <a {...props} className={`${theme === 'modern' ? 'text-cyan-400' : 'text-black'} font-semibold hover:underline`} target="_blank" rel="noopener noreferrer" />
                                             )
                                         }}
@@ -85,7 +85,7 @@ const MessageBubble = ({
                     <div className="prose prose-sm max-w-none break-words">
                         <ReactMarkdown
                             components={{
-                                a: ({ node, ...props }) => (
+                                a: ({ ...props }) => (
                                     <a {...props} className={`${theme === 'modern' ? 'text-cyan-400' : 'text-white'} font-semibold hover:underline`} target="_blank" rel="noopener noreferrer" />
                                 )
                             }}

@@ -1,9 +1,11 @@
-from fastapi import Security, HTTPException, status, Depends, Query
+import logging
+
+from fastapi import Depends, HTTPException, Query, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import select
+
+from app.db.models import Bot, Client
 from app.db.session import get_session
-from app.db.models import Client, Bot
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ def get_current_client(
 
         # Fallback: resolve via X-Bot-Key → owning Client
         if bot_key:
-            stmt = select(Bot).where(Bot.bot_key == bot_key, Bot.is_active == True)
+            stmt = select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))
             bot = session.execute(stmt).scalars().first()
             if bot:
                 client_stmt = select(Client).where(Client.id == bot.client_id)
@@ -67,7 +69,7 @@ def get_superadmin(client: Client = Depends(get_current_client)):
     """
     Dependency: Ensure authenticated Client is a Superadmin.
     """
-    if getattr(client, 'is_superadmin', False) is not True:
+    if getattr(client, "is_superadmin", False) is not True:
         logger.warning(f"Client {client.id} attempted to access a superadmin route without permission.")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -92,7 +94,7 @@ def get_current_bot(
     with get_session() as session:
         # Primary path: resolve via bot_key
         if bot_key:
-            stmt = select(Bot).where(Bot.bot_key == bot_key, Bot.is_active == True)
+            stmt = select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))
             bot = session.execute(stmt).scalars().first()
             if bot:
                 # Eagerly access key attributes before detaching
@@ -112,9 +114,9 @@ def get_current_bot(
             client = session.execute(stmt).scalars().first()
             if client:
                 # Get the client's first (default) bot
-                bot_stmt = select(Bot).where(
-                    Bot.client_id == client.id, Bot.is_active == True
-                ).order_by(Bot.id).limit(1)
+                bot_stmt = (
+                    select(Bot).where(Bot.client_id == client.id, Bot.is_active.is_(True)).order_by(Bot.id).limit(1)
+                )
                 bot = session.execute(bot_stmt).scalars().first()
                 if bot:
                     _ = bot.id, bot.name, bot.system_prompt, bot.client_id, bot.bot_key

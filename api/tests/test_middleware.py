@@ -1,6 +1,8 @@
 """Tests for middleware utilities."""
+
 import os
 from unittest.mock import patch
+
 from app.core.middleware import get_cors_origins
 
 

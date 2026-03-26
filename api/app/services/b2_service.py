@@ -1,14 +1,17 @@
-import boto3
-import uuid
-import logging
 import io
+import logging
 import re
-from PIL import Image
-from botocore.exceptions import ClientError
+import uuid
+
+import boto3
 from botocore.config import Config
-from app.config import B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2_ENDPOINT
+from botocore.exceptions import ClientError
+from PIL import Image
+
+from app.config import B2_APPLICATION_KEY, B2_BUCKET_NAME, B2_ENDPOINT, B2_KEY_ID
 
 logger = logging.getLogger(__name__)
+
 
 def process_image_for_logo(file_data, target_size=(512, 512)):
     """
@@ -18,8 +21,8 @@ def process_image_for_logo(file_data, target_size=(512, 512)):
     img = Image.open(io.BytesIO(file_data))
 
     # Convert to RGBA if not already (to preserve transparency)
-    if img.mode != 'RGBA':
-        img = img.convert('RGBA')
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
 
     # Square center crop logic
     width, height = img.size
@@ -39,15 +42,17 @@ def process_image_for_logo(file_data, target_size=(512, 512)):
     img.save(output, format="PNG", optimize=True)
     return output.getvalue()
 
+
 # Initialize S3 client for Backblaze B2
 s3_client = boto3.client(
-    's3',
+    "s3",
     endpoint_url=f"https://{B2_ENDPOINT}",
     aws_access_key_id=B2_KEY_ID,
     aws_secret_access_key=B2_APPLICATION_KEY,
-    region_name=B2_ENDPOINT.split('.')[1] if hasattr(B2_ENDPOINT, 'split') and '.' in B2_ENDPOINT else 'us-east-1',
-    config=Config(signature_version='s3v4')
+    region_name=B2_ENDPOINT.split(".")[1] if hasattr(B2_ENDPOINT, "split") and "." in B2_ENDPOINT else "us-east-1",
+    config=Config(signature_version="s3v4"),
 )
+
 
 def _build_public_url(key: str) -> str:
     """
@@ -67,18 +72,19 @@ def _build_public_url(key: str) -> str:
     → cluster = "003" → friendly host = "f003.backblazeb2.com"
     """
     # Extract cluster ID (e.g., "s3.eu-central-003.backblazeb2.com" -> cluster is "003")
-    match = re.search(r'(\d{3,4})\.backblazeb2\.com', B2_ENDPOINT or '')
+    match = re.search(r"(\d{3,4})\.backblazeb2\.com", B2_ENDPOINT or "")
     if match:
         cluster_id = match.group(1)
         return f"https://f{cluster_id}.backblazeb2.com/file/{B2_BUCKET_NAME}/{key}"
 
     # Secondary check: look for digits after a hyphen
-    match = re.search(r'-(\d{3,4})\.', B2_ENDPOINT or '')
+    match = re.search(r"-(\d{3,4})\.", B2_ENDPOINT or "")
     if match:
         cluster_id = match.group(1)
         return f"https://f{cluster_id}.backblazeb2.com/file/{B2_BUCKET_NAME}/{key}"
 
     return f"https://{B2_ENDPOINT}/{B2_BUCKET_NAME}/{key}"
+
 
 def get_signed_url(key: str, expires_in: int = 3600) -> str:
     """
@@ -87,14 +93,13 @@ def get_signed_url(key: str, expires_in: int = 3600) -> str:
     """
     try:
         url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': B2_BUCKET_NAME, 'Key': key},
-            ExpiresIn=expires_in
+            "get_object", Params={"Bucket": B2_BUCKET_NAME, "Key": key}, ExpiresIn=expires_in
         )
         return url
     except Exception as e:
         logger.error(f"Failed to generate signed URL for {key}: {e}")
-        return _build_public_url(key) # Fallback to public format
+        return _build_public_url(key)  # Fallback to public format
+
 
 def get_object(key: str):
     """
@@ -102,9 +107,10 @@ def get_object(key: str):
     Raises ClientError if the object does not exist.
     """
     response = s3_client.get_object(Bucket=B2_BUCKET_NAME, Key=key)
-    content_type = response.get('ContentType', 'application/octet-stream')
-    body = response['Body']
+    content_type = response.get("ContentType", "application/octet-stream")
+    body = response["Body"]
     return body, content_type
+
 
 def upload_to_b2(file_data, filename, content_type):
     """
@@ -120,12 +126,7 @@ def upload_to_b2(file_data, filename, content_type):
         unique_filename = f"logos/{uuid.uuid4()}.png"
 
         # Upload the file
-        s3_client.put_object(
-            Bucket=B2_BUCKET_NAME,
-            Key=unique_filename,
-            Body=processed_data,
-            ContentType='image/png'
-        )
+        s3_client.put_object(Bucket=B2_BUCKET_NAME, Key=unique_filename, Body=processed_data, ContentType="image/png")
 
         # Build a persistent backend URL that will handle the signing/redirecting
         # This prevents logos from breaking when a direct signed URL expires.
@@ -134,10 +135,12 @@ def upload_to_b2(file_data, filename, content_type):
         return unique_filename
 
     except ClientError as e:
-        error_msg = f"B2 Upload failed (ClientError): {e.response['Error']['Message'] if 'Error' in e.response else str(e)}"
+        error_msg = (
+            f"B2 Upload failed (ClientError): {e.response['Error']['Message'] if 'Error' in e.response else str(e)}"
+        )
         logger.error(error_msg)
-        raise Exception(error_msg)
+        raise Exception(error_msg) from e
     except Exception as e:
         error_msg = f"Unexpected error during B2 upload: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        raise Exception(error_msg)
+        raise Exception(error_msg) from e

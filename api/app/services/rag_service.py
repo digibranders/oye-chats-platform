@@ -1,23 +1,23 @@
-from app.ingestion.embedder import embed_chunks
+import contextlib
+import json
+import logging
+
+from app.core.langfuse_client import get_langfuse
+from app.db.models import Bot, ChatSession
 from app.db.repository import (
-    search_similar_documents,
-    search_keyword_documents,
     add_chat_message,
+    ensure_chat_session,
     get_chat_history,
+    search_keyword_documents,
+    search_similar_documents,
     update_session_bant,
-    ensure_chat_session
 )
+from app.db.session import get_session
+from app.ingestion.embedder import embed_chunks
 from app.services.llm_service import (
-    generate_response,
-    generate_response_stream,
     generate_response_observed,
     generate_response_stream_observed,
 )
-from app.core.langfuse_client import get_langfuse
-from app.db.session import get_session
-from app.db.models import Client, Bot, ChatSession
-import logging
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +25,14 @@ logger = logging.getLogger(__name__)
 # Hybrid RAG Prompt Builder
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def build_hybrid_prompt(
     client,  # Accepts Client or Bot object — both have .name and .system_prompt
     question: str,
     context_text: str,
     history_context: str,
     bant_state: dict = None,
-    bant_enabled: bool = True
+    bant_enabled: bool = True,
 ) -> str:
     """
     Construct the Hybrid RAG system prompt that:
@@ -42,13 +43,6 @@ def build_hybrid_prompt(
       4. Never invents specific capabilities, pricing, or policies absent from the
          retrieved context (BOUNDARIES).
     """
-
-    # 1. PERSONA: First-party representative with a warm, professional voice.
-    base_persona = client.system_prompt if client.system_prompt else (
-        f"I am your AI assistant for **{client.name}**. I am here to provide you with warm, professional, and genuinely helpful support regarding our services and policies."
-    )
-
-    has_context = context_text and "No relevant documents found" not in context_text
 
     # Format BANT state for prompt
     bs = bant_state or {}
@@ -125,14 +119,13 @@ USER QUESTION: {question}
 """
     return hybrid_system_prompt
 
+
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
     if not history:
         return question
 
-    history_text = "\n".join(
-        f"{msg.role.upper()}: {msg.content}" for msg in history[-4:]
-    )
+    history_text = "\n".join(f"{msg.role.upper()}: {msg.content}" for msg in history[-4:])
 
     rewrite_prompt = f"""Given the conversation history and a follow-up question, rewrite the follow-up question to be a standalone search query that captures the full context.
 
@@ -151,9 +144,7 @@ Respond with ONLY the rewritten standalone query, nothing else."""
         return question
 
 
-def extract_bant_from_conversation(
-    history_context: str, question: str, bot_answer: str, current_bant: dict
-) -> dict:
+def extract_bant_from_conversation(history_context: str, question: str, bot_answer: str, current_bant: dict) -> dict:
     """
     Lightweight LLM call to extract BANT data from the conversation.
     Returns updated bant dict. On any failure, returns current_bant unchanged.
@@ -204,12 +195,20 @@ INSTRUCTIONS:
         logger.warning(f"BANT extraction failed (non-breaking): {e}")
         return current_bant
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard (Non-Streaming) Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
-def rag_pipeline(client, question: str, session_id: str = "default_session",
-                 location: str = None, device: str = None, bot_id: int = None):
+
+def rag_pipeline(
+    client,
+    question: str,
+    session_id: str = "default_session",
+    location: str = None,
+    device: str = None,
+    bot_id: int = None,
+):
     """
     Orchestrate the RAG flow with Chat Memory.
     Accepts Client or Bot object. If bot_id is provided, uses bot-scoped queries.
@@ -217,13 +216,13 @@ def rag_pipeline(client, question: str, session_id: str = "default_session",
     """
     # Determine owner IDs
     if bot_id:
-        cid = getattr(client, 'client_id', None) if isinstance(client, Bot) else getattr(client, 'id', None)
+        cid = getattr(client, "client_id", None) if isinstance(client, Bot) else getattr(client, "id", None)
         bid = bot_id
     elif isinstance(client, Bot):
-        cid = getattr(client, 'client_id', None)
+        cid = getattr(client, "client_id", None)
         bid = client.id
     else:
-        cid = getattr(client, 'id', None)
+        cid = getattr(client, "id", None)
         bid = None
     logger.info(f"RAG pipeline started | session={session_id} | client_id={cid} | bot_id={bid}")
 
@@ -233,8 +232,7 @@ def rag_pipeline(client, question: str, session_id: str = "default_session",
     def _run_pipeline():
         with get_session() as session:
             # 1. Fetch BANT state
-            ensure_chat_session(session, session_id, client_id=cid, bot_id=bid,
-                                location=location, device=device)
+            ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
             chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
             current_bant = {
                 "need": chat_session.bant_need if chat_session else None,
@@ -253,10 +251,20 @@ def rag_pipeline(client, question: str, session_id: str = "default_session",
             query_embedding = embed_chunks([search_query])[0]
 
             # 5. Save User Message & Retrieve Documents
-            add_chat_message(session, session_id, client_id=cid, role="user", content=question,
-                             location=location, device=device, bot_id=bid)
+            add_chat_message(
+                session,
+                session_id,
+                client_id=cid,
+                role="user",
+                content=question,
+                location=location,
+                device=device,
+                bot_id=bid,
+            )
 
-            vector_results = search_similar_documents(session, client_id=cid, query_embedding=query_embedding, k=5, bot_id=bid)
+            vector_results = search_similar_documents(
+                session, client_id=cid, query_embedding=query_embedding, k=5, bot_id=bid
+            )
             keyword_results = search_keyword_documents(session, client_id=cid, query=question, k=5, bot_id=bid)
 
             all_results = {doc.id: doc for doc in vector_results}
@@ -274,8 +282,10 @@ def rag_pipeline(client, question: str, session_id: str = "default_session",
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
             # 7. Build Hybrid RAG Prompt (with BANT state)
-            is_bant_enabled = getattr(client, 'bant_enabled', True)
-            prompt = build_hybrid_prompt(client, question, context_text, history_context, bant_state=current_bant, bant_enabled=is_bant_enabled)
+            is_bant_enabled = getattr(client, "bant_enabled", True)
+            prompt = build_hybrid_prompt(
+                client, question, context_text, history_context, bant_state=current_bant, bant_enabled=is_bant_enabled
+            )
 
             # 8. Generate Response (auto-observed via generate_response_observed)
             answer = generate_response_observed(
@@ -286,17 +296,13 @@ def rag_pipeline(client, question: str, session_id: str = "default_session",
             bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=answer, bot_id=bid)
 
             # Store trace_id for feedback linking
-            if lf and hasattr(bot_msg, 'trace_id'):
-                try:
+            if lf and hasattr(bot_msg, "trace_id"):
+                with contextlib.suppress(Exception):
                     bot_msg.trace_id = lf.get_current_trace_id()
-                except Exception:
-                    pass
 
             # 9. Background BANT extraction (auto-observed)
             if is_bant_enabled:
-                extracted = extract_bant_from_conversation(
-                    history_context, question, answer, current_bant
-                )
+                extracted = extract_bant_from_conversation(history_context, question, answer, current_bant)
                 bant_updates = {
                     "bant_need": extracted.get("need"),
                     "bant_timeline": extracted.get("timeline"),
@@ -311,27 +317,30 @@ def rag_pipeline(client, question: str, session_id: str = "default_session",
                 "answer": answer,
                 "sources": [doc.document_name for doc in final_results],
                 "session_id": session_id,
-                "message_id": bot_msg.id
+                "message_id": bot_msg.id,
             }
 
     # Wrap entire pipeline in a Langfuse trace context if enabled
     if lf:
         from langfuse import propagate_attributes
-        with propagate_attributes(
-            user_id=str(cid) if cid else None,
-            session_id=session_id,
-            metadata={"bot_id": bid, "question": question, "device": device, "location": location},
-            tags=["rag", f"bot:{bid}"] if bid else ["rag"],
-        ):
-            with lf.start_as_current_observation(
+
+        with (
+            propagate_attributes(
+                user_id=str(cid) if cid else None,
+                session_id=session_id,
+                metadata={"bot_id": bid, "question": question, "device": device, "location": location},
+                tags=["rag", f"bot:{bid}"] if bid else ["rag"],
+            ),
+            lf.start_as_current_observation(
                 name="rag-pipeline",
                 as_type="chain",
                 input=question,
                 metadata={"bot_id": bid, "session_id": session_id},
-            ) as trace:
-                result = _run_pipeline()
-                trace.update(output=result.get("answer", ""))
-                return result
+            ) as trace,
+        ):
+            result = _run_pipeline()
+            trace.update(output=result.get("answer", ""))
+            return result
     else:
         return _run_pipeline()
 
@@ -340,8 +349,15 @@ def rag_pipeline(client, question: str, session_id: str = "default_session",
 # Streaming Pipeline (Hybrid Mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def rag_pipeline_stream(client, question: str, session_id: str = "default_session",
-                              location: str = None, device: str = None, bot_id: int = None):
+
+async def rag_pipeline_stream(
+    client,
+    question: str,
+    session_id: str = "default_session",
+    location: str = None,
+    device: str = None,
+    bot_id: int = None,
+):
     """
     Streaming version of the Hybrid RAG flow.
     Accepts Client or Bot object. If bot_id is provided, uses bot-scoped queries.
@@ -349,21 +365,20 @@ async def rag_pipeline_stream(client, question: str, session_id: str = "default_
     """
     # Determine owner IDs
     if bot_id:
-        cid = getattr(client, 'client_id', None) if isinstance(client, Bot) else getattr(client, 'id', None)
+        cid = getattr(client, "client_id", None) if isinstance(client, Bot) else getattr(client, "id", None)
         bid = bot_id
     elif isinstance(client, Bot):
-        cid = getattr(client, 'client_id', None)
+        cid = getattr(client, "client_id", None)
         bid = client.id
     else:
-        cid = getattr(client, 'id', None)
+        cid = getattr(client, "id", None)
         bid = None
     logger.info(f"RAG stream started | client_id={cid} | bot_id={bid}")
 
     full_answer = ""
     with get_session() as session:
         # 1. Fetch BANT state
-        ensure_chat_session(session, session_id, client_id=cid, bot_id=bid,
-                            location=location, device=device)
+        ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
         chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
         current_bant = {
             "need": chat_session.bant_need if chat_session else None,
@@ -380,10 +395,20 @@ async def rag_pipeline_stream(client, question: str, session_id: str = "default_
 
         # 4. Embed & Retrieve
         query_embedding = embed_chunks([search_query])[0]
-        add_chat_message(session, session_id, client_id=cid, role="user", content=question,
-                         location=location, device=device, bot_id=bid)
+        add_chat_message(
+            session,
+            session_id,
+            client_id=cid,
+            role="user",
+            content=question,
+            location=location,
+            device=device,
+            bot_id=bid,
+        )
 
-        vector_results = search_similar_documents(session, client_id=cid, query_embedding=query_embedding, k=5, bot_id=bid)
+        vector_results = search_similar_documents(
+            session, client_id=cid, query_embedding=query_embedding, k=5, bot_id=bid
+        )
         keyword_results = search_keyword_documents(session, client_id=cid, query=search_query, k=5, bot_id=bid)
 
         all_results = {doc.id: doc for doc in vector_results}
@@ -397,14 +422,18 @@ async def rag_pipeline_stream(client, question: str, session_id: str = "default_
         yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
 
         # 5. Format Context
-        context_text = "\n---\n".join(
-            [f"Document: {doc.document_name}\nContent:\n{doc.content}" for doc in final_results]
-        ) if final_results else "No relevant documents found."
+        context_text = (
+            "\n---\n".join([f"Document: {doc.document_name}\nContent:\n{doc.content}" for doc in final_results])
+            if final_results
+            else "No relevant documents found."
+        )
         history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
         # 6. Build Hybrid RAG Prompt (with BANT state)
-        is_bant_enabled = getattr(client, 'bant_enabled', True)
-        prompt = build_hybrid_prompt(client, question, context_text, history_context, bant_state=current_bant, bant_enabled=is_bant_enabled)
+        is_bant_enabled = getattr(client, "bant_enabled", True)
+        prompt = build_hybrid_prompt(
+            client, question, context_text, history_context, bant_state=current_bant, bant_enabled=is_bant_enabled
+        )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
         # 7. Stream and Accumulate (auto-observed via wrapper)
@@ -433,17 +462,13 @@ async def rag_pipeline_stream(client, question: str, session_id: str = "default_
 
         # Store trace_id for feedback linking
         lf = get_langfuse()
-        if lf and hasattr(bot_msg, 'trace_id'):
-            try:
+        if lf and hasattr(bot_msg, "trace_id"):
+            with contextlib.suppress(Exception):
                 bot_msg.trace_id = lf.get_current_trace_id()
-            except Exception:
-                pass
 
         # 9. Background BANT extraction (auto-observed)
         if is_bant_enabled:
-            extracted = extract_bant_from_conversation(
-                history_context, question, full_answer, current_bant
-            )
+            extracted = extract_bant_from_conversation(history_context, question, full_answer, current_bant)
             bant_updates = {
                 "bant_need": extracted.get("need"),
                 "bant_timeline": extracted.get("timeline"),

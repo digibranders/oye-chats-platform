@@ -20,7 +20,7 @@ const StreamingText = ({ text, onComplete }) => {
             }
         }, speed);
         return () => clearInterval(timer);
-    }, [text]);
+    }, [text, onComplete]);
 
     if (done) return null;
     return <span style={{ whiteSpace: 'pre-wrap' }}>{displayed}<span className="animate-pulse">▌</span></span>;

@@ -46,7 +46,7 @@ const getCroppedImg = (imageSrc, pixelCrop, rotation = 0) => {
     });
 };
 
-const ColorPickerControl = ({ label, color, onChange, id }) => {
+const ColorPickerControl = ({ label, color, onChange }) => {
     const [isOpen, setIsOpen] = useState(false);
     const popover = useRef();
 
@@ -105,12 +105,7 @@ const ColorPickerControl = ({ label, color, onChange, id }) => {
 export default function Interface() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
 
-    if (!botsLoading && bots.length === 0) {
-        return <NoBotState title="Interface Customization" subtitle="Create a chatbot first, then customize its colors, logo, and appearance here." />;
-    }
     const [logo, setLogo] = useState(null); // base64 data URL
-    const [logoName, setLogoName] = useState('');
-    const [uploadSuccess, setUploadSuccess] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -171,8 +166,11 @@ export default function Interface() {
         fetchSettings();
     }, [selectedBot?.id]);
 
+    if (!botsLoading && bots.length === 0) {
+        return <NoBotState title="Interface Customization" subtitle="Create a chatbot first, then customize its colors, logo, and appearance here." />;
+    }
+
     const tabs = ['General', 'Avatar', 'Action Buttons', 'Messages', 'Human Form', 'Leads Form', 'Custom Brand'];
-    const presetColors = ['#ba68c8', '#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#06b6d4', '#6366f1', '#f43f5e', '#3f3f46'];
 
     const handleFile = (file) => {
         if (!file) return;
@@ -203,10 +201,8 @@ export default function Interface() {
             const result = await uploadLogo(croppedFile);
             const publicUrl = result.url;
 
-            setLogoName(cropFileName);
             setLogo(publicUrl);
             setLauncherLogo(publicUrl);
-            setUploadSuccess(true);
         } catch (error) {
             console.error("Error uploading logo:", error);
             alert("Failed to upload logo: " + (error.detail || error));
@@ -248,9 +244,7 @@ export default function Interface() {
 
     const handleRemove = () => {
         setLogo(null);
-        setLogoName('');
         setLauncherLogo(null);
-        setUploadSuccess(false);
     };
 
     return (

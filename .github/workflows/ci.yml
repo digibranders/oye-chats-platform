@@ -1,0 +1,95 @@
+name: CI Checks
+
+on:
+  push:
+    branches: [development]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Backend (Python) ──
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Lint with ruff
+        working-directory: api
+        run: |
+          ~/.local/bin/uv sync
+          ~/.local/bin/uv run ruff check .
+          ~/.local/bin/uv run ruff format --check .
+
+      - name: Run tests
+        working-directory: api
+        env:
+          DB_URL: postgresql://test:test@localhost:5432/test
+          GOOGLE_API_KEY: test-key
+          APP_ENV: testing
+        run: |
+          ~/.local/bin/uv run pytest -x -q
+
+  # ── Widget (React) ──
+  widget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Lint
+        working-directory: widget
+        run: |
+          npm ci
+          npm run lint
+
+      - name: Build
+        working-directory: widget
+        run: npm run build
+        env:
+          VITE_API_URL: https://api.oyechats.com
+
+  # ── Admin Dashboard (React) ──
+  admin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Lint
+        working-directory: app
+        run: |
+          npm ci
+          npm run lint
+
+      - name: Build
+        working-directory: app
+        run: npm run build
+        env:
+          VITE_API_URL: https://api.oyechats.com

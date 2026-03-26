@@ -20,12 +20,14 @@ Prerequisites:
 This script is IDEMPOTENT — safe to run multiple times.
 """
 
+import logging
 import sys
 import uuid
-import logging
-from sqlalchemy import text, inspect, select
+
+from sqlalchemy import inspect, select, text
+
+from app.db.models import Bot, Client
 from app.db.session import engine, get_session
-from app.db.models import Base, Client, Bot
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger("multibot_migration")
@@ -73,9 +75,7 @@ def _create_default_bots(dry_run=False):
         clients = session.execute(select(Client)).scalars().all()
 
         for client in clients:
-            existing_bot = session.execute(
-                select(Bot.id).where(Bot.client_id == client.id).limit(1)
-            ).scalar()
+            existing_bot = session.execute(select(Bot.id).where(Bot.client_id == client.id).limit(1)).scalar()
 
             if existing_bot:
                 logger.info(f"  Client {client.id} ({client.name}) -> already has bot {existing_bot}")
@@ -86,21 +86,23 @@ def _create_default_bots(dry_run=False):
             bot_data = {
                 "client_id": client.id,
                 "bot_key": f"bot-{uuid.uuid4().hex[:12]}",
-                "name": getattr(client, 'bot_name', None) or "AI Assistant",
-                "system_prompt": getattr(client, 'system_prompt', None),
-                "website": getattr(client, 'website', None),
-                "bot_logo": getattr(client, 'bot_logo', None),
-                "launcher_name": getattr(client, 'launcher_name', None) or "Have Questions?",
-                "launcher_logo": getattr(client, 'launcher_logo', None),
-                "primary_color": getattr(client, 'primary_color', None) or "#ba68c8",
-                "background_color": getattr(client, 'background_color', None) or "#ffffff",
-                "header_color": getattr(client, 'header_color', None) or "#3A0CA3",
-                "recommended_colors": getattr(client, 'recommended_colors', None),
+                "name": getattr(client, "bot_name", None) or "AI Assistant",
+                "system_prompt": getattr(client, "system_prompt", None),
+                "website": getattr(client, "website", None),
+                "bot_logo": getattr(client, "bot_logo", None),
+                "launcher_name": getattr(client, "launcher_name", None) or "Have Questions?",
+                "launcher_logo": getattr(client, "launcher_logo", None),
+                "primary_color": getattr(client, "primary_color", None) or "#ba68c8",
+                "background_color": getattr(client, "background_color", None) or "#ffffff",
+                "header_color": getattr(client, "header_color", None) or "#3A0CA3",
+                "recommended_colors": getattr(client, "recommended_colors", None),
                 "is_active": True,
             }
 
             if dry_run:
-                logger.info(f"  [DRY RUN] Would create bot for client {client.id} ({client.name}): key={bot_data['bot_key']}")
+                logger.info(
+                    f"  [DRY RUN] Would create bot for client {client.id} ({client.name}): key={bot_data['bot_key']}"
+                )
                 created.append(bot_data)
                 continue
 
@@ -136,7 +138,8 @@ def _backfill_bot_ids(dry_run=False):
             return orphan_docs, orphan_sessions
 
         # Backfill documents
-        docs_result = session.execute(text("""
+        docs_result = session.execute(
+            text("""
             UPDATE documents d
             SET bot_id = (
                 SELECT b.id FROM bots b
@@ -144,12 +147,14 @@ def _backfill_bot_ids(dry_run=False):
                 ORDER BY b.id LIMIT 1
             )
             WHERE d.bot_id IS NULL AND d.client_id IS NOT NULL
-        """))
+        """)
+        )
         docs_updated = docs_result.rowcount
         session.commit()
 
         # Backfill chat_sessions
-        sessions_result = session.execute(text("""
+        sessions_result = session.execute(
+            text("""
             UPDATE chat_sessions cs
             SET bot_id = (
                 SELECT b.id FROM bots b
@@ -157,7 +162,8 @@ def _backfill_bot_ids(dry_run=False):
                 ORDER BY b.id LIMIT 1
             )
             WHERE cs.bot_id IS NULL AND cs.client_id IS NOT NULL
-        """))
+        """)
+        )
         sessions_updated = sessions_result.rowcount
         session.commit()
 

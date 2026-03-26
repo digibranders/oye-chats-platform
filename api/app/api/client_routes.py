@@ -1,11 +1,10 @@
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
-from app.db.session import get_session
-from app.db.models import Client, Bot
 from app.api.auth import get_current_client
+from app.db.models import Bot, Client
+from app.db.session import get_session
 from app.schemas.client import ClientSettingsUpdate
 
 logger = logging.getLogger(__name__)
@@ -16,7 +15,7 @@ router = APIRouter(prefix="/client", tags=["client"])
 @router.get("/settings")
 def get_client_settings(
     request: Request,
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Retrieve chatbot customization settings."""
@@ -68,7 +67,7 @@ def get_client_settings(
 @router.patch("/settings")
 def update_client_settings(
     request: ClientSettingsUpdate,
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Update chatbot customization settings."""
@@ -104,14 +103,14 @@ def update_client_settings(
         raise
     except Exception as e:
         logger.error(f"Failed to update settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/upload-logo")
 async def upload_logo_endpoint(
     request: Request,
     file: UploadFile = File(...),
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Upload a logo to Backblaze B2 and return the URL."""
@@ -125,4 +124,4 @@ async def upload_logo_endpoint(
         return {"url": public_url}
     except Exception as e:
         logger.error(f"Logo upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
