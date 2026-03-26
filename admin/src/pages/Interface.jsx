@@ -1,0 +1,970 @@
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { HexColorPicker } from 'react-colorful';
+import Cropper from 'react-easy-crop';
+import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw } from 'lucide-react';
+import { getClientSettings, updateClientSettings, uploadLogo } from '../services/api';
+import { useBotContext } from '../context/BotContext';
+import NoBotState from '../components/NoBotState';
+
+// Helper: create cropped image from canvas (supports rotation)
+const getCroppedImg = (imageSrc, pixelCrop, rotation = 0) => {
+    return new Promise((resolve) => {
+        const image = new Image();
+        image.crossOrigin = 'anonymous';
+        image.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            const rad = (rotation * Math.PI) / 180;
+            const sin = Math.abs(Math.sin(rad));
+            const cos = Math.abs(Math.cos(rad));
+            const bBoxW = image.width * cos + image.height * sin;
+            const bBoxH = image.width * sin + image.height * cos;
+
+            // Draw rotated full image onto temp canvas
+            const rotCanvas = document.createElement('canvas');
+            rotCanvas.width = bBoxW;
+            rotCanvas.height = bBoxH;
+            const rotCtx = rotCanvas.getContext('2d');
+            rotCtx.translate(bBoxW / 2, bBoxH / 2);
+            rotCtx.rotate(rad);
+            rotCtx.drawImage(image, -image.width / 2, -image.height / 2);
+
+            // Crop from rotated canvas
+            canvas.width = pixelCrop.width;
+            canvas.height = pixelCrop.height;
+            ctx.drawImage(
+                rotCanvas,
+                pixelCrop.x, pixelCrop.y,
+                pixelCrop.width, pixelCrop.height,
+                0, 0,
+                pixelCrop.width, pixelCrop.height
+            );
+            canvas.toBlob((blob) => resolve(blob), 'image/png', 1);
+        };
+        image.src = imageSrc;
+    });
+};
+
+const ColorPickerControl = ({ label, color, onChange, id }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const popover = useRef();
+
+    const close = (e) => {
+        if (popover.current && !popover.current.contains(e.target)) {
+            setIsOpen(false);
+        }
+    };
+
+    useEffect(() => {
+        if (isOpen) {
+            document.addEventListener('mousedown', close);
+            return () => document.removeEventListener('mousedown', close);
+        }
+    }, [isOpen]);
+
+    return (
+        <div className="space-y-2">
+            <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">{label}</label>
+            <div className="relative">
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setIsOpen(!isOpen)}
+                        className="w-10 h-10 rounded-lg shadow-sm border border-secondary-200 dark:border-secondary-700 flex-shrink-0 transition-transform hover:scale-105 active:scale-95"
+                        style={{ backgroundColor: color || '#000000' }}
+                    />
+                    <div className="relative flex-grow max-w-[140px]">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400 font-mono text-xs">#</span>
+                        <input
+                            type="text"
+                            value={color ? color.replace('#', '').toUpperCase() : ''}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                if (val.length <= 6 && /^[0-9A-Fa-f]*$/.test(val)) {
+                                    onChange('#' + val);
+                                }
+                            }}
+                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-secondary-600 dark:text-secondary-300 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                        />
+                    </div>
+                </div>
+
+                {isOpen && (
+                    <div 
+                        ref={popover}
+                        className="absolute z-50 mt-2 p-3 bg-white dark:bg-secondary-800 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] dark:shadow-black/60 border border-secondary-200 dark:border-secondary-700 animate-in fade-in zoom-in duration-200 origin-top-left"
+                    >
+                        <HexColorPicker color={color || '#000000'} onChange={onChange} />
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default function Interface() {
+    const { selectedBot, bots, loading: botsLoading } = useBotContext();
+
+    if (!botsLoading && bots.length === 0) {
+        return <NoBotState title="Interface Customization" subtitle="Create a chatbot first, then customize its colors, logo, and appearance here." />;
+    }
+    const [logo, setLogo] = useState(null); // base64 data URL
+    const [logoName, setLogoName] = useState('');
+    const [uploadSuccess, setUploadSuccess] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [saveError, setSaveError] = useState(null);
+    const [botName, setBotName] = useState('AI Assistant');
+    const [launcherName, setLauncherName] = useState('Have Questions?');
+    const [launcherLogo, setLauncherLogo] = useState(null);
+    const [primaryColor, setPrimaryColor] = useState('#ba68c8');
+    const [headerColor, setHeaderColor] = useState('#3A0CA3');
+    const [backgroundColor, setBackgroundColor] = useState('#ffffff');
+    const [recommendedColors, setRecommendedColors] = useState([]);
+    const [bantEnabled, setBantEnabled] = useState(true);
+    const [avatarType, setAvatarType] = useState('upload');
+    const [orbColor, setOrbColor] = useState('');
+    const [activeTab, setActiveTab] = useState('General');
+    const inputRef = useRef(null);
+
+    // Crop state
+    const [showCropModal, setShowCropModal] = useState(false);
+    const [cropImage, setCropImage] = useState(null);
+    const [cropFileName, setCropFileName] = useState('');
+    const [crop, setCrop] = useState({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(1);
+    const [rotation, setRotation] = useState(0);
+    const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
+
+    const onCropComplete = useCallback((croppedArea, croppedAreaPx) => {
+        setCroppedAreaPixels(croppedAreaPx);
+    }, []);
+
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                const settings = await getClientSettings(selectedBot?.id);
+                setBotName(settings.bot_name || 'AI Assistant');
+                setLauncherName(settings.launcher_name || 'Have Questions?');
+                setPrimaryColor(settings.primary_color || '#ba68c8');
+                setHeaderColor(settings.header_color || '#3A0CA3');
+                setBackgroundColor(settings.background_color || '#ffffff');
+                setRecommendedColors(settings.recommended_colors || []);
+                setBantEnabled(settings.bant_enabled ?? true);
+                setAvatarType(settings.avatar_type || 'upload');
+                setOrbColor(settings.orb_color || '');
+                if (settings.bot_logo) {
+                    setLogo(settings.bot_logo);
+                } else {
+                    setLogo(null);
+                }
+                if (settings.launcher_logo) {
+                    setLauncherLogo(settings.launcher_logo);
+                } else {
+                    setLauncherLogo(null);
+                }
+            } catch (error) {
+                console.error("Error fetching settings:", error);
+            }
+        };
+        fetchSettings();
+    }, [selectedBot?.id]);
+
+    const tabs = ['General', 'Avatar', 'Action Buttons', 'Messages', 'Human Form', 'Leads Form', 'Custom Brand'];
+    const presetColors = ['#ba68c8', '#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#06b6d4', '#6366f1', '#f43f5e', '#3f3f46'];
+
+    const handleFile = (file) => {
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            alert('Please upload an image file.');
+            return;
+        }
+        // Open crop modal instead of uploading directly
+        const reader = new FileReader();
+        reader.onload = () => {
+            setCropImage(reader.result);
+            setCropFileName(file.name);
+            setCrop({ x: 0, y: 0 });
+            setZoom(1);
+            setRotation(0);
+            setShowCropModal(true);
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleCropConfirm = async () => {
+        if (!croppedAreaPixels || !cropImage) return;
+        setShowCropModal(false);
+        setIsUploading(true);
+        try {
+            const croppedBlob = await getCroppedImg(cropImage, croppedAreaPixels, rotation);
+            const croppedFile = new File([croppedBlob], cropFileName || 'avatar.png', { type: 'image/png' });
+            const result = await uploadLogo(croppedFile);
+            const publicUrl = result.url;
+
+            setLogoName(cropFileName);
+            setLogo(publicUrl);
+            setLauncherLogo(publicUrl);
+            setUploadSuccess(true);
+        } catch (error) {
+            console.error("Error uploading logo:", error);
+            alert("Failed to upload logo: " + (error.detail || error));
+        } finally {
+            setIsUploading(false);
+            setCropImage(null);
+        }
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        setSaveError(null);
+        try {
+            const payload = {
+                bot_name: botName,
+                bot_logo: logo,
+                launcher_name: launcherName,
+                launcher_logo: launcherLogo,
+                primary_color: primaryColor,
+                header_color: headerColor,
+                background_color: backgroundColor,
+                bant_enabled: bantEnabled,
+                avatar_type: avatarType,
+                orb_color: orbColor || null
+            };
+            console.log('[Interface] Saving settings:', payload, 'botId:', selectedBot?.id);
+            await updateClientSettings(payload, selectedBot?.id);
+            setSaved(true);
+            setTimeout(() => setSaved(false), 3000);
+        } catch (error) {
+            console.error("Error saving settings:", error);
+            const msg = typeof error === 'string' ? error : error?.detail || error?.message || 'Failed to save settings';
+            setSaveError(msg);
+            setTimeout(() => setSaveError(null), 5000);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleRemove = () => {
+        setLogo(null);
+        setLogoName('');
+        setLauncherLogo(null);
+        setUploadSuccess(false);
+    };
+
+    return (
+        <div className="max-w-6xl mx-auto space-y-8 animate-slide-up pb-20">
+            {/* Error Toast */}
+            {saveError && (
+                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-red-50 dark:bg-red-900/90 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 animate-fade-in">
+                    <AlertCircle size={18} />
+                    <span className="text-sm font-medium">{saveError}</span>
+                    <button onClick={() => setSaveError(null)} className="ml-2 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+            {/* Tab Navigation Header */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-secondary-200 dark:border-secondary-700/60 w-full">
+                <div className="flex items-center gap-1 bg-secondary-100 dark:bg-secondary-800/50 p-1.5 rounded-xl w-full max-w-4xl overflow-x-auto no-scrollbar shadow-inner">
+                    {tabs.map((tab) => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            className={`flex-1 min-w-max px-4 py-2 text-[13px] rounded-lg transition-all duration-200 ${
+                                activeTab === tab
+                                    ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm font-bold'
+                                    : 'text-secondary-500 dark:text-secondary-400 font-semibold hover:text-secondary-700 dark:hover:text-secondary-200 hover:bg-secondary-200/50 dark:hover:bg-secondary-700/50'
+                            }`}
+                        >
+                            {tab}
+                        </button>
+                    ))}
+                </div>
+
+                <button
+                    onClick={handleSave}
+                    disabled={isSaving || saved}
+                    className={`group relative flex items-center gap-2 px-6 h-11 rounded-lg shadow-sm transition-all font-semibold text-sm disabled:opacity-70 overflow-hidden ${saved
+                            ? 'bg-green-500 hover:bg-green-600 text-white'
+                            : 'bg-primary-600 hover:bg-primary-700 text-white'
+                        }`}
+                >
+                    <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                    {saved ? (
+                        <>
+                            <CheckCircle className="w-4 h-4 relative z-10" />
+                            <span className="relative z-10">Saved!</span>
+                        </>
+                    ) : isSaving ? (
+                        <>
+                            <RefreshCw className="w-4 h-4 relative z-10 animate-spin" />
+                            <span className="relative z-10">Saving...</span>
+                        </>
+                    ) : (
+                        <>
+                            <CheckCircle className="w-4 h-4 relative z-10" />
+                            <span className="relative z-10">Save Configuration</span>
+                        </>
+                    )}
+                </button>
+            </div>
+
+            <div className="flex flex-col lg:flex-row gap-8 items-start w-full">
+                {/* Left Side: 60% Configuration Column */}
+                <div className="w-full lg:w-[60%] flex flex-col gap-10 lg:pr-6">
+                    {activeTab === 'General' ? (
+                        <>
+                            {/* Chatbot Display Name Section */}
+                            <div className="space-y-3 animate-fade-in">
+                                <div>
+                                    <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
+                                        <Bot className="w-4 h-4 text-primary-500" />
+                                        Chatbot Display Name
+                                    </h3>
+                                    {/* <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">This name is seen by those who interact with your chat (e.g. customers)</p> */}
+                                </div>
+                                <input
+                                    type="text"
+                                    value={botName}
+                                    onChange={(e) => setBotName(e.target.value)}
+                                    maxLength={40}
+                                    placeholder="e.g. AI Assistant, Support Bot..."
+                                    className="w-full max-w-lg h-10 px-3 rounded-md border border-secondary-200 dark:border-secondary-600/80 bg-white dark:bg-secondary-800 text-sm text-secondary-900 dark:text-white placeholder-secondary-400 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
+                                />
+                            </div>
+
+                            {/* Launcher Customization Section */}
+                            {/* <div className="space-y-6 animate-fade-in" style={{ animationDelay: '0.07s' }}>
+                                <div className="pt-4 border-t border-secondary-100 dark:border-secondary-700/50">
+                                    <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
+                                        <Settings2 className="w-4 h-4 text-primary-500" />
+                                        Launcher Customization
+                                    </h3>
+                                    <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">Customize how your chatbot launcher looks to visitors</p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="space-y-2">
+                                        <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Launcher Tooltip Text</label>
+                                        <input
+                                            type="text"
+                                            value={launcherName}
+                                            onChange={(e) => setLauncherName(e.target.value)}
+                                            maxLength={50}
+                                            placeholder="e.g. Have Questions? I'm here to help!"
+                                            className="w-full max-w-lg h-10 px-3 rounded-md border border-secondary-200 dark:border-secondary-600/80 bg-white dark:bg-secondary-800 text-sm text-secondary-900 dark:text-white placeholder-secondary-400 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Launcher Image</label>
+                                        <div className="flex items-center w-full max-w-lg">
+                                            <input
+                                                id="launcher-input"
+                                                type="file"
+                                                accept="image/*"
+                                                className="hidden"
+                                                onChange={(e) => handleFile(e.target.files[0], 'launcher')}
+                                            />
+                                            <div 
+                                                onClick={() => document.getElementById('launcher-input').click()}
+                                                className="w-full min-h-[40px] px-3 py-2 flex items-center justify-between rounded-md border border-secondary-200 dark:border-secondary-600/80 bg-white dark:bg-secondary-800 cursor-pointer hover:border-primary-400 transition-colors shadow-sm"
+                                            >
+                                                <span className={`text-[13px] ${launcherLogo ? 'text-secondary-900 dark:text-white font-medium' : 'text-secondary-400'}`}>
+                                                    {launcherLogo ? launcherLogoName || 'Custom Launcher Active' : 'Choose Launcher Image'}
+                                                </span>
+                                                {launcherLogo && (
+                                                    <img src={launcherLogo} alt="launcher preview" className="w-8 h-8 object-cover rounded-full flex-shrink-0 bg-secondary-50 dark:bg-secondary-700/50 border border-secondary-200" />
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <button 
+                                                onClick={() => document.getElementById('launcher-input').click()}
+                                                className="px-4 h-8 rounded-md border border-secondary-200 dark:border-secondary-600/80 bg-white dark:bg-secondary-800 text-secondary-700 dark:text-secondary-300 text-[12px] font-bold tracking-wide hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors shadow-sm"
+                                            >
+                                                Upload Launcher Image
+                                            </button>
+                                            {launcherLogo && (
+                                                <button
+                                                    onClick={() => handleRemove('launcher')}
+                                                    className="text-[12px] font-bold text-red-500 hover:text-red-600 transition-colors flex items-center gap-1"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" /> Remove
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div> */}
+
+                            {/* Chatbot Colors */}
+                            <div className="space-y-6 animate-fade-in" style={{ animationDelay: '0.1s' }}>
+                                <div>
+                                    <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
+                                        <Palette className="w-4 h-4 text-primary-500" />
+                                        Chatbot Colors
+                                    </h3>
+                                    <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">
+                                        Customize your chatbot interface colors. Match them with your brand.
+                                    </p>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x gap-y-10 bg-secondary-50/50 dark:bg-secondary-800/20 p-8 rounded-2xl border border-secondary-200 dark:border-secondary-700/50 animate-fade-in" style={{ animationDelay: '0.1s' }}>
+                                    {/* Left Column: Manual Controls */}
+                                    <div className="space-y-8">
+                                        <ColorPickerControl 
+                                            label="Primary Color (User Highlights)" 
+                                            color={primaryColor} 
+                                            onChange={setPrimaryColor} 
+                                        />
+                                        <ColorPickerControl 
+                                            label="Header Background" 
+                                            color={headerColor} 
+                                            onChange={setHeaderColor} 
+                                        />
+                                        <ColorPickerControl 
+                                            label="Chat Background" 
+                                            color={backgroundColor} 
+                                            onChange={setBackgroundColor} 
+                                        />
+                                    </div>
+
+                                    {/* Right Column: Recommended Colors Section */}
+                                    <div className="lg:border-l lg:border-secondary-200 lg:dark:border-secondary-700/50 lg:pl-8">
+                                        {recommendedColors.length > 0 ? (
+                                            <div className="space-y-4">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <Sparkles className="w-4 h-4 text-primary-500 animate-pulse" />
+                                                    <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Extracted from your Website</label>
+                                                </div>
+                                                <div className="space-y-2.5">
+                                                    {recommendedColors.slice(0, 6).map((color) => (
+                                                        <div key={color} className="flex items-center gap-2.5 group">
+                                                            <div
+                                                                className="w-8 h-8 rounded-md shadow-sm border border-secondary-200 dark:border-secondary-700 flex-shrink-0 transition-transform group-hover:scale-110 cursor-pointer"
+                                                                style={{ backgroundColor: color }}
+                                                                title={color}
+                                                            />
+                                                            <div className="relative w-[100px]">
+                                                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-secondary-400 font-mono text-[10px]">#</span>
+                                                                <div className="w-full h-8 pl-5 pr-2 text-[12px] font-mono text-secondary-600 dark:text-secondary-300 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-md shadow-sm flex items-center">
+                                                                    {color.replace('#', '').toUpperCase()}
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex gap-1 ml-auto">
+                                                                <button
+                                                                    onClick={() => setPrimaryColor(color)}
+                                                                    className="px-2 py-1 text-[8px] font-bold bg-secondary-100 dark:bg-secondary-700 text-secondary-500 dark:text-secondary-400 rounded hover:bg-primary-500 hover:text-white transition-all uppercase tracking-wider leading-none"
+                                                                >Primary</button>
+                                                                <button
+                                                                    onClick={() => setHeaderColor(color)}
+                                                                    className="px-2 py-1 text-[8px] font-bold bg-secondary-100 dark:bg-secondary-700 text-secondary-500 dark:text-secondary-400 rounded hover:bg-purple-500 hover:text-white transition-all uppercase tracking-wider leading-none"
+                                                                >Header</button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center h-full text-center py-10 opacity-50">
+                                                <Sparkles className="w-8 h-8 mb-2 text-secondary-300" />
+                                                <p className="text-[10px] font-bold text-secondary-500 uppercase tracking-widest">No brand colors detected</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    ) : activeTab === 'Avatar' ? (
+                        <div className="space-y-6 animate-fade-in">
+                            <div>
+                                <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
+                                    <ImageIcon className="w-4 h-4 text-primary-500" />
+                                    Chatbot Avatar Style
+                                </h3>
+                                <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">Choose how your chatbot avatar appears to visitors.</p>
+                            </div>
+
+                            {/* Avatar Type Selection Cards */}
+                            <div className="grid grid-cols-3 gap-3">
+                                {[
+                                    { key: 'upload', label: 'Upload Photo', icon: <Upload className="w-5 h-5" />, desc: 'Custom image' },
+                                    { key: 'orb', label: 'Orb', icon: (
+                                        <div className="w-5 h-5 rounded-full" style={{ background: `radial-gradient(circle at 35% 35%, ${(orbColor || primaryColor)}88, ${orbColor || primaryColor})` }} />
+                                    ), desc: 'Animated gradient' },
+                                    { key: 'mascot', label: 'Mascot', icon: <Bot className="w-5 h-5" />, desc: 'Robot character' },
+                                ].map((opt) => {
+                                    const isSelected = avatarType === opt.key;
+                                    const hasUpload = opt.key === 'upload' && logo;
+                                    return (
+                                    <button
+                                        key={opt.key}
+                                        onClick={() => setAvatarType(opt.key)}
+                                        className={`relative flex flex-col items-center gap-2 p-5 rounded-xl border-2 transition-all duration-200 ${
+                                            isSelected
+                                                ? 'border-green-500 bg-green-50/50 dark:bg-green-900/20 shadow-sm ring-1 ring-green-500/20'
+                                                : 'border-secondary-200 dark:border-secondary-700 hover:border-secondary-300 dark:hover:border-secondary-600 bg-white dark:bg-secondary-800/50'
+                                        }`}
+                                    >
+                                        {isSelected && (
+                                            <div className="absolute top-2 right-2">
+                                                <Check className="w-4 h-4 text-green-500" />
+                                            </div>
+                                        )}
+                                        {/* Show uploaded badge on Upload Photo card even when not selected */}
+                                        {!isSelected && hasUpload && (
+                                            <div className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 rounded-full">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                                <span className="text-[8px] font-bold text-green-600 dark:text-green-400 uppercase">Uploaded</span>
+                                            </div>
+                                        )}
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors overflow-hidden ${
+                                            isSelected
+                                                ? 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400'
+                                                : 'bg-secondary-100 dark:bg-secondary-700/50 text-secondary-500 dark:text-secondary-400'
+                                        }`}>
+                                            {/* Show thumbnail on Upload card if image exists */}
+                                            {opt.key === 'upload' && logo ? (
+                                                <img src={logo} alt="avatar" className="w-full h-full object-cover" />
+                                            ) : opt.icon}
+                                        </div>
+                                        <span className={`text-[13px] font-bold ${
+                                            isSelected
+                                                ? 'text-green-700 dark:text-green-300'
+                                                : 'text-secondary-700 dark:text-secondary-300'
+                                        }`}>{opt.label}</span>
+                                        <span className="text-[11px] text-secondary-400">{opt.desc}</span>
+                                    </button>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Conditional content based on avatar type */}
+                            {avatarType === 'upload' && (
+                                <div className="space-y-3 animate-fade-in">
+                                    <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Upload Avatar Image</label>
+                                    <input
+                                        ref={inputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                            handleFile(e.target.files[0]);
+                                            e.target.value = '';
+                                        }}
+                                    />
+
+                                    {!logo ? (
+                                        <div
+                                            onClick={() => inputRef.current?.click()}
+                                            onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-primary-500', 'bg-primary-50', 'dark:bg-primary-900/10'); }}
+                                            onDragLeave={(e) => { e.currentTarget.classList.remove('border-primary-500', 'bg-primary-50', 'dark:bg-primary-900/10'); }}
+                                            onDrop={(e) => {
+                                                e.preventDefault();
+                                                e.currentTarget.classList.remove('border-primary-500', 'bg-primary-50', 'dark:bg-primary-900/10');
+                                                const file = e.dataTransfer.files?.[0];
+                                                if (file) handleFile(file);
+                                            }}
+                                            className="w-full max-w-lg border-2 border-dashed border-secondary-200 dark:border-secondary-600/60 rounded-xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-primary-400 hover:bg-primary-50/30 dark:hover:bg-primary-900/5 transition-all group"
+                                        >
+                                            {isUploading ? (
+                                                <div className="flex flex-col items-center gap-2">
+                                                    <RefreshCw className="w-6 h-6 text-primary-500 animate-spin" />
+                                                    <span className="text-[13px] font-semibold text-primary-500">Uploading...</span>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="w-12 h-12 rounded-full bg-secondary-100 dark:bg-secondary-700/50 flex items-center justify-center group-hover:bg-primary-100 dark:group-hover:bg-primary-900/20 transition-colors">
+                                                        <Upload className="w-5 h-5 text-secondary-400 group-hover:text-primary-500 transition-colors" />
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <p className="text-[13px] font-semibold text-secondary-700 dark:text-secondary-300">
+                                                            <span className="text-primary-500">Click to upload</span> or drag and drop
+                                                        </p>
+                                                        <p className="text-[11px] text-secondary-400 mt-0.5">PNG, JPG, SVG up to 2MB</p>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="w-full max-w-lg bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl p-4 flex items-center gap-4">
+                                            <div className="w-14 h-14 rounded-xl bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 flex items-center justify-center overflow-hidden flex-shrink-0 shadow-sm">
+                                                <img src={logo} alt="avatar" className="w-full h-full object-cover" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-0.5">
+                                                    <span className="text-[13px] font-semibold text-secondary-900 dark:text-white truncate">Avatar Active</span>
+                                                    <span className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold text-green-600 bg-green-100 dark:bg-green-900/30 dark:text-green-400 rounded-full uppercase">
+                                                        <Check className="w-2.5 h-2.5" /> Uploaded
+                                                    </span>
+                                                </div>
+                                                <p className="text-[11px] text-secondary-400">Click below to replace or remove</p>
+                                            </div>
+                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                <button
+                                                    onClick={() => inputRef.current?.click()}
+                                                    className="w-8 h-8 rounded-lg bg-white dark:bg-secondary-700 border border-secondary-200 dark:border-secondary-600 flex items-center justify-center hover:border-primary-400 hover:text-primary-500 transition-colors shadow-sm"
+                                                    title="Replace image"
+                                                >
+                                                    <Upload className="w-3.5 h-3.5" />
+                                                </button>
+                                                <button
+                                                    onClick={handleRemove}
+                                                    className="w-8 h-8 rounded-lg bg-white dark:bg-secondary-700 border border-secondary-200 dark:border-secondary-600 flex items-center justify-center hover:border-red-400 hover:text-red-500 text-secondary-400 transition-colors shadow-sm"
+                                                    title="Remove image"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {avatarType === 'orb' && (() => {
+                                const activeOrbColor = orbColor || primaryColor;
+                                return (
+                                <div className="space-y-5 animate-fade-in">
+                                    {/* Orb Preview */}
+                                    <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Orb Preview</label>
+                                    <div className="flex items-center gap-6 p-6 bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl">
+                                        <div
+                                            className="w-20 h-20 rounded-full flex-shrink-0"
+                                            style={{
+                                                background: `radial-gradient(circle at 35% 35%, ${activeOrbColor}44, ${activeOrbColor}bb, ${activeOrbColor})`,
+                                                boxShadow: `0 0 20px ${activeOrbColor}55, 0 0 40px ${activeOrbColor}22`,
+                                                animation: 'pulse 2.5s ease-in-out infinite'
+                                            }}
+                                        />
+                                        <div>
+                                            <p className="text-[13px] font-semibold text-secondary-900 dark:text-white">Animated Orb</p>
+                                            <p className="text-[11px] text-secondary-400 mt-1">A pulsing gradient orb. Pick a color below or use your primary color.</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Orb Color Picker */}
+                                    <div>
+                                        <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Orb Color</label>
+                                        <p className="text-[11px] text-secondary-400 mt-0.5 mb-3">Pick any color for the orb using the picker, or use your primary color.</p>
+
+                                        {/* Use Primary toggle */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setOrbColor(orbColor ? '' : primaryColor)}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-[12px] font-semibold transition-all mb-4 ${
+                                                !orbColor
+                                                    ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300 ring-1 ring-green-500/20'
+                                                    : 'border-secondary-200 dark:border-secondary-700 text-secondary-600 dark:text-secondary-400 hover:border-secondary-300'
+                                            }`}
+                                        >
+                                            <div className="w-5 h-5 rounded-full border-2 border-white dark:border-secondary-600 shadow-sm" style={{ backgroundColor: primaryColor }} />
+                                            {!orbColor ? <><Check className="w-3.5 h-3.5" /> Using Primary Color</> : 'Use Primary Color'}
+                                        </button>
+
+                                        {/* HexColorPicker - full saturation/brightness square + hue slider */}
+                                        <div className="p-6 bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl">
+                                            <div className="orb-color-picker">
+                                                <HexColorPicker
+                                                    color={activeOrbColor}
+                                                    onChange={(color) => setOrbColor(color)}
+                                                />
+                                            </div>
+
+                                            {/* Hex input row */}
+                                            <div className="flex items-center gap-3 mt-4">
+                                                <div
+                                                    className="w-10 h-10 rounded-lg shadow-sm border border-secondary-200 dark:border-secondary-700 flex-shrink-0"
+                                                    style={{ backgroundColor: activeOrbColor }}
+                                                />
+                                                <div className="relative flex-grow max-w-[140px]">
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400 font-mono text-xs">#</span>
+                                                    <input
+                                                        type="text"
+                                                        value={activeOrbColor.replace('#', '').toUpperCase()}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value;
+                                                            if (val.length <= 6 && /^[0-9A-Fa-f]*$/.test(val)) {
+                                                                setOrbColor('#' + val);
+                                                            }
+                                                        }}
+                                                        className="w-full h-9 pl-6 pr-3 text-sm font-mono text-secondary-600 dark:text-secondary-300 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                );
+                            })()}
+
+                            {avatarType === 'mascot' && (
+                                <div className="space-y-4 animate-fade-in">
+                                    <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Mascot Preview</label>
+                                    <div className="flex items-center gap-6 p-6 bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl">
+                                        <div
+                                            className="w-20 h-20 rounded-full flex-shrink-0 flex items-center justify-center"
+                                            style={{ backgroundColor: primaryColor }}
+                                        >
+                                            <Bot className="w-10 h-10 text-white" />
+                                        </div>
+                                        <div>
+                                            <p className="text-[13px] font-semibold text-secondary-900 dark:text-white">Robot Mascot</p>
+                                            <p className="text-[11px] text-secondary-400 mt-1">A friendly robot icon on your primary color background. Change the color in the General tab.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : activeTab === 'Leads Form' ? (
+                        <div className="space-y-6 animate-fade-in">
+                            <div>
+                                <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
+                                    <Bot className="w-4 h-4 text-primary-500" />
+                                    <span>BANT</span> Lead Qualification
+                                </h3>
+                                <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">
+                                    When enabled, the <span className="font-semibold text-secondary-700 dark:text-secondary-200">AI</span> will subtly ask <span className="font-semibold text-secondary-700 dark:text-secondary-200">qualifying questions</span> (<span className="font-semibold text-secondary-700 dark:text-secondary-200">Budget</span>, <span className="font-semibold text-secondary-700 dark:text-secondary-200">Authority</span>, <span className="font-semibold text-secondary-700 dark:text-secondary-200">Need</span>, <span className="font-semibold text-secondary-700 dark:text-secondary-200">Timeline</span>) when the user shows <span className="font-semibold text-secondary-700 dark:text-secondary-200">genuine buying intent</span>.
+                                </p>
+                            </div>
+                            
+                            <div className="bg-white dark:bg-secondary-800 p-6 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <h4 className="text-[14px] font-semibold text-secondary-900 dark:text-white">Enable <span className="font-bold">BANT</span> Qualification</h4>
+                                    <p className="text-[12px] text-secondary-500 dark:text-secondary-400 mt-1">Allows the bot to <span className="font-semibold text-secondary-700 dark:text-secondary-200">qualify leads</span> automatically.</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        className="sr-only peer" 
+                                        checked={bantEnabled}
+                                        onChange={(e) => setBantEnabled(e.target.checked)}
+                                    />
+                                    <div className="w-11 h-6 bg-secondary-200 peer-focus:outline-none rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
+                                </label>
+                            </div>
+                        </div>
+                    ) : activeTab === 'Custom Brand' ? (
+                        <div className="space-y-6 animate-fade-in">
+                            <div className="bg-gradient-to-br from-primary-50 to-indigo-50 dark:from-primary-900/20 dark:to-indigo-900/20 p-8 rounded-2xl border border-primary-200 dark:border-primary-700/50 shadow-sm">
+                                <div className="flex items-start gap-4">
+                                    <div className="w-12 h-12 rounded-xl bg-primary-100 dark:bg-primary-900/50 flex items-center justify-center flex-shrink-0">
+                                        <Settings2 className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-[16px] font-bold text-secondary-900 dark:text-white mb-1">
+                                            Need <span className="font-bold">Personalized</span> Customization?
+                                        </h3>
+                                        <p className="text-[13px] text-secondary-600 dark:text-secondary-400 leading-relaxed mb-4">
+                                            If you'd like to add <span className="font-semibold text-secondary-700 dark:text-secondary-200">custom branding</span>, <span className="font-semibold text-secondary-700 dark:text-secondary-200">unique themes</span>, or any <span className="font-semibold text-secondary-700 dark:text-secondary-200">personalized features</span> to your chatbot, our development team is here to help!
+                                        </p>
+                                        <div className="bg-white dark:bg-secondary-800 px-5 py-4 rounded-xl border border-secondary-200 dark:border-secondary-700 inline-flex items-center gap-3">
+                                            <span className="text-[13px] text-secondary-500 dark:text-secondary-400">Email us at:</span>
+                                            <a 
+                                                href="mailto:developer@oyechat.com" 
+                                                className="text-[14px] font-bold text-primary-600 dark:text-primary-400 hover:underline"
+                                            >
+                                                developer@oyechat.com
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center p-12 text-center border-2 border-dashed border-secondary-200 dark:border-secondary-700/50 rounded-2xl bg-secondary-50/50 dark:bg-secondary-800/20 animate-fade-in">
+                            <Settings2 className="w-10 h-10 text-secondary-300 dark:text-secondary-600 mb-4" />
+                            <h3 className="text-secondary-900 dark:text-white font-bold mb-2">Content for {activeTab}</h3>
+                            <p className="text-sm text-secondary-500 dark:text-secondary-400 max-w-sm">
+                                This section is currently under construction. Settings for "{activeTab}" will appear here when ready.
+                            </p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Right Side: 40% Live Preview Column (Sticky) */}
+                <div className="lg:w-[40%] flex flex-col items-center sticky top-8 animate-fade-in" style={{ animationDelay: '0.15s' }}>
+                    <div className="flex items-center justify-between w-full max-w-[360px] mb-4 px-2">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-secondary-400">Live Preview</span>
+                        <div className="flex gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-red-400/30" />
+                            <div className="w-2 h-2 rounded-full bg-amber-400/30" />
+                            <div className="w-2 h-2 rounded-full bg-green-400/30" />
+                        </div>
+                    </div>
+
+                    {/* Chat Window Preview Wrapper */}
+                    <div className="w-full max-w-[360px] bg-white dark:bg-secondary-900 rounded-[20px] overflow-hidden shadow-[0_20px_40px_-15px_rgba(0,0,0,0.15)] dark:shadow-black/50 flex flex-col border border-secondary-200 dark:border-secondary-700/60 transition-colors">
+                        
+                        {/* 1. Header Styling */}
+                        <div className="px-5 pt-5 pb-4 flex items-center justify-between z-10 border-b border-black/5 dark:border-white/5 transition-colors duration-200" style={{ backgroundColor: headerColor }}>
+                            <div className="flex items-center gap-3">
+                                {avatarType === 'orb' ? (
+                                    <div
+                                        className="w-10 h-10 rounded-full flex-shrink-0"
+                                        style={{
+                                            background: `radial-gradient(circle at 35% 35%, ${orbColor || primaryColor}44, ${orbColor || primaryColor}bb, ${orbColor || primaryColor})`,
+                                            boxShadow: `0 0 10px ${orbColor || primaryColor}55`,
+                                            animation: 'pulse 2.5s ease-in-out infinite'
+                                        }}
+                                    />
+                                ) : avatarType === 'mascot' ? (
+                                    <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: primaryColor }}>
+                                        <Bot className="w-5 h-5 text-white" />
+                                    </div>
+                                ) : logo ? (
+                                    <img src={logo} alt="logo" className="w-10 h-10 rounded-full object-contain bg-white dark:bg-secondary-900 p-0.5 shadow-sm" />
+                                ) : (
+                                    <div className="w-10 h-10 rounded-full bg-black/10 flex items-center justify-center text-white">
+                                        <Bot className="w-5 h-5" />
+                                    </div>
+                                )}
+                                <div>
+                                    <p className="font-bold text-white text-[15px] leading-tight flex items-center gap-1.5 drop-shadow-sm">
+                                        {botName || 'AI Assistant'}
+                                    </p>
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                                        <span className="text-[9px] text-white/70 font-bold uppercase tracking-tighter">Online</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 2. Message Bubbles */}
+                        <div className="flex-grow px-5 py-2 space-y-4 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px]" style={{ backgroundColor: backgroundColor }}>
+                            
+                            {/* Bot Message 1 */}
+                            <div className="flex flex-col gap-1 mt-2">
+                                <div className="bg-secondary-100 dark:bg-secondary-800/80 rounded-2xl rounded-tl-sm px-4 py-2.5 text-secondary-800 dark:text-secondary-200 text-[14px] leading-relaxed max-w-[85%] shadow-sm">
+                                    How can we help you today?
+                                </div>
+                            </div>
+
+                            {/* User Message 1 */}
+                            <div className="flex flex-col items-end gap-1">
+                                <div className="text-white rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-md shadow-black/5 text-[14px] leading-relaxed max-w-[85%] transition-colors duration-200" style={{ backgroundColor: primaryColor }}>
+                                    Tell me about your services.
+                                </div>
+                            </div>
+
+                            {/* Bot Message 2 */}
+                            <div className="flex flex-col gap-1">
+                                <div className="bg-secondary-100 dark:bg-secondary-800/80 rounded-2xl rounded-tl-sm px-4 py-2.5 text-secondary-800 dark:text-secondary-200 text-[14px] leading-relaxed max-w-[85%] shadow-sm">
+                                    I'm exploring the new customization options!
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 4. Input Area & Footer */}
+                        <div className="px-5 pt-2 pb-4 border-t border-transparent z-10 transition-colors duration-200" style={{ backgroundColor: backgroundColor }}>
+                            <div className="relative flex items-center mb-1">
+                                <input 
+                                    type="text" 
+                                    placeholder="Ask me anything..." 
+                                    className="w-full h-11 pl-4 pr-12 rounded-full border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-[13px] text-secondary-900 dark:text-white placeholder-secondary-400 focus:outline-none focus:border-primary-400 focus:ring-1 focus:ring-primary-400 transition-all"
+                                    readOnly
+                                />
+                                <button className="absolute right-1.5 w-8 h-8 rounded-full text-white flex items-center justify-center shadow-sm hover:opacity-90 transition-all duration-200" style={{ backgroundColor: primaryColor }}>
+                                    <ArrowUp className="w-4 h-4" />
+                                </button>
+                            </div>
+                            {/* <p className="text-[9px] text-center text-secondary-400 mt-3 font-bold">
+                                Powered by {botName}
+                            </p> */}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Crop Modal */}
+            {showCropModal && cropImage && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-secondary-900/70 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white dark:bg-secondary-800 rounded-2xl shadow-2xl w-full max-w-md border border-secondary-200 dark:border-secondary-700 overflow-hidden">
+                        {/* Header */}
+                        <div className="px-5 py-4 border-b border-secondary-200 dark:border-secondary-700 flex items-center justify-between">
+                            <div>
+                                <h3 className="text-base font-bold text-secondary-900 dark:text-white">Crop Avatar</h3>
+                                <p className="text-[11px] text-secondary-400 mt-0.5">Drag to reposition, scroll to zoom</p>
+                            </div>
+                            <button
+                                onClick={() => { setShowCropModal(false); setCropImage(null); }}
+                                className="p-1.5 rounded-lg text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 hover:bg-secondary-100 dark:hover:bg-secondary-700 transition-colors"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Crop Area */}
+                        <div className="relative w-full h-64 bg-secondary-900">
+                            <Cropper
+                                image={cropImage}
+                                crop={crop}
+                                zoom={zoom}
+                                rotation={rotation}
+                                aspect={1}
+                                cropShape="round"
+                                showGrid={false}
+                                onCropChange={setCrop}
+                                onZoomChange={setZoom}
+                                onCropComplete={onCropComplete}
+                            />
+                        </div>
+
+                        {/* Controls */}
+                        <div className="px-5 py-4 space-y-3">
+                            {/* Zoom */}
+                            <div className="flex items-center gap-3">
+                                <ZoomOut size={14} className="text-secondary-400 flex-shrink-0" />
+                                <input
+                                    type="range"
+                                    min={1}
+                                    max={3}
+                                    step={0.05}
+                                    value={zoom}
+                                    onChange={(e) => setZoom(Number(e.target.value))}
+                                    className="flex-1 h-1.5 bg-secondary-200 dark:bg-secondary-700 rounded-full appearance-none cursor-pointer accent-primary-500"
+                                />
+                                <ZoomIn size={14} className="text-secondary-400 flex-shrink-0" />
+                            </div>
+
+                            {/* Rotate */}
+                            <div className="flex items-center gap-3">
+                                <RotateCw size={14} className="text-secondary-400 flex-shrink-0" />
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={360}
+                                    step={1}
+                                    value={rotation}
+                                    onChange={(e) => setRotation(Number(e.target.value))}
+                                    className="flex-1 h-1.5 bg-secondary-200 dark:bg-secondary-700 rounded-full appearance-none cursor-pointer accent-primary-500"
+                                />
+                                <span className="text-[11px] font-mono text-secondary-400 w-8 text-right">{rotation}°</span>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="px-5 py-3 border-t border-secondary-200 dark:border-secondary-700 flex items-center justify-end gap-3">
+                            <button
+                                onClick={() => { setShowCropModal(false); setCropImage(null); }}
+                                className="px-4 py-2 text-sm font-medium text-secondary-600 dark:text-secondary-300 bg-secondary-100 dark:bg-secondary-700 hover:bg-secondary-200 dark:hover:bg-secondary-600 rounded-xl transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleCropConfirm}
+                                className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 rounded-xl shadow-lg shadow-primary-500/25 dark:shadow-none transition-all flex items-center gap-2"
+                            >
+                                <Check size={14} />
+                                Apply & Upload
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

@@ -1,0 +1,44 @@
+# Documents (Keep folder structure, but ignore content)
+api/documents/*
+api/archive/*
+!api/documents/.gitkeep
+!api/archive/.gitkeep
+
+# Database / Secrets
+.env
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Distribution / packaging
+dist/
+node_modules/
+dist-ssr/
+*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editor / System
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.gemini/
+brain/
+.claude/
+

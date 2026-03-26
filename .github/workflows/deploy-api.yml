@@ -1,0 +1,28 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths: ['api/**']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to DigitalOcean via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            cd /opt/oyechat/platform
+            git pull origin main
+            cd api
+            ~/.local/bin/uv sync
+            ~/.local/bin/uv run alembic upgrade head
+            sudo systemctl restart oyechat-api
+            echo "Backend deployed successfully"

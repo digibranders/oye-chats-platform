@@ -1,0 +1,67 @@
+/* 
+  NOTE: The warnings below (@theme, @variant) are expected and safe to ignore.
+  They are new features of Tailwind CSS v4 that your IDE's CSS linter may not recognize yet.
+*/
+@import "tailwindcss";
+
+@theme {
+  --color-primary-50: #f0f3ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
+
+  --color-secondary-50: #f8fafc;
+  --color-secondary-100: #f1f5f9;
+  --color-secondary-200: #e2e8f0;
+  --color-secondary-300: #cbd5e1;
+  --color-secondary-400: #94a3b8;
+  --color-secondary-500: #64748b;
+  --color-secondary-600: #475569;
+  --color-secondary-700: #334155;
+  --color-secondary-800: #1e293b;
+  --color-secondary-900: #0f172a;
+}
+
+.dark body {
+  background-color: var(--color-secondary-900);
+  color: var(--color-secondary-50);
+}
+
+/* Enable class-based dark mode in Tailwind v4 */
+@variant dark (&:where(.dark, .dark *));
+
+body {
+  background-color: var(--color-secondary-50);
+  color: var(--color-secondary-900);
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Orb color picker - compact react-colorful */
+.orb-color-picker .react-colorful {
+  width: 100% !important;
+  max-width: 240px;
+  height: 130px;
+  border-radius: 10px;
+}
+.orb-color-picker .react-colorful__saturation {
+  border-radius: 8px 8px 0 0;
+}
+.orb-color-picker .react-colorful__hue {
+  height: 14px;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+.orb-color-picker .react-colorful__saturation-pointer,
+.orb-color-picker .react-colorful__hue-pointer {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}

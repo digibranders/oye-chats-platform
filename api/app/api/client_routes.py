@@ -1,0 +1,128 @@
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Query
+
+from app.db.session import get_session
+from app.db.models import Client, Bot
+from app.api.auth import get_current_client
+from app.schemas.client import ClientSettingsUpdate
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/client", tags=["client"])
+
+
+@router.get("/settings")
+def get_client_settings(
+    request: Request,
+    bot_id: Optional[int] = Query(None),
+    client: Client = Depends(get_current_client),
+):
+    """Retrieve chatbot customization settings."""
+    with get_session() as session:
+        if bot_id:
+            bot_db = session.query(Bot).filter(Bot.id == bot_id, Bot.client_id == client.id).first()
+        else:
+            bot_db = session.query(Bot).filter(Bot.client_id == client.id).order_by(Bot.id).first()
+
+        if not bot_db:
+            client_db = session.query(Client).get(client.id)
+            return {
+                "bot_name": getattr(client_db, "bot_name", "AI Assistant"),
+                "bot_logo": getattr(client_db, "bot_logo", None),
+                "launcher_name": getattr(client_db, "launcher_name", "Have Questions?"),
+                "launcher_logo": getattr(client_db, "launcher_logo", None),
+                "primary_color": getattr(client_db, "primary_color", "#ba68c8"),
+                "background_color": getattr(client_db, "background_color", "#ffffff"),
+                "header_color": getattr(client_db, "header_color", "#3A0CA3"),
+                "recommended_colors": getattr(client_db, "recommended_colors", []) or [],
+            }
+
+        logo_url = None
+        if bot_db.bot_logo:
+            if bot_db.bot_logo.startswith("http"):
+                logo_url = bot_db.bot_logo
+            else:
+                logo_url = f"{str(request.base_url).rstrip('/')}/files/{bot_db.bot_logo}"
+
+        launcher_logo_url = None
+        if bot_db.launcher_logo:
+            if bot_db.launcher_logo.startswith("http"):
+                launcher_logo_url = bot_db.launcher_logo
+            else:
+                launcher_logo_url = f"{str(request.base_url).rstrip('/')}/files/{bot_db.launcher_logo}"
+
+        return {
+            "bot_name": bot_db.name,
+            "bot_logo": logo_url,
+            "launcher_name": bot_db.launcher_name or "Have Questions?",
+            "launcher_logo": launcher_logo_url,
+            "primary_color": bot_db.primary_color or "#ba68c8",
+            "background_color": bot_db.background_color or "#ffffff",
+            "header_color": bot_db.header_color or "#3A0CA3",
+            "recommended_colors": bot_db.recommended_colors or [],
+        }
+
+
+@router.patch("/settings")
+def update_client_settings(
+    request: ClientSettingsUpdate,
+    bot_id: Optional[int] = Query(None),
+    client: Client = Depends(get_current_client),
+):
+    """Update chatbot customization settings."""
+    try:
+        with get_session() as session:
+            if bot_id:
+                bot_db = session.query(Bot).filter(Bot.id == bot_id, Bot.client_id == client.id).first()
+            else:
+                bot_db = session.query(Bot).filter(Bot.client_id == client.id).order_by(Bot.id).first()
+
+            if not bot_db:
+                raise HTTPException(status_code=404, detail="Bot not found")
+
+            update_data = request.dict(exclude_unset=True)
+
+            if "bot_logo" in update_data:
+                update_data["launcher_logo"] = update_data["bot_logo"]
+            elif "launcher_logo" in update_data:
+                update_data["bot_logo"] = update_data["launcher_logo"]
+
+            field_mapping = {"bot_name": "name"}
+
+            for key, value in update_data.items():
+                bot_key = field_mapping.get(key, key)
+                if hasattr(bot_db, bot_key):
+                    if (bot_key in ("bot_logo", "launcher_logo")) and value and "/files/" in value:
+                        value = value.split("/files/")[-1]
+                    setattr(bot_db, bot_key, value)
+
+            session.commit()
+            return {"message": "Settings updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload-logo")
+async def upload_logo_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    bot_id: Optional[int] = Query(None),
+    client: Client = Depends(get_current_client),
+):
+    """Upload a logo to Backblaze B2 and return the URL."""
+    try:
+        from app.services.b2_service import upload_to_b2
+
+        content = await file.read()
+        file_key = upload_to_b2(content, file.filename, file.content_type)
+        public_url = f"{str(request.base_url).rstrip('/')}/files/{file_key}"
+
+        return {"url": public_url}
+    except Exception as e:
+        logger.error(f"Logo upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

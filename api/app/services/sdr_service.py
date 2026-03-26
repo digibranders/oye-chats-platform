@@ -1,0 +1,231 @@
+import logging
+import json
+from typing import Optional, List
+from pydantic import BaseModel, Field
+from google import genai
+from app.config import GOOGLE_API_KEY, GEMINI_MODEL
+from app.services.llm_service import generate_response_observed, generate_response_stream_observed
+from app.db.session import get_session
+from app.db.repository import add_chat_message, update_session_bant, get_chat_history, ensure_chat_session
+from app.db.models import ChatSession
+
+logger = logging.getLogger(__name__)
+
+# Initialize the client
+client = genai.Client(api_key=GOOGLE_API_KEY)
+
+class BANTState(BaseModel):
+    need: Optional[str] = Field(None, description="The user's core business need or problem they are trying to solve.")
+    timeline: Optional[str] = Field(None, description="When the user plans to implement a solution.")
+    authority: Optional[str] = Field(None, description="Who else is involved in the decision-making process/evaluating the solution.")
+    budget: Optional[str] = Field(None, description="The budget range allocated for this solution.")
+
+class SDRResponse(BaseModel):
+    updated_bant: BANTState = Field(..., description="The updated BANT state based on the latest user message.")
+    chat_response: str = Field(..., description="The empathetic and consultative response to the user, including exactly ONE probe if any BANT field is missing.")
+
+SDR_BASE_PROMPT = """
+SYSTEM ROLE:
+You are an elite, consultative Sales Development Representative. Your objective is to qualify leads by uncovering their BANT (Budget, Authority, Need, Timeline) criteria through natural, empathetic conversation.
+
+YOUR DIRECTIVES:
+1. ANALYZE & UPDATE: Evaluate the user's latest message against the CURRENT SESSION STATE. If the user provides new information relevant to missing BANT fields, you must update those fields. If a field is already populated, carry that value forward unless the user explicitly changes it.
+2. CONVERSATIONAL PROGRESSION: Identify which BANT fields are still null. Formulate your response to seamlessly ask exactly ONE question to uncover ONE missing field.
+3. NO INTERROGATION: Never ask multiple questions in a single message. Do not sound like a survey or checklist. Always acknowledge, validate, or provide value based on the user's previous statement before asking your next question.
+4. TACTFUL PROBING:
+   - Authority: Frame it around team involvement (e.g., "Who else on the team is evaluating this?").
+   - Budget: Frame it around tiers or ranges (e.g., "To ensure I recommend the right tier, what budget range is allocated for this?").
+5. HANDLING PUSHBACK: If the user is evasive about Budget or Authority, do not press aggressively. Provide a helpful, value-driven statement, offer a baseline price range, and pivot smoothly.
+6. OFF-TOPIC RECOVERY: If the user asks an unrelated question, answer it briefly, then gently steer the conversation back to their business goals or timeline.
+7. THE CLOSE: If all four BANT fields are populated, cease all qualifying questions. Use your response to enthusiastically propose next steps, such as scheduling a demo or booking a call with an Account Executive.
+
+CURRENT SESSION STATE:
+- Need: {need}
+- Timeline: {timeline}
+- Authority: {authority}
+- Budget: {budget}
+"""
+
+SDR_STREAM_PROMPT = SDR_BASE_PROMPT + "\n\nIMPORTANT: Respond with natural, conversational plain text ONLY. DO NOT return any JSON, structured data, or code markers."
+SDR_JSON_PROMPT = SDR_BASE_PROMPT + "\n\nReturn your response in a structured JSON format matching the SDRResponse schema."
+
+async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id: int = None):
+    """
+    Industry-level SDR qualification stream.
+    Supports bot_id for multi-bot architecture.
+    Instrumented with Langfuse traces when enabled.
+    """
+    try:
+        cid = getattr(client_obj, 'client_id', None) if hasattr(client_obj, 'bot_key') else getattr(client_obj, 'id', None)
+        bid = bot_id or (getattr(client_obj, 'id', None) if hasattr(client_obj, 'bot_key') else None)
+
+        with get_session() as session:
+            # 1. Fetch Session and BANT state
+            ensure_chat_session(session, session_id, client_id=cid, bot_id=bid)
+            chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if not chat_session:
+                yield f"METADATA:{{\"error\": \"Session not found\"}}\n"
+                return
+
+            # Current BANT State
+            current_bant = {
+                "need": chat_session.bant_need,
+                "timeline": chat_session.bant_timeline,
+                "authority": chat_session.bant_authority,
+                "budget": chat_session.bant_budget
+            }
+
+            # 2. Fetch History
+            history = get_chat_history(session, session_id, client_id=cid, limit=6, bot_id=bid)
+            history_str = "\n".join([f"{m.role.upper()}: {m.content}" for m in history])
+
+            # 3. Add User Message to History
+            add_chat_message(session, session_id, client_id=cid, role="user", content=question, bot_id=bid)
+            session.commit()
+
+            # 4. Construct Prompt (STREAMING USES PLAIN TEXT PROMPT)
+            prompt = SDR_STREAM_PROMPT.format(
+                need=current_bant["need"] or "null",
+                timeline=current_bant["timeline"] or "null",
+                authority=current_bant["authority"] or "null",
+                budget=current_bant["budget"] or "null"
+            )
+
+            yield f"METADATA:{{\"session_id\": \"{session_id}\"}}\n"
+
+            full_answer = ""
+
+            # Use observed streaming wrapper (auto-instruments with Langfuse)
+            for chunk in generate_response_stream_observed(
+                f"{prompt}\n\nHISTORY:\n{history_str}\nUSER: {question}\n\nRESPONSE:",
+                generation_name="sdr-stream-generation",
+            ):
+                full_answer += chunk
+                yield chunk
+
+            # 6. Post-processing: Extract BANT and save Bot Message
+            bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=full_answer, bot_id=bid)
+            session.commit()
+
+            # 7. Background BANT update (auto-observed via wrapper)
+            try:
+                extraction_prompt = f"Given this conversation history:\n{history_str}\n\nAnd user's last message: '{question}'\n\nCurrent BANT: {current_bant}\n\nProvide the updated BANT fields in valid JSON matching this schema: {{\"need\": string, \"timeline\": string, \"authority\": string, \"budget\": string}}"
+
+                resp_text = generate_response_observed(
+                    extraction_prompt,
+                    generation_name="sdr-bant-extraction",
+                )
+                try:
+                    clean_json = resp_text.strip()
+                    if clean_json.startswith("```json"):
+                        clean_json = clean_json.split("```json")[-1].split("```")[0].strip()
+
+                    bant_data = json.loads(clean_json)
+                    update_session_bant(session, session_id, client_id=cid, bant_data={
+                        "bant_need": bant_data.get("need"),
+                        "bant_timeline": bant_data.get("timeline"),
+                        "bant_authority": bant_data.get("authority"),
+                        "bant_budget": bant_data.get("budget")
+                    }, bot_id=bid)
+                    session.commit()
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning(f"SDR BANT JSON parsing failed: {e}")
+            except Exception as e:
+                logger.warning(f"SDR BANT extraction call failed: {e}")
+
+            yield f"\nFINAL_METADATA:{{\"message_id\": {bot_msg.id}}}\n"
+
+    except Exception as e:
+        logger.error(f"SDR Streaming Error: {e}")
+        yield f"Error: {str(e)}"
+
+def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: int = None):
+    """
+    Industry-level SDR qualification flow.
+    Supports bot_id for multi-bot architecture.
+    Instrumented with Langfuse traces when enabled.
+    """
+    try:
+        cid = getattr(client_obj, 'client_id', None) if hasattr(client_obj, 'bot_key') else getattr(client_obj, 'id', None)
+        bid = bot_id or (getattr(client_obj, 'id', None) if hasattr(client_obj, 'bot_key') else None)
+
+        with get_session() as session:
+            # 1. Fetch Session and BANT state
+            ensure_chat_session(session, session_id, client_id=cid, bot_id=bid)
+            chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if not chat_session:
+                logger.error(f"Session {session_id} not found for SDR flow.")
+                return {"error": "Session not found"}
+
+            # Current BANT State
+            current_bant = {
+                "need": chat_session.bant_need,
+                "timeline": chat_session.bant_timeline,
+                "authority": chat_session.bant_authority,
+                "budget": chat_session.bant_budget
+            }
+
+            # 2. Fetch History
+            history = get_chat_history(session, session_id, client_id=cid, limit=10, bot_id=bid)
+            history_str = "\n".join([f"{m.role.upper()}: {m.content}" for m in history])
+
+            # 3. Add User Message to History
+            add_chat_message(session, session_id, client_id=cid, role="user", content=question, bot_id=bid)
+            session.commit()
+
+            # 4. Construct Prompt
+            prompt = SDR_JSON_PROMPT.format(
+                need=current_bant["need"] or "null",
+                timeline=current_bant["timeline"] or "null",
+                authority=current_bant["authority"] or "null",
+                budget=current_bant["budget"] or "null"
+            )
+
+            # Use history in the contents
+            contents = [
+                {"role": "user", "parts": [{"text": prompt}]},
+                {"role": "user", "parts": [{"text": f"Conversation History:\n{history_str}\nUSER: {question}"}]}
+            ]
+
+            # 5. Call Gemini with Structured Output
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=contents,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": SDRResponse
+                }
+            )
+
+            if not response.text:
+                raise ValueError("Empty response from Gemini")
+
+            # 6. Parse and Update
+            data = SDRResponse.model_validate_json(response.text)
+
+            # Save updated BANT to DB
+            bant_updates = {
+                "bant_need": data.updated_bant.need,
+                "bant_timeline": data.updated_bant.timeline,
+                "bant_authority": data.updated_bant.authority,
+                "bant_budget": data.updated_bant.budget
+            }
+            update_session_bant(session, session_id, client_id=cid, bant_data=bant_updates, bot_id=bid)
+
+            # Save Bot Response
+            bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=data.chat_response, bot_id=bid)
+            session.commit()
+
+            return {
+                "session_id": session_id,
+                "answer": data.chat_response,
+                "message_id": bot_msg.id,
+                "bant_state": data.updated_bant.model_dump()
+            }
+
+    except Exception as e:
+        logger.error(f"SDR Qualification Error: {e}")
+        return {
+            "error": "Failed to process qualification",
+            "detail": str(e)
+        }

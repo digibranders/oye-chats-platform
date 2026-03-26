@@ -1,0 +1,35 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: oyechat
+      POSTGRES_PASSWORD: oyechat
+      POSTGRES_DB: oyechat
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oyechat"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./api/.env
+    environment:
+      DB_URL: postgresql://oyechat:oyechat@db:5432/oyechat
+      APP_ENV: development
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./api:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  pgdata:

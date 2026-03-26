@@ -1,0 +1,39 @@
+name: Deploy Widget to CDN
+
+on:
+  push:
+    branches: [main]
+    paths: ['widget/**']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install & Build
+        working-directory: widget
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: https://api.oyechats.com
+
+      - name: Upload JS to Cloudflare R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          command: r2 object put oyechat-cdn/oyechat-widget.js --file widget/dist/oyechat-widget.js --content-type "text/javascript"
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+
+      - name: Upload CSS to Cloudflare R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          command: r2 object put oyechat-cdn/oyechat-widget.css --file widget/dist/oyechat-widget.css --content-type "text/css"
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
