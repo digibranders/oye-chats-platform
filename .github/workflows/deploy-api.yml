@@ -3,7 +3,7 @@ name: Deploy Backend
 on:
   push:
     branches: [main]
-    paths: ['api/**']
+    paths: ['api/**', '.github/workflows/deploy-api.yml']
   workflow_dispatch:
 
 jobs:
@@ -33,21 +33,21 @@ jobs:
           script: |
             cd /opt/oyechat/platform
 
-            # Generate .env from secrets
-            cat > .env << EOF
-            DB_URL=${DB_URL}
-            GOOGLE_API_KEY=${GOOGLE_API_KEY}
-            APP_ENV=production
-            CORS_ORIGINS=${CORS_ORIGINS}
-            R2_KEY_ID=${R2_KEY_ID}
-            R2_APPLICATION_KEY=${R2_APPLICATION_KEY}
-            R2_BUCKET_NAME=${R2_BUCKET_NAME}
-            R2_ENDPOINT=${R2_ENDPOINT}
-            SENTRY_DSN_BACKEND=${SENTRY_DSN_BACKEND}
-            LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-            LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-            LANGFUSE_HOST=https://cloud.langfuse.com
-            EOF
+            # Generate .env from secrets (no leading spaces)
+            printf '%s\n' \
+              "DB_URL=${DB_URL}" \
+              "GOOGLE_API_KEY=${GOOGLE_API_KEY}" \
+              "APP_ENV=production" \
+              "CORS_ORIGINS=${CORS_ORIGINS}" \
+              "R2_KEY_ID=${R2_KEY_ID}" \
+              "R2_APPLICATION_KEY=${R2_APPLICATION_KEY}" \
+              "R2_BUCKET_NAME=${R2_BUCKET_NAME}" \
+              "R2_ENDPOINT=${R2_ENDPOINT}" \
+              "SENTRY_DSN_BACKEND=${SENTRY_DSN_BACKEND}" \
+              "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}" \
+              "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}" \
+              "LANGFUSE_HOST=https://cloud.langfuse.com" \
+              > .env
 
             # Pull latest code
             git pull origin main
