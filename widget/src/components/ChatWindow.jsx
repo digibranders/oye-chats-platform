@@ -35,7 +35,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
     const [showWelcome, setShowWelcome] = useState(true);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
-    const [lastUserMessage, setLastUserMessage] = useState(null);
+
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
 
@@ -61,10 +61,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                     if (history && history.length > 0) {
                         const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
                         setIsReturningUser(true);
-                        if (lastUserMsg) {
-                            setLastUserMessage(lastUserMsg.content);
-                        }
-
                         let welcomeBackText = `Welcome back! 👋`;
                         if (lastUserMsg) {
                             const preview = lastUserMsg.content.length > 80
@@ -93,6 +89,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
         };
 
         initChat();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
@@ -115,7 +112,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                 feedback: null
             }]);
             setIsReturningUser(false);
-            setLastUserMessage(null);
             setIsInitializing(false);
         }, 600);
     };

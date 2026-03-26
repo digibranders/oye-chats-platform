@@ -6,10 +6,6 @@ import NoBotState from '../components/NoBotState';
 
 export default function Feedback() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
-
-    if (!botsLoading && bots.length === 0) {
-        return <NoBotState title="Feedback" subtitle="Create a chatbot first to start collecting user feedback on responses." />;
-    }
     const [feedback, setFeedback] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
@@ -30,6 +26,10 @@ export default function Feedback() {
 
         fetchFeedback();
     }, [selectedBot?.id]);
+
+    if (!botsLoading && bots.length === 0) {
+        return <NoBotState title="Feedback" subtitle="Create a chatbot first to start collecting user feedback on responses." />;
+    }
 
     const formatDate = (isoString) => {
         const date = new Date(isoString);

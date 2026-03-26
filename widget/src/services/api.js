@@ -15,7 +15,7 @@ const getHeaders = () => {
     return headers;
 };
 
-export const sendMessage = async (message, sessionId = null, onMessage) => {
+export const sendMessage = async (message, sessionId = null) => {
     try {
         const response = await fetch(`${API_URL}/chat`, {
             method: 'POST',

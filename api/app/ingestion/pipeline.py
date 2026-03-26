@@ -1,27 +1,31 @@
+import hashlib
+import logging
 import os
 import shutil
-import hashlib
 from datetime import datetime
-from typing import List, Dict, Any
-from app.ingestion.extraction import load_pdf, load_docx, load_txt
-from app.ingestion.cleaner import clean_text
-from app.ingestion.chunking import chunk_text
-from app.ingestion.embedder import embed_chunks
+from typing import Any
 
+from app.config import ARCHIVE_DIR
 from app.db.repository import insert_documents, is_document_processed
 from app.db.session import get_session
-from app.config import ARCHIVE_DIR
-import logging
+from app.ingestion.chunking import chunk_text
+from app.ingestion.cleaner import clean_text
+from app.ingestion.embedder import embed_chunks
+from app.ingestion.extraction import load_docx, load_pdf, load_txt
 
 logger = logging.getLogger(__name__)
 
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
+
 def calculate_hash(text: str) -> str:
     """Calculate SHA-256 hash of text."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-def _ingest_document(client_id: int, source_name: str, full_text: str, pages_data: List[Dict[str, Any]], bot_id: int = None) -> int:
+
+def _ingest_document(
+    client_id: int, source_name: str, full_text: str, pages_data: list[dict[str, Any]], bot_id: int = None
+) -> int:
     """
     Common ingestion logic for both files and web content.
     Returns the number of chunks processed (0 if skipped).
@@ -63,14 +67,7 @@ def _ingest_document(client_id: int, source_name: str, full_text: str, pages_dat
         # 4. Save to Database with JSONB metadata
         try:
             insert_documents(
-                session,
-                client_id,
-                source_name,
-                file_hash,
-                chunk_contents,
-                embeddings,
-                chunk_metadatas,
-                bot_id=bot_id
+                session, client_id, source_name, file_hash, chunk_contents, embeddings, chunk_metadatas, bot_id=bot_id
             )
             session.commit()
         except Exception as e:
@@ -81,7 +78,6 @@ def _ingest_document(client_id: int, source_name: str, full_text: str, pages_dat
 
 
 def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int = None):
-
     """
     Scan folder and ingest all supported files.
     Supports bot_id for multi-bot architecture.
@@ -111,16 +107,16 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int = None):
             if not pages_data:
                 logger.warning(f"No text extracted from {file_name}. Skipping.")
                 continue
-            
+
             # combine text for hashing and cleaning
             full_raw_text = " ".join([p["text"] for p in pages_data])
-            
+
             # Delegate to common ingestion logic
             chunks_count = _ingest_document(client_id, file_name, full_raw_text, pages_data, bot_id=bot_id)
-            
+
             if chunks_count > 0:
                 processed_count += 1
-            
+
             # Move to archive regardless of skip/process
             move_to_archive(file_path, file_name)
 
@@ -141,31 +137,29 @@ def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int = None
     try:
         # Wrap content in the expected format for chunking
         # We treat the whole page as a single "page" of text
-        pages_data = [{
-            "text": content,
-            "metadata": {"page": 1, "url": url}
-        }]
+        pages_data = [{"text": content, "metadata": {"page": 1, "url": url}}]
 
         chunks_count = _ingest_document(client_id, url, content, pages_data, bot_id=bot_id)
         logger.info(f"Web ingestion complete for {url}. Chunks: {chunks_count}")
         return chunks_count
-        
+
     except Exception as e:
         logger.error(f"Error processing URL {url}: {e}")
         raise e
 
+
 def move_to_archive(file_path: str, filename: str):
     """
-    Move a file to the archive directory. 
+    Move a file to the archive directory.
     If a file with the same name exists, append a timestamp to avoid collision.
     """
     dest_path = os.path.join(ARCHIVE_DIR, filename)
-    
+
     if os.path.exists(dest_path):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         name, ext = os.path.splitext(filename)
         dest_path = os.path.join(ARCHIVE_DIR, f"{name}_{timestamp}{ext}")
-    
+
     try:
         shutil.move(file_path, dest_path)
         logger.info(f"Archived file to: {dest_path}")

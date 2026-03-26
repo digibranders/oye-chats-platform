@@ -3,12 +3,9 @@
 These tests mock the google-genai SDK and Langfuse client to test
 instrumentation logic without requiring real API keys or connections.
 """
-import os
-import sys
-import time
-from unittest.mock import MagicMock, patch, PropertyMock
-import pytest
 
+import sys
+from unittest.mock import MagicMock, patch
 
 # Mock google.genai before any app module imports it
 mock_genai = MagicMock()
@@ -24,6 +21,7 @@ class TestLangfuseClient:
         with patch("app.core.langfuse_client.LANGFUSE_ENABLED", False):
             # Reset singleton
             import app.core.langfuse_client as lfc
+
             lfc._langfuse_instance = None
 
             result = lfc.get_langfuse()
@@ -40,9 +38,7 @@ class TestLangfuseClient:
 
         import app.core.langfuse_client as lfc
 
-        with patch.object(lfc, "LANGFUSE_ENABLED", True), \
-             patch.dict("sys.modules", {"langfuse": mock_langfuse_module}):
-
+        with patch.object(lfc, "LANGFUSE_ENABLED", True), patch.dict("sys.modules", {"langfuse": mock_langfuse_module}):
             result = lfc.get_langfuse()
             assert result is mock_client
             mock_get_client.assert_called_once()
@@ -50,6 +46,7 @@ class TestLangfuseClient:
     def test_flush_langfuse_noop_when_disabled(self):
         """flush_langfuse() is a no-op when Langfuse is disabled."""
         import app.core.langfuse_client as lfc
+
         lfc._langfuse_instance = None
 
         with patch.object(lfc, "LANGFUSE_ENABLED", False):
@@ -67,9 +64,7 @@ class TestLLMServiceObserved:
             import app.services.llm_service as llm_svc
 
             with patch.object(llm_svc, "generate_response", return_value="Hello!"):
-                result = llm_svc.generate_response_observed(
-                    "test prompt", generation_name="test", trace=None
-                )
+                result = llm_svc.generate_response_observed("test prompt", generation_name="test", trace=None)
                 assert result == "Hello!"
 
     def test_generate_response_observed_creates_generation(self):
@@ -91,9 +86,11 @@ class TestLLMServiceObserved:
         with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
             import app.services.llm_service as llm_svc
 
-            with patch("app.core.langfuse_client.get_langfuse", return_value=mock_lf), \
-                 patch.object(llm_svc, "GOOGLE_API_KEY", "test-key"), \
-                 patch.object(llm_svc, "client") as mock_client:
+            with (
+                patch("app.core.langfuse_client.get_langfuse", return_value=mock_lf),
+                patch.object(llm_svc, "GOOGLE_API_KEY", "test-key"),
+                patch.object(llm_svc, "client") as mock_client,
+            ):
                 mock_client.models.generate_content.return_value = mock_response
 
                 result = llm_svc.generate_response_observed(
@@ -109,6 +106,7 @@ class TestLLMServiceObserved:
 
     def test_generate_response_stream_observed_without_trace(self):
         """Falls through to original generator when trace is None."""
+
         def mock_stream(prompt):
             yield "chunk1"
             yield "chunk2"
@@ -117,9 +115,9 @@ class TestLLMServiceObserved:
             import app.services.llm_service as llm_svc
 
             with patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream):
-                chunks = list(llm_svc.generate_response_stream_observed(
-                    "test prompt", generation_name="test", trace=None
-                ))
+                chunks = list(
+                    llm_svc.generate_response_stream_observed("test prompt", generation_name="test", trace=None)
+                )
                 assert chunks == ["chunk1", "chunk2"]
 
     def test_generate_response_stream_observed_captures_output(self):
@@ -137,12 +135,16 @@ class TestLLMServiceObserved:
         with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
             import app.services.llm_service as llm_svc
 
-            with patch("app.core.langfuse_client.get_langfuse", return_value=mock_lf), \
-                 patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream):
-                chunks = list(llm_svc.generate_response_stream_observed(
-                    "test prompt",
-                    generation_name="rag-stream",
-                ))
+            with (
+                patch("app.core.langfuse_client.get_langfuse", return_value=mock_lf),
+                patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream),
+            ):
+                chunks = list(
+                    llm_svc.generate_response_stream_observed(
+                        "test prompt",
+                        generation_name="rag-stream",
+                    )
+                )
 
                 assert chunks == ["Hello ", "world!"]
                 mock_generation.update.assert_called_once()
@@ -153,6 +155,7 @@ class TestLLMServiceObserved:
 
     def test_stream_without_langfuse_yields_all_chunks(self):
         """Streaming works identically when Langfuse is disabled."""
+
         def mock_stream(prompt):
             yield "chunk1"
             yield "chunk2"
@@ -161,12 +164,16 @@ class TestLLMServiceObserved:
         with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
             import app.services.llm_service as llm_svc
 
-            with patch("app.core.langfuse_client.get_langfuse", return_value=None), \
-                 patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream):
-                chunks = list(llm_svc.generate_response_stream_observed(
-                    "test prompt",
-                    generation_name="test",
-                ))
+            with (
+                patch("app.core.langfuse_client.get_langfuse", return_value=None),
+                patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream),
+            ):
+                chunks = list(
+                    llm_svc.generate_response_stream_observed(
+                        "test prompt",
+                        generation_name="test",
+                    )
+                )
                 assert chunks == ["chunk1", "chunk2", "chunk3"]
 
 

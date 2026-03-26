@@ -1,28 +1,37 @@
-import logging
 import json
-from typing import Optional, List
-from pydantic import BaseModel, Field
+import logging
+
 from google import genai
-from app.config import GOOGLE_API_KEY, GEMINI_MODEL
-from app.services.llm_service import generate_response_observed, generate_response_stream_observed
-from app.db.session import get_session
-from app.db.repository import add_chat_message, update_session_bant, get_chat_history, ensure_chat_session
+from pydantic import BaseModel, Field
+
+from app.config import GEMINI_MODEL, GOOGLE_API_KEY
 from app.db.models import ChatSession
+from app.db.repository import add_chat_message, ensure_chat_session, get_chat_history, update_session_bant
+from app.db.session import get_session
+from app.services.llm_service import generate_response_observed, generate_response_stream_observed
 
 logger = logging.getLogger(__name__)
 
 # Initialize the client
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
+
 class BANTState(BaseModel):
-    need: Optional[str] = Field(None, description="The user's core business need or problem they are trying to solve.")
-    timeline: Optional[str] = Field(None, description="When the user plans to implement a solution.")
-    authority: Optional[str] = Field(None, description="Who else is involved in the decision-making process/evaluating the solution.")
-    budget: Optional[str] = Field(None, description="The budget range allocated for this solution.")
+    need: str | None = Field(None, description="The user's core business need or problem they are trying to solve.")
+    timeline: str | None = Field(None, description="When the user plans to implement a solution.")
+    authority: str | None = Field(
+        None, description="Who else is involved in the decision-making process/evaluating the solution."
+    )
+    budget: str | None = Field(None, description="The budget range allocated for this solution.")
+
 
 class SDRResponse(BaseModel):
     updated_bant: BANTState = Field(..., description="The updated BANT state based on the latest user message.")
-    chat_response: str = Field(..., description="The empathetic and consultative response to the user, including exactly ONE probe if any BANT field is missing.")
+    chat_response: str = Field(
+        ...,
+        description="The empathetic and consultative response to the user, including exactly ONE probe if any BANT field is missing.",
+    )
+
 
 SDR_BASE_PROMPT = """
 SYSTEM ROLE:
@@ -46,8 +55,14 @@ CURRENT SESSION STATE:
 - Budget: {budget}
 """
 
-SDR_STREAM_PROMPT = SDR_BASE_PROMPT + "\n\nIMPORTANT: Respond with natural, conversational plain text ONLY. DO NOT return any JSON, structured data, or code markers."
-SDR_JSON_PROMPT = SDR_BASE_PROMPT + "\n\nReturn your response in a structured JSON format matching the SDRResponse schema."
+SDR_STREAM_PROMPT = (
+    SDR_BASE_PROMPT
+    + "\n\nIMPORTANT: Respond with natural, conversational plain text ONLY. DO NOT return any JSON, structured data, or code markers."
+)
+SDR_JSON_PROMPT = (
+    SDR_BASE_PROMPT + "\n\nReturn your response in a structured JSON format matching the SDRResponse schema."
+)
+
 
 async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id: int = None):
     """
@@ -56,15 +71,19 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
     Instrumented with Langfuse traces when enabled.
     """
     try:
-        cid = getattr(client_obj, 'client_id', None) if hasattr(client_obj, 'bot_key') else getattr(client_obj, 'id', None)
-        bid = bot_id or (getattr(client_obj, 'id', None) if hasattr(client_obj, 'bot_key') else None)
+        cid = (
+            getattr(client_obj, "client_id", None)
+            if hasattr(client_obj, "bot_key")
+            else getattr(client_obj, "id", None)
+        )
+        bid = bot_id or (getattr(client_obj, "id", None) if hasattr(client_obj, "bot_key") else None)
 
         with get_session() as session:
             # 1. Fetch Session and BANT state
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid)
             chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
             if not chat_session:
-                yield f"METADATA:{{\"error\": \"Session not found\"}}\n"
+                yield 'METADATA:{"error": "Session not found"}\n'
                 return
 
             # Current BANT State
@@ -72,7 +91,7 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
                 "need": chat_session.bant_need,
                 "timeline": chat_session.bant_timeline,
                 "authority": chat_session.bant_authority,
-                "budget": chat_session.bant_budget
+                "budget": chat_session.bant_budget,
             }
 
             # 2. Fetch History
@@ -88,10 +107,10 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
                 need=current_bant["need"] or "null",
                 timeline=current_bant["timeline"] or "null",
                 authority=current_bant["authority"] or "null",
-                budget=current_bant["budget"] or "null"
+                budget=current_bant["budget"] or "null",
             )
 
-            yield f"METADATA:{{\"session_id\": \"{session_id}\"}}\n"
+            yield f'METADATA:{{"session_id": "{session_id}"}}\n'
 
             full_answer = ""
 
@@ -109,7 +128,7 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
 
             # 7. Background BANT update (auto-observed via wrapper)
             try:
-                extraction_prompt = f"Given this conversation history:\n{history_str}\n\nAnd user's last message: '{question}'\n\nCurrent BANT: {current_bant}\n\nProvide the updated BANT fields in valid JSON matching this schema: {{\"need\": string, \"timeline\": string, \"authority\": string, \"budget\": string}}"
+                extraction_prompt = f'Given this conversation history:\n{history_str}\n\nAnd user\'s last message: \'{question}\'\n\nCurrent BANT: {current_bant}\n\nProvide the updated BANT fields in valid JSON matching this schema: {{"need": string, "timeline": string, "authority": string, "budget": string}}'
 
                 resp_text = generate_response_observed(
                     extraction_prompt,
@@ -121,23 +140,30 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
                         clean_json = clean_json.split("```json")[-1].split("```")[0].strip()
 
                     bant_data = json.loads(clean_json)
-                    update_session_bant(session, session_id, client_id=cid, bant_data={
-                        "bant_need": bant_data.get("need"),
-                        "bant_timeline": bant_data.get("timeline"),
-                        "bant_authority": bant_data.get("authority"),
-                        "bant_budget": bant_data.get("budget")
-                    }, bot_id=bid)
+                    update_session_bant(
+                        session,
+                        session_id,
+                        client_id=cid,
+                        bant_data={
+                            "bant_need": bant_data.get("need"),
+                            "bant_timeline": bant_data.get("timeline"),
+                            "bant_authority": bant_data.get("authority"),
+                            "bant_budget": bant_data.get("budget"),
+                        },
+                        bot_id=bid,
+                    )
                     session.commit()
                 except (json.JSONDecodeError, ValueError) as e:
                     logger.warning(f"SDR BANT JSON parsing failed: {e}")
             except Exception as e:
                 logger.warning(f"SDR BANT extraction call failed: {e}")
 
-            yield f"\nFINAL_METADATA:{{\"message_id\": {bot_msg.id}}}\n"
+            yield f'\nFINAL_METADATA:{{"message_id": {bot_msg.id}}}\n'
 
     except Exception as e:
         logger.error(f"SDR Streaming Error: {e}")
         yield f"Error: {str(e)}"
+
 
 def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: int = None):
     """
@@ -146,8 +172,12 @@ def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: in
     Instrumented with Langfuse traces when enabled.
     """
     try:
-        cid = getattr(client_obj, 'client_id', None) if hasattr(client_obj, 'bot_key') else getattr(client_obj, 'id', None)
-        bid = bot_id or (getattr(client_obj, 'id', None) if hasattr(client_obj, 'bot_key') else None)
+        cid = (
+            getattr(client_obj, "client_id", None)
+            if hasattr(client_obj, "bot_key")
+            else getattr(client_obj, "id", None)
+        )
+        bid = bot_id or (getattr(client_obj, "id", None) if hasattr(client_obj, "bot_key") else None)
 
         with get_session() as session:
             # 1. Fetch Session and BANT state
@@ -162,7 +192,7 @@ def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: in
                 "need": chat_session.bant_need,
                 "timeline": chat_session.bant_timeline,
                 "authority": chat_session.bant_authority,
-                "budget": chat_session.bant_budget
+                "budget": chat_session.bant_budget,
             }
 
             # 2. Fetch History
@@ -178,23 +208,20 @@ def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: in
                 need=current_bant["need"] or "null",
                 timeline=current_bant["timeline"] or "null",
                 authority=current_bant["authority"] or "null",
-                budget=current_bant["budget"] or "null"
+                budget=current_bant["budget"] or "null",
             )
 
             # Use history in the contents
             contents = [
                 {"role": "user", "parts": [{"text": prompt}]},
-                {"role": "user", "parts": [{"text": f"Conversation History:\n{history_str}\nUSER: {question}"}]}
+                {"role": "user", "parts": [{"text": f"Conversation History:\n{history_str}\nUSER: {question}"}]},
             ]
 
             # 5. Call Gemini with Structured Output
             response = client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=contents,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": SDRResponse
-                }
+                config={"response_mime_type": "application/json", "response_schema": SDRResponse},
             )
 
             if not response.text:
@@ -208,24 +235,23 @@ def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: in
                 "bant_need": data.updated_bant.need,
                 "bant_timeline": data.updated_bant.timeline,
                 "bant_authority": data.updated_bant.authority,
-                "bant_budget": data.updated_bant.budget
+                "bant_budget": data.updated_bant.budget,
             }
             update_session_bant(session, session_id, client_id=cid, bant_data=bant_updates, bot_id=bid)
 
             # Save Bot Response
-            bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=data.chat_response, bot_id=bid)
+            bot_msg = add_chat_message(
+                session, session_id, client_id=cid, role="bot", content=data.chat_response, bot_id=bid
+            )
             session.commit()
 
             return {
                 "session_id": session_id,
                 "answer": data.chat_response,
                 "message_id": bot_msg.id,
-                "bant_state": data.updated_bant.model_dump()
+                "bant_state": data.updated_bant.model_dump(),
             }
 
     except Exception as e:
         logger.error(f"SDR Qualification Error: {e}")
-        return {
-            "error": "Failed to process qualification",
-            "detail": str(e)
-        }
+        return {"error": "Failed to process qualification", "detail": str(e)}

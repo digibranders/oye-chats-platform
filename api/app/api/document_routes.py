@@ -1,18 +1,17 @@
+import logging
 import os
 import shutil
-import logging
-from typing import List, Optional
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Depends, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
-from app.db.session import get_session
-from app.db.models import Client, Bot, Document
-from app.db.repository import get_ingested_documents
-from app.config import DOCUMENTS_DIR
 from app.api.auth import get_current_client
+from app.config import DOCUMENTS_DIR
+from app.db.models import Bot, Client, Document
+from app.db.repository import get_ingested_documents
+from app.db.session import get_session
+from app.ingestion.pipeline import run_folder_ingestion, run_web_ingestion
 from app.schemas.client import CrawlRequest
 from app.services.crawler_service import crawl_website
-from app.ingestion.pipeline import run_folder_ingestion, run_web_ingestion
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ router = APIRouter(tags=["documents"])
 
 
 @router.get("/documents")
-def get_documents_endpoint(bot_id: Optional[int] = Query(None), client: Client = Depends(get_current_client)):
+def get_documents_endpoint(bot_id: int | None = Query(None), client: Client = Depends(get_current_client)):
     """Retrieve a list of all ingested documents for the authenticated client."""
     try:
         with get_session() as session:
@@ -28,13 +27,13 @@ def get_documents_endpoint(bot_id: Optional[int] = Query(None), client: Client =
             return docs
     except Exception as e:
         logger.error(f"Failed to fetch documents: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete("/documents/{document_name:path}")
 def delete_document_endpoint(
     document_name: str,
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Delete all documents associated with a document name for the authenticated client."""
@@ -82,13 +81,13 @@ def delete_document_endpoint(
         raise
     except Exception as e:
         logger.error(f"Failed to delete document '{document_name}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/ingest")
 def ingest_documents(
-    files: List[UploadFile] = File(...),
-    bot_id: Optional[int] = Query(None),
+    files: list[UploadFile] = File(...),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Ingest multiple files (PDF, DOCX, TXT, MD) for a client."""
@@ -126,13 +125,13 @@ def ingest_documents(
         }
     except Exception as e:
         logger.error(f"Ingestion failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}") from e
 
 
 @router.post("/crawl")
 async def crawl_endpoint(
     request: CrawlRequest,
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Crawl a URL recursively and ingest content for a client."""
@@ -182,4 +181,4 @@ async def crawl_endpoint(
         }
     except Exception as e:
         logger.error(f"Crawling failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e

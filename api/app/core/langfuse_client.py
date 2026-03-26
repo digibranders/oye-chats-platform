@@ -6,7 +6,6 @@ Graceful no-op when LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY are not set.
 """
 
 import logging
-from typing import Optional
 
 from app.config import LANGFUSE_ENABLED
 
@@ -25,6 +24,7 @@ def get_langfuse():
 
     try:
         from langfuse import get_client
+
         return get_client()
     except ImportError:
         logger.warning("langfuse package not installed. Observability disabled.")

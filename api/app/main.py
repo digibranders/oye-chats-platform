@@ -1,7 +1,7 @@
-import sys
 import asyncio
-import os
 import logging
+import os
+import sys
 
 # Fix for Playwright on Windows:
 if sys.platform.startswith("win"):
@@ -10,21 +10,22 @@ if sys.platform.startswith("win"):
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, text, inspect
+from sqlalchemy import inspect, select, text
 
-from app.db.session import engine, get_session
-from app.db.models import Base, Bot, ChatSession as CS
-from app.config import DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED, APP_ENV
-from app.core.middleware import validation_exception_handler, generic_exception_handler, get_cors_origins
+from app.api.analytics_routes import router as analytics_router
 
 # Route imports
 from app.api.auth_routes import router as auth_router
-from app.api.superadmin_routes import router as superadmin_router
 from app.api.bot_routes import router as bot_router
 from app.api.chat_routes import router as chat_router
-from app.api.document_routes import router as document_router
-from app.api.analytics_routes import router as analytics_router
 from app.api.client_routes import router as client_router
+from app.api.document_routes import router as document_router
+from app.api.superadmin_routes import router as superadmin_router
+from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
+from app.core.middleware import generic_exception_handler, get_cors_origins, validation_exception_handler
+from app.db.models import Base, Bot
+from app.db.models import ChatSession as CS
+from app.db.session import engine, get_session
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 # Initialize Sentry (must be before FastAPI app creation)
 if SENTRY_ENABLED:
     import sentry_sdk
+
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         environment=APP_ENV,
@@ -100,6 +102,7 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 def shutdown_langfuse():
     """Flush any buffered Langfuse events on shutdown."""
     from app.core.langfuse_client import flush_langfuse
+
     flush_langfuse()
 
 
@@ -135,21 +138,22 @@ def serve_b2_file(file_path: str):
     """Serve a file from private B2 by proxying the content."""
     if ".." in file_path or file_path.startswith("/"):
         raise HTTPException(status_code=400, detail="Invalid file path")
-    from app.services.b2_service import get_object
     from botocore.exceptions import ClientError
     from fastapi.responses import StreamingResponse
+
+    from app.services.b2_service import get_object
 
     try:
         body, content_type = get_object(file_path)
     except ClientError as e:
         error_code = e.response["Error"]["Code"]
         if error_code in ("NoSuchKey", "404", "NotFound"):
-            raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}") from e
         logger.error(f"B2 error fetching {file_path}: {e}")
-        raise HTTPException(status_code=502, detail="Storage backend error")
+        raise HTTPException(status_code=502, detail="Storage backend error") from e
     except Exception as e:
         logger.error(f"Unexpected error serving {file_path}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
     headers = {
         "Cache-Control": "public, max-age=86400, immutable",

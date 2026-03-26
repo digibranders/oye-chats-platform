@@ -1,18 +1,16 @@
-import uuid
 import json
-import urllib.request
 import logging
-from typing import Optional
+import urllib.request
+import uuid
 
-from fastapi import APIRouter, HTTPException, Request, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.db.session import get_session
-from app.db.models import Bot
-from app.db.repository import get_chat_history, ensure_chat_session, update_message_feedback
-from app.api.auth import get_current_client, get_current_bot
-from app.schemas.chat import ChatRequest, FeedbackRequest
+from app.api.auth import get_current_bot, get_current_client
 from app.core.langfuse_client import get_langfuse
+from app.db.models import Bot
+from app.db.repository import ensure_chat_session, get_chat_history, update_message_feedback
+from app.db.session import get_session
+from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.rag_service import rag_pipeline
 from app.services.sdr_service import run_sdr_qualification
 
@@ -126,7 +124,7 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
         raise
     except Exception as e:
         logger.error(f"Chat failed for bot {getattr(bot, 'id', '?')}: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/chat/sdr")
@@ -152,7 +150,7 @@ def chat_sdr_endpoint(request: ChatRequest, bot: Bot = Depends(get_current_bot))
         raise
     except Exception as e:
         logger.error(f"SDR Chat failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/chat/feedback/{message_id}")
@@ -189,19 +187,21 @@ def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot
         raise
     except Exception as e:
         logger.error(f"Feedback submission failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/chat/history/{session_id}")
 def get_history_endpoint(
     session_id: str,
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client=Depends(get_current_client),
 ):
     """Retrieve chat history for a given session."""
     try:
         from sqlalchemy import select
-        from app.db.models import ChatMessage, Bot as BotModel, ChatSession as CS
+
+        from app.db.models import Bot as BotModel
+        from app.db.models import ChatMessage
 
         with get_session() as session:
             all_history = []
@@ -209,9 +209,7 @@ def get_history_endpoint(
 
             resolve_bot_ids = []
             if not bot_id:
-                bots = session.execute(
-                    select(BotModel.id).where(BotModel.client_id == client.id)
-                ).scalars().all()
+                bots = session.execute(select(BotModel.id).where(BotModel.client_id == client.id)).scalars().all()
                 resolve_bot_ids = list(bots)
 
             for sid in sids:
@@ -239,10 +237,7 @@ def get_history_endpoint(
 
             all_history.sort(key=lambda m: m.created_at)
 
-            return [
-                {"role": m.role, "content": m.content, "timestamp": m.created_at.isoformat()}
-                for m in all_history
-            ]
+            return [{"role": m.role, "content": m.content, "timestamp": m.created_at.isoformat()} for m in all_history]
     except Exception as e:
         logger.error(f"Failed to fetch history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

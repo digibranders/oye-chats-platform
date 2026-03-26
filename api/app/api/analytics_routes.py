@@ -1,18 +1,17 @@
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.db.session import get_session
+from app.api.auth import get_current_client
 from app.db.models import Client
 from app.db.repository import (
     get_dashboard_stats,
+    get_feedback_data,
     get_message_activity,
     get_top_questions,
     get_visitor_data,
-    get_feedback_data,
 )
-from app.api.auth import get_current_client
+from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 @router.get("/dashboard")
 def get_dashboard_analytics_endpoint(
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Retrieve live aggregate statistics for the admin dashboard."""
@@ -31,12 +30,12 @@ def get_dashboard_analytics_endpoint(
             return stats
     except Exception as e:
         logger.error(f"Failed to fetch dashboard stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/activity")
 def get_activity_analytics_endpoint(
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Retrieve message activity over time for charts."""
@@ -46,12 +45,12 @@ def get_activity_analytics_endpoint(
             return activity
     except Exception as e:
         logger.error(f"Failed to fetch activity stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/top-questions")
 def get_top_questions_endpoint(
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Retrieve the most common user queries."""
@@ -61,12 +60,12 @@ def get_top_questions_endpoint(
             return top_questions
     except Exception as e:
         logger.error(f"Failed to fetch top questions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/visitors")
 def get_visitors_endpoint(
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Retrieve all visitor sessions for the admin dashboard."""
@@ -114,12 +113,12 @@ def get_visitors_endpoint(
 
     except Exception as e:
         logger.error(f"Failed to fetch visitors: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/feedback")
 def get_feedback_endpoint(
-    bot_id: Optional[int] = Query(None),
+    bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
 ):
     """Retrieve all feedback for the admin dashboard."""
@@ -143,4 +142,4 @@ def get_feedback_endpoint(
 
     except Exception as e:
         logger.error(f"Failed to fetch feedback logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

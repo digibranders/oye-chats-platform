@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+import re
+import uuid
+
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
-from app.db.session import get_session
+
+from app.core.security import get_password_hash, verify_password
 from app.db.models import Client
-from app.core.security import verify_password, get_password_hash
-import uuid
-import re
-import logging
+from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +16,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # ── Request / Response Models ──
 
+
 class LoginRequest(BaseModel):
     email: str
     password: str
+
 
 class LoginResponse(BaseModel):
     access_token: str
@@ -24,6 +28,7 @@ class LoginResponse(BaseModel):
     client_id: int
     name: str
     is_superadmin: bool
+
 
 class RegisterRequest(BaseModel):
     name: str
@@ -59,6 +64,7 @@ class RegisterRequest(BaseModel):
             raise ValueError("Password must contain at least one number.")
         return v
 
+
 class RegisterResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -67,7 +73,9 @@ class RegisterResponse(BaseModel):
     is_superadmin: bool = False
     message: str = "Account created successfully"
 
+
 # ── Endpoints ──
+
 
 @router.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest):
@@ -101,7 +109,7 @@ def login(request: LoginRequest):
                 "token_type": "bearer",
                 "client_id": client.id,
                 "name": client.name,
-                "is_superadmin": getattr(client, 'is_superadmin', False)
+                "is_superadmin": getattr(client, "is_superadmin", False),
             }
     except HTTPException:
         raise
@@ -110,7 +118,7 @@ def login(request: LoginRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}",
-        )
+        ) from e
 
 
 @router.post("/register", response_model=RegisterResponse)
@@ -149,7 +157,9 @@ def register(request: RegisterRequest):
 
             session.refresh(new_client)
 
-            logger.info(f"New client registered: {new_client.id} ({new_client.name}, {new_client.email}) — no default bot (client will create manually)")
+            logger.info(
+                f"New client registered: {new_client.id} ({new_client.name}, {new_client.email}) — no default bot (client will create manually)"
+            )
 
             return {
                 "access_token": new_client.api_key,
@@ -166,4 +176,4 @@ def register(request: RegisterRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}",
-        )
+        ) from e

@@ -1,8 +1,9 @@
-import os
 import logging
+import os
+
 from fastapi import Request
-from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,10 @@ async def generic_exception_handler(request: Request, exc: Exception):
     # Enrich Sentry event with request context
     try:
         from app.config import SENTRY_ENABLED
+
         if SENTRY_ENABLED:
             import sentry_sdk
+
             sentry_sdk.set_tag("endpoint", request.url.path)
             sentry_sdk.set_tag("method", request.method)
     except Exception:

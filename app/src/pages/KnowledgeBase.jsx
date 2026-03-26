@@ -6,10 +6,6 @@ import NoBotState from '../components/NoBotState';
 
 export default function KnowledgeBase() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
-
-    if (!botsLoading && bots.length === 0) {
-        return <NoBotState title="Knowledge Base" subtitle="Create a chatbot first, then upload documents and URLs to build its knowledge base." />;
-    }
     const [activeTab, setActiveTab] = useState('files');
 
     // File Upload State
@@ -62,6 +58,10 @@ export default function KnowledgeBase() {
             fetchDocuments();
         }
     }, [activeTab, selectedBot?.id]);
+
+    if (!botsLoading && bots.length === 0) {
+        return <NoBotState title="Knowledge Base" subtitle="Create a chatbot first, then upload documents and URLs to build its knowledge base." />;
+    }
 
     // --- File Upload Handlers ---
     const handleDragOver = (e) => {

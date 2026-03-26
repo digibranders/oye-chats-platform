@@ -6,10 +6,6 @@ import NoBotState from '../components/NoBotState';
 
 export default function Users() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
-
-    if (!botsLoading && bots.length === 0) {
-        return <NoBotState title="Visitors" subtitle="Create a chatbot first to start tracking visitor sessions and conversations." />;
-    }
     const [visitors, setVisitors] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedSessionId, setSelectedSessionId] = useState(null);
@@ -19,6 +15,10 @@ export default function Users() {
     useEffect(() => {
         fetchVisitors();
     }, [selectedBot?.id]);
+
+    if (!botsLoading && bots.length === 0) {
+        return <NoBotState title="Visitors" subtitle="Create a chatbot first to start tracking visitor sessions and conversations." />;
+    }
 
     const fetchVisitors = async () => {
         setIsLoading(true);

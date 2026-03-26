@@ -1,8 +1,9 @@
-import time
 import logging
-from typing import Optional
+import time
+
 from google import genai
-from app.config import GOOGLE_API_KEY, GEMINI_MODEL
+
+from app.config import GEMINI_MODEL, GOOGLE_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ else:
 # Initialize the client
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
+
 def generate_response(prompt: str) -> str:
     """
     Generate a standard (non-streaming) response from Google Gemini.
@@ -24,10 +26,7 @@ def generate_response(prompt: str) -> str:
         return "Configuration error: AI service is not configured. Please contact the administrator."
     try:
         logger.info(f"Generating Gemini response | model={GEMINI_MODEL} | prompt_length={len(prompt)}")
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt
-        )
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         if response and response.text:
             logger.info(f"Gemini response received | length={len(response.text)}")
             return response.text
@@ -37,6 +36,7 @@ def generate_response(prompt: str) -> str:
     except Exception as e:
         logger.error(f"Gemini API Error ({type(e).__name__}): {e}", exc_info=True)
         return f"I encountered an error generating the response. Error: {type(e).__name__}"
+
 
 def generate_response_stream(prompt: str):
     """
@@ -49,15 +49,12 @@ def generate_response_stream(prompt: str):
         return
     try:
         logger.info(f"Starting Gemini stream | model={GEMINI_MODEL} | prompt_length={len(prompt)}")
-        for chunk in client.models.generate_content_stream(
-            model=GEMINI_MODEL,
-            contents=prompt
-        ):
+        for chunk in client.models.generate_content_stream(model=GEMINI_MODEL, contents=prompt):
             if chunk.text:
                 yield chunk.text
             else:
                 # Log if chunk is empty (might be a safety block or finish)
-                if hasattr(chunk, 'candidates') and chunk.candidates:
+                if hasattr(chunk, "candidates") and chunk.candidates:
                     finish_reason = chunk.candidates[0].finish_reason
                     logger.info(f"Gemini stream chunk empty. Finish reason: {finish_reason}")
                 else:
@@ -78,7 +75,7 @@ def generate_response_observed(
     prompt: str,
     *,
     generation_name: str = "llm-generation",
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
     **kwargs,
 ) -> str:
     """
@@ -134,7 +131,7 @@ def generate_response_stream_observed(
     prompt: str,
     *,
     generation_name: str = "llm-stream-generation",
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
     **kwargs,
 ):
     """

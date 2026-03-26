@@ -1,6 +1,8 @@
 import logging
+
 from google import genai
-from app.config import GOOGLE_API_KEY, GEMINI_MODEL
+
+from app.config import GEMINI_MODEL, GOOGLE_API_KEY
 from app.core.langfuse_client import get_langfuse
 
 logger = logging.getLogger(__name__)
@@ -26,10 +28,7 @@ def _detect_intent_raw(question: str) -> bool:
     Respond with ONLY 'YES' if sales intent is detected, or 'NO' if it is just a general question, small talk, or unrelated.
     """
 
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[prompt]
-    )
+    response = client.models.generate_content(model=GEMINI_MODEL, contents=[prompt])
 
     result = response.text.strip().upper()
     has_intent = "YES" in result

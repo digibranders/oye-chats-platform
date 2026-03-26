@@ -14,10 +14,6 @@ import NoBotState from '../components/NoBotState';
 
 export default function Analytics() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
-
-    if (!botsLoading && bots.length === 0) {
-        return <NoBotState title="Analytics" subtitle="Create a chatbot first to start tracking conversation analytics and user engagement." />;
-    }
     const [activityData, setActivityData] = useState([]);
     const [topQuestions, setTopQuestions] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -125,6 +121,10 @@ export default function Analytics() {
 
         return { total, average, peak, peakDate };
     }, [activityData]);
+
+    if (!botsLoading && bots.length === 0) {
+        return <NoBotState title="Analytics" subtitle="Create a chatbot first to start tracking conversation analytics and user engagement." />;
+    }
 
     // Custom Tooltip for Recharts
     const CustomTooltip = ({ active, payload, label }) => {

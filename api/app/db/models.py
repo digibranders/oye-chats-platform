@@ -1,11 +1,12 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Index, ForeignKey
 import sqlalchemy
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
-from sqlalchemy.sql import func
-from sqlalchemy.orm import declarative_base, relationship
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.sql import func
 
 Base = declarative_base()
+
 
 class Client(Base):
     __tablename__ = "clients"
@@ -35,10 +36,12 @@ class Client(Base):
     # Relationships
     bots = relationship("Bot", back_populates="client", cascade="all, delete-orphan")
     # Legacy relationships — kept until migration removes client_id from these tables
-    documents = relationship("Document", back_populates="client", cascade="all, delete-orphan",
-                             foreign_keys="Document.client_id")
-    chat_sessions = relationship("ChatSession", back_populates="client", cascade="all, delete-orphan",
-                                 foreign_keys="ChatSession.client_id")
+    documents = relationship(
+        "Document", back_populates="client", cascade="all, delete-orphan", foreign_keys="Document.client_id"
+    )
+    chat_sessions = relationship(
+        "ChatSession", back_populates="client", cascade="all, delete-orphan", foreign_keys="ChatSession.client_id"
+    )
 
 
 class Bot(Base):
@@ -46,6 +49,7 @@ class Bot(Base):
     Each Bot is an independent chatbot instance owned by a Client.
     Has its own knowledge base, settings, embed key, and chat sessions.
     """
+
     __tablename__ = "bots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -98,9 +102,7 @@ class Document(Base):
     client = relationship("Client", back_populates="documents", foreign_keys=[client_id])
     bot = relationship("Bot", back_populates="documents")
 
-    __table_args__ = (
-        Index('ix_documents_search_vector', 'search_vector', postgresql_using='gin'),
-    )
+    __table_args__ = (Index("ix_documents_search_vector", "search_vector", postgresql_using="gin"),)
 
 
 class ChatSession(Base):
