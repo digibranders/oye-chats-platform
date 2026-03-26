@@ -76,7 +76,7 @@ Then embed:
 Document Upload/Crawl
   → Extraction (PDF/DOCX/TXT via extraction.py)
   → Cleaning (cleaner.py)
-  → Chunking (recursive splitting, 1200 chars, 200 overlap — chunking.py)
+  → Chunking (recursive splitting, 2000 chars, 300 overlap — chunking.py, env-configurable)
   → Embedding (FastEmbed BAAI/bge-small-en-v1.5, 384-dim vectors — embedder.py)
   → Storage (PostgreSQL pgvector — repository.py)
 

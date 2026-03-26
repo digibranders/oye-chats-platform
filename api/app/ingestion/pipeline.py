@@ -223,7 +223,7 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int = None) -
             batch = all_chunk_contents[i : i + MAX_EMBED_BATCH]
             all_embeddings.extend(embed_chunks(chunk_content_list=batch))
 
-        # Insert per-page (to maintain document_name grouping)
+        # Insert per-page with individual commits to prevent rollback cascade
         total = 0
         for boundary in page_boundaries:
             start = boundary["start_idx"]
@@ -244,13 +244,12 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int = None) -
                     page_metas,
                     bot_id=bot_id,
                 )
+                session.commit()
                 total += count
             except Exception as e:
                 logger.error(f"Failed to insert chunks for {boundary['url']}: {e}")
                 session.rollback()
                 continue
-
-        session.commit()
 
     logger.info(f"Batch ingestion complete: {total} chunks from {len(page_boundaries)} pages")
     return total

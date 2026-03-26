@@ -53,7 +53,5 @@ SENTRY_DSN = os.getenv("SENTRY_DSN") or os.getenv("SENTRY_DSN_BACKEND")
 SENTRY_ENABLED = bool(SENTRY_DSN)
 APP_ENV = os.getenv("APP_ENV", "development")
 
-# Crawler Config
-MAX_CRAWL_PAGES = int(os.getenv("MAX_CRAWL_PAGES", "25"))
-CRAWL_CONCURRENCY = int(os.getenv("CRAWL_CONCURRENCY", "3"))
-CRAWL_PAGE_TIMEOUT = int(os.getenv("CRAWL_PAGE_TIMEOUT", "15"))
+# Crawler Config (read by crawler_script.py subprocess via os.getenv directly)
+# Defaults: MAX_CRAWL_PAGES=25, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=15

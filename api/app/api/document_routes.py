@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import shutil
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["documents"])
 
-_crawl_lock = asyncio.Lock()
+_crawl_in_progress = False
 
 
 def _check_memory():
@@ -152,49 +151,52 @@ async def crawl_endpoint(
     """Crawl a URL recursively and ingest content for a client."""
     _check_memory()
 
-    if _crawl_lock.locked():
+    global _crawl_in_progress  # noqa: PLW0603
+    if _crawl_in_progress:
         raise HTTPException(status_code=429, detail="A crawl job is already running. Please wait.")
 
-    async with _crawl_lock:
-        try:
-            logger.info(f"Crawling URL recursively: {request.url} for client {client.id}, bot_id={bot_id}")
-            crawl_data = await crawl_website(request.url)
+    _crawl_in_progress = True
+    try:
+        logger.info(f"Crawling URL recursively: {request.url} for client {client.id}, bot_id={bot_id}")
+        crawl_data = await crawl_website(request.url)
 
-            results = crawl_data.get("results")
-            recommended_colors = crawl_data.get("recommended_colors", [])
+        results = crawl_data.get("results")
+        recommended_colors = crawl_data.get("recommended_colors", [])
 
-            if not results:
-                raise HTTPException(status_code=400, detail="Failed to retrieve content from URL")
+        if not results:
+            raise HTTPException(status_code=400, detail="Failed to retrieve content from URL")
 
-            valid_pages = [p for p in results if p.get("url") and p.get("content")]
-            pages_processed = len(valid_pages)
-            logger.info(f"Batch ingesting {pages_processed} pages")
-            total_chunks = batch_web_ingestion(client.id, valid_pages, bot_id=bot_id)
+        valid_pages = [p for p in results if p.get("url") and p.get("content")]
+        pages_processed = len(valid_pages)
+        logger.info(f"Batch ingesting {pages_processed} pages")
+        total_chunks = batch_web_ingestion(client.id, valid_pages, bot_id=bot_id)
 
-            if recommended_colors:
-                with get_session() as session:
-                    if bot_id:
-                        bot_db = session.query(Bot).get(bot_id)
-                        if bot_db and bot_db.client_id == client.id:
-                            bot_db.recommended_colors = recommended_colors
-                            session.commit()
-                            logger.info(f"Saved {len(recommended_colors)} recommended colors for bot {bot_id}")
-                    else:
-                        client_db = session.query(Client).get(client.id)
-                        if client_db:
-                            client_db.recommended_colors = recommended_colors
-                            session.commit()
-                            logger.info(f"Saved {len(recommended_colors)} recommended colors for client {client.id}")
+        if recommended_colors:
+            with get_session() as session:
+                if bot_id:
+                    bot_db = session.query(Bot).get(bot_id)
+                    if bot_db and bot_db.client_id == client.id:
+                        bot_db.recommended_colors = recommended_colors
+                        session.commit()
+                        logger.info(f"Saved {len(recommended_colors)} recommended colors for bot {bot_id}")
+                else:
+                    client_db = session.query(Client).get(client.id)
+                    if client_db:
+                        client_db.recommended_colors = recommended_colors
+                        session.commit()
+                        logger.info(f"Saved {len(recommended_colors)} recommended colors for client {client.id}")
 
-            return {
-                "message": "Crawling and ingestion completed successfully",
-                "root_url": request.url,
-                "pages_processed": pages_processed,
-                "chunks_processed": total_chunks,
-                "recommended_colors": recommended_colors,
-            }
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Crawling failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
+        return {
+            "message": "Crawling and ingestion completed successfully",
+            "root_url": request.url,
+            "pages_processed": pages_processed,
+            "chunks_processed": total_chunks,
+            "recommended_colors": recommended_colors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Crawling failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
+    finally:
+        _crawl_in_progress = False
