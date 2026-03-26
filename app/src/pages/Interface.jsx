@@ -4,7 +4,8 @@ import Cropper from 'react-easy-crop';
 import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo } from '../services/api';
 import { useBotContext } from '../context/BotContext';
-import NoBotState from '../components/NoBotState';
+import { useToast } from '../context/ToastContext';
+import EmptyState from '../components/ui/EmptyState';
 
 // Helper: create cropped image from canvas (supports rotation)
 const getCroppedImg = (imageSrc, pixelCrop, rotation = 0) => {
@@ -104,6 +105,7 @@ const ColorPickerControl = ({ label, color, onChange }) => {
 
 export default function Interface() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const { showToast } = useToast();
 
     const [logo, setLogo] = useState(null); // base64 data URL
     const [isSaving, setIsSaving] = useState(false);
@@ -167,7 +169,7 @@ export default function Interface() {
     }, [selectedBot?.id]);
 
     if (!botsLoading && bots.length === 0) {
-        return <NoBotState title="Interface Customization" subtitle="Create a chatbot first, then customize its colors, logo, and appearance here." />;
+        return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
     const tabs = ['General', 'Avatar', 'Action Buttons', 'Messages', 'Human Form', 'Leads Form', 'Custom Brand'];
@@ -248,10 +250,10 @@ export default function Interface() {
     };
 
     return (
-        <div className="max-w-6xl mx-auto space-y-8 animate-slide-up pb-20">
+        <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-20">
             {/* Error Toast */}
             {saveError && (
-                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-red-50 dark:bg-red-900/90 border-red-200 dark:border-red-700 text-red-700 dark:text-red-300 animate-fade-in">
+                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-error-50 dark:bg-error-500/10 border-error-500/20 text-error-600 dark:text-error-500 animate-fade-in">
                     <AlertCircle size={18} />
                     <span className="text-sm font-medium">{saveError}</span>
                     <button onClick={() => setSaveError(null)} className="ml-2 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
@@ -259,17 +261,23 @@ export default function Interface() {
                     </button>
                 </div>
             )}
+            {/* Page Header */}
+            <div>
+                <h1 className="text-2xl font-bold text-secondary-900 dark:text-white tracking-tight">Appearance</h1>
+                <p className="text-secondary-500 dark:text-secondary-400 mt-1 text-sm">Customize how your chatbot looks</p>
+            </div>
+
             {/* Tab Navigation Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-secondary-200 dark:border-secondary-700/60 w-full">
-                <div className="flex items-center gap-1 bg-secondary-100 dark:bg-secondary-800/50 p-1.5 rounded-xl w-full max-w-4xl overflow-x-auto no-scrollbar shadow-inner">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-secondary-200 dark:border-secondary-800 w-full">
+                <div className="flex items-center gap-1 bg-secondary-100 dark:bg-secondary-800 p-1 rounded-xl w-full max-w-4xl overflow-x-auto no-scrollbar">
                     {tabs.map((tab) => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
-                            className={`flex-1 min-w-max px-4 py-2 text-[13px] rounded-lg transition-all duration-200 ${
+                            className={`flex-1 min-w-max px-3 py-2 text-[12px] rounded-lg transition-all ${
                                 activeTab === tab
-                                    ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm font-bold'
-                                    : 'text-secondary-500 dark:text-secondary-400 font-semibold hover:text-secondary-700 dark:hover:text-secondary-200 hover:bg-secondary-200/50 dark:hover:bg-secondary-700/50'
+                                    ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm font-semibold'
+                                    : 'text-secondary-500 dark:text-secondary-400 font-medium hover:text-secondary-700 dark:hover:text-secondary-200'
                             }`}
                         >
                             {tab}
@@ -280,8 +288,8 @@ export default function Interface() {
                 <button
                     onClick={handleSave}
                     disabled={isSaving || saved}
-                    className={`group relative flex items-center gap-2 px-6 h-11 rounded-lg shadow-sm transition-all font-semibold text-sm disabled:opacity-70 overflow-hidden ${saved
-                            ? 'bg-green-500 hover:bg-green-600 text-white'
+                    className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
+                            ? 'bg-success-500 hover:bg-success-600 text-white'
                             : 'bg-primary-600 hover:bg-primary-700 text-white'
                         }`}
                 >

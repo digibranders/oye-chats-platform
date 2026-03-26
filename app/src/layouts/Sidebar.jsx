@@ -2,30 +2,29 @@ import { useState, useRef, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard,
-    Database,
-    Palette,
-    BarChart2,
-    Users as UsersIcon,
+    BookOpen,
+    BarChart3,
     MessageCircle,
+    ThumbsUp,
     Bot,
+    Palette,
     ChevronDown,
     Plus,
     Check,
     Loader2,
-    Code2
+    Settings,
+    Plug,
 } from 'lucide-react';
-import SettingsDropup from '../components/SettingsDropup';
 import { useBotContext } from '../context/BotContext';
 import { createBot } from '../services/api';
 
-export default function Sidebar({ isOpen }) {
+export default function Sidebar({ isOpen, isMobile, onClose }) {
     const location = useLocation();
     const { bots, selectedBot, selectBot, refreshBots, loading } = useBotContext();
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [creating, setCreating] = useState(false);
     const dropdownRef = useRef(null);
 
-    // Close dropdown on outside click
     useEffect(() => {
         const handler = (e) => {
             if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -35,6 +34,11 @@ export default function Sidebar({ isOpen }) {
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
     }, []);
+
+    // Close sidebar on nav click on mobile
+    const handleNavClick = () => {
+        if (isMobile && onClose) onClose();
+    };
 
     const handleCreateBot = async () => {
         try {
@@ -49,22 +53,23 @@ export default function Sidebar({ isOpen }) {
         }
     };
 
-    const menuItems = [
-        { path: '/admin', name: 'Dashboard', icon: LayoutDashboard },
-        { path: '/admin/knowledge', name: 'Knowledge Base', icon: Database },
-        { path: '/admin/analytics', name: 'Analytics', icon: BarChart2 },
-        { path: '/admin/users', name: 'Visitors', icon: UsersIcon },
-        { path: '/admin/feedback', name: 'Feedback', icon: MessageCircle },
+    const mainItems = [
+        { path: '/', name: 'Overview', icon: LayoutDashboard },
+        { path: '/knowledge', name: 'Sources', icon: BookOpen },
+        { path: '/analytics', name: 'Analytics', icon: BarChart3 },
+        { path: '/users', name: 'Conversations', icon: MessageCircle },
+        { path: '/feedback', name: 'Feedback', icon: ThumbsUp },
     ];
 
-    const customizeItems = [
-        { path: '/admin/chatbot', name: 'Chatbot', icon: Code2 },
-        { path: '/admin/interface', name: 'Interface', icon: Palette },
+    const configItems = [
+        { path: '/chatbot', name: 'My Bots', icon: Bot },
+        { path: '/interface', name: 'Appearance', icon: Palette },
+        { path: '/integrations/whatsapp', name: 'Integrations', icon: Plug },
     ];
 
     const isActive = (item) =>
         location.pathname === item.path ||
-        (item.path !== '/admin' && location.pathname.startsWith(item.path));
+        (item.path !== '/' && location.pathname.startsWith(item.path));
 
     const renderLink = (item) => {
         const Icon = item.icon;
@@ -73,42 +78,52 @@ export default function Sidebar({ isOpen }) {
             <NavLink
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-3 rounded-xl transition-all group ${isOpen ? 'w-full h-8' : 'w-8 h-8 justify-center'
-                    } ${active
-                        ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 font-medium'
-                        : 'text-secondary-600 dark:text-secondary-400 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 hover:text-secondary-900 dark:hover:text-secondary-200'
-                    }`}
+                onClick={handleNavClick}
+                className={`relative flex items-center gap-3 px-3 py-2 rounded-lg transition-all group ${
+                    isOpen ? 'w-full' : 'w-10 h-10 justify-center'
+                } ${
+                    active
+                        ? 'bg-white/[0.08] text-white'
+                        : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'
+                }`}
                 title={!isOpen ? item.name : undefined}
             >
+                {active && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary-500 rounded-r-full" />
+                )}
                 <Icon
                     size={18}
-                    className={`flex-shrink-0 transition-colors ${active
-                        ? 'text-primary-600 dark:text-primary-400'
-                        : 'text-secondary-400 dark:text-secondary-500 group-hover:text-secondary-600 dark:group-hover:text-secondary-300'
-                        }`}
+                    className={`flex-shrink-0 ${active ? 'text-primary-400' : 'text-zinc-500 group-hover:text-zinc-300'}`}
                 />
-                {isOpen && <span className="truncate text-sm">{item.name}</span>}
-                {active && isOpen && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-600 flex-shrink-0"></div>
+                {isOpen && (
+                    <span className="truncate text-[13px] font-medium">{item.name}</span>
                 )}
             </NavLink>
         );
     };
 
+    const adminName = localStorage.getItem('admin_name') || 'User';
+
+    // Mobile: slide-in overlay. Desktop/tablet: fixed sidebar.
+    const sidebarClasses = isMobile
+        ? `fixed top-0 left-0 h-screen bg-zinc-950 z-30 transition-transform duration-300 flex flex-col w-60 ${
+            isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`
+        : `fixed top-0 left-0 h-screen overflow-hidden bg-zinc-950 z-30 transition-all duration-300 flex flex-col ${
+            isOpen ? 'w-60' : 'w-[68px]'
+        }`;
+
     return (
-        <aside
-            className={`fixed top-0 left-0 h-screen overflow-x-hidden bg-white dark:bg-secondary-800 border-r border-secondary-200 dark:border-secondary-700 shadow-sm z-20 transition-all duration-300 ${isOpen ? 'w-58' : 'w-20'
-                }`}
-        >
+        <aside className={sidebarClasses}>
             {/* Logo */}
-            <div className="flex items-center justify-center h-16 border-b border-secondary-100 dark:border-secondary-700">
+            <div className="flex items-center h-16 px-4 shrink-0">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-primary-600 dark:bg-primary-500 text-white flex items-center justify-center flex-shrink-0 shadow-md">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-primary-500/20">
                         <Bot size={20} />
                     </div>
                     {isOpen && (
-                        <span className="text-l font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary-600 to-primary-900 dark:from-primary-400 dark:to-primary-200 truncate">
-                            Admin Dashboard
+                        <span className="text-[15px] font-bold text-white tracking-tight">
+                            OyeChat
                         </span>
                     )}
                 </div>
@@ -116,72 +131,59 @@ export default function Sidebar({ isOpen }) {
 
             {/* Bot Selector */}
             {isOpen && (
-                <div className="px-3 pt-3 pb-1" ref={dropdownRef}>
+                <div className="px-3 pb-2" ref={dropdownRef}>
                     {bots.length === 0 && !loading ? (
-                        /* Empty state — no bots yet */
                         <NavLink
-                            to="/admin/chatbot"
-                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border border-dashed border-primary-300 dark:border-primary-700 bg-primary-50/50 dark:bg-primary-900/10 hover:bg-primary-100 dark:hover:bg-primary-900/20 transition-all text-left"
+                            to="/chatbot"
+                            onClick={handleNavClick}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 transition-all text-left"
                         >
-                            <div className="w-6 h-6 rounded-md bg-primary-100 dark:bg-primary-900/40 flex items-center justify-center flex-shrink-0">
-                                <Plus size={13} className="text-primary-600 dark:text-primary-400" />
+                            <div className="w-6 h-6 rounded-md bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+                                <Plus size={13} className="text-primary-400" />
                             </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-[12px] font-semibold text-primary-600 dark:text-primary-400 truncate">
-                                    Create a Chatbot
-                                </p>
-                            </div>
+                            <p className="text-[12px] font-semibold text-primary-400 truncate">
+                                Create a Chatbot
+                            </p>
                         </NavLink>
                     ) : (
-                        <>
+                        <div className="relative">
                             <button
                                 onClick={() => setDropdownOpen(!dropdownOpen)}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-secondary-50 dark:bg-secondary-800/50 hover:bg-secondary-100 dark:hover:bg-secondary-700 transition-all text-left group"
+                                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg bg-zinc-900/80 border border-zinc-800 hover:border-zinc-700 transition-all text-left group"
                             >
-                                <div className="w-6 h-6 rounded-md bg-primary-100 dark:bg-primary-900/40 flex items-center justify-center flex-shrink-0">
-                                    <Bot size={13} className="text-primary-600 dark:text-primary-400" />
+                                <div className="w-6 h-6 rounded-md bg-primary-500/15 flex items-center justify-center flex-shrink-0">
+                                    <Bot size={13} className="text-primary-400" />
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-[12px] font-semibold text-secondary-800 dark:text-secondary-200 truncate">
-                                        {loading ? 'Loading...' : (selectedBot?.name || 'Select a Bot')}
-                                    </p>
-                                </div>
-                                <ChevronDown size={14} className={`text-secondary-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+                                <p className="text-[12px] font-semibold text-zinc-200 truncate flex-1">
+                                    {loading ? 'Loading...' : (selectedBot?.name || 'Select a Bot')}
+                                </p>
+                                <ChevronDown size={14} className={`text-zinc-500 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {/* Dropdown */}
                             {dropdownOpen && (
-                                <div className="mt-1 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-xl shadow-lg overflow-hidden z-50 relative">
+                                <div className="absolute left-0 right-0 mt-1 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden z-50">
                                     <div className="max-h-48 overflow-y-auto py-1">
                                         {bots.map((bot) => (
                                             <button
                                                 key={bot.id}
-                                                onClick={() => {
-                                                    selectBot(bot);
-                                                    setDropdownOpen(false);
-                                                }}
-                                                className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors ${
-                                                    selectedBot?.id === bot.id ? 'bg-primary-50/50 dark:bg-primary-900/20' : ''
+                                                onClick={() => { selectBot(bot); setDropdownOpen(false); }}
+                                                className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-zinc-800 transition-colors ${
+                                                    selectedBot?.id === bot.id ? 'bg-zinc-800/50' : ''
                                                 }`}
                                             >
-                                                <div className="w-5 h-5 rounded-md bg-secondary-100 dark:bg-secondary-700 flex items-center justify-center flex-shrink-0">
-                                                    <Bot size={11} className="text-secondary-500" />
+                                                <div className="w-5 h-5 rounded-md bg-zinc-800 flex items-center justify-center flex-shrink-0">
+                                                    <Bot size={11} className="text-zinc-400" />
                                                 </div>
-                                                <span className="text-[12px] font-medium text-secondary-700 dark:text-secondary-300 truncate flex-1">
-                                                    {bot.name}
-                                                </span>
-                                                {selectedBot?.id === bot.id && (
-                                                    <Check size={13} className="text-primary-600 dark:text-primary-400 flex-shrink-0" />
-                                                )}
+                                                <span className="text-[12px] font-medium text-zinc-300 truncate flex-1">{bot.name}</span>
+                                                {selectedBot?.id === bot.id && <Check size={13} className="text-primary-400 flex-shrink-0" />}
                                             </button>
                                         ))}
                                     </div>
-                                    {/* Create bot button */}
-                                    <div className="border-t border-secondary-100 dark:border-secondary-700">
+                                    <div className="border-t border-zinc-800">
                                         <button
                                             onClick={handleCreateBot}
                                             disabled={creating}
-                                            className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors disabled:opacity-50"
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-primary-400 hover:bg-zinc-800 transition-colors disabled:opacity-50"
                                         >
                                             {creating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
                                             {creating ? 'Creating...' : 'Create new bot'}
@@ -189,51 +191,63 @@ export default function Sidebar({ isOpen }) {
                                     </div>
                                 </div>
                             )}
-                        </>
+                        </div>
                     )}
                 </div>
             )}
 
             {/* Collapsed bot indicator */}
-            {!isOpen && (
-                <div className="flex justify-center pt-3 pb-1">
+            {!isOpen && !isMobile && (
+                <div className="flex justify-center pb-2">
                     {selectedBot ? (
-                        <div
-                            className="w-8 h-8 rounded-lg bg-primary-100 dark:bg-primary-900/40 flex items-center justify-center cursor-pointer"
-                            title={selectedBot.name}
-                        >
-                            <Bot size={15} className="text-primary-600 dark:text-primary-400" />
+                        <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center cursor-pointer" title={selectedBot.name}>
+                            <Bot size={15} className="text-primary-400" />
                         </div>
                     ) : (
-                        <NavLink
-                            to="/admin/chatbot"
-                            className="w-8 h-8 rounded-lg bg-primary-50 dark:bg-primary-900/20 border border-dashed border-primary-300 dark:border-primary-700 flex items-center justify-center"
-                            title="Create a chatbot"
-                        >
-                            <Plus size={15} className="text-primary-500" />
+                        <NavLink to="/chatbot" className="w-9 h-9 rounded-lg bg-zinc-900 border border-dashed border-zinc-700 flex items-center justify-center" title="Create a chatbot">
+                            <Plus size={15} className="text-zinc-500" />
                         </NavLink>
                     )}
                 </div>
             )}
 
-            <nav className="p-4 space-y-1 mt-1 overflow-y-auto h-[calc(100vh-14rem)]">
-                {/* Main Nav */}
-                {menuItems.map(renderLink)}
+            {/* Navigation */}
+            <nav className="flex-1 overflow-y-auto px-3 space-y-1 mt-2">
+                {isOpen && <p className="px-3 pt-2 pb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600">Main</p>}
+                {mainItems.map(renderLink)}
 
-                {/* Customize Section */}
                 <div className="pt-4">
-                    {isOpen && (
-                        <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-widest text-secondary-400 dark:text-secondary-500">
-                            Customize
-                        </p>
-                    )}
-                    {!isOpen && <div className="border-t border-secondary-100 dark:border-secondary-700 mb-2"></div>}
-                    {customizeItems.map(renderLink)}
+                    {isOpen && <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600">Configure</p>}
+                    {!isOpen && !isMobile && <div className="border-t border-zinc-800 mb-2 mx-2" />}
+                    {configItems.map(renderLink)}
                 </div>
             </nav>
 
-            <div className="absolute bottom-4 left-0 w-full px-4 space-y-2 bg-white dark:bg-secondary-800 z-50">
-                <SettingsDropup isOpen={isOpen} />
+            {/* Bottom: User + Settings */}
+            <div className="shrink-0 p-3 border-t border-zinc-800/50">
+                <NavLink
+                    to="/settings"
+                    onClick={handleNavClick}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all group ${
+                        isOpen ? 'w-full' : 'w-10 h-10 justify-center'
+                    } ${
+                        location.pathname === '/settings'
+                            ? 'bg-white/[0.08] text-white'
+                            : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'
+                    }`}
+                    title={!isOpen ? 'Settings' : undefined}
+                >
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white flex items-center justify-center flex-shrink-0 text-[11px] font-bold">
+                        {adminName.charAt(0).toUpperCase()}
+                    </div>
+                    {isOpen && (
+                        <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-medium text-zinc-200 truncate">{adminName}</p>
+                            <p className="text-[10px] text-zinc-500">Settings</p>
+                        </div>
+                    )}
+                    {isOpen && <Settings size={14} className="text-zinc-500" />}
+                </NavLink>
             </div>
         </aside>
     );

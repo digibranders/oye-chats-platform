@@ -28,7 +28,7 @@ export default function NoBotState({ title, subtitle }) {
 
                 {/* CTA Button */}
                 <button
-                    onClick={() => navigate('/admin/chatbot')}
+                    onClick={() => navigate('/chatbot')}
                     className="flex items-center gap-2 px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-semibold shadow-sm transition-all hover:shadow hover:-translate-y-0.5 active:translate-y-0"
                 >
                     <Plus size={18} />

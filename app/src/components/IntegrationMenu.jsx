@@ -20,10 +20,10 @@ const IntegrationMenu = ({ isOpen: sidebarOpen }) => {
 
 
     
-    // Using a dynamic path because App.jsx route is what matters. In App.jsx I'll mount them at /admin/integrations/*
+    // Using a dynamic path because App.jsx route is what matters. In App.jsx I'll mount them at /integrations/*
     const items = [
-        { id: 'whatsapp', name: 'WhatsApp', icon: WhatsAppIcon, path: '/admin/integrations/whatsapp' },
-        { id: 'email', name: 'Email', icon: EmailIcon, path: '/admin/integrations/email' },
+        { id: 'whatsapp', name: 'WhatsApp', icon: WhatsAppIcon, path: '/integrations/whatsapp' },
+        { id: 'email', name: 'Email', icon: EmailIcon, path: '/integrations/email' },
     ];
 
     return (

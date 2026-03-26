@@ -1,107 +1,71 @@
-import React from 'react';
-import { EmailIcon } from '../../components/Icons';
+import { Mail } from 'lucide-react';
+import PageHeader from '../../components/ui/PageHeader';
+import Badge from '../../components/ui/Badge';
 
-const Email = () => {
-  return (
-    <div className="p-6">
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-secondary-900 dark:text-white flex items-center gap-3">
-             <EmailIcon className="w-7 h-7 shadow-sm rounded-sm" />
-             Email Integration
-          </h1>
-          <p className="text-secondary-500 dark:text-secondary-400 mt-1">
-            Configure your Email integration settings here.
-          </p>
+export default function Email() {
+    const inputClass = "w-full px-3.5 py-2.5 bg-white dark:bg-secondary-950 border border-secondary-200 dark:border-secondary-800 rounded-xl text-sm text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
+    const selectClass = "w-full px-3.5 py-2.5 bg-white dark:bg-secondary-950 border border-secondary-200 dark:border-secondary-800 rounded-xl text-sm text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
+
+    return (
+        <div className="space-y-6 animate-fade-in max-w-3xl">
+            <PageHeader title="Email Integration" subtitle="Configure email notifications and outreach">
+                <Badge variant="neutral">Not Configured</Badge>
+            </PageHeader>
+
+            <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 shadow-sm p-6">
+                <div className="flex items-center gap-3 mb-6">
+                    <div className="w-10 h-10 rounded-xl bg-info-50 dark:bg-info-500/10 flex items-center justify-center">
+                        <Mail size={20} className="text-info-600 dark:text-info-500" />
+                    </div>
+                    <div>
+                        <h3 className="text-sm font-semibold text-secondary-900 dark:text-white">Email Configuration</h3>
+                        <p className="text-xs text-secondary-500">Set up SMTP or API to send email notifications</p>
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Provider</label>
+                        <select className={selectClass}>
+                            <option value="smtp">Custom SMTP</option>
+                            <option value="sendgrid">SendGrid</option>
+                            <option value="mailgun">Mailgun</option>
+                            <option value="aws_ses">Amazon SES</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">SMTP Host</label>
+                        <input type="text" className={inputClass} placeholder="e.g. smtp.example.com" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">SMTP Port</label>
+                            <input type="text" className={inputClass} placeholder="e.g. 587" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Security</label>
+                            <select className={selectClass}>
+                                <option value="tls">TLS</option>
+                                <option value="ssl">SSL</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Username</label>
+                        <input type="text" className={inputClass} placeholder="SMTP Username" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Password</label>
+                        <input type="password" className={inputClass} placeholder="SMTP Password" />
+                    </div>
+                    <div className="pt-2">
+                        <button className="px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium shadow-sm transition-all">
+                            Save Configuration
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
-      </div>
-
-      <div className="bg-white dark:bg-secondary-800 rounded-2xl shadow-sm border border-secondary-200 dark:border-secondary-700 p-6">
-        <div className="max-w-2xl">
-           <p className="text-secondary-600 dark:text-secondary-300 mb-6">
-             Configure SMTP or API settings to allow the system to send email notifications and engage with visitors via Email.
-           </p>
-
-           <div className="space-y-4">
-               <div>
-                  <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-                      Provider
-                  </label>
-                  <select className="w-full px-4 py-2 bg-secondary-50 dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-700 rounded-lg text-secondary-900 dark:text-white">
-                      <option value="smtp">Custom SMTP</option>
-                      <option value="sendgrid">SendGrid</option>
-                      <option value="mailgun">Mailgun</option>
-                      <option value="aws_ses">Amazon SES</option>
-                  </select>
-               </div>
-               
-               <div>
-                  <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-                      SMTP Host
-                  </label>
-                  <input
-                      type="text"
-                      className="w-full px-4 py-2 bg-secondary-50 dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-700 rounded-lg text-secondary-900 dark:text-white"
-                      placeholder="e.g. smtp.example.com"
-                  />
-               </div>
-
-               <div className="grid grid-cols-2 gap-4">
-                   <div>
-                      <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-                          SMTP Port
-                      </label>
-                      <input
-                          type="text"
-                          className="w-full px-4 py-2 bg-secondary-50 dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-700 rounded-lg text-secondary-900 dark:text-white"
-                          placeholder="e.g. 587"
-                      />
-                   </div>
-                   <div>
-                      <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-                          Security
-                      </label>
-                      <select className="w-full px-4 py-2 bg-secondary-50 dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-700 rounded-lg text-secondary-900 dark:text-white">
-                          <option value="tls">TLS</option>
-                          <option value="ssl">SSL</option>
-                          <option value="none">None</option>
-                      </select>
-                   </div>
-               </div>
-               
-               <div>
-                  <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-                      Username
-                  </label>
-                  <input
-                      type="text"
-                      className="w-full px-4 py-2 bg-secondary-50 dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-700 rounded-lg text-secondary-900 dark:text-white"
-                      placeholder="SMTP Username"
-                  />
-               </div>
-               
-               <div>
-                  <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-                      Password
-                  </label>
-                  <input
-                      type="password"
-                      className="w-full px-4 py-2 bg-secondary-50 dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-700 rounded-lg text-secondary-900 dark:text-white"
-                      placeholder="SMTP Password"
-                  />
-               </div>
-
-
-               <div className="pt-4">
-                   <button className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition">
-                       Save Configuration
-                   </button>
-               </div>
-           </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default Email;
+    );
+}
