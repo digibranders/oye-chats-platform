@@ -29,11 +29,11 @@ if not GOOGLE_API_KEY:
 if not DB_URL:
     logger.error("DB_URL is not set! Database connections will fail.")
 
-# Backblaze B2 Config
-B2_KEY_ID = os.getenv("B2_KEY_ID")
-B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY")
-B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
-B2_ENDPOINT = os.getenv("B2_ENDPOINT")
+# R2 Config
+R2_KEY_ID = os.getenv("R2_KEY_ID")
+R2_APPLICATION_KEY = os.getenv("R2_APPLICATION_KEY")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT")
 
 # Langfuse Observability (opt-in: no-op when keys are absent)
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
