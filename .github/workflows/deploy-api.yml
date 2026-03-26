@@ -14,15 +14,54 @@ jobs:
 
       - name: Deploy to DigitalOcean via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          R2_KEY_ID: ${{ secrets.R2_KEY_ID }}
+          R2_APPLICATION_KEY: ${{ secrets.R2_APPLICATION_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          SENTRY_DSN_BACKEND: ${{ secrets.SENTRY_DSN_BACKEND }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
+          envs: DB_URL,GOOGLE_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY
           script: |
             cd /opt/oyechat/platform
+
+            # Generate .env from secrets
+            cat > .env << EOF
+            DB_URL=${DB_URL}
+            GOOGLE_API_KEY=${GOOGLE_API_KEY}
+            APP_ENV=production
+            CORS_ORIGINS=${CORS_ORIGINS}
+            R2_KEY_ID=${R2_KEY_ID}
+            R2_APPLICATION_KEY=${R2_APPLICATION_KEY}
+            R2_BUCKET_NAME=${R2_BUCKET_NAME}
+            R2_ENDPOINT=${R2_ENDPOINT}
+            SENTRY_DSN_BACKEND=${SENTRY_DSN_BACKEND}
+            LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+            LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+            LANGFUSE_HOST=https://cloud.langfuse.com
+            EOF
+
+            # Pull latest code
             git pull origin main
+
+            # Sync dependencies
             cd api
-            ~/.local/bin/uv sync
-            ~/.local/bin/uv run alembic upgrade head
+            /home/oyechat/.local/bin/uv sync
+
+            # Run migrations
+            /home/oyechat/.local/bin/uv run alembic upgrade head
+
+            # Restart service
             sudo systemctl restart oyechat-api
-            echo "Backend deployed successfully"
+
+            # Health check
+            sleep 3
+            curl -sf http://localhost:8000/docs > /dev/null && echo "Deploy successful" || echo "Deploy failed"

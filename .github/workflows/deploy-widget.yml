@@ -27,13 +27,13 @@ jobs:
       - name: Upload JS to Cloudflare R2
         uses: cloudflare/wrangler-action@v3
         with:
-          command: r2 object put oyechat-cdn/oyechat-widget.js --file widget/dist/oyechat-widget.js --content-type "text/javascript"
+          command: r2 object put oyechats-cdn/oyechat-widget.js --file widget/dist/oyechat-widget.js --content-type "text/javascript"
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
 
       - name: Upload CSS to Cloudflare R2
         uses: cloudflare/wrangler-action@v3
         with:
-          command: r2 object put oyechat-cdn/oyechat-widget.css --file widget/dist/oyechat-widget.css --content-type "text/css"
+          command: r2 object put oyechats-cdn/oyechat-widget.css --file widget/dist/oyechat-widget.css --content-type "text/css"
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
