@@ -148,6 +148,113 @@ def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int = None
         raise e
 
 
+def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int = None) -> int:
+    """
+    Batch ingest multiple web pages: chunk all, embed all at once, insert all.
+    Much faster than per-page ingestion because embedding is batched.
+
+    Args:
+        client_id: The client ID
+        pages: List of {"url": str, "content": str} dicts
+        bot_id: Optional bot ID
+
+    Returns:
+        Total number of chunks processed
+    """
+    if not pages:
+        return 0
+
+    all_chunk_contents: list[str] = []
+    all_chunk_metadatas: list[dict] = []
+    page_boundaries: list[dict] = []  # Track which chunks belong to which page
+    current_time = datetime.utcnow().isoformat()
+
+    with get_session() as session:
+        for page in pages:
+            url = page["url"]
+            content = page["content"]
+
+            # Clean and hash for dedup
+            cleaned = clean_text(content)
+            file_hash = calculate_hash(cleaned)
+
+            if is_document_processed(session, client_id, file_hash, bot_id=bot_id):
+                logger.info(f"Skipping {url} (already processed)")
+                continue
+
+            # Chunk this page
+            pages_data = [{"text": content, "metadata": {"page": 1, "url": url}}]
+            chunks = chunk_text(pages_data)
+
+            if not chunks:
+                continue
+
+            chunk_contents = [c.page_content for c in chunks]
+            chunk_metas = []
+            for c in chunks:
+                meta = c.metadata.copy()
+                meta["source"] = url
+                meta["ingest_date"] = current_time
+                chunk_metas.append(meta)
+
+            page_boundaries.append(
+                {
+                    "url": url,
+                    "file_hash": file_hash,
+                    "start_idx": len(all_chunk_contents),
+                    "count": len(chunk_contents),
+                }
+            )
+
+            all_chunk_contents.extend(chunk_contents)
+            all_chunk_metadatas.extend(chunk_metas)
+
+        if not all_chunk_contents:
+            logger.info("No new content to process")
+            return 0
+
+        # Batch embed ALL chunks at once (major speedup)
+        logger.info(f"Batch embedding {len(all_chunk_contents)} chunks from {len(page_boundaries)} pages")
+
+        # Sub-batch if too many chunks (memory protection)
+        MAX_EMBED_BATCH = 100
+        all_embeddings: list = []
+        for i in range(0, len(all_chunk_contents), MAX_EMBED_BATCH):
+            batch = all_chunk_contents[i : i + MAX_EMBED_BATCH]
+            all_embeddings.extend(embed_chunks(chunk_content_list=batch))
+
+        # Insert per-page with individual commits to prevent rollback cascade
+        total = 0
+        for boundary in page_boundaries:
+            start = boundary["start_idx"]
+            count = boundary["count"]
+
+            page_chunks = all_chunk_contents[start : start + count]
+            page_embeddings = all_embeddings[start : start + count]
+            page_metas = all_chunk_metadatas[start : start + count]
+
+            try:
+                insert_documents(
+                    session,
+                    client_id,
+                    boundary["url"],
+                    boundary["file_hash"],
+                    page_chunks,
+                    page_embeddings,
+                    page_metas,
+                    bot_id=bot_id,
+                )
+                session.commit()
+                total += count
+            except Exception as e:
+                logger.error(f"Failed to insert chunks for {boundary['url']}: {e}")
+                session.rollback()
+                continue
+
+    logger.info(f"Batch ingestion complete: {total} chunks from {len(page_boundaries)} pages")
+    return total
+
+
 def move_to_archive(file_path: str, filename: str):
     """
     Move a file to the archive directory.

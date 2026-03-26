@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 
+import psutil
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.api.auth import get_current_client
@@ -9,13 +10,26 @@ from app.config import DOCUMENTS_DIR
 from app.db.models import Bot, Client, Document
 from app.db.repository import get_ingested_documents
 from app.db.session import get_session
-from app.ingestion.pipeline import run_folder_ingestion, run_web_ingestion
+from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
 from app.schemas.client import CrawlRequest
 from app.services.crawler_service import crawl_website
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["documents"])
+
+_crawl_in_progress = False
+
+
+def _check_memory():
+    """Raise if memory usage is too high to safely run a crawl."""
+    mem = psutil.virtual_memory()
+    if mem.percent > 85:
+        raise HTTPException(
+            status_code=503,
+            detail="Server memory too high for crawling. Please try again later.",
+            headers={"Retry-After": "60"},
+        )
 
 
 @router.get("/documents")
@@ -135,6 +149,13 @@ async def crawl_endpoint(
     client: Client = Depends(get_current_client),
 ):
     """Crawl a URL recursively and ingest content for a client."""
+    _check_memory()
+
+    global _crawl_in_progress  # noqa: PLW0603
+    if _crawl_in_progress:
+        raise HTTPException(status_code=429, detail="A crawl job is already running. Please wait.")
+
+    _crawl_in_progress = True
     try:
         logger.info(f"Crawling URL recursively: {request.url} for client {client.id}, bot_id={bot_id}")
         crawl_data = await crawl_website(request.url)
@@ -145,17 +166,10 @@ async def crawl_endpoint(
         if not results:
             raise HTTPException(status_code=400, detail="Failed to retrieve content from URL")
 
-        total_chunks = 0
-        pages_processed = 0
-
-        for page in results:
-            url = page.get("url")
-            content = page.get("content")
-            if url and content:
-                logger.info(f"Ingesting: {url}")
-                chunks = run_web_ingestion(client.id, url, content, bot_id=bot_id)
-                total_chunks += chunks
-                pages_processed += 1
+        valid_pages = [p for p in results if p.get("url") and p.get("content")]
+        pages_processed = len(valid_pages)
+        logger.info(f"Batch ingesting {pages_processed} pages")
+        total_chunks = batch_web_ingestion(client.id, valid_pages, bot_id=bot_id)
 
         if recommended_colors:
             with get_session() as session:
@@ -179,6 +193,10 @@ async def crawl_endpoint(
             "chunks_processed": total_chunks,
             "recommended_colors": recommended_colors,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Crawling failed: {e}")
         raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
+    finally:
+        _crawl_in_progress = False
