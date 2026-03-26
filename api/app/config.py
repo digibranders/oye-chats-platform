@@ -16,15 +16,15 @@ DOCUMENTS_DIR = "documents"
 ARCHIVE_DIR = "archive"
 
 # Gemini Config
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY4")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL = "gemini-2.5-flash"
 
 # Validate critical config on startup
 if not GOOGLE_API_KEY:
-    logger.warning("GOOGLE_API_KEY4 not found in env. Trying GOOGLE_API_KEY...")
+    logger.warning("GOOGLE_API_KEY not found in env. Trying GOOGLE_API_KEY...")
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
-    logger.error("NO GOOGLE API KEY FOUND! Set GOOGLE_API_KEY4 or GOOGLE_API_KEY in your .env file.")
+    logger.error("NO GOOGLE API KEY FOUND! Set GOOGLE_API_KEY or GOOGLE_API_KEY in your .env file.")
 
 if not DB_URL:
     logger.error("DB_URL is not set! Database connections will fail.")

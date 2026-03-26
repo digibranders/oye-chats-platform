@@ -29,7 +29,7 @@ Spins up PostgreSQL + pgvector and the FastAPI backend in containers.
 # 1. Clone and configure
 git clone <repo-url> && cd platform
 cp api/.env.example api/.env
-# Edit api/.env — at minimum set GOOGLE_API_KEY4
+# Edit api/.env — at minimum set GOOGLE_API_KEY
 
 # 2. Start all services
 docker compose up --build
@@ -136,8 +136,8 @@ Create `api/.env` from the example file. Variables marked required must be set f
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DB_URL` | Yes | — | PostgreSQL connection string (`postgresql://user:pass@host:5432/ragpro`) |
-| `GOOGLE_API_KEY4` | Yes | — | Google Gemini API key |
-| `GOOGLE_API_KEY` | No | — | Fallback Gemini API key (used if `GOOGLE_API_KEY4` is unset) |
+| `GOOGLE_API_KEY` | Yes | — | Google Gemini API key |
+| `GOOGLE_API_KEY` | No | — | Fallback Gemini API key (used if `GOOGLE_API_KEY` is unset) |
 | `APP_ENV` | No | `development` | `development` or `production` |
 | `CORS_ORIGINS` | No | `*` (dev) | Comma-separated allowed origins (production only) |
 | `B2_KEY_ID` | No | — | Backblaze B2 storage key ID |

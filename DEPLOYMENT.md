@@ -83,7 +83,7 @@ nano .env
 **Required .env values:**
 ```
 DB_URL=postgresql://oyechat:<STRONG_PASSWORD>@localhost:5432/oyechat
-GOOGLE_API_KEY4=<your-gemini-key>
+GOOGLE_API_KEY=<your-gemini-key>
 APP_ENV=production
 CORS_ORIGINS=https://oyechats.com,https://admin.oyechats.com
 ```
