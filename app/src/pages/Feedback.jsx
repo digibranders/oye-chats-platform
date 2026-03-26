@@ -1,129 +1,145 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { getFeedbackData } from '../services/api';
-import { ThumbsUp, ThumbsDown, MessageSquareQuote, Search, Calendar, User } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
-import NoBotState from '../components/NoBotState';
+import PageHeader from '../components/ui/PageHeader';
+import Tabs from '../components/ui/Tabs';
+import EmptyState from '../components/ui/EmptyState';
 
 export default function Feedback() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const [feedback, setFeedback] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
+    const [filter, setFilter] = useState('all');
+    const [expandedId, setExpandedId] = useState(null);
 
     useEffect(() => {
         const fetchFeedback = async () => {
             setIsLoading(true);
-            try {
-                const data = await getFeedbackData(selectedBot?.id);
-                setFeedback(data);
-            } catch (err) {
-                console.error("Failed to load feedback:", err);
-                setError('Failed to load feedback data.');
-            } finally {
-                setIsLoading(false);
-            }
+            try { setFeedback(await getFeedbackData(selectedBot?.id)); }
+            catch (err) { console.error('Failed to load feedback:', err); setError('Failed to load feedback data.'); }
+            finally { setIsLoading(false); }
         };
-
         fetchFeedback();
     }, [selectedBot?.id]);
 
     if (!botsLoading && bots.length === 0) {
-        return <NoBotState title="Feedback" subtitle="Create a chatbot first to start collecting user feedback on responses." />;
+        return <EmptyState title="Feedback" description="Create a chatbot first to start collecting user feedback on responses." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
-    const formatDate = (isoString) => {
-        const date = new Date(isoString);
-        return new Intl.DateTimeFormat('en-US', {
-            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
-        }).format(date);
-    };
+    const filtered = useMemo(() => {
+        if (filter === 'positive') return feedback.filter(f => f.feedback === 1);
+        if (filter === 'negative') return feedback.filter(f => f.feedback !== 1);
+        return feedback;
+    }, [feedback, filter]);
+
+    const stats = useMemo(() => {
+        const total = feedback.length;
+        const positive = feedback.filter(f => f.feedback === 1).length;
+        const negative = total - positive;
+        const rate = total > 0 ? Math.round((positive / total) * 100) : 0;
+        return { total, positive, negative, rate };
+    }, [feedback]);
+
+    const formatDate = (isoString) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(isoString));
+
+    const tabs = [
+        { id: 'all', label: `All (${stats.total})` },
+        { id: 'positive', label: `Positive (${stats.positive})` },
+        { id: 'negative', label: `Negative (${stats.negative})` },
+    ];
 
     return (
-        <div className="space-y-6 animate-slide-up pb-10">
-            {/* Header section */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold bg-gradient-to-r from-secondary-900 to-secondary-600 dark:from-white dark:to-secondary-400 bg-clip-text text-transparent">User Feedback</h1>
-                    <p className="text-secondary-500 dark:text-secondary-400 mt-1">Review live thumbs-up and thumbs-down ratings from users chatting with your widget.</p>
-                </div>
-            </div>
+        <div className="space-y-6 animate-fade-in">
+            <PageHeader title="Response Feedback" subtitle="See how users rate your chatbot's responses" />
 
-            {/* Error State */}
             {error && (
-                <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 rounded-xl border border-red-100 dark:border-red-800/50 flex items-center gap-2">
-                    <span className="font-semibold">Error:</span> {error}
+                <div className="bg-error-50 dark:bg-error-500/10 text-error-600 dark:text-error-500 p-3 rounded-xl border border-error-500/20 text-sm font-medium">
+                    {error}
                 </div>
             )}
 
-            {/* Content Area */}
             {isLoading ? (
-                <div className="bg-white dark:bg-secondary-800 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm p-12 flex flex-col items-center justify-center min-h-[400px]">
-                    <div className="w-12 h-12 border-4 border-primary-500/20 border-t-primary-500 rounded-full animate-spin"></div>
-                    <p className="mt-4 text-secondary-500 font-medium">Loading feedback data...</p>
+                <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-12 flex flex-col items-center justify-center min-h-[400px]">
+                    <div className="w-10 h-10 border-3 border-primary-500/20 border-t-primary-500 rounded-full animate-spin" />
+                    <p className="mt-4 text-secondary-500 text-sm font-medium">Loading feedback...</p>
                 </div>
             ) : feedback.length === 0 ? (
-                <div className="bg-white dark:bg-secondary-800 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm p-12 flex flex-col items-center text-center min-h-[400px] justify-center">
-                    <div className="w-20 h-20 bg-secondary-50 dark:bg-secondary-700/50 rounded-full flex items-center justify-center mb-6">
-                        <MessageSquareQuote className="w-10 h-10 text-primary-500" />
-                    </div>
-                    <h3 className="text-xl font-bold text-secondary-900 dark:text-white mb-2">No Feedback Yet</h3>
-                    <p className="text-secondary-500 max-w-md mx-auto">
-                        Your users haven't rated any chatbot responses yet. Once they click the thumbs up or down icons in the widget, they will appear here.
-                    </p>
-                </div>
+                <EmptyState
+                    icon={MessageSquare}
+                    title="No Feedback Yet"
+                    description="Your users haven't rated any chatbot responses yet. Ratings will appear here once they use the thumbs up/down buttons."
+                    compact
+                />
             ) : (
-                <div className="bg-white dark:bg-secondary-800 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-secondary-50 dark:bg-secondary-800/50 border-b border-secondary-200 dark:border-secondary-700 text-secondary-500 dark:text-secondary-400 text-sm font-medium">
-                                    <th className="py-4 px-6 truncate w-32"><div className="flex items-center gap-2"><User className="w-4 h-4" /> User Session</div></th>
-                                    <th className="py-4 px-6"><div className="flex items-center gap-2"><Calendar className="w-4 h-4" /> Date</div></th>
-                                    <th className="py-4 px-6 w-1/3">User Question</th>
-                                    <th className="py-4 px-6 w-1/3">Bot Answer</th>
-                                    <th className="py-4 px-6 text-center">Rating</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-secondary-200 dark:divide-secondary-700">
-                                {feedback.map((item) => (
-                                    <tr key={item.message_id} className="hover:bg-secondary-50/50 dark:hover:bg-secondary-700/20 transition-colors group">
-                                        <td className="py-4 px-6 align-top">
-                                            <div className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 whitespace-nowrap">
-                                                {item.user}
-                                            </div>
-                                        </td>
-                                        <td className="py-4 px-6 text-sm text-secondary-500 dark:text-secondary-400 align-top whitespace-nowrap">
-                                            {formatDate(item.created_at)}
-                                        </td>
-                                        <td className="py-4 px-6 align-top">
-                                            <p className="text-secondary-900 dark:text-white text-sm line-clamp-3 group-hover:line-clamp-none transition-all duration-300">
-                                                {item.question}
-                                            </p>
-                                        </td>
-                                        <td className="py-4 px-6 align-top">
-                                            <p className="text-secondary-600 dark:text-secondary-300 text-sm line-clamp-2 transition-all duration-300 bg-secondary-50 dark:bg-secondary-800/50 p-2 rounded-lg border border-transparent group-hover:border-secondary-200 dark:group-hover:border-secondary-700">
-                                                {item.answer}
-                                            </p>
-                                        </td>
-                                        <td className="py-4 px-6 align-middle">
-                                            <div className="flex justify-center items-center">
-                                                {item.feedback === 1 ? (
-                                                    <div className="inline-flex items-center justify-center p-2 rounded-xl bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-100 dark:border-green-800/50" title="Good Response">
-                                                        <ThumbsUp className="w-5 h-5 fill-current" />
-                                                    </div>
-                                                ) : (
-                                                    <div className="inline-flex items-center justify-center p-2 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-800/50" title="Bad Response">
-                                                        <ThumbsDown className="w-5 h-5 fill-current" />
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                <>
+                    {/* Summary Bar */}
+                    <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                        <div className="flex items-center gap-6 flex-1">
+                            <div>
+                                <p className="text-2xl font-bold text-secondary-900 dark:text-white">{stats.total}</p>
+                                <p className="text-xs text-secondary-400">Total ratings</p>
+                            </div>
+                            <div className="h-8 w-px bg-secondary-200 dark:bg-secondary-800" />
+                            <div className="flex items-center gap-2">
+                                <ThumbsUp size={16} className="text-success-500" />
+                                <span className="text-sm font-bold text-success-600 dark:text-success-500">{stats.rate}%</span>
+                                <span className="text-xs text-secondary-400">positive</span>
+                            </div>
+                        </div>
+                        <div className="w-full sm:w-48 h-2 bg-secondary-100 dark:bg-secondary-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-success-500 rounded-full transition-all duration-700" style={{ width: `${stats.rate}%` }} />
+                        </div>
                     </div>
-                </div>
+
+                    {/* Filter Tabs */}
+                    <Tabs tabs={tabs} activeTab={filter} onChange={setFilter} />
+
+                    {/* Feedback Cards */}
+                    <div className="space-y-3">
+                        {filtered.map((item) => {
+                            const isExpanded = expandedId === item.message_id;
+                            const isPositive = item.feedback === 1;
+                            return (
+                                <div key={item.message_id} className="bg-white dark:bg-secondary-900 rounded-xl border border-secondary-200 dark:border-secondary-800 overflow-hidden hover:shadow-sm transition-all">
+                                    <button
+                                        onClick={() => setExpandedId(isExpanded ? null : item.message_id)}
+                                        className="w-full flex items-center gap-4 p-4 text-left"
+                                    >
+                                        <div className={`p-2 rounded-lg shrink-0 ${isPositive ? 'bg-success-50 dark:bg-success-500/10' : 'bg-error-50 dark:bg-error-500/10'}`}>
+                                            {isPositive
+                                                ? <ThumbsUp size={16} className="text-success-500 fill-current" />
+                                                : <ThumbsDown size={16} className="text-error-500 fill-current" />
+                                            }
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-secondary-900 dark:text-white truncate">{item.question}</p>
+                                            <div className="flex items-center gap-3 mt-1">
+                                                <span className="text-[11px] text-secondary-400">{formatDate(item.created_at)}</span>
+                                                <span className="text-[11px] text-primary-500 font-medium">{item.user}</span>
+                                            </div>
+                                        </div>
+                                        {isExpanded ? <ChevronUp size={16} className="text-secondary-400 shrink-0" /> : <ChevronDown size={16} className="text-secondary-400 shrink-0" />}
+                                    </button>
+
+                                    {isExpanded && (
+                                        <div className="px-4 pb-4 pt-0 space-y-3 animate-fade-in">
+                                            <div className="p-3 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-400 mb-1">User Question</p>
+                                                <p className="text-sm text-secondary-900 dark:text-white">{item.question}</p>
+                                            </div>
+                                            <div className="p-3 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg">
+                                                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-400 mb-1">Bot Answer</p>
+                                                <p className="text-sm text-secondary-600 dark:text-secondary-300">{item.answer}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </>
             )}
         </div>
     );
