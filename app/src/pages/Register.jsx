@@ -243,9 +243,9 @@ export default function Register() {
 
                         <p className="text-xs text-secondary-400 dark:text-secondary-500 text-center pt-1">
                             By creating an account, you agree to our{' '}
-                            <a href="#" tabIndex={5} className="text-primary-600 dark:text-primary-400 hover:underline">Terms of Service</a>{' '}
+                            <a href="#" tabIndex={-1} className="text-primary-600 dark:text-primary-400 hover:underline">Terms of Service</a>{' '}
                             and{' '}
-                            <a href="#" tabIndex={6} className="text-primary-600 dark:text-primary-400 hover:underline">Privacy Policy</a>.
+                            <a href="#" tabIndex={-1} className="text-primary-600 dark:text-primary-400 hover:underline">Privacy Policy</a>.
                         </p>
 
                         <button

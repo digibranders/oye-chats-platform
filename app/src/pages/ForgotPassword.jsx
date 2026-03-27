@@ -203,7 +203,7 @@ export default function ForgotPassword() {
                                         />
                                         <button
                                             type="button"
-                                            tabIndex={3}
+                                            tabIndex={-1}
                                             className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none focus:text-primary-600"
                                             onClick={() => setShowPassword(!showPassword)}
                                         >

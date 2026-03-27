@@ -162,17 +162,8 @@ def list_bots(request: Request, client: Client = Depends(get_current_client)):
 
 @router.post("", status_code=201)
 def create_bot(request: CreateBotRequest, client: Client = Depends(get_current_client)):
-    """Create a new bot for the authenticated client. Enforces max_bots limit."""
+    """Create a new bot for the authenticated client."""
     with get_session() as session:
-        # Check limit
-        count = session.execute(select(Bot.id).where(Bot.client_id == client.id)).all()
-        max_bots = getattr(client, "max_bots", 1) or 1
-        if len(count) >= max_bots:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Bot limit reached ({max_bots}). Upgrade your plan to create more bots.",
-            )
-
         new_bot = Bot(
             client_id=client.id,
             bot_key=f"bot-{uuid.uuid4().hex[:12]}",
