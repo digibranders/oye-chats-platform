@@ -24,10 +24,6 @@ export default function Feedback() {
         fetchFeedback();
     }, [selectedBot?.id]);
 
-    if (!botsLoading && bots.length === 0) {
-        return <EmptyState title="Feedback" description="Create a chatbot first to start collecting user feedback on responses." actionLabel="Create Chatbot" actionTo="/chatbot" />;
-    }
-
     const filtered = useMemo(() => {
         if (filter === 'positive') return feedback.filter(f => f.feedback === 1);
         if (filter === 'negative') return feedback.filter(f => f.feedback !== 1);
@@ -41,6 +37,10 @@ export default function Feedback() {
         const rate = total > 0 ? Math.round((positive / total) * 100) : 0;
         return { total, positive, negative, rate };
     }, [feedback]);
+
+    if (!botsLoading && bots.length === 0) {
+        return <EmptyState title="Feedback" description="Create a chatbot first to start collecting user feedback on responses." actionLabel="Create Chatbot" actionTo="/chatbot" />;
+    }
 
     const formatDate = (isoString) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(isoString));
 

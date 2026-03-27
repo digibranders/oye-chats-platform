@@ -5,9 +5,7 @@ import StreamingText from './StreamingText';
 
 const MessageBubble = ({
     msg,
-    theme,
     currentTheme,
-    settings,
     streamingId,
     setStreamingId,
     copiedId,

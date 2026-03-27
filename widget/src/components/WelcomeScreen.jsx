@@ -3,7 +3,7 @@ import { X, Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 import BotAvatar from './BotAvatar';
 
-const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, setInputText, inputRef }) => {
+const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, setInputText, inputRef, isAnimating = true }) => {
     const suggestions = settings?.welcome_suggestions || ['Our Services', 'About us', 'Contact us'];
 
     const getGreeting = () => {
@@ -16,7 +16,7 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
     const hasText = inputText.trim().length > 0;
 
     return (
-        <div className={currentTheme.container}>
+        <div className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
             {/* Header — white bg, avatar + name, close X */}
             <div className={currentTheme.header}>
                 <div className="flex items-center gap-3">
@@ -62,7 +62,7 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                             <button
                                 key={s}
                                 onClick={() => onSend(null, s)}
-                                className="px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-all cursor-pointer"
+                                className="px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer"
                                 style={{ animation: `fadeUp 0.3s ease-out ${i * 0.08}s both` }}
                             >
                                 {s}

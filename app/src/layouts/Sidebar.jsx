@@ -6,6 +6,8 @@ import {
     BarChart3,
     MessageCircle,
     ThumbsUp,
+    Target,
+    Headphones,
     Bot,
     Palette,
     ChevronDown,
@@ -57,6 +59,8 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         { path: '/', name: 'Overview', icon: LayoutDashboard },
         { path: '/knowledge', name: 'Sources', icon: BookOpen },
         { path: '/analytics', name: 'Analytics', icon: BarChart3 },
+        { path: '/leads', name: 'Leads', icon: Target },
+        { path: '/live-chat', name: 'Live Chat', icon: Headphones },
         { path: '/users', name: 'Conversations', icon: MessageCircle },
         { path: '/feedback', name: 'Feedback', icon: ThumbsUp },
     ];

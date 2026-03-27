@@ -47,9 +47,10 @@ function AdminLayoutInner() {
         }
     }, []);
 
+    // Show onboarding when bots finish loading and none exist
     useEffect(() => {
         if (!botsLoading && bots.length === 0 && !localStorage.getItem('onboarding_complete')) {
-            setShowOnboarding(true);
+            setShowOnboarding(true); // eslint-disable-line react-hooks/set-state-in-effect -- one-time init from external state (localStorage)
         }
     }, [botsLoading, bots.length]);
 

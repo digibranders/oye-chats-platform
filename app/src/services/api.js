@@ -81,6 +81,45 @@ export const registerClient = async (name, email, password) => {
 };
 
 /**
+ * Request a password reset OTP
+ * @param {string} email
+ * @returns {Promise<Object>} API response
+ */
+export const requestPasswordReset = async (email) => {
+    try {
+        const response = await api.post('/auth/request-password-reset', { email });
+        return response.data;
+    } catch (error) {
+        console.error('API Error requesting password reset:', error);
+        throw error.response?.data?.detail || error.message || 'Failed to request reset';
+    }
+};
+
+/**
+ * Verify OTP and reset password
+ * @param {string} email
+ * @param {string} otp
+ * @param {string} new_password
+ * @returns {Promise<Object>} API response
+ */
+export const resetPassword = async (email, otp, new_password) => {
+    try {
+        const response = await api.post('/auth/reset-password', { email, otp, new_password });
+        return response.data;
+    } catch (error) {
+        console.error('API Error resetting password:', error);
+        if (error.response?.status === 422) {
+            const detail = error.response?.data?.detail;
+            if (Array.isArray(detail) && detail.length > 0) {
+                const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
+                throw msg.replace('Value error, ', '');
+            }
+        }
+        throw error.response?.data?.detail || error.message || 'Failed to reset password';
+    }
+};
+
+/**
  * Uploads multiple PDF documents to the ingestion endpoint.
  * @param {File[]} files - An array of File objects (must be PDFs)
  * @returns {Promise<Object>} The API response with upload results
@@ -268,7 +307,15 @@ export const getClientSettings = async (botId) => {
                 background_color: bot.background_color,
                 header_color: bot.header_color,
                 recommended_colors: bot.recommended_colors || [],
-                bant_enabled: bot.bant_enabled
+                bant_enabled: bot.bant_enabled,
+                avatar_type: bot.avatar_type,
+                orb_color: bot.orb_color,
+                lead_form_enabled: bot.lead_form_enabled,
+                lead_form_fields: bot.lead_form_fields,
+                notification_email: bot.notification_email,
+                email_on_qualified: bot.email_on_qualified,
+                email_on_handoff: bot.email_on_handoff,
+                agent_timeout_seconds: bot.agent_timeout_seconds
             };
         }
         const response = await api.get('/client/settings');
@@ -477,5 +524,104 @@ export const deleteBot = async (botId) => {
     } catch (error) {
         console.error('API Error deleting bot:', error);
         throw error.response?.data?.detail || error.message || 'Failed to delete bot';
+    }
+};
+
+// ── Lead Management ──
+
+export const getLeads = async (botId, params = {}) => {
+    try {
+        const query = new URLSearchParams();
+        if (botId) query.set('bot_id', botId);
+        if (params.status) query.set('status', params.status);
+        if (params.min_score != null) query.set('min_score', params.min_score);
+        if (params.page) query.set('page', params.page);
+        if (params.limit) query.set('limit', params.limit);
+        const response = await api.get(`/leads?${query.toString()}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching leads:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const getLeadDetail = async (sessionId) => {
+    try {
+        const response = await api.get(`/leads/${sessionId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching lead detail:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const getLeadStats = async (botId) => {
+    try {
+        const query = botId ? `?bot_id=${botId}` : '';
+        const response = await api.get(`/leads/stats${query}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching lead stats:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const exportLeadsCsv = async (botId) => {
+    try {
+        const query = botId ? `?bot_id=${botId}` : '';
+        const response = await api.get(`/leads/export${query}`, { responseType: 'blob' });
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'oyechat-leads.csv');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('API Error exporting leads:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+// ── Live Chat / Agent ──
+
+export const getAgentQueue = async () => {
+    try {
+        const response = await api.get('/agents/queue');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching queue:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const acceptChat = async (sessionId) => {
+    try {
+        const response = await api.post(`/agents/accept/${sessionId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error accepting chat:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const closeAgentChat = async (sessionId) => {
+    try {
+        const response = await api.post(`/agents/close/${sessionId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error closing chat:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const toggleAgentStatus = async () => {
+    try {
+        const response = await api.post('/agents/status');
+        return response.data;
+    } catch (error) {
+        console.error('API Error toggling status:', error);
+        throw error.response?.data || error.message;
     }
 };

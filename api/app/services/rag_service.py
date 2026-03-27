@@ -8,12 +8,14 @@ from app.db.repository import (
     add_chat_message,
     ensure_chat_session,
     get_chat_history,
+    get_lead_info_by_session,
     search_keyword_documents,
     search_similar_documents,
     update_session_bant,
 )
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks
+from app.services.email_service import send_qualified_lead_email
 from app.services.llm_service import (
     generate_response_observed,
     generate_response_stream_observed,
@@ -231,6 +233,9 @@ def rag_pipeline(
 
     def _run_pipeline():
         with get_session() as session:
+            # Resolve bot object for email notifications
+            bot = session.query(Bot).get(bid) if bid else (client if isinstance(client, Bot) else None)
+
             # 1. Fetch BANT state
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
             chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -311,6 +316,24 @@ def rag_pipeline(
                 }
                 update_session_bant(session, session_id, client_id=cid, bant_data=bant_updates, bot_id=bid)
 
+                # Check if lead just became fully qualified → trigger email
+                if (
+                    all(bant_updates.get(k) for k in ("bant_need", "bant_budget", "bant_authority", "bant_timeline"))
+                    and bot
+                    and bot.notification_email
+                    and bot.email_on_qualified
+                ):
+                    lead_info = get_lead_info_by_session(session, session_id)
+                    contact = None
+                    if lead_info:
+                        contact = {
+                            "name": lead_info.name,
+                            "email": lead_info.email,
+                            "phone": lead_info.phone,
+                            "company": lead_info.company,
+                        }
+                    send_qualified_lead_email(bot.notification_email, bot.name, bant_updates, contact)
+
             session.commit()
 
             return {
@@ -377,6 +400,9 @@ async def rag_pipeline_stream(
 
     full_answer = ""
     with get_session() as session:
+        # Resolve bot object for email notifications
+        bot = session.query(Bot).get(bid) if bid else (client if isinstance(client, Bot) else None)
+
         # 1. Fetch BANT state
         ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
         chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -476,6 +502,24 @@ async def rag_pipeline_stream(
                 "bant_budget": extracted.get("budget"),
             }
             update_session_bant(session, session_id, client_id=cid, bant_data=bant_updates, bot_id=bid)
+
+            # Check if lead just became fully qualified → trigger email
+            if (
+                all(bant_updates.get(k) for k in ("bant_need", "bant_budget", "bant_authority", "bant_timeline"))
+                and bot
+                and bot.notification_email
+                and bot.email_on_qualified
+            ):
+                lead_info = get_lead_info_by_session(session, session_id)
+                contact = None
+                if lead_info:
+                    contact = {
+                        "name": lead_info.name,
+                        "email": lead_info.email,
+                        "phone": lead_info.phone,
+                        "company": lead_info.company,
+                    }
+                send_qualified_lead_email(bot.notification_email, bot.name, bant_updates, contact)
 
         session.commit()
 

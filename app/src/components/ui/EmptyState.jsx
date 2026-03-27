@@ -2,6 +2,7 @@ import { Bot, Plus, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function EmptyState({
+    // eslint-disable-next-line no-unused-vars
     icon: Icon = Bot,
     title = 'Nothing here yet',
     description = 'Get started by creating your first chatbot.',

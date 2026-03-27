@@ -72,6 +72,53 @@ export const submitFeedback = async (messageId, feedbackValue) => {
     }
 };
 
+export const submitLeadCapture = async (sessionId, formData) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/lead-capture`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+                session_id: sessionId,
+                ...formData,
+            }),
+        });
+        if (!response.ok) {
+            throw new Error('Failed to submit lead capture');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error("Error submitting lead capture:", error);
+        throw error;
+    }
+};
+
+export const requestHandoff = async (sessionId, formData) => {
+    try {
+        const response = await fetch(`${API_URL}/agents/handoff`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+                session_id: sessionId,
+                reason: formData.reason || null,
+            }),
+        });
+        if (!response.ok) throw new Error('Handoff request failed');
+
+        // Also save lead info if provided
+        if (formData.name || formData.email) {
+            await submitLeadCapture(sessionId, {
+                name: formData.name,
+                email: formData.email,
+            });
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error("Error requesting handoff:", error);
+        throw error;
+    }
+};
+
 export const getChatbotSettings = async () => {
     try {
         // Use the new bot-scoped public settings endpoint

@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
-import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw } from 'lucide-react';
+import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo } from '../services/api';
 import { useBotContext } from '../context/BotContext';
-import { useToast } from '../context/ToastContext';
 import EmptyState from '../components/ui/EmptyState';
 
 // Helper: create cropped image from canvas (supports rotation)
@@ -105,8 +104,6 @@ const ColorPickerControl = ({ label, color, onChange }) => {
 
 export default function Interface() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
-    const { showToast } = useToast();
-
     const [logo, setLogo] = useState(null); // base64 data URL
     const [isSaving, setIsSaving] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
@@ -122,6 +119,14 @@ export default function Interface() {
     const [bantEnabled, setBantEnabled] = useState(true);
     const [avatarType, setAvatarType] = useState('upload');
     const [orbColor, setOrbColor] = useState('');
+    const [leadFormEnabled, setLeadFormEnabled] = useState(false);
+    const [leadFormFields, setLeadFormFields] = useState([
+        { field: 'name', required: true },
+        { field: 'email', required: true },
+    ]);
+    const [notificationEmail, setNotificationEmail] = useState('');
+    const [emailOnQualified, setEmailOnQualified] = useState(true);
+    const [emailOnHandoff, setEmailOnHandoff] = useState(true);
     const [activeTab, setActiveTab] = useState('General');
     const inputRef = useRef(null);
 
@@ -151,6 +156,11 @@ export default function Interface() {
                 setBantEnabled(settings.bant_enabled ?? true);
                 setAvatarType(settings.avatar_type || 'upload');
                 setOrbColor(settings.orb_color || '');
+                setLeadFormEnabled(settings.lead_form_enabled ?? false);
+                if (settings.lead_form_fields) setLeadFormFields(settings.lead_form_fields);
+                setNotificationEmail(settings.notification_email || '');
+                setEmailOnQualified(settings.email_on_qualified ?? true);
+                setEmailOnHandoff(settings.email_on_handoff ?? true);
                 if (settings.bot_logo) {
                     setLogo(settings.bot_logo);
                 } else {
@@ -228,7 +238,12 @@ export default function Interface() {
                 background_color: backgroundColor,
                 bant_enabled: bantEnabled,
                 avatar_type: avatarType,
-                orb_color: orbColor || null
+                orb_color: orbColor || null,
+                lead_form_enabled: leadFormEnabled,
+                lead_form_fields: leadFormFields,
+                notification_email: notificationEmail || null,
+                email_on_qualified: emailOnQualified,
+                email_on_handoff: emailOnHandoff
             };
             console.log('[Interface] Saving settings:', payload, 'botId:', selectedBot?.id);
             await updateClientSettings(payload, selectedBot?.id);
@@ -722,30 +737,136 @@ export default function Interface() {
                         </div>
                     ) : activeTab === 'Leads Form' ? (
                         <div className="space-y-6 animate-fade-in">
+                            {/* BANT Qualification Toggle */}
                             <div>
                                 <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
                                     <Bot className="w-4 h-4 text-primary-500" />
                                     <span>BANT</span> Lead Qualification
                                 </h3>
                                 <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">
-                                    When enabled, the <span className="font-semibold text-secondary-700 dark:text-secondary-200">AI</span> will subtly ask <span className="font-semibold text-secondary-700 dark:text-secondary-200">qualifying questions</span> (<span className="font-semibold text-secondary-700 dark:text-secondary-200">Budget</span>, <span className="font-semibold text-secondary-700 dark:text-secondary-200">Authority</span>, <span className="font-semibold text-secondary-700 dark:text-secondary-200">Need</span>, <span className="font-semibold text-secondary-700 dark:text-secondary-200">Timeline</span>) when the user shows <span className="font-semibold text-secondary-700 dark:text-secondary-200">genuine buying intent</span>.
+                                    AI will subtly ask qualifying questions (Budget, Authority, Need, Timeline) when the user shows buying intent.
                                 </p>
                             </div>
-                            
-                            <div className="bg-white dark:bg-secondary-800 p-6 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm flex items-center justify-between">
+                            <div className="bg-white dark:bg-secondary-800 p-5 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm flex items-center justify-between">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-secondary-900 dark:text-white">Enable <span className="font-bold">BANT</span> Qualification</h4>
-                                    <p className="text-[12px] text-secondary-500 dark:text-secondary-400 mt-1">Allows the bot to <span className="font-semibold text-secondary-700 dark:text-secondary-200">qualify leads</span> automatically.</p>
+                                    <h4 className="text-[14px] font-semibold text-secondary-900 dark:text-white">Enable BANT Qualification</h4>
+                                    <p className="text-[12px] text-secondary-500 dark:text-secondary-400 mt-1">Qualify leads automatically during chat.</p>
                                 </div>
                                 <label className="relative inline-flex items-center cursor-pointer">
-                                    <input 
-                                        type="checkbox" 
-                                        className="sr-only peer" 
-                                        checked={bantEnabled}
-                                        onChange={(e) => setBantEnabled(e.target.checked)}
-                                    />
+                                    <input type="checkbox" className="sr-only peer" checked={bantEnabled} onChange={(e) => setBantEnabled(e.target.checked)} />
                                     <div className="w-11 h-6 bg-secondary-200 peer-focus:outline-none rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
                                 </label>
+                            </div>
+
+                            {/* Pre-Chat Lead Capture Form */}
+                            <div className="border-t border-secondary-200 dark:border-secondary-700 pt-6">
+                                <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
+                                    <Sparkles className="w-4 h-4 text-primary-500" />
+                                    Pre-Chat Lead Capture
+                                </h3>
+                                <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">
+                                    Show a form before chat starts to capture visitor contact details.
+                                </p>
+                            </div>
+
+                            <div className="bg-white dark:bg-secondary-800 p-5 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <h4 className="text-[14px] font-semibold text-secondary-900 dark:text-white">Enable Lead Form</h4>
+                                    <p className="text-[12px] text-secondary-500 dark:text-secondary-400 mt-1">New visitors fill out a form before chatting.</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" className="sr-only peer" checked={leadFormEnabled} onChange={(e) => setLeadFormEnabled(e.target.checked)} />
+                                    <div className="w-11 h-6 bg-secondary-200 peer-focus:outline-none rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
+                                </label>
+                            </div>
+
+                            {leadFormEnabled && (
+                                <div className="bg-white dark:bg-secondary-800 p-5 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm space-y-3">
+                                    <h4 className="text-[14px] font-semibold text-secondary-900 dark:text-white">Form Fields</h4>
+                                    <p className="text-[12px] text-secondary-500 dark:text-secondary-400">Select which fields to show and mark as required.</p>
+                                    {['name', 'email', 'phone', 'company'].map((fieldName) => {
+                                        const existing = leadFormFields.find(f => f.field === fieldName);
+                                        const isEnabled = !!existing;
+                                        const isRequired = existing?.required ?? false;
+                                        const labels = { name: 'Name', email: 'Email', phone: 'Phone', company: 'Company' };
+
+                                        return (
+                                            <div key={fieldName} className="flex items-center justify-between py-2 border-b border-secondary-100 dark:border-secondary-700 last:border-0">
+                                                <div className="flex items-center gap-3">
+                                                    <label className="relative inline-flex items-center cursor-pointer">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="sr-only peer"
+                                                            checked={isEnabled}
+                                                            onChange={(e) => {
+                                                                if (e.target.checked) {
+                                                                    setLeadFormFields(prev => [...prev, { field: fieldName, required: false }]);
+                                                                } else {
+                                                                    setLeadFormFields(prev => prev.filter(f => f.field !== fieldName));
+                                                                }
+                                                            }}
+                                                        />
+                                                        <div className="w-9 h-5 bg-secondary-200 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                                                    </label>
+                                                    <span className="text-[13px] font-medium text-secondary-700 dark:text-secondary-300">{labels[fieldName]}</span>
+                                                </div>
+                                                {isEnabled && (
+                                                    <label className="flex items-center gap-2 cursor-pointer">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="w-4 h-4 text-primary-600 rounded border-secondary-300 focus:ring-primary-500"
+                                                            checked={isRequired}
+                                                            onChange={(e) => {
+                                                                setLeadFormFields(prev => prev.map(f =>
+                                                                    f.field === fieldName ? { ...f, required: e.target.checked } : f
+                                                                ));
+                                                            }}
+                                                        />
+                                                        <span className="text-[12px] text-secondary-500 dark:text-secondary-400">Required</span>
+                                                    </label>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {/* Email Notifications */}
+                            <div className="border-t border-secondary-200 dark:border-secondary-700 pt-6">
+                                <h3 className="text-[15px] font-bold text-secondary-900 dark:text-white flex items-center gap-2">
+                                    <Settings2 className="w-4 h-4 text-primary-500" />
+                                    Email Notifications
+                                </h3>
+                                <p className="text-[13px] text-secondary-500 dark:text-secondary-400 mt-0.5">
+                                    Get notified when leads are qualified or request live support.
+                                </p>
+                            </div>
+
+                            <div className="bg-white dark:bg-secondary-800 p-5 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm space-y-4">
+                                <div className="space-y-2">
+                                    <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Notification Email</label>
+                                    <input
+                                        type="email"
+                                        value={notificationEmail}
+                                        onChange={(e) => setNotificationEmail(e.target.value)}
+                                        placeholder="sales@yourcompany.com"
+                                        className="w-full h-10 px-3 text-sm text-secondary-600 dark:text-secondary-300 bg-white dark:bg-secondary-900 border border-secondary-200 dark:border-secondary-700 rounded-lg focus:outline-none focus:border-primary-400"
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between py-2">
+                                    <span className="text-[13px] text-secondary-700 dark:text-secondary-300">Email on qualified lead</span>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" className="sr-only peer" checked={emailOnQualified} onChange={(e) => setEmailOnQualified(e.target.checked)} />
+                                        <div className="w-9 h-5 bg-secondary-200 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                                    </label>
+                                </div>
+                                <div className="flex items-center justify-between py-2">
+                                    <span className="text-[13px] text-secondary-700 dark:text-secondary-300">Email on live chat request</span>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" className="sr-only peer" checked={emailOnHandoff} onChange={(e) => setEmailOnHandoff(e.target.checked)} />
+                                        <div className="w-9 h-5 bg-secondary-200 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     ) : activeTab === 'Custom Brand' ? (
@@ -836,46 +957,54 @@ export default function Interface() {
                         </div>
 
                         {/* 2. Message Bubbles */}
-                        <div className="flex-grow px-5 py-2 space-y-4 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px]" style={{ backgroundColor: backgroundColor }}>
-                            
-                            {/* Bot Message 1 */}
-                            <div className="flex flex-col gap-1 mt-2">
-                                <div className="bg-secondary-100 dark:bg-secondary-800/80 rounded-2xl rounded-tl-sm px-4 py-2.5 text-secondary-800 dark:text-secondary-200 text-[14px] leading-relaxed max-w-[85%] shadow-sm">
+                        <div className="flex-grow px-5 py-2 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px]" style={{ backgroundColor: backgroundColor }}>
+
+                            {/* Bot Message 1 — plain text, no bubble (matches widget) */}
+                            <div className="flex flex-col items-start w-full mt-2">
+                                <div className="max-w-[85%] text-[14px] leading-relaxed text-secondary-800 dark:text-secondary-200">
                                     How can we help you today?
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-1.5 opacity-40">
+                                    <Copy className="w-3 h-3 text-secondary-400" />
+                                    <ThumbsUp className="w-3 h-3 text-secondary-400" />
+                                    <ThumbsDown className="w-3 h-3 text-secondary-400" />
                                 </div>
                             </div>
 
-                            {/* User Message 1 */}
-                            <div className="flex flex-col items-end gap-1">
-                                <div className="text-white rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-md shadow-black/5 text-[14px] leading-relaxed max-w-[85%] transition-colors duration-200" style={{ backgroundColor: primaryColor }}>
+                            {/* User Message 1 — light blue bubble, dark text (matches widget) */}
+                            <div className="flex flex-col items-end">
+                                <div className="max-w-[85%] bg-[#DBE9FF] text-[#16202C] rounded-2xl rounded-tr-sm px-4 py-3 text-[14px] leading-relaxed">
                                     Tell me about your services.
                                 </div>
                             </div>
 
-                            {/* Bot Message 2 */}
-                            <div className="flex flex-col gap-1">
-                                <div className="bg-secondary-100 dark:bg-secondary-800/80 rounded-2xl rounded-tl-sm px-4 py-2.5 text-secondary-800 dark:text-secondary-200 text-[14px] leading-relaxed max-w-[85%] shadow-sm">
-                                    I'm exploring the new customization options!
+                            {/* Bot Message 2 — plain text, no bubble */}
+                            <div className="flex flex-col items-start w-full">
+                                <div className="max-w-[85%] text-[14px] leading-relaxed text-secondary-800 dark:text-secondary-200">
+                                    I&apos;m exploring the new customization options!
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-1.5 opacity-40">
+                                    <Copy className="w-3 h-3 text-secondary-400" />
+                                    <ThumbsUp className="w-3 h-3 text-secondary-400" />
+                                    <ThumbsDown className="w-3 h-3 text-secondary-400" />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 4. Input Area & Footer */}
+                        {/* 4. Input Area & Footer — matches widget ChatInput */}
                         <div className="px-5 pt-2 pb-4 border-t border-transparent z-10 transition-colors duration-200" style={{ backgroundColor: backgroundColor }}>
-                            <div className="relative flex items-center mb-1">
-                                <input 
-                                    type="text" 
-                                    placeholder="Ask me anything..." 
-                                    className="w-full h-11 pl-4 pr-12 rounded-full border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-[13px] text-secondary-900 dark:text-white placeholder-secondary-400 focus:outline-none focus:border-primary-400 focus:ring-1 focus:ring-primary-400 transition-all"
+                            <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white dark:bg-secondary-800 px-4 pt-3 pb-2 shadow-sm">
+                                <input
+                                    type="text"
+                                    placeholder="Ask anything?"
+                                    className="w-full outline-none bg-transparent text-[14px] text-[#16202C] dark:text-white placeholder:text-gray-400"
                                     readOnly
                                 />
-                                <button className="absolute right-1.5 w-8 h-8 rounded-full text-white flex items-center justify-center shadow-sm hover:opacity-90 transition-all duration-200" style={{ backgroundColor: primaryColor }}>
-                                    <ArrowUp className="w-4 h-4" />
-                                </button>
+                                <div className="flex items-center justify-between mt-2">
+                                    <Paperclip className="w-5 h-5 text-[#16202C] dark:text-secondary-400" />
+                                    <ArrowUp className="w-5 h-5 text-[#BBE7FF]" />
+                                </div>
                             </div>
-                            {/* <p className="text-[9px] text-center text-secondary-400 mt-3 font-bold">
-                                Powered by {botName}
-                            </p> */}
                         </div>
                     </div>
                 </div>

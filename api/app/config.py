@@ -53,5 +53,16 @@ SENTRY_DSN = os.getenv("SENTRY_DSN") or os.getenv("SENTRY_DSN_BACKEND")
 SENTRY_ENABLED = bool(SENTRY_DSN)
 APP_ENV = os.getenv("APP_ENV", "development")
 
+# Brevo Email Notifications (opt-in: no-op when key is absent)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "OyeChat")
+EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "notifications@oyechats.com")
+EMAIL_ENABLED = bool(BREVO_API_KEY)
+
+if EMAIL_ENABLED:
+    logger.info("Brevo email notifications enabled")
+else:
+    logger.info("Email notifications disabled (no BREVO_API_KEY)")
+
 # Crawler Config (read by crawler_script.py subprocess via os.getenv directly)
 # Defaults: MAX_CRAWL_PAGES=25, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=15

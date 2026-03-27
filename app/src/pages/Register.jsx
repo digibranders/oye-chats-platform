@@ -164,6 +164,7 @@ export default function Register() {
                                     className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="John Doe"
                                     autoComplete="name"
+                                    tabIndex={1}
                                 />
                             </div>
                         </div>
@@ -179,6 +180,7 @@ export default function Register() {
                                     className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="you@company.com"
                                     autoComplete="email"
+                                    tabIndex={2}
                                 />
                             </div>
                         </div>
@@ -194,6 +196,7 @@ export default function Register() {
                                     className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="Create a strong password"
                                     autoComplete="new-password"
+                                    tabIndex={3}
                                 />
                                 <button
                                     type="button"
@@ -230,6 +233,7 @@ export default function Register() {
                                     }`}
                                     placeholder="Re-enter your password"
                                     autoComplete="new-password"
+                                    tabIndex={4}
                                 />
                             </div>
                             {confirmPassword && !passwordsMatch && (
@@ -239,15 +243,16 @@ export default function Register() {
 
                         <p className="text-xs text-secondary-400 dark:text-secondary-500 text-center pt-1">
                             By creating an account, you agree to our{' '}
-                            <a href="#" className="text-primary-600 dark:text-primary-400 hover:underline">Terms of Service</a>{' '}
+                            <a href="#" tabIndex={5} className="text-primary-600 dark:text-primary-400 hover:underline">Terms of Service</a>{' '}
                             and{' '}
-                            <a href="#" className="text-primary-600 dark:text-primary-400 hover:underline">Privacy Policy</a>.
+                            <a href="#" tabIndex={6} className="text-primary-600 dark:text-primary-400 hover:underline">Privacy Policy</a>.
                         </p>
 
                         <button
                             type="submit"
                             disabled={isLoading}
                             className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-xl shadow-lg shadow-primary-500/20 transition-all active:scale-[0.98] flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                            tabIndex={7}
                         >
                             {isLoading ? <Loader2 size={18} className="animate-spin" /> : 'Create Account'}
                         </button>
@@ -255,7 +260,7 @@ export default function Register() {
 
                     <p className="text-center text-sm text-secondary-500 dark:text-secondary-400 mt-6">
                         Already have an account?{' '}
-                        <Link to="/login" className="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
+                        <Link to="/login" tabIndex={8} className="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
                             Sign in
                         </Link>
                     </p>

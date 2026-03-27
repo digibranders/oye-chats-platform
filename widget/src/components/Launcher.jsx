@@ -28,18 +28,18 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
     return (
         <div className="relative flex flex-col items-end">
             {/* Tooltip */}
-            <div className={`absolute bottom-full mb-4 mr-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transform transition-all duration-300 origin-bottom-right whitespace-nowrap ${showTooltip ? 'scale-100 opacity-100' : 'scale-0 opacity-0 pointer-events-none'}`}>
+            <div className={`absolute bottom-full mb-4 mr-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transition-opacity duration-200 whitespace-nowrap ${showTooltip ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                 <div className="text-sm font-medium text-gray-700">
                     <b>{launcherName}</b>
                 </div>
                 <div className="absolute -bottom-2 right-6 w-4 h-4 bg-white transform rotate-45 border-r border-b border-gray-100"></div>
             </div>
 
-            {/* Main Button Container with Zoom/Pulse Animation */}
-            <div className={`${!isOpen ? 'animate-zoom-pulse' : ''}`}>
+            {/* Main Button — crossfades with widget */}
+            <div className={`transition-all duration-300 ${isOpen ? 'opacity-0 scale-75 pointer-events-none' : 'opacity-100 scale-100'}`}>
                 <button
                     onClick={toggleChat}
-                    className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform duration-300 overflow-hidden"
+                    className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden"
                 >
                     {avatarType === 'orb' ? (() => {
                         const oc = settings?.orb_color || primaryColor;
@@ -48,8 +48,7 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
                             className="w-full h-full rounded-full"
                             style={{
                                 background: `radial-gradient(circle at 35% 35%, ${oc}44, ${oc}bb, ${oc})`,
-                                boxShadow: `0 0 12px ${oc}55`,
-                                animation: 'pulse 2.5s ease-in-out infinite'
+                                boxShadow: `0 0 12px ${oc}55`
                             }}
                         />
                         );

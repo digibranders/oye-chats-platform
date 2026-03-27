@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import {
     Bot, Plus, Copy, Check, Trash2, Code2, Key, Globe, Loader2,
     X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff
