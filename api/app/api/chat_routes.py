@@ -4,15 +4,24 @@ import urllib.request
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel as PydanticBaseModel
 
 from app.api.auth import get_current_bot, get_current_client
 from app.core.langfuse_client import get_langfuse
 from app.db.models import Bot
-from app.db.repository import ensure_chat_session, get_chat_history, update_message_feedback
+from app.db.repository import create_or_update_lead_info, ensure_chat_session, get_chat_history, update_message_feedback
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.rag_service import rag_pipeline
 from app.services.sdr_service import run_sdr_qualification
+
+
+class LeadCaptureRequest(PydanticBaseModel):
+    session_id: str
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    company: str | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +133,29 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
         raise
     except Exception as e:
         logger.error(f"Chat failed for bot {getattr(bot, 'id', '?')}: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/chat/lead-capture")
+def lead_capture_endpoint(request: LeadCaptureRequest, bot: Bot = Depends(get_current_bot)):
+    """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key."""
+    try:
+        with get_session() as session:
+            ensure_chat_session(session, request.session_id, bot_id=bot.id)
+            create_or_update_lead_info(
+                session,
+                session_id=request.session_id,
+                bot_id=bot.id,
+                name=request.name,
+                email=request.email,
+                phone=request.phone,
+                company=request.company,
+            )
+            session.commit()
+            logger.info(f"Lead captured | bot={bot.id} session={request.session_id} email={request.email}")
+            return {"success": True, "session_id": request.session_id}
+    except Exception as e:
+        logger.error(f"Lead capture failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import case, desc, func, insert, select, text
 
-from app.db.models import ChatMessage, ChatSession, Client, Document
+from app.db.models import ChatMessage, ChatSession, Client, Document, LeadInfo
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: Resolve bot_id or client_id for backward compatibility
@@ -113,6 +113,57 @@ def get_chat_history(session, session_id: str, client_id: int = None, limit=10, 
 
     results = session.execute(stmt).scalars().all()
     return results[::-1]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lead Info Operations
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def create_or_update_lead_info(
+    session,
+    session_id: str,
+    bot_id: int,
+    name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    company: str | None = None,
+) -> LeadInfo:
+    """Create or update lead info for a session."""
+    existing = session.execute(
+        select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)
+    ).scalar_one_or_none()
+
+    if existing:
+        if name is not None:
+            existing.name = name
+        if email is not None:
+            existing.email = email
+        if phone is not None:
+            existing.phone = phone
+        if company is not None:
+            existing.company = company
+        session.flush()
+        return existing
+
+    lead = LeadInfo(
+        session_id=session_id,
+        bot_id=bot_id,
+        name=name,
+        email=email,
+        phone=phone,
+        company=company,
+    )
+    session.add(lead)
+    session.flush()
+    return lead
+
+
+def get_lead_info_by_session(session, session_id: str) -> LeadInfo | None:
+    """Get lead info for a session."""
+    return session.execute(
+        select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)
+    ).scalar_one_or_none()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

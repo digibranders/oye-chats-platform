@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Bot, BookOpen, Palette, Code2, Check, ArrowRight, ArrowLeft, Copy, Loader2, X, Sparkles } from 'lucide-react';
-import { createBot, uploadDocuments, crawlWebsite } from '../services/api';
+import { createBot } from '../services/api';
 
 const steps = [
     { id: 'welcome', title: 'Welcome to OyeChat', icon: Sparkles },

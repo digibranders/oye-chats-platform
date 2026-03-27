@@ -37,6 +37,15 @@ class UpdateBotRequest(BaseModel):
     bant_enabled: bool | None = None
     avatar_type: str | None = None
     orb_color: str | None = None
+    # Lead form settings
+    lead_form_enabled: bool | None = None
+    lead_form_fields: list[dict] | None = None
+    # Email notification settings
+    notification_email: str | None = None
+    email_on_qualified: bool | None = None
+    email_on_handoff: bool | None = None
+    # Live chat settings
+    agent_timeout_seconds: int | None = None
 
 
 class BotResponse(BaseModel):
@@ -55,6 +64,12 @@ class BotResponse(BaseModel):
     bant_enabled: bool
     avatar_type: str
     orb_color: str | None
+    lead_form_enabled: bool = False
+    lead_form_fields: list[dict] | None = None
+    notification_email: str | None = None
+    email_on_qualified: bool = True
+    email_on_handoff: bool = True
+    agent_timeout_seconds: int = 120
     is_active: bool
     created_at: str
 
@@ -95,6 +110,8 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "bant_enabled": bot.bant_enabled,
         "avatar_type": bot.avatar_type or "upload",
         "orb_color": bot.orb_color,
+        "lead_form_enabled": bot.lead_form_enabled,
+        "lead_form_fields": bot.lead_form_fields,
     }
 
 
@@ -130,6 +147,12 @@ def list_bots(request: Request, client: Client = Depends(get_current_client)):
                     bant_enabled=b.bant_enabled,
                     avatar_type=b.avatar_type or "upload",
                     orb_color=b.orb_color,
+                    lead_form_enabled=b.lead_form_enabled,
+                    lead_form_fields=b.lead_form_fields,
+                    notification_email=b.notification_email,
+                    email_on_qualified=b.email_on_qualified,
+                    email_on_handoff=b.email_on_handoff,
+                    agent_timeout_seconds=b.agent_timeout_seconds,
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
                 )
@@ -203,6 +226,12 @@ def get_bot(bot_id: int, request: Request, client: Client = Depends(get_current_
             bant_enabled=bot.bant_enabled,
             avatar_type=bot.avatar_type or "upload",
             orb_color=bot.orb_color,
+            lead_form_enabled=bot.lead_form_enabled,
+            lead_form_fields=bot.lead_form_fields,
+            notification_email=bot.notification_email,
+            email_on_qualified=bot.email_on_qualified,
+            email_on_handoff=bot.email_on_handoff,
+            agent_timeout_seconds=bot.agent_timeout_seconds,
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )

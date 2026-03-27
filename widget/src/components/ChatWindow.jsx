@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus } from 'lucide-react';
-import { sendMessage, getChatHistory, submitFeedback } from '../services/api';
+import { sendMessage, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
+import LeadCaptureForm from './LeadCaptureForm';
+import HandoffForm from './HandoffForm';
+import LiveChatMode from './LiveChatMode';
 
 const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
     const [messages, setMessages] = useState([
@@ -33,6 +36,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
     const [copiedId, setCopiedId] = useState(null);
     const [sessionId, setSessionId] = useState(() => localStorage.getItem('chat_session_id'));
     const [showWelcome, setShowWelcome] = useState(true);
+    const [showLeadForm, setShowLeadForm] = useState(false);
+    const [chatMode, setChatMode] = useState('bot'); // bot|handoff_form|waiting|live|unavailable
+    const [agentName, setAgentName] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
 
@@ -53,6 +59,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                 setMessages(prev => prev.map(m =>
                     m.id === 'welcome' ? { ...m, text: `Hi There, How can I help you today?` } : m
                 ));
+            }
+
+            // Check if lead form should be shown (new visitors only)
+            const resolvedSettings = initialSettings || settings;
+            const botKey = window.OYECHAT_BOT_KEY || window.OYECHAT_API_KEY || 'default';
+            const leadCapturedKey = `oyechat_lead_captured_${botKey}`;
+            if (resolvedSettings?.lead_form_enabled && !localStorage.getItem(leadCapturedKey) && !sessionId) {
+                setShowLeadForm(true);
+                setShowWelcome(false);
+                setIsInitializing(false);
+                return;
             }
 
             if (sessionId) {
@@ -199,6 +216,52 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
         }
     };
 
+    // Handle lead form submission
+    const handleLeadFormSubmit = async (formData) => {
+        const newSessionId = sessionId || `session_${Date.now()}`;
+        if (!sessionId) {
+            setSessionId(newSessionId);
+            localStorage.setItem('chat_session_id', newSessionId);
+        }
+        await submitLeadCapture(newSessionId, formData);
+        const botKey = window.OYECHAT_BOT_KEY || window.OYECHAT_API_KEY || 'default';
+        localStorage.setItem(`oyechat_lead_captured_${botKey}`, 'true');
+        setShowLeadForm(false);
+        setShowWelcome(true);
+    };
+
+    // Handle handoff form submission
+    const handleHandoffSubmit = async (formData) => {
+        await requestHandoff(sessionId, formData);
+        setChatMode('waiting');
+    };
+
+    // Trigger handoff (called from a button or auto-detected)
+    const triggerHandoff = () => {
+        setChatMode('handoff_form');
+    };
+
+    // Add message from live chat back to main messages (for transition messages)
+    const handleLiveChatMessage = (msg) => {
+        setMessages(prev => [...prev, msg]);
+        setChatMode('bot');
+    };
+
+    // Render based on chat mode
+    const isLiveMode = ['handoff_form', 'waiting', 'live', 'unavailable'].includes(chatMode);
+
+    // Lead capture form (shown before welcome for new visitors)
+    if (showLeadForm) {
+        return (
+            <LeadCaptureForm
+                settings={settings}
+                currentTheme={currentTheme}
+                onClose={onClose}
+                onSubmit={handleLeadFormSubmit}
+            />
+        );
+    }
+
     // Welcome screen
     if (showWelcome) {
         return (
@@ -214,16 +277,60 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
         );
     }
 
+    // Dynamic header content based on chat mode
+    const renderHeader = () => {
+        if (chatMode === 'waiting') {
+            return (
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                        <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                    <h3 className="font-semibold text-sm text-[#16202C]">Connecting to support...</h3>
+                </div>
+            );
+        }
+        if (chatMode === 'live' && agentName) {
+            return (
+                <div className="flex items-center gap-3">
+                    <div className="relative">
+                        <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
+                            {agentName.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
+                    </div>
+                    <div>
+                        <h3 className="font-semibold text-sm text-[#16202C]">{agentName}</h3>
+                        <p className="text-[10px] text-green-600 font-medium">Online</p>
+                    </div>
+                </div>
+            );
+        }
+        if (chatMode === 'unavailable') {
+            return (
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                        <span className="text-sm">⏸</span>
+                    </div>
+                    <h3 className="font-semibold text-sm text-gray-500">Support Unavailable</h3>
+                </div>
+            );
+        }
+        // Default: bot mode
+        return (
+            <div className="flex items-center gap-3">
+                <BotAvatar settings={settings} size="md" />
+                <h3 className="font-semibold text-sm text-[#16202C]">{settings.bot_name}</h3>
+            </div>
+        );
+    };
+
     return (
         <div className={currentTheme.container}>
-            {/* Header — clean white, matches Figma */}
+            {/* Header — dynamic based on chat mode */}
             <div className={currentTheme.header}>
-                <div className="flex items-center gap-3">
-                    <BotAvatar settings={settings} size="md" />
-                    <h3 className="font-semibold text-sm text-[#16202C]">{settings.bot_name}</h3>
-                </div>
+                {renderHeader()}
                 <div className="flex items-center gap-2">
-                    {(isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
+                    {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
                         <button
                             onClick={handleNewChat}
                             className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
@@ -242,55 +349,85 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                 </div>
             </div>
 
-            {/* Messages */}
-            <div className={currentTheme.messagesArea} style={{ backgroundColor: settings.background_color }}>
-                {isInitializing ? (
-                    <div className="flex-1 flex flex-col items-center justify-center gap-3">
-                        <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-                        <p className="text-gray-500 font-medium animate-pulse text-sm">Starting new chat...</p>
-                    </div>
-                ) : (
-                    <>
-                        <div className="text-center">
-                            <span className="inline-block px-3 rounded-full text-xs" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
-                                {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                        </div>
+            {/* Handoff form */}
+            {chatMode === 'handoff_form' ? (
+                <HandoffForm
+                    settings={settings}
+                    onSubmit={handleHandoffSubmit}
+                    existingLeadInfo={null}
+                />
+            ) : isLiveMode ? (
+                /* Live chat / waiting / unavailable modes */
+                <LiveChatMode
+                    sessionId={sessionId}
+                    settings={settings}
+                    chatMode={chatMode}
+                    setChatMode={setChatMode}
+                    setAgentName={setAgentName}
+                    onNewMessage={handleLiveChatMessage}
+                />
+            ) : (
+                /* Normal bot chat mode */
+                <>
+                    <div className={currentTheme.messagesArea} style={{ backgroundColor: settings.background_color }}>
+                        {isInitializing ? (
+                            <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                                <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+                                <p className="text-gray-500 font-medium animate-pulse text-sm">Starting new chat...</p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="text-center">
+                                    <span className="inline-block px-3 rounded-full text-xs" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
+                                        {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                </div>
 
-                        {messages.map((msg) => (
-                            <MessageBubble
-                                key={msg.id}
-                                msg={msg}
-                                theme={theme}
-                                currentTheme={currentTheme}
-                                settings={settings}
-                                streamingId={streamingId}
-                                setStreamingId={setStreamingId}
-                                copiedId={copiedId}
-                                onCopy={handleCopy}
-                                onFeedback={handleFeedback}
-                            />
-                        ))}
+                                {messages.map((msg) => (
+                                    <MessageBubble
+                                        key={msg.id}
+                                        msg={msg}
+                                        theme={theme}
+                                        currentTheme={currentTheme}
+                                        settings={settings}
+                                        streamingId={streamingId}
+                                        setStreamingId={setStreamingId}
+                                        copiedId={copiedId}
+                                        onCopy={handleCopy}
+                                        onFeedback={handleFeedback}
+                                    />
+                                ))}
 
-                        {isTyping && (
-                            <TypingIndicator />
+                                {isTyping && <TypingIndicator />}
+                                <div ref={messagesEndRef} />
+                            </>
                         )}
+                    </div>
 
-                        <div ref={messagesEndRef} />
-                    </>
-                )}
-            </div>
-
-            {/* Input */}
-            <ChatInput
-                inputText={inputText}
-                setInputText={setInputText}
-                onSubmit={handleSend}
-                isTyping={isTyping}
-                settings={settings}
-                currentTheme={currentTheme}
-                inputRef={inputRef}
-            />
+                    {/* Input + Connect with support button */}
+                    <div>
+                        {!isInitializing && messages.filter(m => m.sender === 'user').length >= 2 && chatMode === 'bot' && (
+                            <div className="px-3 pb-1">
+                                <button
+                                    onClick={triggerHandoff}
+                                    className="w-full py-2 text-[12px] font-medium text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                                >
+                                    💬 Connect with support team
+                                </button>
+                            </div>
+                        )}
+                        <ChatInput
+                            inputText={inputText}
+                            setInputText={setInputText}
+                            onSubmit={handleSend}
+                            isTyping={isTyping}
+                            settings={settings}
+                            currentTheme={currentTheme}
+                            inputRef={inputRef}
+                        />
+                    </div>
+                </>
+            )}
         </div>
     );
 };

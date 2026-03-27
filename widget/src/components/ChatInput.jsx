@@ -2,7 +2,7 @@ import React from 'react';
 import { Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 
-const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, settings, currentTheme, inputRef, placeholder }) => {
+const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, inputRef, placeholder }) => {
     const handleChange = (e) => {
         setInputText(e.target.value);
         e.target.style.height = 'auto';

@@ -1,6 +1,6 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -72,6 +72,18 @@ class Bot(Base):
     avatar_type = Column(String, default="upload", server_default="upload", nullable=False)
     orb_color = Column(String, nullable=True)
 
+    # Lead capture form settings
+    lead_form_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
+
+    # Email notification settings
+    notification_email = Column(String, nullable=True)
+    email_on_qualified = Column(Boolean, default=True, server_default="true", nullable=False)
+    email_on_handoff = Column(Boolean, default=True, server_default="true", nullable=False)
+
+    # Live chat settings
+    agent_timeout_seconds = Column(Integer, default=120, server_default="120", nullable=False)
+
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -79,6 +91,7 @@ class Bot(Base):
     client = relationship("Client", back_populates="bots")
     documents = relationship("Document", back_populates="bot", cascade="all, delete-orphan")
     chat_sessions = relationship("ChatSession", back_populates="bot", cascade="all, delete-orphan")
+    lead_infos = relationship("LeadInfo", back_populates="bot", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -105,6 +118,24 @@ class Document(Base):
     __table_args__ = (Index("ix_documents_search_vector", "search_vector", postgresql_using="gin"),)
 
 
+class LeadInfo(Base):
+    """Captured lead contact information from pre-chat forms or handoff forms."""
+
+    __tablename__ = "lead_info"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), unique=True, nullable=False)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    company = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("ChatSession", back_populates="lead_info")
+    bot = relationship("Bot", back_populates="lead_infos")
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id = Column(String, primary_key=True)
@@ -122,19 +153,43 @@ class ChatSession(Base):
     bant_authority = Column(String, nullable=True)
     bant_budget = Column(String, nullable=True)
 
+    # Live chat state
+    status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed
+    assigned_agent_id = Column(Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    handoff_reason = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_active_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     client = relationship("Client", back_populates="chat_sessions", foreign_keys=[client_id])
     bot = relationship("Bot", back_populates="chat_sessions")
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
+    lead_info = relationship("LeadInfo", back_populates="session", uselist=False, cascade="all, delete-orphan")
+    assigned_agent = relationship("Agent", back_populates="active_sessions")
+
+
+class Agent(Base):
+    """Live chat agent — a team member who can handle customer conversations."""
+
+    __tablename__ = "agents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    is_online = Column(Boolean, default=False, server_default="false", nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    client = relationship("Client")
+    active_sessions = relationship("ChatSession", back_populates="assigned_agent")
 
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
-    role = Column(String, nullable=False)
+    role = Column(String, nullable=False)  # user|bot|agent|system
     content = Column(Text, nullable=False)
     feedback = Column(Integer, nullable=True)
     trace_id = Column(String(255), nullable=True)  # Langfuse trace ID for feedback linking

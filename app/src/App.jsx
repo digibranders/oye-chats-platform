@@ -15,6 +15,8 @@ import Users from './pages/Users';
 import Feedback from './pages/Feedback';
 import Settings from './pages/Settings';
 import Chatbot from './pages/Chatbot';
+import Leads from './pages/Leads';
+import LiveChat from './pages/LiveChat';
 import WhatsApp from './pages/integrations/WhatsApp';
 import Email from './pages/integrations/Email';
 
@@ -61,6 +63,8 @@ function App() {
                         <Route path="chatbot" element={<Chatbot />} />
                         <Route path="interface" element={<Interface />} />
                         <Route path="analytics" element={<Analytics />} />
+                        <Route path="leads" element={<Leads />} />
+                        <Route path="live-chat" element={<LiveChat />} />
                         <Route path="users" element={<Users />} />
                         <Route path="feedback" element={<Feedback />} />
                         <Route path="settings" element={<Settings />} />

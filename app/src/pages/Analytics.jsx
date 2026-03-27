@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { TrendingUp, Activity, BarChart3, Zap, MessageSquare } from 'lucide-react';
 import {
     AreaChart,
