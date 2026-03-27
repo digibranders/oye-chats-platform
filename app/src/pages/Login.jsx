@@ -140,6 +140,7 @@ export default function Login() {
                                     onChange={(e) => setEmail(e.target.value)}
                                     className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="you@company.com"
+                                    tabIndex={1}
                                 />
                             </div>
                         </div>
@@ -149,9 +150,9 @@ export default function Login() {
                                 <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300">
                                     Password
                                 </label>
-                                <a href="#" className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+                                <Link to="/forgot-password" tabIndex={5} className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
                                     Forgot password?
-                                </a>
+                                </Link>
                             </div>
                             <div className="relative">
                                 <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary-400" />
@@ -161,6 +162,7 @@ export default function Login() {
                                     onChange={(e) => setPassword(e.target.value)}
                                     className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="Enter your password"
+                                    tabIndex={2}
                                 />
                                 <button
                                     type="button"
@@ -178,6 +180,7 @@ export default function Login() {
                                 <input
                                     type="checkbox"
                                     className="peer appearance-none w-4 h-4 border border-secondary-300 dark:border-secondary-700 rounded bg-white dark:bg-secondary-900 checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
+                                    tabIndex={3}
                                 />
                                 <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -190,6 +193,7 @@ export default function Login() {
                             type="submit"
                             disabled={isLoading}
                             className="w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-xl shadow-lg shadow-primary-500/20 transition-all active:scale-[0.98] flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                            tabIndex={4}
                         >
                             {isLoading ? <Loader2 size={18} className="animate-spin" /> : 'Sign in'}
                         </button>
@@ -197,7 +201,7 @@ export default function Login() {
 
                     <p className="text-center text-sm text-secondary-500 dark:text-secondary-400 mt-8">
                         Don't have an account?{' '}
-                        <Link to="/register" className="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
+                        <Link to="/register" tabIndex={6} className="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
                             Sign up
                         </Link>
                     </p>

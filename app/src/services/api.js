@@ -81,6 +81,45 @@ export const registerClient = async (name, email, password) => {
 };
 
 /**
+ * Request a password reset OTP
+ * @param {string} email
+ * @returns {Promise<Object>} API response
+ */
+export const requestPasswordReset = async (email) => {
+    try {
+        const response = await api.post('/auth/request-password-reset', { email });
+        return response.data;
+    } catch (error) {
+        console.error('API Error requesting password reset:', error);
+        throw error.response?.data?.detail || error.message || 'Failed to request reset';
+    }
+};
+
+/**
+ * Verify OTP and reset password
+ * @param {string} email
+ * @param {string} otp
+ * @param {string} new_password
+ * @returns {Promise<Object>} API response
+ */
+export const resetPassword = async (email, otp, new_password) => {
+    try {
+        const response = await api.post('/auth/reset-password', { email, otp, new_password });
+        return response.data;
+    } catch (error) {
+        console.error('API Error resetting password:', error);
+        if (error.response?.status === 422) {
+            const detail = error.response?.data?.detail;
+            if (Array.isArray(detail) && detail.length > 0) {
+                const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
+                throw msg.replace('Value error, ', '');
+            }
+        }
+        throw error.response?.data?.detail || error.message || 'Failed to reset password';
+    }
+};
+
+/**
  * Uploads multiple PDF documents to the ingestion endpoint.
  * @param {File[]} files - An array of File objects (must be PDFs)
  * @returns {Promise<Object>} The API response with upload results

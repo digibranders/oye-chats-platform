@@ -20,6 +20,10 @@ class Client(Base):
     max_bots = Column(Integer, default=1, server_default="1", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Password reset fields
+    reset_otp = Column(String, nullable=True)
+    reset_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     # ── LEGACY columns kept for backward compatibility during migration ──
     # These will be removed once all data is migrated to Bot model.
     system_prompt = Column(Text, nullable=True)

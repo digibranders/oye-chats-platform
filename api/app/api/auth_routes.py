@@ -1,6 +1,8 @@
 import logging
+import random
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, field_validator
@@ -9,6 +11,7 @@ from sqlalchemy import select
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Client
 from app.db.session import get_session
+from app.services.email_service import send_password_reset_email
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,25 @@ class RegisterResponse(BaseModel):
 
 
 # ── Endpoints ──
+
+class RequestPasswordResetRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def strong_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters.")
+        if not re.search(r"[A-Za-z]", v):
+            raise ValueError("Password must contain at least one letter.")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("Password must contain at least one number.")
+        return v
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -177,3 +199,56 @@ def register(request: RegisterRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}",
         ) from e
+
+
+@router.post("/request-password-reset")
+def request_password_reset(request: RequestPasswordResetRequest):
+    """Generates an OTP and sends it via email."""
+    try:
+        with get_session() as session:
+            stmt = select(Client).where(Client.email == request.email.strip().lower()).limit(1)
+            client = session.execute(stmt).scalars().first()
+            if not client:
+                # Return success anyway to avoid email enumeration
+                return {"message": "If an account exists, a reset link has been sent."}
+
+            otp = str(random.randint(100000, 999999))
+            client.reset_otp = otp
+            client.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+            session.commit()
+
+            send_password_reset_email(client.email, otp)
+            return {"message": "If an account exists, a reset link has been sent."}
+    except Exception as e:
+        logger.error(f"Failed to request password reset for {request.email}: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred.") from e
+
+
+@router.post("/reset-password")
+def reset_password(request: ResetPasswordRequest):
+    """Verifies OTP and resets the password."""
+    try:
+        with get_session() as session:
+            stmt = select(Client).where(Client.email == request.email.strip().lower()).limit(1)
+            client = session.execute(stmt).scalars().first()
+
+            if not client or not client.reset_otp or not client.reset_otp_expires_at:
+                raise HTTPException(status_code=400, detail="Invalid or expired reset code.")
+
+            if client.reset_otp != request.otp.strip():
+                raise HTTPException(status_code=400, detail="Invalid reset code.")
+
+            if datetime.now(UTC) > client.reset_otp_expires_at:
+                raise HTTPException(status_code=400, detail="Reset code has expired.")
+
+            client.hashed_password = get_password_hash(request.new_password)
+            client.reset_otp = None
+            client.reset_otp_expires_at = None
+            session.commit()
+
+            return {"message": "Password successfully reset."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reset password for {request.email}: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred.") from e

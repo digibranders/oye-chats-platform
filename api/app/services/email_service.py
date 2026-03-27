@@ -173,3 +173,26 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
         f"[OyeChat] Missed Chat — Callback Requested — {bot_name}",
         _base_template("Missed Chat — Callback Requested 📞", content),
     )
+
+
+def send_password_reset_email(to_email: str, otp: str):
+    """Send a password reset OTP email."""
+    content = f"""
+    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
+        You recently requested to reset your password for your OyeChat account.
+    </p>
+    <div style="background: #f3f4f6; border: 1px dashed #d1d5db; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 24px; margin-top: 16px;">
+        <p style="color: #6b7280; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px 0;">Your Reset Code</p>
+        <div style="font-family: monospace; font-size: 32px; font-weight: 700; color: #111827; letter-spacing: 4px;">
+            {otp}
+        </div>
+    </div>
+    <p style="color: #4b5563; font-size: 14px; margin: 0;">
+        This code is valid for <strong>15 minutes</strong>. If you did not request a password reset, please ignore this email or contact support if you have concerns.
+    </p>
+    """
+    send_email_async(
+        to_email,
+        "Reset Your Password — OyeChat",
+        _base_template("Password Reset Request 🔐", content),
+    )
