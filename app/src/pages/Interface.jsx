@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
-import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy } from 'lucide-react';
+import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import EmptyState from '../components/ui/EmptyState';
@@ -918,11 +918,11 @@ export default function Interface() {
                         </div>
                     </div>
 
-                    {/* Chat Window Preview Wrapper */}
-                    <div className="w-full max-w-[360px] bg-white dark:bg-secondary-900 rounded-[20px] overflow-hidden shadow-[0_20px_40px_-15px_rgba(0,0,0,0.15)] dark:shadow-black/50 flex flex-col border border-secondary-200 dark:border-secondary-700/60 transition-colors">
-                        
-                        {/* 1. Header Styling */}
-                        <div className="px-5 pt-5 pb-4 flex items-center justify-between z-10 border-b border-black/5 dark:border-white/5 transition-colors duration-200" style={{ backgroundColor: headerColor }}>
+                    {/* Chat Window Preview Wrapper — matches widget classic theme */}
+                    <div className="w-full max-w-[360px] bg-white dark:bg-secondary-900 rounded-2xl overflow-hidden shadow-[0_20px_40px_-15px_rgba(0,0,0,0.15)] dark:shadow-black/50 flex flex-col border border-[#BBE7FF]/30 dark:border-secondary-700/60 transition-colors">
+
+                        {/* 1. Header — white bg, dark text (matches widget classic theme) */}
+                        <div className="bg-white dark:bg-secondary-900 px-5 py-3.5 flex items-center justify-between shrink-0 border-b border-gray-100 dark:border-secondary-700/50">
                             <div className="flex items-center gap-3">
                                 {avatarType === 'orb' ? (
                                     <div
@@ -938,71 +938,77 @@ export default function Interface() {
                                         <Bot className="w-5 h-5 text-white" />
                                     </div>
                                 ) : logo ? (
-                                    <img src={logo} alt="logo" className="w-10 h-10 rounded-full object-contain bg-white dark:bg-secondary-900 p-0.5 shadow-sm" />
+                                    <img src={logo} alt="logo" className="w-10 h-10 rounded-full object-cover" />
                                 ) : (
-                                    <div className="w-10 h-10 rounded-full bg-black/10 flex items-center justify-center text-white">
-                                        <Bot className="w-5 h-5" />
+                                    <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
+                                        <Bot className="w-5 h-5 text-white" />
                                     </div>
                                 )}
-                                <div>
-                                    <p className="font-bold text-white text-[15px] leading-tight flex items-center gap-1.5 drop-shadow-sm">
-                                        {botName || 'AI Assistant'}
-                                    </p>
-                                    <div className="flex items-center gap-1 mt-0.5">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                                        <span className="text-[9px] text-white/70 font-bold uppercase tracking-tighter">Online</span>
-                                    </div>
+                                <span className="font-semibold text-sm text-[#16202C] dark:text-white">
+                                    {botName || 'AI Assistant'}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400">
+                                    <Plus className="w-4 h-4" />
+                                </div>
+                                <div className="w-7 h-7 flex items-center justify-center text-gray-400">
+                                    <X className="w-5 h-5" />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 2. Message Bubbles */}
-                        <div className="flex-grow px-5 py-2 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px]" style={{ backgroundColor: backgroundColor }}>
+                        {/* 2. Messages Area — white bg, gap-5 (matches widget) */}
+                        <div className="flex-grow px-5 py-4 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px]" style={{ backgroundColor: backgroundColor }}>
 
-                            {/* Bot Message 1 — plain text, no bubble (matches widget) */}
-                            <div className="flex flex-col items-start w-full mt-2">
-                                <div className="max-w-[85%] text-[14px] leading-relaxed text-secondary-800 dark:text-secondary-200">
+                            {/* Timestamp pill (matches widget) */}
+                            <div className="text-center">
+                                <span className="inline-block px-3 rounded-full text-[11px]" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
+                                    Today &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                            </div>
+
+                            {/* Bot Message 1 — plain text, no bubble */}
+                            <div className="flex flex-col items-start w-full">
+                                <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C] dark:text-secondary-200">
                                     How can we help you today?
                                 </div>
                                 <div className="flex items-center gap-1.5 mt-1.5 opacity-40">
-                                    <Copy className="w-3 h-3 text-secondary-400" />
-                                    <ThumbsUp className="w-3 h-3 text-secondary-400" />
-                                    <ThumbsDown className="w-3 h-3 text-secondary-400" />
+                                    <Copy className="w-3 h-3 text-gray-300" />
+                                    <ThumbsUp className="w-3 h-3 text-gray-300" />
+                                    <ThumbsDown className="w-3 h-3 text-gray-300" />
                                 </div>
                             </div>
 
-                            {/* User Message 1 — light blue bubble, dark text (matches widget) */}
+                            {/* User Message 1 — light blue bubble, dark text */}
                             <div className="flex flex-col items-end">
-                                <div className="max-w-[85%] bg-[#DBE9FF] text-[#16202C] rounded-2xl rounded-tr-sm px-4 py-3 text-[14px] leading-relaxed">
+                                <div className="max-w-[85%] bg-[#DBE9FF] text-[#16202C] rounded-2xl px-4 py-3 text-[14px] leading-relaxed">
                                     Tell me about your services.
                                 </div>
                             </div>
 
                             {/* Bot Message 2 — plain text, no bubble */}
                             <div className="flex flex-col items-start w-full">
-                                <div className="max-w-[85%] text-[14px] leading-relaxed text-secondary-800 dark:text-secondary-200">
+                                <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C] dark:text-secondary-200">
                                     I&apos;m exploring the new customization options!
                                 </div>
                                 <div className="flex items-center gap-1.5 mt-1.5 opacity-40">
-                                    <Copy className="w-3 h-3 text-secondary-400" />
-                                    <ThumbsUp className="w-3 h-3 text-secondary-400" />
-                                    <ThumbsDown className="w-3 h-3 text-secondary-400" />
+                                    <Copy className="w-3 h-3 text-gray-300" />
+                                    <ThumbsUp className="w-3 h-3 text-gray-300" />
+                                    <ThumbsDown className="w-3 h-3 text-gray-300" />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 4. Input Area & Footer — matches widget ChatInput */}
-                        <div className="px-5 pt-2 pb-4 border-t border-transparent z-10 transition-colors duration-200" style={{ backgroundColor: backgroundColor }}>
+                        {/* 3. Input Area — rounded box with paperclip + send icon */}
+                        <div className="px-4 pb-4 pt-2 shrink-0 transition-colors duration-200" style={{ backgroundColor: backgroundColor }}>
                             <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white dark:bg-secondary-800 px-4 pt-3 pb-2 shadow-sm">
-                                <input
-                                    type="text"
-                                    placeholder="Ask anything?"
-                                    className="w-full outline-none bg-transparent text-[14px] text-[#16202C] dark:text-white placeholder:text-gray-400"
-                                    readOnly
-                                />
+                                <div className="text-[14px] text-gray-400">Ask anything?</div>
                                 <div className="flex items-center justify-between mt-2">
                                     <Paperclip className="w-5 h-5 text-[#16202C] dark:text-secondary-400" />
-                                    <ArrowUp className="w-5 h-5 text-[#BBE7FF]" />
+                                    <svg width="20" height="20" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-[#BBE7FF]">
+                                        <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
+                                    </svg>
                                 </div>
                             </div>
                         </div>
