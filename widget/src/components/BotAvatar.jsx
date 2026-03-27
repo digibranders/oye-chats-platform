@@ -9,7 +9,7 @@ const SIZES = {
 
 const BotAvatar = ({ settings, size = 'md' }) => {
     const avatarType = settings.avatar_type || 'upload';
-    const pc = settings.primary_color || '#3A0CA3';
+    const pc = settings.primary_color || '#2B66BC';
     const s = SIZES[size] || SIZES.md;
 
     if (avatarType === 'orb') {
