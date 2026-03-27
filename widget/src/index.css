@@ -64,7 +64,11 @@
   animation: zoom-pulse 3s infinite ease-in-out;
 }
 
-/* Chat Markdown Styles */
+/* Chat Markdown Styles — clean, readable */
+.prose {
+  line-height: 1.7;
+}
+
 .prose ul {
   list-style-type: disc;
   padding-left: 1.5em;
@@ -80,11 +84,11 @@
 }
 
 .prose li {
-  margin-bottom: 0.25em;
+  margin-bottom: 0.3em;
 }
 
 .prose p {
-  margin-bottom: 0.75em;
+  margin-bottom: 0.8em;
 }
 
 .prose p:last-child {
@@ -92,34 +96,40 @@
 }
 
 .prose strong {
-  font-weight: 700;
-  color: #111827;
+  font-weight: 600;
+  color: #16202C;
 }
 
 .prose a {
-  color: #3b82f6;
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.prose a:hover {
   text-decoration: underline;
 }
 
 .prose code {
-  background-color: rgba(0, 0, 0, 0.1);
-  padding: 0.2em 0.4em;
+  background-color: #f1f5f9;
+  padding: 0.15em 0.4em;
   border-radius: 0.25em;
   font-family: monospace;
-  font-size: 0.9em;
+  font-size: 0.88em;
+  color: #16202C;
 }
 
 .prose pre {
-  background-color: #f3f4f6;
-  padding: 0.75em;
+  background-color: #f8fafc;
+  padding: 0.75em 1em;
   border-radius: 0.5em;
   overflow-x: auto;
   margin-top: 0.5em;
   margin-bottom: 0.5em;
+  border: 1px solid #e2e8f0;
 }
 
 .prose pre code {
   background-color: transparent;
   padding: 0;
-  color: #1f2937;
+  color: #1e293b;
 }

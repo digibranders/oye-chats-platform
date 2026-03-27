@@ -5,7 +5,7 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
     const launcherName = settings?.launcher_name || "Have Questions?";
     const launcherLogo = settings?.launcher_logo;
     const avatarType = settings?.avatar_type || 'upload';
-    const primaryColor = settings?.primary_color || '#3A0CA3';
+    const primaryColor = settings?.primary_color || '#2B66BC';
     const [isScrolling, setIsScrolling] = useState(false);
     const scrollTimer = useRef(null);
 
@@ -64,7 +64,7 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
                             className="w-full h-full object-cover"
                         />
                     ) : (
-                        <div className="w-full h-full bg-[#3A0CA3] flex items-center justify-center">
+                        <div className="w-full h-full bg-[#2B66BC] flex items-center justify-center">
                             <Bot size={28} />
                         </div>
                     )}

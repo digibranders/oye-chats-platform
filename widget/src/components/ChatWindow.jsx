@@ -216,22 +216,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
 
     return (
         <div className={currentTheme.container}>
-            {/* Header */}
-            <div
-                className="px-4 py-3 flex items-center justify-between text-white shrink-0 transition-colors duration-500 shadow-md"
-                style={{ backgroundColor: settings.header_color }}
-            >
-                <div className="flex items-center gap-2.5">
-                    <BotAvatar settings={settings} size="sm" />
-                    <div>
-                        <h3 className="font-medium text-sm leading-tight drop-shadow-sm">{settings.bot_name}</h3>
-                    </div>
+            {/* Header — clean white, matches Figma */}
+            <div className={currentTheme.header}>
+                <div className="flex items-center gap-3">
+                    <BotAvatar settings={settings} size="md" />
+                    <h3 className="font-semibold text-sm text-[#16202C]">{settings.bot_name}</h3>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                     {(isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
                         <button
                             onClick={handleNewChat}
-                            className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+                            className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
                             title="Start New Chat"
                         >
                             <Plus className="w-4 h-4" />
@@ -239,10 +234,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                     )}
                     <button
                         onClick={onClose}
-                        className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+                        className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
                         title="Close"
                     >
-                        <X className="w-4 h-4" />
+                        <X className="w-5 h-5" />
                     </button>
                 </div>
             </div>
@@ -251,7 +246,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
             <div className={currentTheme.messagesArea} style={{ backgroundColor: settings.background_color }}>
                 {isInitializing ? (
                     <div className="flex-1 flex flex-col items-center justify-center gap-3">
-                        <div className="w-10 h-10 border-4 border-[#3A0CA3]/20 border-t-[#3A0CA3] rounded-full animate-spin"></div>
+                        <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
                         <p className="text-gray-500 font-medium animate-pulse text-sm">Starting new chat...</p>
                     </div>
                 ) : (
@@ -278,7 +273,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                         ))}
 
                         {isTyping && (
-                            <TypingIndicator settings={settings} currentTheme={currentTheme} />
+                            <TypingIndicator />
                         )}
 
                         <div ref={messagesEndRef} />

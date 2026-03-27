@@ -1,5 +1,6 @@
 import React from 'react';
-import { Send } from 'lucide-react';
+import { Paperclip } from 'lucide-react';
+import SendIcon from './SendIcon';
 
 const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, settings, currentTheme, inputRef, placeholder }) => {
     const handleChange = (e) => {
@@ -15,29 +16,43 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, settings, curr
         }
     };
 
+    const hasText = inputText.trim().length > 0;
+
     return (
-        <div className={currentTheme.inputArea} style={{ backgroundColor: settings.background_color }}>
-            <form onSubmit={onSubmit} className="relative flex items-center gap-2">
-                <div className="flex-1 relative">
+        <div className={currentTheme.inputArea}>
+            <form onSubmit={onSubmit}>
+                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
+                    {/* Text area — top row */}
                     <textarea
                         value={inputText}
                         onChange={handleChange}
                         onKeyDown={handleKeyDown}
-                        placeholder={placeholder || `Reply to ${settings.bot_name}...`}
-                        className={`w-full pl-4 pr-12 py-3 rounded-2xl focus:outline-none transition-all text-sm resize-none overflow-hidden min-h-[44px] max-h-[120px] ${currentTheme.inputBg}`}
+                        placeholder={placeholder || 'Ask anything?'}
+                        className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[100px]"
+                        style={{ border: 'none' }}
                         disabled={isTyping}
                         ref={inputRef}
                         rows={1}
                     />
+
+                    {/* Bottom row — paperclip left, send right */}
+                    <div className="flex items-center justify-between mt-2">
+                        <Paperclip
+                            size={20}
+                            className="text-[#16202C] cursor-pointer hover:text-gray-500 transition-colors"
+                        />
+                        <button
+                            type="submit"
+                            disabled={!hasText || isTyping}
+                            className="transition-all disabled:cursor-not-allowed"
+                        >
+                            <SendIcon
+                                size={20}
+                                className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
+                            />
+                        </button>
+                    </div>
                 </div>
-                <button
-                    type="submit"
-                    disabled={!inputText.trim() || isTyping}
-                    className={`w-10 h-10 rounded-full text-white flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md`}
-                    style={{ backgroundColor: settings.primary_color }}
-                >
-                    <Send className="w-5 h-5 ml-0.5" />
-                </button>
             </form>
         </div>
     );
