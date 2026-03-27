@@ -59,11 +59,14 @@ class ConnectionManager:
             self.waiting_queue.append(session_id)
 
         # Notify visitor they're in queue
-        await self._send_to_visitor(session_id, {
-            "type": "status",
-            "status": "waiting",
-            "queue_position": self.waiting_queue.index(session_id) + 1,
-        })
+        await self._send_to_visitor(
+            session_id,
+            {
+                "type": "status",
+                "status": "waiting",
+                "queue_position": self.waiting_queue.index(session_id) + 1,
+            },
+        )
 
         # Notify all online agents
         for agent_id in list(self.agent_connections.keys()):
@@ -80,17 +83,23 @@ class ConnectionManager:
         self._cancel_timeout(session_id)
 
         # Notify visitor
-        await self._send_to_visitor(session_id, {
-            "type": "status",
-            "status": "connected",
-            "agent_name": agent_name,
-        })
+        await self._send_to_visitor(
+            session_id,
+            {
+                "type": "status",
+                "status": "connected",
+                "agent_name": agent_name,
+            },
+        )
 
         # Notify agent
-        await self._send_to_agent(agent_id, {
-            "type": "chat_accepted",
-            "session_id": session_id,
-        })
+        await self._send_to_agent(
+            agent_id,
+            {
+                "type": "chat_accepted",
+                "session_id": session_id,
+            },
+        )
 
         logger.info(f"Agent {agent_id} ({agent_name}) accepted chat {session_id}")
 
@@ -99,17 +108,23 @@ class ConnectionManager:
         agent_id = self.assignments.pop(session_id, None)
         self._cancel_timeout(session_id)
 
-        await self._send_to_visitor(session_id, {
-            "type": "status",
-            "status": "closed",
-            "bot_name": bot_name,
-        })
+        await self._send_to_visitor(
+            session_id,
+            {
+                "type": "status",
+                "status": "closed",
+                "bot_name": bot_name,
+            },
+        )
 
         if agent_id:
-            await self._send_to_agent(agent_id, {
-                "type": "chat_closed",
-                "session_id": session_id,
-            })
+            await self._send_to_agent(
+                agent_id,
+                {
+                    "type": "chat_closed",
+                    "session_id": session_id,
+                },
+            )
 
         logger.info(f"Chat {session_id} closed")
 
@@ -119,23 +134,29 @@ class ConnectionManager:
         """Route a message from visitor to their assigned agent."""
         agent_id = self.assignments.get(session_id)
         if agent_id and agent_id in self.agent_connections:
-            await self._send_to_agent(agent_id, {
-                "type": "message",
-                "session_id": session_id,
-                "role": "user",
-                "content": content,
-                "timestamp": datetime.utcnow().isoformat(),
-            })
+            await self._send_to_agent(
+                agent_id,
+                {
+                    "type": "message",
+                    "session_id": session_id,
+                    "role": "user",
+                    "content": content,
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
 
     async def route_agent_message(self, session_id: str, content: str, agent_name: str):
         """Route a message from agent to visitor."""
-        await self._send_to_visitor(session_id, {
-            "type": "message",
-            "role": "agent",
-            "content": content,
-            "agent_name": agent_name,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+        await self._send_to_visitor(
+            session_id,
+            {
+                "type": "message",
+                "role": "agent",
+                "content": content,
+                "agent_name": agent_name,
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
 
     async def send_typing_to_visitor(self, session_id: str):
         """Notify visitor that agent is typing."""
@@ -145,10 +166,13 @@ class ConnectionManager:
         """Notify agent that visitor is typing."""
         agent_id = self.assignments.get(session_id)
         if agent_id:
-            await self._send_to_agent(agent_id, {
-                "type": "visitor_typing",
-                "session_id": session_id,
-            })
+            await self._send_to_agent(
+                agent_id,
+                {
+                    "type": "visitor_typing",
+                    "session_id": session_id,
+                },
+            )
 
     # ── Timeout handling ──
 
@@ -169,10 +193,13 @@ class ConnectionManager:
             # Still waiting?
             if session_id in self.waiting_queue:
                 self.waiting_queue.remove(session_id)
-                await self._send_to_visitor(session_id, {
-                    "type": "status",
-                    "status": "unavailable",
-                })
+                await self._send_to_visitor(
+                    session_id,
+                    {
+                        "type": "status",
+                        "status": "unavailable",
+                    },
+                )
                 logger.info(f"Timeout: no agent accepted chat {session_id} within {timeout_seconds}s")
         except asyncio.CancelledError:
             pass
@@ -199,11 +226,14 @@ class ConnectionManager:
 
     async def _notify_agent_queue(self, agent_id: int):
         """Send current queue to a specific agent."""
-        await self._send_to_agent(agent_id, {
-            "type": "queue_update",
-            "waiting": self.waiting_queue,
-            "count": len(self.waiting_queue),
-        })
+        await self._send_to_agent(
+            agent_id,
+            {
+                "type": "queue_update",
+                "waiting": self.waiting_queue,
+                "count": len(self.waiting_queue),
+            },
+        )
 
     # ── State queries ──
 

@@ -11,7 +11,7 @@ import LeadCaptureForm from './LeadCaptureForm';
 import HandoffForm from './HandoffForm';
 import LiveChatMode from './LiveChatMode';
 
-const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
+const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true }) => {
     const [messages, setMessages] = useState([
         {
             id: 'welcome',
@@ -258,6 +258,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                 currentTheme={currentTheme}
                 onClose={onClose}
                 onSubmit={handleLeadFormSubmit}
+                isAnimating={isAnimating}
             />
         );
     }
@@ -273,6 +274,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
                 inputText={inputText}
                 setInputText={setInputText}
                 inputRef={inputRef}
+                isAnimating={isAnimating}
             />
         );
     }
@@ -325,7 +327,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings }) => {
     };
 
     return (
-        <div className={currentTheme.container}>
+        <div className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
             {/* Header — dynamic based on chat mode */}
             <div className={currentTheme.header}>
                 {renderHeader()}

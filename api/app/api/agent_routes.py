@@ -72,20 +72,20 @@ def get_queue(client: Client = Depends(get_current_client)):
 
     with get_session() as session:
         for sid in queue_ids:
-            chat_session = session.execute(
-                select(ChatSession).where(ChatSession.id == sid)
-            ).scalar_one_or_none()
+            chat_session = session.execute(select(ChatSession).where(ChatSession.id == sid)).scalar_one_or_none()
             if chat_session:
                 lead_info = get_lead_info_by_session(session, sid)
-                queue_items.append({
-                    "session_id": sid,
-                    "name": lead_info.name if lead_info else None,
-                    "email": lead_info.email if lead_info else None,
-                    "reason": chat_session.handoff_reason,
-                    "location": chat_session.location,
-                    "device": chat_session.device,
-                    "created_at": chat_session.created_at.isoformat() if chat_session.created_at else None,
-                })
+                queue_items.append(
+                    {
+                        "session_id": sid,
+                        "name": lead_info.name if lead_info else None,
+                        "email": lead_info.email if lead_info else None,
+                        "reason": chat_session.handoff_reason,
+                        "location": chat_session.location,
+                        "device": chat_session.device,
+                        "created_at": chat_session.created_at.isoformat() if chat_session.created_at else None,
+                    }
+                )
 
     return {"queue": queue_items, "count": len(queue_items)}
 
@@ -102,17 +102,13 @@ def accept_chat(session_id: str, client: Client = Depends(get_current_client)):
         ).scalar_one_or_none()
 
         if not agent:
-            agent = session.execute(
-                select(Agent).where(Agent.client_id == client.id).limit(1)
-            ).scalar_one_or_none()
+            agent = session.execute(select(Agent).where(Agent.client_id == client.id).limit(1)).scalar_one_or_none()
 
         if not agent:
             raise HTTPException(status_code=400, detail="No agent profile found. Open Live Chat first.")
 
         # Update session
-        chat_session = session.execute(
-            select(ChatSession).where(ChatSession.id == session_id)
-        ).scalar_one_or_none()
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
@@ -137,9 +133,7 @@ def close_chat(session_id: str, client: Client = Depends(get_current_client)):
     import asyncio
 
     with get_session() as session:
-        chat_session = session.execute(
-            select(ChatSession).where(ChatSession.id == session_id)
-        ).scalar_one_or_none()
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
@@ -161,9 +155,7 @@ def close_chat(session_id: str, client: Client = Depends(get_current_client)):
 def toggle_agent_status(client: Client = Depends(get_current_client)):
     """Toggle agent online/offline status."""
     with get_session() as session:
-        agent = session.execute(
-            select(Agent).where(Agent.client_id == client.id).limit(1)
-        ).scalar_one_or_none()
+        agent = session.execute(select(Agent).where(Agent.client_id == client.id).limit(1)).scalar_one_or_none()
 
         if not agent:
             agent = Agent(client_id=client.id, name=client.name, email=client.email, is_online=True)

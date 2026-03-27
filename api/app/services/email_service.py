@@ -18,12 +18,14 @@ def _send_brevo_email(to_email: str, subject: str, html_body: str) -> bool:
         logger.debug("Email not sent (Brevo not configured)")
         return False
 
-    payload = json.dumps({
-        "sender": {"name": EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS},
-        "to": [{"email": to_email}],
-        "subject": subject,
-        "htmlContent": html_body,
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "sender": {"name": EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS},
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "htmlContent": html_body,
+        }
+    ).encode("utf-8")
 
     req = Request(
         BREVO_API_URL,
@@ -53,6 +55,7 @@ def send_email_async(to_email: str, subject: str, html_body: str):
     except RuntimeError:
         # No event loop — use thread
         import threading
+
         threading.Thread(
             target=_send_brevo_email,
             args=(to_email, subject, html_body),
@@ -61,6 +64,7 @@ def send_email_async(to_email: str, subject: str, html_body: str):
 
 
 # ── Email Templates ──
+
 
 def _base_template(title: str, content: str) -> str:
     return f"""
@@ -102,10 +106,10 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
     <div style="background: #f0fdf4; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
         <h3 style="font-size: 14px; font-weight: 600; color: #166534; margin: 0 0 12px 0;">BANT Summary</h3>
         <ul style="margin: 0; padding-left: 20px; color: #15803d; line-height: 1.8;">
-            <li><strong>Need:</strong> {bant.get('bant_need', '—')}</li>
-            <li><strong>Budget:</strong> {bant.get('bant_budget', '—')}</li>
-            <li><strong>Authority:</strong> {bant.get('bant_authority', '—')}</li>
-            <li><strong>Timeline:</strong> {bant.get('bant_timeline', '—')}</li>
+            <li><strong>Need:</strong> {bant.get("bant_need", "—")}</li>
+            <li><strong>Budget:</strong> {bant.get("bant_budget", "—")}</li>
+            <li><strong>Authority:</strong> {bant.get("bant_authority", "—")}</li>
+            <li><strong>Timeline:</strong> {bant.get("bant_timeline", "—")}</li>
         </ul>
     </div>
     {contact_section}
@@ -113,7 +117,11 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
         View in Dashboard
     </a>
     """
-    send_email_async(notification_email, f"[OyeChat] New Qualified Lead — {bot_name}", _base_template("New Qualified Lead 🎯", content))
+    send_email_async(
+        notification_email,
+        f"[OyeChat] New Qualified Lead — {bot_name}",
+        _base_template("New Qualified Lead 🎯", content),
+    )
 
 
 def send_handoff_request_email(notification_email: str, bot_name: str, reason: str | None, contact: dict | None = None):
@@ -133,12 +141,14 @@ def send_handoff_request_email(notification_email: str, bot_name: str, reason: s
         A visitor on <strong>{bot_name}</strong> has requested to speak with a team member.
     </p>
     {contact_info}
-    {f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:</strong> {reason}</p></div>' if reason else ''}
+    {f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:</strong> {reason}</p></div>' if reason else ""}
     <a href="https://admin.oyechats.com/live-chat" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
         Open Live Chat
     </a>
     """
-    send_email_async(notification_email, f"[OyeChat] Live Chat Request — {bot_name}", _base_template("Live Chat Request 💬", content))
+    send_email_async(
+        notification_email, f"[OyeChat] Live Chat Request — {bot_name}", _base_template("Live Chat Request 💬", content)
+    )
 
 
 def send_unavailable_callback_email(notification_email: str, bot_name: str, contact: dict):
@@ -149,13 +159,17 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
     </p>
     <div style="background: #fef2f2; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
         <ul style="margin: 0; padding-left: 20px; color: #991b1b; line-height: 1.8;">
-            <li><strong>Name:</strong> {contact.get('name', '—')}</li>
-            <li><strong>Email:</strong> {contact.get('email', '—')}</li>
-            {f"<li><strong>Phone:</strong> {contact.get('phone')}</li>" if contact.get('phone') else ""}
+            <li><strong>Name:</strong> {contact.get("name", "—")}</li>
+            <li><strong>Email:</strong> {contact.get("email", "—")}</li>
+            {f"<li><strong>Phone:</strong> {contact.get('phone')}</li>" if contact.get("phone") else ""}
         </ul>
     </div>
     <a href="https://admin.oyechats.com/leads" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
         Follow Up
     </a>
     """
-    send_email_async(notification_email, f"[OyeChat] Missed Chat — Callback Requested — {bot_name}", _base_template("Missed Chat — Callback Requested 📞", content))
+    send_email_async(
+        notification_email,
+        f"[OyeChat] Missed Chat — Callback Requested — {bot_name}",
+        _base_template("Missed Chat — Callback Requested 📞", content),
+    )

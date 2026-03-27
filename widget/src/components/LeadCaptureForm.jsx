@@ -9,7 +9,7 @@ const FIELD_CONFIG = {
     company: { label: 'Company', icon: Building2, type: 'text', placeholder: 'Acme Inc.' },
 };
 
-const LeadCaptureForm = ({ settings, currentTheme, onClose, onSubmit }) => {
+const LeadCaptureForm = ({ settings, currentTheme, onClose, onSubmit, isAnimating = true }) => {
     const fields = settings?.lead_form_fields || [
         { field: 'name', required: true },
         { field: 'email', required: true },
@@ -48,7 +48,7 @@ const LeadCaptureForm = ({ settings, currentTheme, onClose, onSubmit }) => {
     };
 
     return (
-        <div className={currentTheme.container}>
+        <div className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
             {/* Header */}
             <div className={currentTheme.header}>
                 <div className="flex items-center gap-3">

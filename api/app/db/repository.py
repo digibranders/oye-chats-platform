@@ -130,9 +130,7 @@ def create_or_update_lead_info(
     company: str | None = None,
 ) -> LeadInfo:
     """Create or update lead info for a session."""
-    existing = session.execute(
-        select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)
-    ).scalar_one_or_none()
+    existing = session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)).scalar_one_or_none()
 
     if existing:
         if name is not None:
@@ -161,9 +159,7 @@ def create_or_update_lead_info(
 
 def get_lead_info_by_session(session, session_id: str) -> LeadInfo | None:
     """Get lead info for a session."""
-    return session.execute(
-        select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)
-    ).scalar_one_or_none()
+    return session.execute(select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)).scalar_one_or_none()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

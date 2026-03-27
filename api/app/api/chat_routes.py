@@ -23,6 +23,7 @@ class LeadCaptureRequest(PydanticBaseModel):
     phone: str | None = None
     company: str | None = None
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])

@@ -37,7 +37,11 @@ def upgrade() -> None:
         "lead_info",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column(
-            "session_id", sa.String(), sa.ForeignKey("chat_sessions.id", ondelete="CASCADE"), unique=True, nullable=False
+            "session_id",
+            sa.String(),
+            sa.ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+            unique=True,
+            nullable=False,
         ),
         sa.Column("bot_id", sa.Integer(), sa.ForeignKey("bots.id", ondelete="CASCADE"), nullable=False),
         sa.Column("name", sa.String(), nullable=True),

@@ -33,9 +33,7 @@ def list_leads(
         if bot_id:
             bot_ids = [bot_id]
         else:
-            bot_ids = list(
-                session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all()
-            )
+            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
 
         if not bot_ids:
             return {"leads": [], "total": 0, "page": page, "limit": limit}
@@ -71,7 +69,7 @@ def list_leads(
         total = len(leads)
         # Paginate
         start = (page - 1) * limit
-        paginated = leads[start:start + limit]
+        paginated = leads[start : start + limit]
 
         return {"leads": paginated, "total": total, "page": page, "limit": limit}
 
@@ -86,13 +84,9 @@ def lead_stats(
         if bot_id:
             bot_ids = [bot_id]
         else:
-            bot_ids = list(
-                session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all()
-            )
+            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
 
-        sessions = session.execute(
-            select(ChatSession).where(ChatSession.bot_id.in_(bot_ids))
-        ).scalars().all()
+        sessions = session.execute(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids))).scalars().all()
 
         counts = {"cold": 0, "warm": 0, "hot": 0, "qualified": 0}
         total_score = 0
@@ -121,9 +115,7 @@ def export_leads_csv(
         if bot_id:
             bot_ids = [bot_id]
         else:
-            bot_ids = list(
-                session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all()
-            )
+            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
 
         results = session.execute(
             select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
@@ -135,11 +127,26 @@ def export_leads_csv(
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow([
-            "Session ID", "Name", "Email", "Phone", "Company",
-            "Score", "Status", "Need", "Budget", "Authority", "Timeline",
-            "Location", "Device", "Messages", "Created", "Last Active"
-        ])
+        writer.writerow(
+            [
+                "Session ID",
+                "Name",
+                "Email",
+                "Phone",
+                "Company",
+                "Score",
+                "Status",
+                "Need",
+                "Budget",
+                "Authority",
+                "Timeline",
+                "Location",
+                "Device",
+                "Messages",
+                "Created",
+                "Last Active",
+            ]
+        )
 
         for chat_session, msg_count in results:
             lead_info = session.execute(
@@ -147,24 +154,26 @@ def export_leads_csv(
             ).scalar_one_or_none()
 
             score = calculate_lead_score(chat_session)
-            writer.writerow([
-                chat_session.id,
-                lead_info.name if lead_info else "",
-                lead_info.email if lead_info else "",
-                lead_info.phone if lead_info else "",
-                lead_info.company if lead_info else "",
-                score,
-                get_lead_status(score),
-                chat_session.bant_need or "",
-                chat_session.bant_budget or "",
-                chat_session.bant_authority or "",
-                chat_session.bant_timeline or "",
-                chat_session.location or "",
-                chat_session.device or "",
-                msg_count,
-                chat_session.created_at.isoformat() if chat_session.created_at else "",
-                chat_session.last_active_at.isoformat() if chat_session.last_active_at else "",
-            ])
+            writer.writerow(
+                [
+                    chat_session.id,
+                    lead_info.name if lead_info else "",
+                    lead_info.email if lead_info else "",
+                    lead_info.phone if lead_info else "",
+                    lead_info.company if lead_info else "",
+                    score,
+                    get_lead_status(score),
+                    chat_session.bant_need or "",
+                    chat_session.bant_budget or "",
+                    chat_session.bant_authority or "",
+                    chat_session.bant_timeline or "",
+                    chat_session.location or "",
+                    chat_session.device or "",
+                    msg_count,
+                    chat_session.created_at.isoformat() if chat_session.created_at else "",
+                    chat_session.last_active_at.isoformat() if chat_session.last_active_at else "",
+                ]
+            )
 
         output.seek(0)
         return StreamingResponse(
@@ -181,9 +190,7 @@ def get_lead_detail(
 ):
     """Get full lead detail: BANT + contact info + chat history."""
     with get_session() as session:
-        bot_ids = list(
-            session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all()
-        )
+        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
 
         chat_session = session.execute(
             select(ChatSession).where(
@@ -199,12 +206,16 @@ def get_lead_detail(
             select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)
         ).scalar_one_or_none()
 
-        messages = session.execute(
-            select(ChatMessage)
-            .where(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.created_at)
-            .limit(100)
-        ).scalars().all()
+        messages = (
+            session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at)
+                .limit(100)
+            )
+            .scalars()
+            .all()
+        )
 
         msg_count = len(messages)
         lead = build_lead_response(chat_session, lead_info, msg_count)

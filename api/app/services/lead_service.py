@@ -46,12 +46,14 @@ def build_lead_response(session: ChatSession, lead_info: LeadInfo | None, messag
             "email": lead_info.email if lead_info else None,
             "phone": lead_info.phone if lead_info else None,
             "company": lead_info.company if lead_info else None,
-        } if lead_info else None,
+        }
+        if lead_info
+        else None,
         "location": session.location or "Unknown",
         "device": session.device or "Unknown",
         "chats": message_count,
         "created_at": session.created_at.isoformat() if session.created_at else None,
-        "last_active_at": session.last_active_at.isoformat() if session.last_active_at else (
-            session.created_at.isoformat() if session.created_at else None
-        ),
+        "last_active_at": session.last_active_at.isoformat()
+        if session.last_active_at
+        else (session.created_at.isoformat() if session.created_at else None),
     }

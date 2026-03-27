@@ -24,9 +24,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         return
 
     with get_session() as session:
-        bot = session.execute(
-            select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))
-        ).scalar_one_or_none()
+        bot = session.execute(select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))).scalar_one_or_none()
         if not bot:
             await ws.close(code=4003, reason="Invalid bot key")
             return
@@ -71,17 +69,13 @@ async def agent_websocket(ws: WebSocket, api_key: str | None = None):
 
     # Auth: resolve agent from client
     with get_session() as session:
-        client = session.execute(
-            select(Client).where(Client.api_key == api_key)
-        ).scalar_one_or_none()
+        client = session.execute(select(Client).where(Client.api_key == api_key)).scalar_one_or_none()
         if not client:
             await ws.close(code=4003, reason="Invalid API key")
             return
 
         # Find or create agent for this client (simple: use client as agent)
-        agent = session.execute(
-            select(Agent).where(Agent.client_id == client.id).limit(1)
-        ).scalar_one_or_none()
+        agent = session.execute(select(Agent).where(Agent.client_id == client.id).limit(1)).scalar_one_or_none()
 
         if not agent:
             # Auto-create agent from client profile
@@ -137,9 +131,7 @@ async def agent_websocket(ws: WebSocket, api_key: str | None = None):
                         ).scalar_one_or_none()
                         if chat_session:
                             # Get bot name for transition message
-                            bot = session.execute(
-                                select(Bot).where(Bot.id == chat_session.bot_id)
-                            ).scalar_one_or_none()
+                            bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
                             chat_session.status = "bot"
                             chat_session.assigned_agent_id = None
                             session.commit()

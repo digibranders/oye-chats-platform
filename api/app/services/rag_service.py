@@ -319,12 +319,19 @@ def rag_pipeline(
                 # Check if lead just became fully qualified → trigger email
                 if (
                     all(bant_updates.get(k) for k in ("bant_need", "bant_budget", "bant_authority", "bant_timeline"))
-                    and bot and bot.notification_email and bot.email_on_qualified
+                    and bot
+                    and bot.notification_email
+                    and bot.email_on_qualified
                 ):
                     lead_info = get_lead_info_by_session(session, session_id)
                     contact = None
                     if lead_info:
-                        contact = {"name": lead_info.name, "email": lead_info.email, "phone": lead_info.phone, "company": lead_info.company}
+                        contact = {
+                            "name": lead_info.name,
+                            "email": lead_info.email,
+                            "phone": lead_info.phone,
+                            "company": lead_info.company,
+                        }
                     send_qualified_lead_email(bot.notification_email, bot.name, bant_updates, contact)
 
             session.commit()
@@ -499,12 +506,19 @@ async def rag_pipeline_stream(
             # Check if lead just became fully qualified → trigger email
             if (
                 all(bant_updates.get(k) for k in ("bant_need", "bant_budget", "bant_authority", "bant_timeline"))
-                and bot and bot.notification_email and bot.email_on_qualified
+                and bot
+                and bot.notification_email
+                and bot.email_on_qualified
             ):
                 lead_info = get_lead_info_by_session(session, session_id)
                 contact = None
                 if lead_info:
-                    contact = {"name": lead_info.name, "email": lead_info.email, "phone": lead_info.phone, "company": lead_info.company}
+                    contact = {
+                        "name": lead_info.name,
+                        "email": lead_info.email,
+                        "phone": lead_info.phone,
+                        "company": lead_info.company,
+                    }
                 send_qualified_lead_email(bot.notification_email, bot.name, bant_updates, contact)
 
         session.commit()
