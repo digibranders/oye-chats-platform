@@ -6,7 +6,7 @@ OyeChat is a **SaaS chatbot platform** where customers sign up, create chatbot i
 > **Codex Agent reviews every edit.** Write clean, production-ready code on every change — no placeholders, no shortcuts, no "fix later" comments. Each edit is evaluated for correctness, type safety, error handling, and adherence to project conventions. Treat every diff as if it's going straight to a code review.
 
 ## Mandatory Pre-Completion Checks
-**BEFORE confirming any code changes to the user, you MUST run the baseline checks for every project that was touched.** Do not skip these. If any check fails, fix the issue before presenting the final result.
+**BEFORE confirming any code changes to the user OR before pushing code, you MUST run all baseline checks for every project that was touched.** Do not skip these. If any check fails, fix the issue BEFORE presenting the final result.
 
 Run only the checks relevant to the files you changed:
 
@@ -20,13 +20,14 @@ Run only the checks relevant to the files you changed:
 | Check | Command (run inside conda `oye` env) |
 |-------|---------------------------------------|
 | Lint | `cd api && uv run ruff check .` |
+| Format | `cd api && uv run ruff format .` |
 | Tests | `cd api && uv run pytest` |
 
 ### Rules
 1. **Scope checks to what changed** — don't lint the entire monorepo if you only touched the widget.
-2. **Fix before reporting** — if lint or build fails, fix the errors and re-run until clean.
+2. **Fix before reporting/pushing** — if lint, format, or build fails, fix all errors and re-run until clean. Do not push breaking or unformatted code!
 3. **Never skip checks** — even for "small" changes. One-line typos can break builds.
-4. **Report the results** — include a brief summary of checks passed in your final message (e.g., "lint ✓ · build ✓").
+4. **Report the results** — include a brief summary of checks passed in your final message (e.g., "lint ✓ · format ✓ · build ✓").
 
 ## How It Works (End-to-End)
 
