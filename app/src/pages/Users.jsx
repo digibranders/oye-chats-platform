@@ -6,7 +6,7 @@ import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
-export default function Users() {
+export default function Users({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const [visitors, setVisitors] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -45,8 +45,8 @@ export default function Users() {
     );
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="Conversations" subtitle="See who's chatting and what they're asking" />
+        <div className={`space-y-6 ${embedded ? '' : 'animate-fade-in'}`}>
+            {!embedded && <PageHeader title="Conversations" subtitle="See who's chatting and what they're asking" />}
 
             {/* Search */}
             <div className="relative max-w-sm">

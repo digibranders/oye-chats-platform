@@ -16,7 +16,7 @@ import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonChart } from '../components/ui/SkeletonLoader';
 
-export default function Analytics() {
+export default function Analytics({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const [activityData, setActivityData] = useState([]);
     const [topQuestions, setTopQuestions] = useState([]);
@@ -122,8 +122,8 @@ export default function Analytics() {
     ];
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="Analytics" subtitle="Understand how your chatbot performs" />
+        <div className={`space-y-6 ${embedded ? '' : 'animate-fade-in'}`}>
+            {!embedded && <PageHeader title="Analytics" subtitle="Understand how your chatbot performs" />}
 
             {/* Metric Cards */}
             {!isLoading && (

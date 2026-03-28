@@ -4,20 +4,15 @@ import {
     LayoutDashboard,
     BookOpen,
     BarChart3,
-    MessageCircle,
-    ThumbsUp,
     Target,
     Headphones,
     Bot,
-    Palette,
     ChevronDown,
     Plus,
     Check,
     Settings,
     Plug,
-    Inbox,
     UsersRound,
-    MessageSquareText,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 
@@ -54,29 +49,23 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     // Agent users see a minimal sidebar
     const mainItems = isAgentRole
         ? [
-            { path: '/live-chat', name: 'Live Chat', icon: Headphones },
-            { path: '/messages', name: 'Messages', icon: Inbox },
+            { path: '/support', name: 'Support', icon: Headphones },
         ]
         : [
             { path: '/', name: 'Overview', icon: LayoutDashboard },
             { path: '/knowledge', name: 'Sources', icon: BookOpen },
-            { path: '/analytics', name: 'Analytics', icon: BarChart3 },
+            { path: '/insights', name: 'Insights', icon: BarChart3 },
+            { path: '/support', name: 'Support', icon: Headphones },
             { path: '/leads', name: 'Leads', icon: Target },
-            { path: '/live-chat', name: 'Live Chat', icon: Headphones },
-            { path: '/messages', name: 'Messages', icon: Inbox },
-            { path: '/users', name: 'Conversations', icon: MessageCircle },
-            { path: '/feedback', name: 'Feedback', icon: ThumbsUp },
         ];
 
     const configItems = isAgentRole
         ? [
-            { path: '/canned-responses', name: 'Quick Replies', icon: MessageSquareText },
+            { path: '/team', name: 'Team', icon: UsersRound },
         ]
         : [
             { path: '/chatbot', name: 'My Bots', icon: Bot },
-            { path: '/interface', name: 'Appearance', icon: Palette },
             { path: '/team', name: 'Team', icon: UsersRound },
-            { path: '/canned-responses', name: 'Quick Replies', icon: MessageSquareText },
             { path: '/integrations/email', name: 'Integrations', icon: Plug },
         ];
 

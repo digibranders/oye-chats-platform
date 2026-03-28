@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones } from 'lucide-react';
+import { UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones, MessageSquareText } from 'lucide-react';
 import { getAgents, createAgent, deleteAgent, getDepartments, createDepartment, deleteDepartment } from '../services/api';
+import CannedResponses from './CannedResponses';
 
 export default function TeamManagement() {
     const [agents, setAgents] = useState([]);
@@ -100,9 +101,17 @@ export default function TeamManagement() {
                 >
                     <Building2 size={15} className="inline mr-1.5 -mt-0.5" /> Departments
                 </button>
+                <button
+                    onClick={() => setActiveTab('quick-replies')}
+                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === 'quick-replies' ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm' : 'text-secondary-500'}`}
+                >
+                    <MessageSquareText size={15} className="inline mr-1.5 -mt-0.5" /> Quick Replies
+                </button>
             </div>
 
-            {loading ? (
+            {activeTab === 'quick-replies' ? (
+                <CannedResponses embedded />
+            ) : loading ? (
                 <div className="flex items-center justify-center py-20">
                     <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
                 </div>

@@ -6,7 +6,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
 
-export default function Feedback() {
+export default function Feedback({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const [feedback, setFeedback] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -51,8 +51,8 @@ export default function Feedback() {
     ];
 
     return (
-        <div className="space-y-6 animate-fade-in">
-            <PageHeader title="Response Feedback" subtitle="See how users rate your chatbot's responses" />
+        <div className={`space-y-6 ${embedded ? '' : 'animate-fade-in'}`}>
+            {!embedded && <PageHeader title="Response Feedback" subtitle="See how users rate your chatbot's responses" />}
 
             {error && (
                 <div className="bg-error-50 dark:bg-error-500/10 text-error-600 dark:text-error-500 p-3 rounded-xl border border-error-500/20 text-sm font-medium">

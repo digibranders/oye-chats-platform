@@ -111,7 +111,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {[
                     { icon: Upload, label: 'Upload documents', desc: 'Add to your knowledge base', to: '/knowledge' },
-                    { icon: Palette, label: 'Customize appearance', desc: 'Brand your chatbot', to: '/interface' },
+                    { icon: Palette, label: 'Customize appearance', desc: 'Brand your chatbot', to: '/chatbot?tab=appearance' },
                     { icon: Code2, label: 'Get embed code', desc: 'Add to your website', to: '/chatbot' },
                 ].map((action) => (
                     <button

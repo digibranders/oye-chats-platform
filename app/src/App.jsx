@@ -10,17 +10,12 @@ import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import Dashboard from './pages/Dashboard';
 import KnowledgeBase from './pages/KnowledgeBase';
-import Interface from './pages/Interface';
-import Analytics from './pages/Analytics';
-import Users from './pages/Users';
-import Feedback from './pages/Feedback';
 import Settings from './pages/Settings';
 import Chatbot from './pages/Chatbot';
 import Leads from './pages/Leads';
-import LiveChat from './pages/LiveChat';
-import OfflineMessages from './pages/OfflineMessages';
+import Insights from './pages/Insights';
+import Support from './pages/Support';
 import TeamManagement from './pages/TeamManagement';
-import CannedResponses from './pages/CannedResponses';
 import Email from './pages/integrations/Email';
 
 // Superadmin
@@ -65,17 +60,21 @@ function App() {
                         <Route index element={<Dashboard />} />
                         <Route path="knowledge" element={<KnowledgeBase />} />
                         <Route path="chatbot" element={<Chatbot />} />
-                        <Route path="interface" element={<Interface />} />
-                        <Route path="analytics" element={<Analytics />} />
+                        <Route path="insights" element={<Insights />} />
+                        <Route path="support" element={<Support />} />
                         <Route path="leads" element={<Leads />} />
-                        <Route path="live-chat" element={<LiveChat />} />
-                        <Route path="messages" element={<OfflineMessages />} />
                         <Route path="team" element={<TeamManagement />} />
-                        <Route path="users" element={<Users />} />
-                        <Route path="feedback" element={<Feedback />} />
                         <Route path="settings" element={<Settings />} />
-                        <Route path="canned-responses" element={<CannedResponses />} />
                         <Route path="integrations/email" element={<Email />} />
+
+                        {/* Redirects for old URLs */}
+                        <Route path="analytics" element={<Navigate to="/insights?tab=analytics" replace />} />
+                        <Route path="users" element={<Navigate to="/insights?tab=conversations" replace />} />
+                        <Route path="feedback" element={<Navigate to="/insights?tab=feedback" replace />} />
+                        <Route path="live-chat" element={<Navigate to="/support?tab=live-chat" replace />} />
+                        <Route path="messages" element={<Navigate to="/support?tab=messages" replace />} />
+                        <Route path="interface" element={<Navigate to="/chatbot?tab=appearance" replace />} />
+                        <Route path="canned-responses" element={<Navigate to="/team" replace />} />
                     </Route>
 
                     {/* Backwards compat: /admin/* → /* */}

@@ -1,28 +1,26 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Search, LayoutDashboard, BookOpen, BarChart3, MessageCircle,
-    ThumbsUp, Bot, Palette, Settings, Plug, Upload, Plus, X
+    Search, LayoutDashboard, BookOpen, BarChart3, Target, Headphones,
+    Bot, Palette, Settings, Plug, Upload, Plus, X, UsersRound
 } from 'lucide-react';
 
 const pages = [
     { name: 'Overview', path: '/', icon: LayoutDashboard, keywords: 'dashboard home overview stats' },
     { name: 'Sources', path: '/knowledge', icon: BookOpen, keywords: 'knowledge base documents upload' },
-    { name: 'Analytics', path: '/analytics', icon: BarChart3, keywords: 'analytics charts metrics activity' },
-    { name: 'Conversations', path: '/users', icon: MessageCircle, keywords: 'visitors users conversations chat history' },
-    { name: 'Feedback', path: '/feedback', icon: ThumbsUp, keywords: 'feedback ratings thumbs review' },
-    { name: 'My Bots', path: '/chatbot', icon: Bot, keywords: 'chatbot bots embed code create' },
-    { name: 'Appearance', path: '/interface', icon: Palette, keywords: 'interface customize theme colors branding' },
+    { name: 'Insights', path: '/insights', icon: BarChart3, keywords: 'analytics charts metrics activity conversations feedback ratings' },
+    { name: 'Support', path: '/support', icon: Headphones, keywords: 'live chat messages offline support agent' },
+    { name: 'Leads', path: '/leads', icon: Target, keywords: 'leads sales bant qualification prospects' },
+    { name: 'My Bots', path: '/chatbot', icon: Bot, keywords: 'chatbot bots embed code create appearance customize' },
+    { name: 'Team', path: '/team', icon: UsersRound, keywords: 'team agents departments members quick replies canned responses' },
     { name: 'Settings', path: '/settings', icon: Settings, keywords: 'settings preferences account theme' },
     { name: 'Integrations', path: '/integrations/email', icon: Plug, keywords: 'integrations email channels' },
-    { name: 'Team', path: '/team', icon: Settings, keywords: 'team agents departments members' },
-    { name: 'Messages', path: '/messages', icon: MessageCircle, keywords: 'offline messages inbox' },
 ];
 
 const actions = [
     { name: 'Upload Documents', path: '/knowledge', icon: Upload, keywords: 'upload documents files' },
-    { name: 'Create New Bot', path: '/chatbot', icon: Plus, keywords: 'create new bot chatbot' },
-    { name: 'Customize Bot', path: '/interface', icon: Palette, keywords: 'customize bot appearance theme' },
+    { name: 'Create New Bot', path: '/chatbot?create=true', icon: Plus, keywords: 'create new bot chatbot' },
+    { name: 'Customize Bot', path: '/chatbot?tab=appearance', icon: Palette, keywords: 'customize bot appearance theme colors branding' },
 ];
 
 export default function CommandPalette({ isOpen, onClose }) {

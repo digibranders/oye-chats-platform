@@ -102,7 +102,7 @@ const ColorPickerControl = ({ label, color, onChange }) => {
     );
 };
 
-export default function Interface() {
+export default function Interface({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const [logo, setLogo] = useState(null); // base64 data URL
     const [isSaving, setIsSaving] = useState(false);
@@ -278,10 +278,12 @@ export default function Interface() {
                 </div>
             )}
             {/* Page Header */}
-            <div>
-                <h1 className="text-2xl font-bold text-secondary-900 dark:text-white tracking-tight">Appearance</h1>
-                <p className="text-secondary-500 dark:text-secondary-400 mt-1 text-sm">Customize how your chatbot looks</p>
-            </div>
+            {!embedded && (
+                <div>
+                    <h1 className="text-2xl font-bold text-secondary-900 dark:text-white tracking-tight">Appearance</h1>
+                    <p className="text-secondary-500 dark:text-secondary-400 mt-1 text-sm">Customize how your chatbot looks</p>
+                </div>
+            )}
 
             {/* Tab Navigation Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-secondary-200 dark:border-secondary-800 w-full">

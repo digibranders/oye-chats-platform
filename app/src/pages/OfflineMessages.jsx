@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Inbox, Mail, Clock, CheckCircle2, Eye, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getOfflineMessages, updateOfflineMessage, deleteOfflineMessage } from '../services/api';
 
-export default function OfflineMessages() {
+export default function OfflineMessages({ embedded = false }) {
     const [messages, setMessages] = useState([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
@@ -67,10 +67,12 @@ export default function OfflineMessages() {
 
     return (
         <div className="space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold text-secondary-900 dark:text-white">Offline Messages</h1>
-                <p className="text-secondary-500 text-sm mt-1">Messages left by visitors when no agent was available.</p>
-            </div>
+            {!embedded && (
+                <div>
+                    <h1 className="text-2xl font-bold text-secondary-900 dark:text-white">Offline Messages</h1>
+                    <p className="text-secondary-500 text-sm mt-1">Messages left by visitors when no agent was available.</p>
+                </div>
+            )}
 
             {/* Filters */}
             <div className="flex gap-2">

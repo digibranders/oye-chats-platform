@@ -7,7 +7,7 @@ import { useBotContext } from '../context/BotContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-export default function LiveChat() {
+export default function LiveChat({ embedded = false }) {
     const { bots, loading: botsLoading } = useBotContext();
     const [isOnline, setIsOnline] = useState(false);
     const [agentName, setAgentName] = useState('');
@@ -301,9 +301,9 @@ export default function LiveChat() {
     }
 
     return (
-        <div className="space-y-4 animate-fade-in h-[calc(100vh-120px)]">
+        <div className={`space-y-4 ${embedded ? '' : 'animate-fade-in'} h-[calc(100vh-${embedded ? '180px' : '120px'})]`}>
             <div className="flex items-center justify-between">
-                <PageHeader title="Live Chat" subtitle="Chat with visitors in real-time" />
+                {!embedded && <PageHeader title="Live Chat" subtitle="Chat with visitors in real-time" />}
                 <div className="flex items-center gap-3">
                     {agentName && <span className="text-sm text-secondary-500 dark:text-secondary-400">{agentName}</span>}
                     <button

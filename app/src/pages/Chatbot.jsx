@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
     Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2,
-    X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff
+    X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, Palette
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
@@ -12,11 +12,19 @@ import PlatformSelector from '../components/PlatformSelector';
 import IntegrationGuide from '../components/IntegrationGuide';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
+import Tabs from '../components/ui/Tabs';
+import Interface from './Interface';
+
+const botPageTabs = [
+    { id: 'bots', label: 'Bots', icon: Bot },
+    { id: 'appearance', label: 'Appearance', icon: Palette },
+];
 
 export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading } = useBotContext();
     const { showToast } = useToast();
     const [searchParams, setSearchParams] = useSearchParams();
+    const [botTab, setBotTab] = useState(searchParams.get('tab') || 'bots');
     const [isCreateOpen, setIsCreateOpen] = useState(false);
     const [newBotName, setNewBotName] = useState('');
     const [newBotWebsite, setNewBotWebsite] = useState('');
@@ -75,9 +83,19 @@ export default function Chatbot() {
     const toggleKey = (botId) => setShowKeys(prev => ({ ...prev, [botId]: !prev[botId] }));
     const maskKey = (key) => key ? key.substring(0, 6) + '••••••••' + key.substring(key.length - 4) : '';
 
+    if (botTab === 'appearance') {
+        return (
+            <div className="space-y-4 animate-fade-in">
+                <PageHeader title="My Bots" subtitle="Manage your chatbot instances and customize appearance" />
+                <Tabs tabs={botPageTabs} activeTab={botTab} onChange={setBotTab} />
+                <Interface embedded />
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6 animate-fade-in">
-            <PageHeader title="My Bots" subtitle="Manage your chatbot instances and embed codes">
+            <PageHeader title="My Bots" subtitle="Manage your chatbot instances and customize appearance">
                 <button
                     onClick={() => setIsCreateOpen(true)}
                     className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-md"
@@ -85,6 +103,7 @@ export default function Chatbot() {
                     <Plus size={16} /> Add Chatbot
                 </button>
             </PageHeader>
+            <Tabs tabs={botPageTabs} activeTab={botTab} onChange={setBotTab} />
 
             {loading ? (
                 <div className="flex flex-col items-center py-16 text-secondary-400">
