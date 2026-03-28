@@ -20,6 +20,7 @@ import Leads from './pages/Leads';
 import LiveChat from './pages/LiveChat';
 import OfflineMessages from './pages/OfflineMessages';
 import TeamManagement from './pages/TeamManagement';
+import CannedResponses from './pages/CannedResponses';
 import Email from './pages/integrations/Email';
 
 // Superadmin
@@ -73,6 +74,7 @@ function App() {
                         <Route path="users" element={<Users />} />
                         <Route path="feedback" element={<Feedback />} />
                         <Route path="settings" element={<Settings />} />
+                        <Route path="canned-responses" element={<CannedResponses />} />
                         <Route path="integrations/email" element={<Email />} />
                     </Route>
 

@@ -87,7 +87,9 @@ class Bot(Base):
     email_on_handoff = Column(Boolean, default=True, server_default="true", nullable=False)
 
     # Live chat settings
+    live_chat_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
     agent_timeout_seconds = Column(Integer, default=120, server_default="120", nullable=False)
+    business_hours = Column(sqlalchemy.JSON, nullable=True)  # e.g. {"mon":{"start":"09:00","end":"17:00"}, ...}
 
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -18,6 +18,7 @@ import {
     Plug,
     Inbox,
     UsersRound,
+    MessageSquareText,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { createBot } from '../services/api';
@@ -77,11 +78,14 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         ];
 
     const configItems = isAgentRole
-        ? []
+        ? [
+            { path: '/canned-responses', name: 'Quick Replies', icon: MessageSquareText },
+        ]
         : [
             { path: '/chatbot', name: 'My Bots', icon: Bot },
             { path: '/interface', name: 'Appearance', icon: Palette },
             { path: '/team', name: 'Team', icon: UsersRound },
+            { path: '/canned-responses', name: 'Quick Replies', icon: MessageSquareText },
             { path: '/integrations/email', name: 'Integrations', icon: Plug },
         ];
 

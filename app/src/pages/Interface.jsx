@@ -126,6 +126,7 @@ export default function Interface() {
     const [notificationEmail, setNotificationEmail] = useState('');
     const [emailOnQualified, setEmailOnQualified] = useState(true);
     const [emailOnHandoff, setEmailOnHandoff] = useState(true);
+    const [liveChatEnabled, setLiveChatEnabled] = useState(true);
     const [activeTab, setActiveTab] = useState('General');
     const inputRef = useRef(null);
 
@@ -159,6 +160,7 @@ export default function Interface() {
                 setNotificationEmail(settings.notification_email || '');
                 setEmailOnQualified(settings.email_on_qualified ?? true);
                 setEmailOnHandoff(settings.email_on_handoff ?? true);
+                setLiveChatEnabled(settings.live_chat_enabled ?? true);
                 if (settings.bot_logo) {
                     setLogo(settings.bot_logo);
                 } else {
@@ -241,7 +243,8 @@ export default function Interface() {
                 lead_form_fields: leadFormFields,
                 notification_email: notificationEmail || null,
                 email_on_qualified: emailOnQualified,
-                email_on_handoff: emailOnHandoff
+                email_on_handoff: emailOnHandoff,
+                live_chat_enabled: liveChatEnabled
             };
             console.log('[Interface] Saving settings:', payload, 'botId:', selectedBot?.id);
             await updateClientSettings(payload, selectedBot?.id);
@@ -860,6 +863,13 @@ export default function Interface() {
                                     <span className="text-[13px] text-secondary-700 dark:text-secondary-300">Email on live chat request</span>
                                     <label className="relative inline-flex items-center cursor-pointer">
                                         <input type="checkbox" className="sr-only peer" checked={emailOnHandoff} onChange={(e) => setEmailOnHandoff(e.target.checked)} />
+                                        <div className="w-9 h-5 bg-secondary-200 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                                    </label>
+                                </div>
+                                <div className="flex items-center justify-between py-2">
+                                    <span className="text-[13px] text-secondary-700 dark:text-secondary-300">Enable live chat (show &quot;Talk to a human&quot; in widget)</span>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" className="sr-only peer" checked={liveChatEnabled} onChange={(e) => setLiveChatEnabled(e.target.checked)} />
                                         <div className="w-9 h-5 bg-secondary-200 rounded-full peer dark:bg-secondary-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
                                     </label>
                                 </div>

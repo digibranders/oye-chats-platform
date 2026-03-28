@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Plus } from 'lucide-react';
 import { sendMessage, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff } from '../services/api';
 import { themeConfigs } from './themeConfigs';
@@ -41,9 +41,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [agentName, setAgentName] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
+    const [showProminentHandoff, setShowProminentHandoff] = useState(false);
 
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
+    const recentMessageTimestamps = useRef([]);
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
 
@@ -154,6 +156,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         setIsTyping(true);
 
+        // Smart handoff: detect frustration or keywords in user message
+        if (detectFrustration() || checkHandoffKeywords(text)) {
+            setShowProminentHandoff(true);
+        }
+
         try {
             const data = await sendMessage(userMsg.text, sessionId);
 
@@ -174,6 +181,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setStreamingId(botMsgId);
             setMessages(prev => [...prev, botMsg]);
             setIsTyping(false);
+
+            // Smart handoff: detect fallback/low-confidence bot response
+            if (checkBotFallback(botMsg.text)) {
+                setShowProminentHandoff(true);
+            }
 
         } catch (error) {
             console.error("Failed to get response:", error);
@@ -241,6 +253,28 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setChatMode('handoff_form');
     };
 
+    // --- Smart handoff emphasis logic ---
+    const HANDOFF_KEYWORDS = /\b(human|agent|speak to someone|real person|support|talk to a person|representative|help me)\b/i;
+    const FALLBACK_PATTERNS = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+
+    // Detect frustration: 3+ user messages within 30 seconds
+    const detectFrustration = useCallback(() => {
+        const now = Date.now();
+        recentMessageTimestamps.current = recentMessageTimestamps.current.filter(t => now - t < 30000);
+        recentMessageTimestamps.current.push(now);
+        return recentMessageTimestamps.current.length >= 3;
+    }, []);
+
+    // Check if latest bot response is a fallback / low-confidence answer
+    const checkBotFallback = useCallback((botText) => {
+        return FALLBACK_PATTERNS.test(botText);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Check user input for handoff keywords
+    const checkHandoffKeywords = useCallback((text) => {
+        return HANDOFF_KEYWORDS.test(text);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Add message from live chat back to main messages (for transition messages)
     const handleLiveChatMessage = (msg) => {
         setMessages(prev => [...prev, msg]);
@@ -275,6 +309,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 setInputText={setInputText}
                 inputRef={inputRef}
                 isAnimating={isAnimating}
+                onTalkToHuman={settings.live_chat_enabled !== false ? triggerHandoff : undefined}
             />
         );
     }
@@ -408,13 +443,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                     {/* Input + Connect with support button */}
                     <div>
-                        {!isInitializing && messages.filter(m => m.sender === 'user').length >= 2 && chatMode === 'bot' && (
+                        {!isInitializing && chatMode === 'bot' && settings.live_chat_enabled !== false && (
                             <div className="px-3 pb-1">
                                 <button
                                     onClick={triggerHandoff}
-                                    className="w-full py-2 text-[12px] font-medium text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                                    className={`w-full py-2 text-[12px] font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                                        showProminentHandoff
+                                            ? 'text-white shadow-sm'
+                                            : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                    }`}
+                                    style={showProminentHandoff ? { backgroundColor: settings.primary_color || '#3A0CA3' } : undefined}
                                 >
-                                    💬 Connect with support team
+                                    {showProminentHandoff ? '🙋 Talk to a human' : '💬 Talk to a human'}
                                 </button>
                             </div>
                         )}
