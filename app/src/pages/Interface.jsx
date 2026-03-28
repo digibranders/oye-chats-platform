@@ -90,7 +90,7 @@ const ColorPickerControl = ({ label, color, onChange }) => {
                 </div>
 
                 {isOpen && (
-                    <div 
+                    <div
                         ref={popover}
                         className="absolute z-50 mt-2 p-3 bg-white dark:bg-secondary-800 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] dark:shadow-black/60 border border-secondary-200 dark:border-secondary-700 animate-in fade-in zoom-in duration-200 origin-top-left"
                     >
@@ -113,8 +113,7 @@ export default function Interface() {
     const [launcherName, setLauncherName] = useState('Have Questions?');
     const [launcherLogo, setLauncherLogo] = useState(null);
     const [primaryColor, setPrimaryColor] = useState('#ba68c8');
-    const [headerColor, setHeaderColor] = useState('#3A0CA3');
-    const [backgroundColor, setBackgroundColor] = useState('#ffffff');
+    const [userBubbleColor, setUserBubbleColor] = useState('#DBE9FF');
     const [recommendedColors, setRecommendedColors] = useState([]);
     const [bantEnabled, setBantEnabled] = useState(true);
     const [avatarType, setAvatarType] = useState('upload');
@@ -150,8 +149,7 @@ export default function Interface() {
                 setBotName(settings.bot_name || 'AI Assistant');
                 setLauncherName(settings.launcher_name || 'Have Questions?');
                 setPrimaryColor(settings.primary_color || '#ba68c8');
-                setHeaderColor(settings.header_color || '#3A0CA3');
-                setBackgroundColor(settings.background_color || '#ffffff');
+                setUserBubbleColor(settings.user_bubble_color || '#DBE9FF');
                 setRecommendedColors(settings.recommended_colors || []);
                 setBantEnabled(settings.bant_enabled ?? true);
                 setAvatarType(settings.avatar_type || 'upload');
@@ -182,7 +180,7 @@ export default function Interface() {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
-    const tabs = ['General', 'Avatar', 'Action Buttons', 'Messages', 'Human Form', 'Leads Form', 'Custom Brand'];
+    const tabs = ['General', 'Avatar', 'Leads Form', 'Custom Brand'];
 
     const handleFile = (file) => {
         if (!file) return;
@@ -234,8 +232,8 @@ export default function Interface() {
                 launcher_name: launcherName,
                 launcher_logo: launcherLogo,
                 primary_color: primaryColor,
-                header_color: headerColor,
-                background_color: backgroundColor,
+                user_bubble_color: userBubbleColor,
+                background_color: '#ffffff',
                 bant_enabled: bantEnabled,
                 avatar_type: avatarType,
                 orb_color: orbColor || null,
@@ -289,11 +287,10 @@ export default function Interface() {
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
-                            className={`flex-1 min-w-max px-3 py-2 text-[12px] rounded-lg transition-all ${
-                                activeTab === tab
+                            className={`flex-1 min-w-max px-3 py-2 text-[12px] rounded-lg transition-all ${activeTab === tab
                                     ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm font-semibold'
                                     : 'text-secondary-500 dark:text-secondary-400 font-medium hover:text-secondary-700 dark:hover:text-secondary-200'
-                            }`}
+                                }`}
                         >
                             {tab}
                         </button>
@@ -304,8 +301,8 @@ export default function Interface() {
                     onClick={handleSave}
                     disabled={isSaving || saved}
                     className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
-                            ? 'bg-success-500 hover:bg-success-600 text-white'
-                            : 'bg-primary-600 hover:bg-primary-700 text-white'
+                        ? 'bg-success-500 hover:bg-success-600 text-white'
+                        : 'bg-primary-600 hover:bg-primary-700 text-white'
                         }`}
                 >
                     <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
@@ -428,25 +425,26 @@ export default function Interface() {
                                         Customize your chatbot interface colors. Match them with your brand.
                                     </p>
                                 </div>
-                                
+
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-x gap-y-10 bg-secondary-50/50 dark:bg-secondary-800/20 p-8 rounded-2xl border border-secondary-200 dark:border-secondary-700/50 animate-fade-in" style={{ animationDelay: '0.1s' }}>
                                     {/* Left Column: Manual Controls */}
                                     <div className="space-y-8">
-                                        <ColorPickerControl 
-                                            label="Primary Color (User Highlights)" 
-                                            color={primaryColor} 
-                                            onChange={setPrimaryColor} 
-                                        />
-                                        <ColorPickerControl 
-                                            label="Header Background" 
-                                            color={headerColor} 
-                                            onChange={setHeaderColor} 
-                                        />
-                                        <ColorPickerControl 
-                                            label="Chat Background" 
-                                            color={backgroundColor} 
-                                            onChange={setBackgroundColor} 
-                                        />
+                                        <div>
+                                            <ColorPickerControl
+                                                label="Brand Color"
+                                                color={primaryColor}
+                                                onChange={setPrimaryColor}
+                                            />
+                                            <p className="text-[11px] text-secondary-400 mt-1.5">Launcher button, avatar, accents, links</p>
+                                        </div>
+                                        <div>
+                                            <ColorPickerControl
+                                                label="User Bubble Color"
+                                                color={userBubbleColor}
+                                                onChange={setUserBubbleColor}
+                                            />
+                                            <p className="text-[11px] text-secondary-400 mt-1.5">Message bubble background for visitor messages</p>
+                                        </div>
                                     </div>
 
                                     {/* Right Column: Recommended Colors Section */}
@@ -475,11 +473,11 @@ export default function Interface() {
                                                                 <button
                                                                     onClick={() => setPrimaryColor(color)}
                                                                     className="px-2 py-1 text-[8px] font-bold bg-secondary-100 dark:bg-secondary-700 text-secondary-500 dark:text-secondary-400 rounded hover:bg-primary-500 hover:text-white transition-all uppercase tracking-wider leading-none"
-                                                                >Primary</button>
+                                                                >Brand</button>
                                                                 <button
-                                                                    onClick={() => setHeaderColor(color)}
-                                                                    className="px-2 py-1 text-[8px] font-bold bg-secondary-100 dark:bg-secondary-700 text-secondary-500 dark:text-secondary-400 rounded hover:bg-purple-500 hover:text-white transition-all uppercase tracking-wider leading-none"
-                                                                >Header</button>
+                                                                    onClick={() => setUserBubbleColor(color)}
+                                                                    className="px-2 py-1 text-[8px] font-bold bg-secondary-100 dark:bg-secondary-700 text-secondary-500 dark:text-secondary-400 rounded hover:bg-blue-500 hover:text-white transition-all uppercase tracking-wider leading-none"
+                                                                >Bubble</button>
                                                             </div>
                                                         </div>
                                                     ))}
@@ -509,52 +507,51 @@ export default function Interface() {
                             <div className="grid grid-cols-3 gap-3">
                                 {[
                                     { key: 'upload', label: 'Upload Photo', icon: <Upload className="w-5 h-5" />, desc: 'Custom image' },
-                                    { key: 'orb', label: 'Orb', icon: (
-                                        <div className="w-5 h-5 rounded-full" style={{ background: `radial-gradient(circle at 35% 35%, ${(orbColor || primaryColor)}88, ${orbColor || primaryColor})` }} />
-                                    ), desc: 'Animated gradient' },
+                                    {
+                                        key: 'orb', label: 'Orb', icon: (
+                                            <div className="w-5 h-5 rounded-full" style={{ background: `radial-gradient(circle at 35% 35%, ${(orbColor || primaryColor)}88, ${orbColor || primaryColor})` }} />
+                                        ), desc: 'Animated gradient'
+                                    },
                                     { key: 'mascot', label: 'Mascot', icon: <Bot className="w-5 h-5" />, desc: 'Robot character' },
                                 ].map((opt) => {
                                     const isSelected = avatarType === opt.key;
                                     const hasUpload = opt.key === 'upload' && logo;
                                     return (
-                                    <button
-                                        key={opt.key}
-                                        onClick={() => setAvatarType(opt.key)}
-                                        className={`relative flex flex-col items-center gap-2 p-5 rounded-xl border-2 transition-all duration-200 ${
-                                            isSelected
-                                                ? 'border-green-500 bg-green-50/50 dark:bg-green-900/20 shadow-sm ring-1 ring-green-500/20'
-                                                : 'border-secondary-200 dark:border-secondary-700 hover:border-secondary-300 dark:hover:border-secondary-600 bg-white dark:bg-secondary-800/50'
-                                        }`}
-                                    >
-                                        {isSelected && (
-                                            <div className="absolute top-2 right-2">
-                                                <Check className="w-4 h-4 text-green-500" />
+                                        <button
+                                            key={opt.key}
+                                            onClick={() => setAvatarType(opt.key)}
+                                            className={`relative flex flex-col items-center gap-2 p-5 rounded-xl border-2 transition-all duration-200 ${isSelected
+                                                    ? 'border-green-500 bg-green-50/50 dark:bg-green-900/20 shadow-sm ring-1 ring-green-500/20'
+                                                    : 'border-secondary-200 dark:border-secondary-700 hover:border-secondary-300 dark:hover:border-secondary-600 bg-white dark:bg-secondary-800/50'
+                                                }`}
+                                        >
+                                            {isSelected && (
+                                                <div className="absolute top-2 right-2">
+                                                    <Check className="w-4 h-4 text-green-500" />
+                                                </div>
+                                            )}
+                                            {/* Show uploaded badge on Upload Photo card even when not selected */}
+                                            {!isSelected && hasUpload && (
+                                                <div className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 rounded-full">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                                    <span className="text-[8px] font-bold text-green-600 dark:text-green-400 uppercase">Uploaded</span>
+                                                </div>
+                                            )}
+                                            <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors overflow-hidden ${isSelected
+                                                    ? 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400'
+                                                    : 'bg-secondary-100 dark:bg-secondary-700/50 text-secondary-500 dark:text-secondary-400'
+                                                }`}>
+                                                {/* Show thumbnail on Upload card if image exists */}
+                                                {opt.key === 'upload' && logo ? (
+                                                    <img src={logo} alt="avatar" className="w-full h-full object-cover" />
+                                                ) : opt.icon}
                                             </div>
-                                        )}
-                                        {/* Show uploaded badge on Upload Photo card even when not selected */}
-                                        {!isSelected && hasUpload && (
-                                            <div className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-green-100 dark:bg-green-900/30 rounded-full">
-                                                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                                                <span className="text-[8px] font-bold text-green-600 dark:text-green-400 uppercase">Uploaded</span>
-                                            </div>
-                                        )}
-                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors overflow-hidden ${
-                                            isSelected
-                                                ? 'bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400'
-                                                : 'bg-secondary-100 dark:bg-secondary-700/50 text-secondary-500 dark:text-secondary-400'
-                                        }`}>
-                                            {/* Show thumbnail on Upload card if image exists */}
-                                            {opt.key === 'upload' && logo ? (
-                                                <img src={logo} alt="avatar" className="w-full h-full object-cover" />
-                                            ) : opt.icon}
-                                        </div>
-                                        <span className={`text-[13px] font-bold ${
-                                            isSelected
-                                                ? 'text-green-700 dark:text-green-300'
-                                                : 'text-secondary-700 dark:text-secondary-300'
-                                        }`}>{opt.label}</span>
-                                        <span className="text-[11px] text-secondary-400">{opt.desc}</span>
-                                    </button>
+                                            <span className={`text-[13px] font-bold ${isSelected
+                                                    ? 'text-green-700 dark:text-green-300'
+                                                    : 'text-secondary-700 dark:text-secondary-300'
+                                                }`}>{opt.label}</span>
+                                            <span className="text-[11px] text-secondary-400">{opt.desc}</span>
+                                        </button>
                                     );
                                 })}
                             </div>
@@ -644,76 +641,75 @@ export default function Interface() {
                             {avatarType === 'orb' && (() => {
                                 const activeOrbColor = orbColor || primaryColor;
                                 return (
-                                <div className="space-y-5 animate-fade-in">
-                                    {/* Orb Preview */}
-                                    <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Orb Preview</label>
-                                    <div className="flex items-center gap-6 p-6 bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl">
-                                        <div
-                                            className="w-20 h-20 rounded-full flex-shrink-0"
-                                            style={{
-                                                background: `radial-gradient(circle at 35% 35%, ${activeOrbColor}44, ${activeOrbColor}bb, ${activeOrbColor})`,
-                                                boxShadow: `0 0 20px ${activeOrbColor}55, 0 0 40px ${activeOrbColor}22`,
-                                                animation: 'pulse 2.5s ease-in-out infinite'
-                                            }}
-                                        />
-                                        <div>
-                                            <p className="text-[13px] font-semibold text-secondary-900 dark:text-white">Animated Orb</p>
-                                            <p className="text-[11px] text-secondary-400 mt-1">A pulsing gradient orb. Pick a color below or use your primary color.</p>
-                                        </div>
-                                    </div>
-
-                                    {/* Orb Color Picker */}
-                                    <div>
-                                        <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Orb Color</label>
-                                        <p className="text-[11px] text-secondary-400 mt-0.5 mb-3">Pick any color for the orb using the picker, or use your primary color.</p>
-
-                                        {/* Use Primary toggle */}
-                                        <button
-                                            type="button"
-                                            onClick={() => setOrbColor(orbColor ? '' : primaryColor)}
-                                            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-[12px] font-semibold transition-all mb-4 ${
-                                                !orbColor
-                                                    ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300 ring-1 ring-green-500/20'
-                                                    : 'border-secondary-200 dark:border-secondary-700 text-secondary-600 dark:text-secondary-400 hover:border-secondary-300'
-                                            }`}
-                                        >
-                                            <div className="w-5 h-5 rounded-full border-2 border-white dark:border-secondary-600 shadow-sm" style={{ backgroundColor: primaryColor }} />
-                                            {!orbColor ? <><Check className="w-3.5 h-3.5" /> Using Primary Color</> : 'Use Primary Color'}
-                                        </button>
-
-                                        {/* HexColorPicker - full saturation/brightness square + hue slider */}
-                                        <div className="p-6 bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl">
-                                            <div className="orb-color-picker">
-                                                <HexColorPicker
-                                                    color={activeOrbColor}
-                                                    onChange={(color) => setOrbColor(color)}
-                                                />
+                                    <div className="space-y-5 animate-fade-in">
+                                        {/* Orb Preview */}
+                                        <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Orb Preview</label>
+                                        <div className="flex items-center gap-6 p-6 bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl">
+                                            <div
+                                                className="w-20 h-20 rounded-full flex-shrink-0"
+                                                style={{
+                                                    background: `radial-gradient(circle at 35% 35%, ${activeOrbColor}44, ${activeOrbColor}bb, ${activeOrbColor})`,
+                                                    boxShadow: `0 0 20px ${activeOrbColor}55, 0 0 40px ${activeOrbColor}22`,
+                                                    animation: 'pulse 2.5s ease-in-out infinite'
+                                                }}
+                                            />
+                                            <div>
+                                                <p className="text-[13px] font-semibold text-secondary-900 dark:text-white">Animated Orb</p>
+                                                <p className="text-[11px] text-secondary-400 mt-1">A pulsing gradient orb. Pick a color below or use your primary color.</p>
                                             </div>
+                                        </div>
 
-                                            {/* Hex input row */}
-                                            <div className="flex items-center gap-3 mt-4">
-                                                <div
-                                                    className="w-10 h-10 rounded-lg shadow-sm border border-secondary-200 dark:border-secondary-700 flex-shrink-0"
-                                                    style={{ backgroundColor: activeOrbColor }}
-                                                />
-                                                <div className="relative flex-grow max-w-[140px]">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400 font-mono text-xs">#</span>
-                                                    <input
-                                                        type="text"
-                                                        value={activeOrbColor.replace('#', '').toUpperCase()}
-                                                        onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            if (val.length <= 6 && /^[0-9A-Fa-f]*$/.test(val)) {
-                                                                setOrbColor('#' + val);
-                                                            }
-                                                        }}
-                                                        className="w-full h-9 pl-6 pr-3 text-sm font-mono text-secondary-600 dark:text-secondary-300 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                                        {/* Orb Color Picker */}
+                                        <div>
+                                            <label className="text-[13px] font-bold text-secondary-700 dark:text-secondary-300">Orb Color</label>
+                                            <p className="text-[11px] text-secondary-400 mt-0.5 mb-3">Pick any color for the orb using the picker, or use your primary color.</p>
+
+                                            {/* Use Primary toggle */}
+                                            <button
+                                                type="button"
+                                                onClick={() => setOrbColor(orbColor ? '' : primaryColor)}
+                                                className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-[12px] font-semibold transition-all mb-4 ${!orbColor
+                                                        ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300 ring-1 ring-green-500/20'
+                                                        : 'border-secondary-200 dark:border-secondary-700 text-secondary-600 dark:text-secondary-400 hover:border-secondary-300'
+                                                    }`}
+                                            >
+                                                <div className="w-5 h-5 rounded-full border-2 border-white dark:border-secondary-600 shadow-sm" style={{ backgroundColor: primaryColor }} />
+                                                {!orbColor ? <><Check className="w-3.5 h-3.5" /> Using Primary Color</> : 'Use Primary Color'}
+                                            </button>
+
+                                            {/* HexColorPicker - full saturation/brightness square + hue slider */}
+                                            <div className="p-6 bg-secondary-50/50 dark:bg-secondary-800/30 border border-secondary-200 dark:border-secondary-700/50 rounded-xl">
+                                                <div className="orb-color-picker">
+                                                    <HexColorPicker
+                                                        color={activeOrbColor}
+                                                        onChange={(color) => setOrbColor(color)}
                                                     />
+                                                </div>
+
+                                                {/* Hex input row */}
+                                                <div className="flex items-center gap-3 mt-4">
+                                                    <div
+                                                        className="w-10 h-10 rounded-lg shadow-sm border border-secondary-200 dark:border-secondary-700 flex-shrink-0"
+                                                        style={{ backgroundColor: activeOrbColor }}
+                                                    />
+                                                    <div className="relative flex-grow max-w-[140px]">
+                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400 font-mono text-xs">#</span>
+                                                        <input
+                                                            type="text"
+                                                            value={activeOrbColor.replace('#', '').toUpperCase()}
+                                                            onChange={(e) => {
+                                                                const val = e.target.value;
+                                                                if (val.length <= 6 && /^[0-9A-Fa-f]*$/.test(val)) {
+                                                                    setOrbColor('#' + val);
+                                                                }
+                                                            }}
+                                                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-secondary-600 dark:text-secondary-300 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                                                        />
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
                                 );
                             })()}
 
@@ -885,11 +881,11 @@ export default function Interface() {
                                         </p>
                                         <div className="bg-white dark:bg-secondary-800 px-5 py-4 rounded-xl border border-secondary-200 dark:border-secondary-700 inline-flex items-center gap-3">
                                             <span className="text-[13px] text-secondary-500 dark:text-secondary-400">Email us at:</span>
-                                            <a 
-                                                href="mailto:developer@oyechat.com" 
+                                            <a
+                                                href="mailto:developer@oyechats.com"
                                                 className="text-[14px] font-bold text-primary-600 dark:text-primary-400 hover:underline"
                                             >
-                                                developer@oyechat.com
+                                                developer@oyechats.com
                                             </a>
                                         </div>
                                     </div>
@@ -959,7 +955,7 @@ export default function Interface() {
                         </div>
 
                         {/* 2. Messages Area — white bg, gap-5 (matches widget) */}
-                        <div className="flex-grow px-5 py-4 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px]" style={{ backgroundColor: backgroundColor }}>
+                        <div className="flex-grow px-5 py-4 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px] bg-white">
 
                             {/* Timestamp pill (matches widget) */}
                             <div className="text-center">
@@ -973,16 +969,16 @@ export default function Interface() {
                                 <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C] dark:text-secondary-200">
                                     How can we help you today?
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-1.5 opacity-40">
-                                    <Copy className="w-3 h-3 text-gray-300" />
-                                    <ThumbsUp className="w-3 h-3 text-gray-300" />
-                                    <ThumbsDown className="w-3 h-3 text-gray-300" />
+                                <div className="flex items-center gap-1.5 mt-2">
+                                    <Copy className="w-3.5 h-3.5 text-gray-400" />
+                                    <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
+                                    <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
                                 </div>
                             </div>
 
-                            {/* User Message 1 — light blue bubble, dark text */}
+                            {/* User Message 1 — dynamic bubble color, dark text */}
                             <div className="flex flex-col items-end">
-                                <div className="max-w-[85%] bg-[#DBE9FF] text-[#16202C] rounded-2xl px-4 py-3 text-[14px] leading-relaxed">
+                                <div className="max-w-[85%] text-[#16202C] rounded-2xl px-4 py-3 text-[14px] leading-relaxed" style={{ backgroundColor: userBubbleColor }}>
                                     Tell me about your services.
                                 </div>
                             </div>
@@ -992,16 +988,16 @@ export default function Interface() {
                                 <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C] dark:text-secondary-200">
                                     I&apos;m exploring the new customization options!
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-1.5 opacity-40">
-                                    <Copy className="w-3 h-3 text-gray-300" />
-                                    <ThumbsUp className="w-3 h-3 text-gray-300" />
-                                    <ThumbsDown className="w-3 h-3 text-gray-300" />
+                                <div className="flex items-center gap-1.5 mt-2">
+                                    <Copy className="w-3.5 h-3.5 text-gray-400" />
+                                    <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
+                                    <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
                                 </div>
                             </div>
                         </div>
 
                         {/* 3. Input Area — rounded box with paperclip + send icon */}
-                        <div className="px-4 pb-4 pt-2 shrink-0 transition-colors duration-200" style={{ backgroundColor: backgroundColor }}>
+                        <div className="px-4 pb-4 pt-2 shrink-0 bg-white">
                             <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white dark:bg-secondary-800 px-4 pt-3 pb-2 shadow-sm">
                                 <div className="text-[14px] text-gray-400">Ask anything?</div>
                                 <div className="flex items-center justify-between mt-2">

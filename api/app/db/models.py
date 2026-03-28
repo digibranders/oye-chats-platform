@@ -71,6 +71,7 @@ class Bot(Base):
     background_color = Column(String, default="#ffffff", server_default="#ffffff")
     header_color = Column(String, default="#3A0CA3", server_default="#3A0CA3")
     recommended_colors = Column(JSONB, nullable=True)
+    user_bubble_color = Column(String, default="#DBE9FF", server_default="#DBE9FF")
 
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     avatar_type = Column(String, default="upload", server_default="upload", nullable=False)
@@ -161,6 +162,8 @@ class ChatSession(Base):
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed
     assigned_agent_id = Column(Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
     handoff_reason = Column(Text, nullable=True)
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
+    visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_active_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -170,6 +173,21 @@ class ChatSession(Base):
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     lead_info = relationship("LeadInfo", back_populates="session", uselist=False, cascade="all, delete-orphan")
     assigned_agent = relationship("Agent", back_populates="active_sessions")
+
+
+class Department(Base):
+    """Department grouping for agents (e.g. Sales, Support, Billing)."""
+
+    __tablename__ = "departments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    client = relationship("Client")
+    agents = relationship("Agent", back_populates="department")
 
 
 class Agent(Base):
@@ -185,7 +203,21 @@ class Agent(Base):
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Auth credentials (for separate agent login)
+    hashed_password = Column(String, nullable=True)
+    agent_api_key = Column(String, unique=True, index=True, nullable=True)
+
+    # Role & department
+    role = Column(String, default="agent", server_default="agent", nullable=False)  # owner|admin|agent
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
+
+    # Profile & settings
+    avatar_url = Column(String, nullable=True)
+    max_concurrent_chats = Column(Integer, default=5, server_default="5", nullable=False)
+    notification_preferences = Column(JSONB, nullable=True)
+
     client = relationship("Client")
+    department = relationship("Department", back_populates="agents")
     active_sessions = relationship("ChatSession", back_populates="assigned_agent")
 
 
@@ -200,3 +232,42 @@ class ChatMessage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
+
+
+class OfflineMessage(Base):
+    """Message left by a visitor when no agent is available."""
+
+    __tablename__ = "offline_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True)
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
+    visitor_name = Column(String, nullable=False)
+    visitor_email = Column(String, nullable=False)
+    visitor_phone = Column(String, nullable=True)
+    message_body = Column(Text, nullable=False)
+    status = Column(String, default="new", server_default="new", nullable=False)  # new|read|replied
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    replied_at = Column(DateTime(timezone=True), nullable=True)
+
+    bot = relationship("Bot")
+
+
+class CannedResponse(Base):
+    """Pre-saved quick replies for agents."""
+
+    __tablename__ = "canned_responses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    shortcut = Column(String, nullable=True)  # e.g. "/hello"
+    category = Column(String, nullable=True)
+    created_by_agent_id = Column(Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    client = relationship("Client")

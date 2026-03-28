@@ -18,9 +18,9 @@ def create_test_data():
         print("Inserting test clients with admin credentials...")
         client_a = Client(
             name="OyeChat",
-            email="admin@oyechat.com",
+            email="admin@oyechats.com",
             hashed_password=get_password_hash("password123"),  # In a real app never default weak passwords
-            api_key="oyechat-secret-key",
+            api_key="oyechats-secret-key",
             system_prompt="You are 'Oye', an advanced AI consultant for OyeChat. Be highly professional.",
         )
 

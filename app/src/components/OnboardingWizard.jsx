@@ -32,7 +32,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
     };
 
     const handleCopy = () => {
-        const script = `<script src="https://cdn.oyechats.com/oyechat-widget.js" data-bot-key="${createdBot?.bot_key}"></script>`;
+        const script = `<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="${createdBot?.bot_key}"></script>`;
         navigator.clipboard.writeText(script);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -131,7 +131,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
 
                             <div className="relative">
                                 <pre className="bg-secondary-900 dark:bg-secondary-950 text-green-400 p-4 rounded-xl text-[11px] leading-relaxed overflow-x-auto border border-secondary-800 font-mono">
-{`<script src="https://cdn.oyechats.com/oyechat-widget.js" data-bot-key="${createdBot?.bot_key || 'bot-xxx'}"></script>`}
+                                    {`<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="${createdBot?.bot_key || 'bot-xxx'}"></script>`}
                                 </pre>
                                 <button onClick={handleCopy} className="absolute top-2 right-2 flex items-center gap-1 px-2.5 py-1 bg-secondary-800 hover:bg-secondary-700 text-secondary-300 rounded-lg text-[10px] font-bold transition-colors">
                                     {copied ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy</>}

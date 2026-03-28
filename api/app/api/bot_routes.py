@@ -34,6 +34,7 @@ class UpdateBotRequest(BaseModel):
     primary_color: str | None = None
     background_color: str | None = None
     header_color: str | None = None
+    user_bubble_color: str | None = None
     bant_enabled: bool | None = None
     avatar_type: str | None = None
     orb_color: str | None = None
@@ -61,6 +62,7 @@ class BotResponse(BaseModel):
     background_color: str
     header_color: str
     recommended_colors: list | None
+    user_bubble_color: str = "#DBE9FF"
     bant_enabled: bool
     avatar_type: str
     orb_color: str | None
@@ -107,6 +109,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "background_color": bot.background_color or "#ffffff",
         "header_color": bot.header_color or "#3A0CA3",
         "recommended_colors": bot.recommended_colors or [],
+        "user_bubble_color": bot.user_bubble_color or "#DBE9FF",
         "bant_enabled": bot.bant_enabled,
         "avatar_type": bot.avatar_type or "upload",
         "orb_color": bot.orb_color,
@@ -144,6 +147,7 @@ def list_bots(request: Request, client: Client = Depends(get_current_client)):
                     background_color=b.background_color or "#ffffff",
                     header_color=b.header_color or "#3A0CA3",
                     recommended_colors=b.recommended_colors or [],
+                    user_bubble_color=b.user_bubble_color or "#DBE9FF",
                     bant_enabled=b.bant_enabled,
                     avatar_type=b.avatar_type or "upload",
                     orb_color=b.orb_color,
@@ -214,6 +218,7 @@ def get_bot(bot_id: int, request: Request, client: Client = Depends(get_current_
             background_color=bot.background_color or "#ffffff",
             header_color=bot.header_color or "#3A0CA3",
             recommended_colors=bot.recommended_colors or [],
+            user_bubble_color=bot.user_bubble_color or "#DBE9FF",
             bant_enabled=bot.bant_enabled,
             avatar_type=bot.avatar_type or "upload",
             orb_color=bot.orb_color,

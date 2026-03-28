@@ -10,12 +10,17 @@ const api = axios.create({
     timeout: 30000,
 });
 
-// Request interceptor: inject API key
+// Request interceptor: inject API key (supports both Client and Agent auth)
 api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('admin_token');
+        const authType = localStorage.getItem('auth_type'); // 'client' or 'agent'
         if (token) {
-            config.headers['X-API-Key'] = token;
+            if (authType === 'agent') {
+                config.headers['X-Agent-Key'] = token;
+            } else {
+                config.headers['X-API-Key'] = token;
+            }
         }
         return config;
     },
@@ -30,6 +35,9 @@ api.interceptors.response.use(
             localStorage.removeItem('admin_token');
             localStorage.removeItem('admin_name');
             localStorage.removeItem('client_id');
+            localStorage.removeItem('auth_type');
+            localStorage.removeItem('agent_role');
+            localStorage.removeItem('agent_id');
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
             }
@@ -573,7 +581,7 @@ export const exportLeadsCsv = async (botId) => {
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', 'oyechat-leads.csv');
+        link.setAttribute('download', 'oyechats-leads.csv');
         document.body.appendChild(link);
         link.click();
         link.remove();
@@ -622,6 +630,187 @@ export const toggleAgentStatus = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error toggling status:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const getSessionDetails = async (sessionId) => {
+    try {
+        const response = await api.get(`/agents/session/${sessionId}/details`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching session details:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+// ── Agent Login ──
+
+export const loginAgent = async (email, password) => {
+    try {
+        const response = await api.post('/auth/agent-login', { email, password });
+        return response.data;
+    } catch (error) {
+        console.error('API Error agent login:', error);
+        throw error.response?.data?.detail || error.message;
+    }
+};
+
+// ── Agent Management ──
+
+export const getAgents = async () => {
+    try {
+        const response = await api.get('/agents');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching agents:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const createAgent = async (data) => {
+    try {
+        const response = await api.post('/agents/create', data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error creating agent:', error);
+        throw error.response?.data?.detail || error.message;
+    }
+};
+
+export const updateAgent = async (agentId, data) => {
+    try {
+        const response = await api.patch(`/agents/${agentId}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error updating agent:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const deleteAgent = async (agentId) => {
+    try {
+        const response = await api.delete(`/agents/${agentId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error deleting agent:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+// ── Department Management ──
+
+export const getDepartments = async () => {
+    try {
+        const response = await api.get('/agents/departments');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching departments:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const createDepartment = async (data) => {
+    try {
+        const response = await api.post('/agents/departments', data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error creating department:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const updateDepartment = async (departmentId, data) => {
+    try {
+        const response = await api.patch(`/agents/departments/${departmentId}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error updating department:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const deleteDepartment = async (departmentId) => {
+    try {
+        const response = await api.delete(`/agents/departments/${departmentId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error deleting department:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+// ── Offline Messages ──
+
+export const getOfflineMessages = async (params = {}) => {
+    try {
+        const response = await api.get('/offline-messages', { params });
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching offline messages:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const updateOfflineMessage = async (messageId, data) => {
+    try {
+        const response = await api.patch(`/offline-messages/${messageId}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error updating offline message:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const deleteOfflineMessage = async (messageId) => {
+    try {
+        const response = await api.delete(`/offline-messages/${messageId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error deleting offline message:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+// ── Canned Responses ──
+
+export const getCannedResponses = async (category = null) => {
+    try {
+        const params = category ? { category } : {};
+        const response = await api.get('/canned-responses', { params });
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching canned responses:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const createCannedResponse = async (data) => {
+    try {
+        const response = await api.post('/canned-responses', data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error creating canned response:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const updateCannedResponse = async (responseId, data) => {
+    try {
+        const response = await api.patch(`/canned-responses/${responseId}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error updating canned response:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
+export const deleteCannedResponse = async (responseId) => {
+    try {
+        const response = await api.delete(`/canned-responses/${responseId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error deleting canned response:', error);
         throw error.response?.data || error.message;
     }
 };

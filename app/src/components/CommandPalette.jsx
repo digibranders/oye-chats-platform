@@ -14,7 +14,9 @@ const pages = [
     { name: 'My Bots', path: '/chatbot', icon: Bot, keywords: 'chatbot bots embed code create' },
     { name: 'Appearance', path: '/interface', icon: Palette, keywords: 'interface customize theme colors branding' },
     { name: 'Settings', path: '/settings', icon: Settings, keywords: 'settings preferences account theme' },
-    { name: 'Integrations', path: '/integrations/whatsapp', icon: Plug, keywords: 'integrations whatsapp email channels' },
+    { name: 'Integrations', path: '/integrations/email', icon: Plug, keywords: 'integrations email channels' },
+    { name: 'Team', path: '/team', icon: Settings, keywords: 'team agents departments members' },
+    { name: 'Messages', path: '/messages', icon: MessageCircle, keywords: 'offline messages inbox' },
 ];
 
 const actions = [

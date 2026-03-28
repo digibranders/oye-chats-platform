@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 packages = ["app"]
 
 [project]
-name = "oyechat-api"
+name = "oyechats-api"
 version = "0.1.0"
 description = "OyeChat RAG chatbot platform API"
 requires-python = ">=3.11,<3.12"

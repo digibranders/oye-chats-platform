@@ -42,11 +42,11 @@ cdn.oyechats.com      CNAME   <r2-public-domain>
 ssh root@<droplet-ip>
 
 # Create deploy user
-adduser oyechat
-usermod -aG sudo oyechat
+adduser oyechats
+usermod -aG sudo oyechats
 
 # Switch to deploy user
-su - oyechat
+su - oyechats
 
 # Install system dependencies
 sudo apt update && sudo apt install -y \
@@ -62,16 +62,16 @@ source ~/.bashrc
 
 ### 1.3 Setup PostgreSQL
 ```bash
-sudo -u postgres createuser oyechat
-sudo -u postgres createdb oyechat -O oyechat
-sudo -u postgres psql -c "ALTER USER oyechat PASSWORD '<STRONG_PASSWORD>';"
-sudo -u postgres psql -d oyechat -c "CREATE EXTENSION IF NOT EXISTS vector;"
+sudo -u postgres createuser oyechats
+sudo -u postgres createdb oyechats -O oyechats
+sudo -u postgres psql -c "ALTER USER oyechats PASSWORD '<STRONG_PASSWORD>';"
+sudo -u postgres psql -d oyechats -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
 ### 1.4 Deploy Backend
 ```bash
-sudo mkdir -p /opt/oyechat && sudo chown oyechat:oyechat /opt/oyechat
-cd /opt/oyechat
+sudo mkdir -p /opt/oyechats && sudo chown oyechats:oyechats /opt/oyechats
+cd /opt/oyechats
 git clone https://github.com/oyechats/platform.git
 cd platform/backend
 
@@ -82,7 +82,7 @@ nano .env
 
 **Required .env values:**
 ```
-DB_URL=postgresql://oyechat:<STRONG_PASSWORD>@localhost:5432/oyechat
+DB_URL=postgresql://oyechats:<STRONG_PASSWORD>@localhost:5432/oyechats
 GOOGLE_API_KEY=<your-gemini-key>
 APP_ENV=production
 CORS_ORIGINS=https://oyechats.com,https://admin.oyechats.com
@@ -99,7 +99,7 @@ uv run playwright install chromium --with-deps
 
 ### 1.5 Create Systemd Service
 ```bash
-sudo nano /etc/systemd/system/oyechat-api.service
+sudo nano /etc/systemd/system/oyechats-api.service
 ```
 
 ```ini
@@ -108,10 +108,10 @@ Description=OyeChat API
 After=network.target postgresql.service
 
 [Service]
-User=oyechat
-WorkingDirectory=/opt/oyechat/platform/backend
-Environment=PATH=/home/oyechat/.local/bin:/usr/bin
-ExecStart=/home/oyechat/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+User=oyechats
+WorkingDirectory=/opt/oyechats/platform/backend
+Environment=PATH=/home/oyechats/.local/bin:/usr/bin
+ExecStart=/home/oyechats/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=always
 RestartSec=5
 
@@ -121,17 +121,17 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable oyechat-api
-sudo systemctl start oyechat-api
+sudo systemctl enable oyechats-api
+sudo systemctl start oyechats-api
 
 # Verify it's running
-sudo systemctl status oyechat-api
+sudo systemctl status oyechats-api
 curl http://localhost:8000/docs  # Should return Swagger HTML
 ```
 
 ### 1.6 Nginx Reverse Proxy
 ```bash
-sudo nano /etc/nginx/sites-available/oyechat-api
+sudo nano /etc/nginx/sites-available/oyechats-api
 ```
 
 ```nginx
@@ -153,7 +153,7 @@ server {
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/oyechat-api /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/oyechats-api /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 
 # SSL (after DNS is pointed)
@@ -162,20 +162,20 @@ sudo certbot --nginx -d api.oyechats.com
 
 ### 1.7 Database Backups
 ```bash
-mkdir -p /opt/oyechat/backups
-nano /opt/oyechat/backup.sh
+mkdir -p /opt/oyechats/backups
+nano /opt/oyechats/backup.sh
 ```
 
 ```bash
 #!/bin/bash
-pg_dump -U oyechat oyechat | gzip > /opt/oyechat/backups/oyechat-$(date +%Y%m%d).sql.gz
-find /opt/oyechat/backups -mtime +7 -delete
+pg_dump -U oyechats oyechats | gzip > /opt/oyechats/backups/oyechats-$(date +%Y%m%d).sql.gz
+find /opt/oyechats/backups -mtime +7 -delete
 ```
 
 ```bash
-chmod +x /opt/oyechat/backup.sh
+chmod +x /opt/oyechats/backup.sh
 crontab -e
-# Add: 0 3 * * * /opt/oyechat/backup.sh
+# Add: 0 3 * * * /opt/oyechats/backup.sh
 ```
 
 ---
@@ -195,10 +195,10 @@ crontab -e
 ```bash
 cd widget
 VITE_API_URL=https://api.oyechats.com npm run build
-# Upload dist/oyechat-widget.js and dist/oyechat-widget.css via Cloudflare dashboard
+# Upload dist/oyechats-widget.js and dist/oyechats-widget.css via Cloudflare dashboard
 # Or use wrangler CLI:
-npx wrangler r2 object put oyechats-cdn/oyechat-widget.js --file dist/oyechat-widget.js
-npx wrangler r2 object put oyechats-cdn/oyechat-widget.css --file dist/oyechat-widget.css
+npx wrangler r2 object put oyechats-cdn/oyechats-widget.js --file dist/oyechats-widget.js
+npx wrangler r2 object put oyechats-cdn/oyechats-widget.css --file dist/oyechats-widget.css
 ```
 
 After this, GitHub Actions handles subsequent deploys automatically.
@@ -234,7 +234,7 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 | Secret | Value |
 |--------|-------|
 | `DO_HOST` | Droplet IP address |
-| `DO_USER` | `oyechat` |
+| `DO_USER` | `oyechats` |
 | `DO_SSH_KEY` | Private SSH key (for droplet access) |
 | `CF_API_TOKEN` | Cloudflare API token (R2 write access) |
 | `CF_ACCOUNT_ID` | Cloudflare account ID |
@@ -257,19 +257,19 @@ Push to main
 ### On the Droplet
 ```bash
 # View API logs
-sudo journalctl -u oyechat-api -f
+sudo journalctl -u oyechats-api -f
 
 # Restart API
-sudo systemctl restart oyechat-api
+sudo systemctl restart oyechats-api
 
 # Manual deploy
-cd /opt/oyechat/platform && git pull && cd backend && uv sync && uv run alembic upgrade head && sudo systemctl restart oyechat-api
+cd /opt/oyechats/platform && git pull && cd backend && uv sync && uv run alembic upgrade head && sudo systemctl restart oyechats-api
 
 # Check Postgres
-sudo -u postgres psql -d oyechat -c "SELECT count(*) FROM bots;"
+sudo -u postgres psql -d oyechats -c "SELECT count(*) FROM bots;"
 
 # Restore backup
-gunzip -c /opt/oyechat/backups/oyechat-YYYYMMDD.sql.gz | psql -U oyechat oyechat
+gunzip -c /opt/oyechats/backups/oyechats-YYYYMMDD.sql.gz | psql -U oyechats oyechats
 ```
 
 ### Local Development

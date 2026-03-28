@@ -2,15 +2,15 @@ services:
   db:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: oyechat
-      POSTGRES_PASSWORD: oyechat
-      POSTGRES_DB: oyechat
+      POSTGRES_USER: oyechats
+      POSTGRES_PASSWORD: oyechats
+      POSTGRES_DB: oyechats
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U oyechat"]
+      test: ["CMD-SHELL", "pg_isready -U oyechats"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -22,7 +22,7 @@ services:
     env_file:
       - ./api/.env
     environment:
-      DB_URL: postgresql://oyechat:oyechat@db:5432/oyechat
+      DB_URL: postgresql://oyechats:oyechats@db:5432/oyechats
       APP_ENV: development
     depends_on:
       db:

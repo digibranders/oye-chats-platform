@@ -10,8 +10,10 @@ const routeLabels = {
     feedback: 'Feedback',
     settings: 'Settings',
     integrations: 'Integrations',
-    whatsapp: 'WhatsApp',
     email: 'Email',
+    messages: 'Messages',
+    team: 'Team',
+    'live-chat': 'Live Chat',
 };
 
 export default function Breadcrumbs() {

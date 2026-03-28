@@ -19,7 +19,7 @@ if (SENTRY_DSN) {
 console.log('[OyeChat] Widget script initializing...');
 
 // ── CSS Auto-Injection ──────────────────────────────────────────────
-// In production the build outputs oyechat-widget.js + oyechat-widget.css as
+// In production the build outputs oyechats-widget.js + oyechats-widget.css as
 // separate files.  Third-party sites only embed the JS via <script>, so
 // the CSS never loads and the widget is invisible.
 // Fix: detect the script's own URL and load the sibling CSS file.
@@ -31,7 +31,7 @@ if (import.meta.env.PROD) {
       (() => {
         const all = document.getElementsByTagName('script');
         for (let i = all.length - 1; i >= 0; i--) {
-          if (all[i].src && all[i].src.includes('oyechat-widget')) return all[i];
+          if (all[i].src && all[i].src.includes('oyechats-widget')) return all[i];
         }
         return null;
       })();
@@ -87,7 +87,7 @@ if (scriptTag) {
 }
 
 // Find or create the root container for the widget
-const CONTAINER_ID = 'oyechat-widget-root';
+const CONTAINER_ID = 'oyechats-widget-root';
 
 const initWidget = () => {
   console.log('[OyeChat] Attempting to initialize widget container...');

@@ -4,12 +4,13 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 
+from app.api.auth import get_current_agent
 from app.core.security import get_password_hash, verify_password
-from app.db.models import Client
+from app.db.models import Agent, Client
 from app.db.session import get_session
 from app.services.email_service import send_password_reset_email
 
@@ -253,4 +254,110 @@ def reset_password(request: ResetPasswordRequest):
         raise
     except Exception as e:
         logger.error(f"Failed to reset password for {request.email}: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred.") from e
+
+
+# ── Agent Authentication ──
+
+
+class AgentLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AgentLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    agent_id: int
+    client_id: int
+    name: str
+    role: str
+    department_id: int | None = None
+
+
+class AgentChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def strong_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters.")
+        if not re.search(r"[A-Za-z]", v):
+            raise ValueError("Password must contain at least one letter.")
+        if not re.search(r"[0-9]", v):
+            raise ValueError("Password must contain at least one number.")
+        return v
+
+
+@router.post("/agent-login", response_model=AgentLoginResponse)
+def agent_login(request: AgentLoginRequest):
+    """
+    Authenticate an Agent via email and password.
+    Returns the Agent's API Key for subsequent requests via X-Agent-Key header.
+    """
+    try:
+        with get_session() as session:
+            stmt = select(Agent).where(Agent.email == request.email.strip().lower()).limit(1)
+            agent = session.execute(stmt).scalars().first()
+
+            if not agent or not agent.hashed_password:
+                logger.warning(f"Agent login failed: unknown email or no password set for {request.email}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect email or password",
+                )
+
+            if not verify_password(request.password, agent.hashed_password):
+                logger.warning(f"Agent login failed: incorrect password for {request.email}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect email or password",
+                )
+
+            logger.info(f"Successful agent login for agent {agent.id} ({agent.name})")
+
+            return {
+                "access_token": agent.agent_api_key,
+                "token_type": "bearer",
+                "agent_id": agent.id,
+                "client_id": agent.client_id,
+                "name": agent.name,
+                "role": agent.role,
+                "department_id": agent.department_id,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AGENT LOGIN FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {str(e)}",
+        ) from e
+
+
+@router.post("/agent-change-password")
+def agent_change_password(
+    request: AgentChangePasswordRequest,
+    agent: Agent = Depends(get_current_agent),
+):
+    """Agent changes their own password."""
+    try:
+        with get_session() as session:
+            db_agent = session.execute(select(Agent).where(Agent.id == agent.id)).scalar_one_or_none()
+            if not db_agent or not db_agent.hashed_password:
+                raise HTTPException(status_code=400, detail="Agent account not properly configured.")
+
+            if not verify_password(request.current_password, db_agent.hashed_password):
+                raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+            db_agent.hashed_password = get_password_hash(request.new_password)
+            session.commit()
+
+            return {"message": "Password changed successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Agent password change failed for agent {agent.id}: {e}")
         raise HTTPException(status_code=500, detail="An error occurred.") from e

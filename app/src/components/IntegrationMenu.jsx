@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Blocks } from 'lucide-react';
-import { WhatsAppIcon, EmailIcon } from './Icons';
+import { EmailIcon } from './Icons';
 import { NavLink } from 'react-router-dom';
 
 const IntegrationMenu = ({ isOpen: sidebarOpen }) => {
@@ -22,7 +22,6 @@ const IntegrationMenu = ({ isOpen: sidebarOpen }) => {
     
     // Using a dynamic path because App.jsx route is what matters. In App.jsx I'll mount them at /integrations/*
     const items = [
-        { id: 'whatsapp', name: 'WhatsApp', icon: WhatsAppIcon, path: '/integrations/whatsapp' },
         { id: 'email', name: 'Email', icon: EmailIcon, path: '/integrations/email' },
     ];
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, Send, User, Mail, ArrowRight } from 'lucide-react';
+import { Loader2, Send, User, Mail, MessageSquare, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { submitOfflineMessage } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -9,7 +10,9 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
     const [messages, setMessages] = useState([]);
     const [isAgentTyping, setIsAgentTyping] = useState(false);
     const [queuePosition, setQueuePosition] = useState(null);
-    const [callbackForm, setCallbackForm] = useState(null);
+    const [offlineForm, setOfflineForm] = useState({ name: '', email: '', message: '' });
+    const [offlineSubmitted, setOfflineSubmitted] = useState(false);
+    const [offlineSubmitting, setOfflineSubmitting] = useState(false);
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
 
@@ -38,7 +41,6 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                     } else if (data.status === 'closed') {
                         setChatMode('bot');
                         setAgentName(null);
-                        // Add transition message
                         onNewMessage({
                             id: Date.now(),
                             text: `You're now chatting with ${data.bot_name || 'AI Assistant'} again. Feel free to continue asking questions!`,
@@ -48,7 +50,6 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                         });
                     } else if (data.status === 'unavailable') {
                         setChatMode('unavailable');
-                        setCallbackForm({ name: '', email: '', message: '' });
                     }
                     break;
 
@@ -76,9 +77,9 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
             console.log('[OyeChat] Live chat WebSocket closed');
         };
 
-        setWs(socket); // eslint-disable-line react-hooks/set-state-in-effect -- storing WebSocket ref from external subscription
+        setWs(socket);
         return () => socket.close();
-    }, [sessionId]);
+    }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -107,6 +108,37 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
         }
     };
 
+    const handleOfflineSubmit = async (e) => {
+        e.preventDefault();
+        setOfflineSubmitting(true);
+        try {
+            await submitOfflineMessage({
+                name: offlineForm.name,
+                email: offlineForm.email,
+                message: offlineForm.message,
+                session_id: sessionId,
+            });
+            setOfflineSubmitted(true);
+        } catch {
+            // Still show success to avoid frustrating the user
+            setOfflineSubmitted(true);
+        } finally {
+            setOfflineSubmitting(false);
+        }
+    };
+
+    const handleReturnToBot = () => {
+        setChatMode('bot');
+        setAgentName(null);
+        onNewMessage({
+            id: Date.now(),
+            text: "Thanks for your message! We'll get back to you soon. In the meantime, feel free to ask me anything.",
+            sender: 'bot',
+            timestamp: new Date().toISOString(),
+            feedback: null,
+        });
+    };
+
     // Waiting screen
     if (chatMode === 'waiting') {
         return (
@@ -123,8 +155,31 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
         );
     }
 
-    // Unavailable screen with callback form
+    // Unavailable screen with "Leave a Message" form
     if (chatMode === 'unavailable') {
+        // Success state
+        if (offlineSubmitted) {
+            return (
+                <div className="flex-1 flex flex-col items-center justify-center px-5 py-6" style={{ backgroundColor: settings.background_color || '#fff' }}>
+                    <div className="w-full max-w-sm text-center" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                        <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                            <CheckCircle2 className="w-7 h-7 text-green-600" />
+                        </div>
+                        <h3 className="text-[#16202C] font-bold text-base mb-2">Message sent!</h3>
+                        <p className="text-gray-500 text-sm mb-5">We'll get back to you at <strong>{offlineForm.email}</strong> as soon as possible.</p>
+                        <button
+                            onClick={handleReturnToBot}
+                            className="w-full py-2.5 rounded-xl text-white text-sm font-medium"
+                            style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                        >
+                            Continue chatting with AI
+                        </button>
+                    </div>
+                    <style>{`@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+                </div>
+            );
+        }
+
         return (
             <div className="flex-1 flex flex-col items-center justify-center px-5 py-6" style={{ backgroundColor: settings.background_color || '#fff' }}>
                 <div className="w-full max-w-sm" style={{ animation: 'fadeUp 0.4s ease-out' }}>
@@ -133,49 +188,56 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                             <span className="text-2xl">🕐</span>
                         </div>
                         <h3 className="text-[#16202C] font-bold text-base mb-1">Team is currently unavailable</h3>
-                        <p className="text-gray-500 text-sm">Leave your details and we'll get back to you soon.</p>
+                        <p className="text-gray-500 text-sm">Leave us a message and we'll get back to you.</p>
                     </div>
 
-                    {callbackForm && (
-                        <form onSubmit={async (e) => {
-                            e.preventDefault();
-                            // Submit via lead capture + return to bot
-                            try {
-                                const headers = { 'Content-Type': 'application/json' };
-                                if (window.OYECHAT_BOT_KEY) headers['X-Bot-Key'] = window.OYECHAT_BOT_KEY;
-                                else if (window.OYECHAT_API_KEY) headers['X-API-Key'] = window.OYECHAT_API_KEY;
-
-                                await fetch(`${API_URL}/chat/lead-capture`, {
-                                    method: 'POST',
-                                    headers,
-                                    body: JSON.stringify({ session_id: sessionId, name: callbackForm.name, email: callbackForm.email }),
-                                });
-                            } catch (err) {
-                                console.error('[OyeChat] Callback form error:', err);
-                            }
-                            setChatMode('bot');
-                            setAgentName(null);
-                            onNewMessage({
-                                id: Date.now(),
-                                text: "Thanks! We'll get back to you soon. In the meantime, feel free to ask me anything.",
-                                sender: 'bot',
-                                timestamp: new Date().toISOString(),
-                                feedback: null,
-                            });
-                        }} className="space-y-3">
-                            <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
-                                <User className="w-4 h-4 text-gray-400" />
-                                <input type="text" placeholder="Your name" required value={callbackForm.name} onChange={(e) => setCallbackForm(prev => ({ ...prev, name: e.target.value }))} className="flex-1 bg-transparent outline-none text-sm" />
-                            </div>
-                            <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
-                                <Mail className="w-4 h-4 text-gray-400" />
-                                <input type="email" placeholder="Email address" required value={callbackForm.email} onChange={(e) => setCallbackForm(prev => ({ ...prev, email: e.target.value }))} className="flex-1 bg-transparent outline-none text-sm" />
-                            </div>
-                            <button type="submit" className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-medium" style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}>
-                                Request Callback <ArrowRight className="w-4 h-4" />
-                            </button>
-                        </form>
-                    )}
+                    <form onSubmit={handleOfflineSubmit} className="space-y-3">
+                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
+                            <User className="w-4 h-4 text-gray-400 shrink-0" />
+                            <input
+                                type="text"
+                                placeholder="Your name"
+                                required
+                                value={offlineForm.name}
+                                onChange={(e) => setOfflineForm(prev => ({ ...prev, name: e.target.value }))}
+                                className="flex-1 bg-transparent outline-none text-sm"
+                            />
+                        </div>
+                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
+                            <Mail className="w-4 h-4 text-gray-400 shrink-0" />
+                            <input
+                                type="email"
+                                placeholder="Email address"
+                                required
+                                value={offlineForm.email}
+                                onChange={(e) => setOfflineForm(prev => ({ ...prev, email: e.target.value }))}
+                                className="flex-1 bg-transparent outline-none text-sm"
+                            />
+                        </div>
+                        <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
+                            <MessageSquare className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" />
+                            <textarea
+                                placeholder="How can we help you?"
+                                required
+                                rows={3}
+                                value={offlineForm.message}
+                                onChange={(e) => setOfflineForm(prev => ({ ...prev, message: e.target.value }))}
+                                className="flex-1 bg-transparent outline-none text-sm resize-none"
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={offlineSubmitting}
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-medium disabled:opacity-60"
+                            style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                        >
+                            {offlineSubmitting ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                                <>Send Message <ArrowRight className="w-4 h-4" /></>
+                            )}
+                        </button>
+                    </form>
                 </div>
                 <style>{`@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
             </div>

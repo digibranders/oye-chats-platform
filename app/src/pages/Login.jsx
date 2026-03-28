@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { Bot, Loader2, Mail, Lock, Zap, BookOpen, BarChart3, Eye, EyeOff } from 'lucide-react';
-import { loginAdmin } from '../services/api';
+import { loginAdmin, loginAgent } from '../services/api';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -22,18 +22,41 @@ export default function Login() {
 
         try {
             setIsLoading(true);
-            const data = await loginAdmin(email, password);
 
-            localStorage.setItem('admin_token', data.access_token);
-            localStorage.setItem('admin_name', data.name);
-            localStorage.setItem('admin_client_id', data.client_id.toString());
-            localStorage.setItem('is_superadmin', data.is_superadmin ? 'true' : 'false');
-            sessionStorage.setItem('login_toast', '1');
+            // Try agent login first, then fall back to admin login.
+            // This auto-detects account type by email — no toggle needed.
+            let loggedIn = false;
 
-            if (data.is_superadmin) {
-                navigate('/superadmin/overview');
-            } else {
-                navigate('/');
+            try {
+                const data = await loginAgent(email, password);
+                localStorage.setItem('admin_token', data.access_token);
+                localStorage.setItem('admin_name', data.name);
+                localStorage.setItem('admin_client_id', data.client_id.toString());
+                localStorage.setItem('auth_type', 'agent');
+                localStorage.setItem('agent_role', data.role);
+                localStorage.setItem('agent_id', data.agent_id.toString());
+                localStorage.setItem('is_superadmin', 'false');
+                sessionStorage.setItem('login_toast', '1');
+                loggedIn = true;
+                navigate('/live-chat');
+            } catch {
+                // Agent login failed — try admin login
+            }
+
+            if (!loggedIn) {
+                const data = await loginAdmin(email, password);
+                localStorage.setItem('admin_token', data.access_token);
+                localStorage.setItem('admin_name', data.name);
+                localStorage.setItem('admin_client_id', data.client_id.toString());
+                localStorage.setItem('auth_type', 'client');
+                localStorage.setItem('is_superadmin', data.is_superadmin ? 'true' : 'false');
+                sessionStorage.setItem('login_toast', '1');
+
+                if (data.is_superadmin) {
+                    navigate('/superadmin/overview');
+                } else {
+                    navigate('/');
+                }
             }
         } catch (err) {
             setError(err.toString());
