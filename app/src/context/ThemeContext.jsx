@@ -1,45 +1,17 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 
 const ThemeContext = createContext();
 
 export function ThemeProvider({ children }) {
-    const [theme, setTheme] = useState(() => {
-        return localStorage.getItem('admin_theme') || 'system';
-    });
-
     useEffect(() => {
-        const applyTheme = () => {
-            const root = window.document.documentElement;
-            let themeToApply = theme;
-
-            if (theme === 'system') {
-                themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-            }
-
-            if (themeToApply === 'dark') {
-                root.classList.add('dark');
-            } else {
-                root.classList.remove('dark');
-            }
-
-            localStorage.setItem('admin_theme', theme);
-        };
-
-        applyTheme();
-
-        // Listener for system changes if theme is 'system'
-        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-        const handleChange = () => {
-            if (theme === 'system') applyTheme();
-        };
-
-        mediaQuery.addEventListener('change', handleChange);
-        return () => mediaQuery.removeEventListener('change', handleChange);
-    }, [theme]);
+        // Always light mode — remove dark class if present
+        window.document.documentElement.classList.remove('dark');
+        localStorage.setItem('admin_theme', 'light');
+    }, []);
 
     return (
-        <ThemeContext.Provider value={{ theme, setTheme }}>
+        <ThemeContext.Provider value={{ theme: 'light', setTheme: () => {} }}>
             {children}
         </ThemeContext.Provider>
     );

@@ -79,13 +79,6 @@
   to { opacity: 1; transform: translateX(0); }
 }
 
-/* Enable class-based dark mode in Tailwind v4 */
-@variant dark (&:where(.dark, .dark *));
-
-.dark body {
-  background-color: var(--color-secondary-950);
-  color: var(--color-secondary-50);
-}
 
 body {
   background-color: var(--color-secondary-50);
