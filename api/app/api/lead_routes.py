@@ -179,7 +179,7 @@ def export_leads_csv(
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=oyechat-leads.csv"},
+            headers={"Content-Disposition": "attachment; filename=oyechats-leads.csv"},
         )
 
 

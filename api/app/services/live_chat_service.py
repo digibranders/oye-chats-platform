@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import WebSocket
 
@@ -23,6 +23,10 @@ class ConnectionManager:
         self.assignments: dict[str, int] = {}
         # session_id → timeout task
         self._timeout_tasks: dict[str, asyncio.Task] = {}
+        # session_id → department_id (for department-aware routing)
+        self._session_departments: dict[str, int | None] = {}
+        # agent_id → department_id (cached on connect)
+        self._agent_departments: dict[int, int | None] = {}
 
     # ── Visitor connections ──
 
@@ -34,29 +38,33 @@ class ConnectionManager:
     def disconnect_visitor(self, session_id: str):
         self.visitor_connections.pop(session_id, None)
         self._cancel_timeout(session_id)
+        self._session_departments.pop(session_id, None)
         if session_id in self.waiting_queue:
             self.waiting_queue.remove(session_id)
         logger.info(f"Visitor disconnected: {session_id}")
 
     # ── Agent connections ──
 
-    async def connect_agent(self, agent_id: int, ws: WebSocket):
+    async def connect_agent(self, agent_id: int, ws: WebSocket, department_id: int | None = None):
         await ws.accept()
         self.agent_connections[agent_id] = ws
-        logger.info(f"Agent connected: {agent_id}")
+        self._agent_departments[agent_id] = department_id
+        logger.info(f"Agent connected: {agent_id} (dept={department_id})")
         # Notify about waiting queue
         await self._notify_agent_queue(agent_id)
 
     def disconnect_agent(self, agent_id: int):
         self.agent_connections.pop(agent_id, None)
+        self._agent_departments.pop(agent_id, None)
         logger.info(f"Agent disconnected: {agent_id}")
 
     # ── Handoff flow ──
 
-    async def request_handoff(self, session_id: str, timeout_seconds: int = 120):
+    async def request_handoff(self, session_id: str, timeout_seconds: int = 120, department_id: int | None = None):
         """Add visitor to the waiting queue and notify agents."""
         if session_id not in self.waiting_queue:
             self.waiting_queue.append(session_id)
+        self._session_departments[session_id] = department_id
 
         # Notify visitor they're in queue
         await self._send_to_visitor(
@@ -68,12 +76,24 @@ class ConnectionManager:
             },
         )
 
-        # Notify all online agents
+        # Notify relevant agents (department-aware)
         for agent_id in list(self.agent_connections.keys()):
-            await self._notify_agent_queue(agent_id)
+            if self._should_notify_agent(agent_id, department_id):
+                await self._notify_agent_queue(agent_id)
 
         # Start timeout
         self._start_timeout(session_id, timeout_seconds)
+
+    def _should_notify_agent(self, agent_id: int, department_id: int | None) -> bool:
+        """Check if an agent should be notified about a queue item."""
+        if department_id is None:
+            # No department specified — notify all agents
+            return True
+        agent_dept = self._agent_departments.get(agent_id)
+        if agent_dept is None:
+            # Agent has no department — notify them for any request
+            return True
+        return agent_dept == department_id
 
     async def accept_chat(self, session_id: str, agent_id: int, agent_name: str):
         """Agent accepts a waiting chat."""
@@ -92,7 +112,7 @@ class ConnectionManager:
             },
         )
 
-        # Notify agent
+        # Notify accepting agent
         await self._send_to_agent(
             agent_id,
             {
@@ -101,12 +121,18 @@ class ConnectionManager:
             },
         )
 
+        # Notify other agents about updated queue
+        for other_agent_id in list(self.agent_connections.keys()):
+            if other_agent_id != agent_id:
+                await self._notify_agent_queue(other_agent_id)
+
         logger.info(f"Agent {agent_id} ({agent_name}) accepted chat {session_id}")
 
     async def close_chat(self, session_id: str, bot_name: str = "AI Assistant"):
         """Agent closes a live chat, returns to bot mode."""
         agent_id = self.assignments.pop(session_id, None)
         self._cancel_timeout(session_id)
+        self._session_departments.pop(session_id, None)
 
         await self._send_to_visitor(
             session_id,
@@ -141,7 +167,7 @@ class ConnectionManager:
                     "session_id": session_id,
                     "role": "user",
                     "content": content,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 },
             )
 
@@ -154,7 +180,7 @@ class ConnectionManager:
                 "role": "agent",
                 "content": content,
                 "agent_name": agent_name,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -193,6 +219,7 @@ class ConnectionManager:
             # Still waiting?
             if session_id in self.waiting_queue:
                 self.waiting_queue.remove(session_id)
+                self._session_departments.pop(session_id, None)
                 await self._send_to_visitor(
                     session_id,
                     {
@@ -225,13 +252,22 @@ class ConnectionManager:
                 self.disconnect_agent(agent_id)
 
     async def _notify_agent_queue(self, agent_id: int):
-        """Send current queue to a specific agent."""
+        """Send current queue to a specific agent (filtered by department)."""
+        agent_dept = self._agent_departments.get(agent_id)
+
+        # Filter queue by department relevance
+        visible_queue = []
+        for sid in self.waiting_queue:
+            session_dept = self._session_departments.get(sid)
+            if session_dept is None or agent_dept is None or session_dept == agent_dept:
+                visible_queue.append(sid)
+
         await self._send_to_agent(
             agent_id,
             {
                 "type": "queue_update",
-                "waiting": self.waiting_queue,
-                "count": len(self.waiting_queue),
+                "waiting": visible_queue,
+                "count": len(visible_queue),
             },
         )
 

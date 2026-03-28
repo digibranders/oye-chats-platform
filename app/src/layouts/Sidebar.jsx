@@ -16,6 +16,8 @@ import {
     Loader2,
     Settings,
     Plug,
+    Inbox,
+    UsersRound,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { createBot } from '../services/api';
@@ -55,21 +57,33 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         }
     };
 
-    const mainItems = [
-        { path: '/', name: 'Overview', icon: LayoutDashboard },
-        { path: '/knowledge', name: 'Sources', icon: BookOpen },
-        { path: '/analytics', name: 'Analytics', icon: BarChart3 },
-        { path: '/leads', name: 'Leads', icon: Target },
-        { path: '/live-chat', name: 'Live Chat', icon: Headphones },
-        { path: '/users', name: 'Conversations', icon: MessageCircle },
-        { path: '/feedback', name: 'Feedback', icon: ThumbsUp },
-    ];
+    const isAgentRole = localStorage.getItem('auth_type') === 'agent';
 
-    const configItems = [
-        { path: '/chatbot', name: 'My Bots', icon: Bot },
-        { path: '/interface', name: 'Appearance', icon: Palette },
-        { path: '/integrations/whatsapp', name: 'Integrations', icon: Plug },
-    ];
+    // Agent users see a minimal sidebar
+    const mainItems = isAgentRole
+        ? [
+            { path: '/live-chat', name: 'Live Chat', icon: Headphones },
+            { path: '/messages', name: 'Messages', icon: Inbox },
+        ]
+        : [
+            { path: '/', name: 'Overview', icon: LayoutDashboard },
+            { path: '/knowledge', name: 'Sources', icon: BookOpen },
+            { path: '/analytics', name: 'Analytics', icon: BarChart3 },
+            { path: '/leads', name: 'Leads', icon: Target },
+            { path: '/live-chat', name: 'Live Chat', icon: Headphones },
+            { path: '/messages', name: 'Messages', icon: Inbox },
+            { path: '/users', name: 'Conversations', icon: MessageCircle },
+            { path: '/feedback', name: 'Feedback', icon: ThumbsUp },
+        ];
+
+    const configItems = isAgentRole
+        ? []
+        : [
+            { path: '/chatbot', name: 'My Bots', icon: Bot },
+            { path: '/interface', name: 'Appearance', icon: Palette },
+            { path: '/team', name: 'Team', icon: UsersRound },
+            { path: '/integrations/email', name: 'Integrations', icon: Plug },
+        ];
 
     const isActive = (item) =>
         location.pathname === item.path ||

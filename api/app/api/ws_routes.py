@@ -60,41 +60,72 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         manager.disconnect_visitor(session_id)
 
 
-@router.websocket("/ws/agent")
-async def agent_websocket(ws: WebSocket, api_key: str | None = None):
-    """WebSocket for agent (admin dashboard) side of live chat."""
-    if not api_key:
-        await ws.close(code=4001, reason="Missing api_key query param")
-        return
+def _resolve_agent_from_key(key: str, key_type: str) -> tuple[int, str, int] | None:
+    """Resolve agent_id, agent_name, client_id from an api_key or agent_key.
 
-    # Auth: resolve agent from client
+    Returns (agent_id, agent_name, client_id) or None if auth fails.
+    """
     with get_session() as session:
-        client = session.execute(select(Client).where(Client.api_key == api_key)).scalar_one_or_none()
-        if not client:
-            await ws.close(code=4003, reason="Invalid API key")
-            return
+        if key_type == "agent_key":
+            # Direct agent auth
+            agent = session.execute(select(Agent).where(Agent.agent_api_key == key)).scalar_one_or_none()
+            if not agent:
+                return None
+            agent.is_online = True
+            session.commit()
+            return agent.id, agent.name, agent.client_id
 
-        # Find or create agent for this client (simple: use client as agent)
+        # Client api_key auth — find or create agent from client profile
+        client = session.execute(select(Client).where(Client.api_key == key)).scalar_one_or_none()
+        if not client:
+            return None
+
         agent = session.execute(select(Agent).where(Agent.client_id == client.id).limit(1)).scalar_one_or_none()
 
         if not agent:
-            # Auto-create agent from client profile
             agent = Agent(
                 client_id=client.id,
                 name=client.name,
                 email=client.email,
                 is_online=True,
+                role="owner",
             )
             session.add(agent)
             session.commit()
             session.refresh(agent)
+        else:
+            agent.is_online = True
+            session.commit()
 
-        agent_id = agent.id
-        agent_name = agent.name
+        return agent.id, agent.name, client.id
 
-        # Mark online
-        agent.is_online = True
-        session.commit()
+
+@router.websocket("/ws/agent")
+async def agent_websocket(
+    ws: WebSocket,
+    api_key: str | None = None,
+    agent_key: str | None = None,
+):
+    """WebSocket for agent (admin dashboard) side of live chat.
+
+    Supports dual auth:
+    - api_key: Client API key (backward compat, resolves to first agent)
+    - agent_key: Agent's own API key (for multi-agent)
+    """
+    # Determine which key was provided
+    if agent_key:
+        result = _resolve_agent_from_key(agent_key, "agent_key")
+    elif api_key:
+        result = _resolve_agent_from_key(api_key, "api_key")
+    else:
+        await ws.close(code=4001, reason="Missing api_key or agent_key query param")
+        return
+
+    if not result:
+        await ws.close(code=4003, reason="Invalid authentication key")
+        return
+
+    agent_id, agent_name, client_id = result
 
     await manager.connect_agent(agent_id, ws)
 
@@ -130,7 +161,6 @@ async def agent_websocket(ws: WebSocket, api_key: str | None = None):
                             select(ChatSession).where(ChatSession.id == target_session)
                         ).scalar_one_or_none()
                         if chat_session:
-                            # Get bot name for transition message
                             bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
                             chat_session.status = "bot"
                             chat_session.assigned_agent_id = None

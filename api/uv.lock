@@ -1346,7 +1346,7 @@ wheels = [
 ]
 
 [[package]]
-name = "oyechat-api"
+name = "oyechats-api"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

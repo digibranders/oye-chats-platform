@@ -7,7 +7,7 @@ A production-ready RAG-powered chatbot platform with multi-bot support, BANT sal
 | Module | Stack | Purpose |
 |--------|-------|---------|
 | `api/` | FastAPI, SQLAlchemy, pgvector, Google Gemini | RAG pipeline, REST API, auth, document ingestion |
-| `widget/` | React 19, Vite, Tailwind CSS | Embeddable chat widget (`oyechat-widget.js`) |
+| `widget/` | React 19, Vite, Tailwind CSS | Embeddable chat widget (`oyechats-widget.js`) |
 | `admin/` | React 19, Vite, React Router, Recharts | Admin dashboard with analytics |
 | `aiorb-preview/` | React 19, Three.js | 3D animated chatbot orb preview |
 
@@ -254,13 +254,13 @@ Build the widget and host the output file:
 ```bash
 cd widget
 npm run build
-# Output: dist/oyechat-widget.js
+# Output: dist/oyechats-widget.js
 ```
 
 Add to any webpage:
 
 ```html
-<script src="https://your-cdn.com/oyechat-widget.js" data-bot-key="bot-YOUR_KEY_HERE"></script>
+<script src="https://your-cdn.com/oyechats-widget.js" data-bot-key="bot-YOUR_KEY_HERE"></script>
 ```
 
 ## Project Structure

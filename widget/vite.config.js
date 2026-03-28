@@ -12,9 +12,9 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: undefined,
-        entryFileNames: 'oyechat-widget.js',
-        chunkFileNames: 'oyechat-widget.js',
-        assetFileNames: 'oyechat-widget.[ext]',
+        entryFileNames: 'oyechats-widget.js',
+        chunkFileNames: 'oyechats-widget.js',
+        assetFileNames: 'oyechats-widget.[ext]',
       }
     }
   }

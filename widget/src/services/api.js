@@ -100,6 +100,7 @@ export const requestHandoff = async (sessionId, formData) => {
             body: JSON.stringify({
                 session_id: sessionId,
                 reason: formData.reason || null,
+                department_id: formData.department_id || null,
             }),
         });
         if (!response.ok) throw new Error('Handoff request failed');
@@ -115,6 +116,41 @@ export const requestHandoff = async (sessionId, formData) => {
         return await response.json();
     } catch (error) {
         console.error("Error requesting handoff:", error);
+        throw error;
+    }
+};
+
+export const getDepartments = async () => {
+    try {
+        const botKey = window.OYECHAT_BOT_KEY || '';
+        const response = await fetch(`${API_URL}/agents/departments/public?bot_key=${botKey}`);
+        if (!response.ok) return { departments: [] };
+        return await response.json();
+    } catch (error) {
+        console.error("Error fetching departments:", error);
+        return { departments: [] };
+    }
+};
+
+export const submitOfflineMessage = async (formData) => {
+    try {
+        const response = await fetch(`${API_URL}/offline-messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                bot_key: window.OYECHAT_BOT_KEY || window.OYECHAT_API_KEY || '',
+                name: formData.name,
+                email: formData.email,
+                phone: formData.phone || null,
+                message: formData.message,
+                session_id: formData.session_id || null,
+                department_id: formData.department_id || null,
+            }),
+        });
+        if (!response.ok) throw new Error('Failed to submit offline message');
+        return await response.json();
+    } catch (error) {
+        console.error("Error submitting offline message:", error);
         throw error;
     }
 };

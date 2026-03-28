@@ -1,13 +1,24 @@
-import React, { useState } from 'react';
-import { User, Mail, MessageSquare, ArrowRight, Headphones } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { User, Mail, MessageSquare, ArrowRight, Headphones, Building2 } from 'lucide-react';
+import { getDepartments } from '../services/api';
 
 const HandoffForm = ({ settings, onSubmit, existingLeadInfo }) => {
     const [formData, setFormData] = useState({
         name: existingLeadInfo?.name || '',
         email: existingLeadInfo?.email || '',
         reason: '',
+        department_id: null,
     });
     const [submitting, setSubmitting] = useState(false);
+    const [departments, setDepartments] = useState([]);
+
+    useEffect(() => {
+        getDepartments().then((data) => {
+            if (data.departments && data.departments.length > 1) {
+                setDepartments(data.departments);
+            }
+        });
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -60,6 +71,22 @@ const HandoffForm = ({ settings, onSubmit, existingLeadInfo }) => {
                             required
                         />
                     </div>
+
+                    {departments.length > 0 && (
+                        <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50/50 px-3.5 py-2.5 focus-within:border-blue-300 focus-within:bg-white transition-colors">
+                            <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            <select
+                                value={formData.department_id || ''}
+                                onChange={(e) => setFormData(prev => ({ ...prev, department_id: e.target.value ? Number(e.target.value) : null }))}
+                                className="flex-1 bg-transparent outline-none text-sm text-[#16202C] appearance-none cursor-pointer"
+                            >
+                                <option value="">Select department</option>
+                                {departments.map((dept) => (
+                                    <option key={dept.id} value={dept.id}>{dept.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     <div className="flex items-start gap-2.5 rounded-xl border border-gray-200 bg-gray-50/50 px-3.5 py-2.5 focus-within:border-blue-300 focus-within:bg-white transition-colors">
                         <MessageSquare className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />

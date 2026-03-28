@@ -175,6 +175,33 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
     )
 
 
+def send_offline_message_email(
+    notification_email: str,
+    bot_name: str,
+    visitor_name: str,
+    visitor_email: str,
+    message_preview: str,
+):
+    """Send email when a visitor leaves an offline message."""
+    content = f"""
+    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
+        A visitor on <strong>{bot_name}</strong> left a message while no agent was available.
+    </p>
+    <div style="background: #f0f9ff; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+        <p style="color: #4b5563; margin: 0 0 8px 0;"><strong>From:</strong> {visitor_name} ({visitor_email})</p>
+        <p style="color: #1e3a5f; margin: 0; line-height: 1.6; white-space: pre-wrap;">{message_preview}</p>
+    </div>
+    <a href="https://admin.oyechats.com/messages" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+        View Messages
+    </a>
+    """
+    send_email_async(
+        notification_email,
+        f"[OyeChat] New Offline Message — {bot_name}",
+        _base_template("New Offline Message 📩", content),
+    )
+
+
 def send_password_reset_email(to_email: str, otp: str):
     """Send a password reset OTP email."""
     content = f"""

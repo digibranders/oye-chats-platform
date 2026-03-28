@@ -4,7 +4,7 @@ from fastapi import Depends, HTTPException, Query, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import select
 
-from app.db.models import Bot, Client
+from app.db.models import Agent, Bot, Client
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 # ── Client Auth (Admin Dashboard) ──
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+# ── Agent Auth (Agent Dashboard) ──
+AGENT_KEY_NAME = "X-Agent-Key"
+agent_key_header = APIKeyHeader(name=AGENT_KEY_NAME, auto_error=False)
 
 # ── Bot Auth (Widget Embed) ──
 BOT_KEY_NAME = "X-Bot-Key"
@@ -63,6 +67,85 @@ def get_current_client(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing API Key. Please provide the X-API-Key or X-Bot-Key header.",
         )
+
+
+def get_current_agent(
+    agent_key: str = Security(agent_key_header),
+):
+    """
+    Dependency: Authenticate an Agent via X-Agent-Key header.
+    Returns the Agent object with client_id accessible for scoping queries.
+    """
+    if not agent_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-Agent-Key header.",
+        )
+
+    with get_session() as session:
+        stmt = select(Agent).where(Agent.agent_api_key == agent_key)
+        agent = session.execute(stmt).scalars().first()
+        if not agent:
+            logger.warning("Failed authentication attempt with invalid Agent Key.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Agent Key.",
+            )
+        # Eagerly access attributes before session closes
+        _ = (
+            agent.id,
+            agent.name,
+            agent.email,
+            agent.client_id,
+            agent.role,
+            agent.department_id,
+            agent.agent_api_key,
+            agent.is_online,
+        )
+        session.expunge(agent)
+        return agent
+
+
+def get_current_client_or_agent(
+    api_key: str = Security(api_key_header),
+    agent_key: str = Security(agent_key_header),
+):
+    """
+    Dependency: Authenticate via X-API-Key (Client) or X-Agent-Key (Agent).
+    Returns a dict with 'type' ('client'|'agent'), the entity, and 'client_id'.
+    Used by endpoints that both admins and agents can access.
+    """
+    # Try agent key first (more specific)
+    if agent_key:
+        with get_session() as session:
+            agent = session.execute(select(Agent).where(Agent.agent_api_key == agent_key)).scalars().first()
+            if agent:
+                _ = (
+                    agent.id,
+                    agent.name,
+                    agent.email,
+                    agent.client_id,
+                    agent.role,
+                    agent.department_id,
+                    agent.agent_api_key,
+                    agent.is_online,
+                )
+                session.expunge(agent)
+                return {"type": "agent", "entity": agent, "client_id": agent.client_id, "agent_id": agent.id}
+
+    # Try client key
+    if api_key:
+        with get_session() as session:
+            client = session.execute(select(Client).where(Client.api_key == api_key)).scalars().first()
+            if client:
+                _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
+                session.expunge(client)
+                return {"type": "client", "entity": client, "client_id": client.id, "agent_id": None}
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing authentication. Provide X-API-Key or X-Agent-Key header.",
+    )
 
 
 def get_superadmin(client: Client = Depends(get_current_client)):

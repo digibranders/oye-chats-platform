@@ -37,7 +37,7 @@ Run only the checks relevant to the files you changed:
 4. **Copies the embed script** from the admin dashboard
 5. **Pastes the script** into their website's `<body>` tag:
    ```html
-   <script src="https://cdn.oyechats.com/oyechat-widget.js" data-bot-key="bot-xxx"></script>
+   <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
    ```
 6. **Visitors see a chat widget** (floating button, bottom-right) → click to open → ask questions
 7. **Widget sends question** to backend API with `X-Bot-Key` header
@@ -51,7 +51,7 @@ Run only the checks relevant to the files you changed:
 oye-chats/
 ├── platform/                     # Main platform (this repo)
 │   ├── api/                     # FastAPI REST API + RAG pipeline
-│   ├── widget/                  # Embeddable chat widget (builds to oyechat-widget.js)
+│   ├── widget/                  # Embeddable chat widget (builds to oyechats-widget.js)
 │   ├── admin/                   # React admin dashboard (bot management, analytics)
 │   └── aiorb-preview/           # 3D animated orb preview (optional)
 ├── landing/                     # Next.js marketing landing page
@@ -67,12 +67,12 @@ oye-chats/
 
 ## Widget Embedding — How It Works
 
-The widget (`oyechat-widget.js`) is a **self-contained IIFE bundle** (~416KB) that:
+The widget (`oyechats-widget.js`) is a **self-contained IIFE bundle** (~416KB) that:
 
 1. Finds its own `<script>` tag and reads `data-bot-key`
 2. Sets `window.OYECHAT_BOT_KEY` globally
-3. Auto-injects its sibling CSS file (`oyechat-widget.css`) in production
-4. Creates a `<div id="oyechat-widget-root">` in the DOM
+3. Auto-injects its sibling CSS file (`oyechats-widget.css`) in production
+4. Creates a `<div id="oyechats-widget-root">` in the DOM
 5. Renders a React app (its own bundled React, isolated from the host page)
 6. Communicates with the backend via `X-Bot-Key` header
 
@@ -80,7 +80,7 @@ The widget (`oyechat-widget.js`) is a **self-contained IIFE bundle** (~416KB) th
 
 ### Production Embed
 ```html
-<script src="https://cdn.oyechats.com/oyechat-widget.js" data-bot-key="bot-xxx"></script>
+<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 ### Development Embed (IMPORTANT)
@@ -94,7 +94,7 @@ npx vite preview --port 4173     # Serve built files
 ```
 Then embed:
 ```html
-<script src="http://localhost:4173/oyechat-widget.js" data-bot-key="bot-xxx"></script>
+<script src="http://localhost:4173/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
 ## RAG Pipeline
@@ -135,11 +135,11 @@ Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessa
 
 | Item | Name |
 |------|------|
-| Widget bundle | `oyechat-widget.js` / `oyechat-widget.css` |
-| DOM container | `oyechat-widget-root` |
+| Widget bundle | `oyechats-widget.js` / `oyechats-widget.css` |
+| DOM container | `oyechats-widget-root` |
 | Window globals | `window.OYECHAT_BOT_KEY`, `window.OYECHAT_API_KEY` |
 | Console prefix | `[OyeChat]` |
-| Production CDN | `cdn.oyechats.com/oyechat-widget.js` |
+| Production CDN | `cdn.oyechats.com/oyechats-widget.js` |
 | Contact email | `developer@oyechats.com` |
 
 ## Environment Setup
@@ -172,7 +172,7 @@ conda run -n oye --no-capture-output bash -c "cd api && uv run uvicorn app.main:
 ```bash
 cd widget
 npm install && npm run dev       # Dev server (localhost:5173) — for widget development only
-npm run build                    # Build oyechat-widget.js
+npm run build                    # Build oyechats-widget.js
 npx vite preview --port 4173     # Serve built widget for embedding tests
 ```
 

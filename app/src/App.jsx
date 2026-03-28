@@ -18,7 +18,8 @@ import Settings from './pages/Settings';
 import Chatbot from './pages/Chatbot';
 import Leads from './pages/Leads';
 import LiveChat from './pages/LiveChat';
-import WhatsApp from './pages/integrations/WhatsApp';
+import OfflineMessages from './pages/OfflineMessages';
+import TeamManagement from './pages/TeamManagement';
 import Email from './pages/integrations/Email';
 
 // Superadmin
@@ -67,10 +68,11 @@ function App() {
                         <Route path="analytics" element={<Analytics />} />
                         <Route path="leads" element={<Leads />} />
                         <Route path="live-chat" element={<LiveChat />} />
+                        <Route path="messages" element={<OfflineMessages />} />
+                        <Route path="team" element={<TeamManagement />} />
                         <Route path="users" element={<Users />} />
                         <Route path="feedback" element={<Feedback />} />
                         <Route path="settings" element={<Settings />} />
-                        <Route path="integrations/whatsapp" element={<WhatsApp />} />
                         <Route path="integrations/email" element={<Email />} />
                     </Route>
 

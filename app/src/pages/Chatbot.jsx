@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import {
-    Bot, Plus, Copy, Check, Trash2, Code2, Key, Globe, Loader2,
+    Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2,
     X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { createBot, deleteBot } from '../services/api';
+import { platforms } from '../data/platformIntegrations';
+import PlatformSelector from '../components/PlatformSelector';
+import IntegrationGuide from '../components/IntegrationGuide';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 
@@ -23,6 +26,7 @@ export default function Chatbot() {
     const [confirmDelete, setConfirmDelete] = useState(null);
     const [showKeys, setShowKeys] = useState({});
     const [embedTab, setEmbedTab] = useState({});
+    const [selectedPlatform, setSelectedPlatform] = useState({});
 
     const handleCopy = (text, field) => {
         navigator.clipboard.writeText(text);
@@ -58,8 +62,6 @@ export default function Chatbot() {
         } finally { setDeletingBot(null); setConfirmDelete(null); }
     };
 
-    const getEmbedScript = (botKey) => `<script src="https://cdn.oyechats.com/oyechat-widget.js" data-bot-key="${botKey}"></script>`;
-    const getDevEmbedScript = (botKey) => `<!-- OyeChat Widget (Development) -->\n<script src="http://localhost:4173/oyechat-widget.js" data-bot-key="${botKey}"></script>`;
     const toggleKey = (botId) => setShowKeys(prev => ({ ...prev, [botId]: !prev[botId] }));
     const maskKey = (key) => key ? key.substring(0, 6) + '••••••••' + key.substring(key.length - 4) : '';
 
@@ -142,27 +144,28 @@ export default function Chatbot() {
                                             </div>
                                         </div>
 
-                                        {/* Embed Script Tabs */}
+                                        {/* Platform Integration Guide */}
                                         <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <div className="flex items-center gap-1 p-0.5 bg-secondary-100 dark:bg-secondary-800 rounded-lg">
-                                                    <button onClick={() => setEmbedTab({ ...embedTab, [bot.id]: 'production' })} className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${currentEmbedTab === 'production' ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm' : 'text-secondary-400'}`}>Production</button>
-                                                    <button onClick={() => setEmbedTab({ ...embedTab, [bot.id]: 'development' })} className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${currentEmbedTab === 'development' ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm' : 'text-secondary-400'}`}>Development</button>
-                                                </div>
-                                                <button onClick={() => handleCopy(currentEmbedTab === 'production' ? getEmbedScript(bot.bot_key) : getDevEmbedScript(bot.bot_key), `${currentEmbedTab}-${bot.id}`)} className="flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:text-primary-700 transition-colors">
-                                                    {copiedField === `${currentEmbedTab}-${bot.id}` ? <Check size={11} /> : <Copy size={11} />}
-                                                    <span className="text-[9px] font-bold uppercase">{copiedField === `${currentEmbedTab}-${bot.id}` ? 'Copied' : 'Copy'}</span>
-                                                </button>
-                                            </div>
-                                            <pre className={`p-4 rounded-xl text-[11px] leading-relaxed overflow-x-auto border font-mono ${currentEmbedTab === 'production' ? 'bg-secondary-900 dark:bg-secondary-950 text-green-400 border-secondary-800' : 'bg-secondary-900 dark:bg-secondary-950 text-amber-400 border-secondary-800'}`}>
-                                                {currentEmbedTab === 'production' ? getEmbedScript(bot.bot_key) : getDevEmbedScript(bot.bot_key)}
-                                            </pre>
-                                            <p className="text-[10px] text-secondary-400 mt-1.5">
-                                                {currentEmbedTab === 'production'
-                                                    ? <>Paste in your website's <code className="text-secondary-500 bg-secondary-100 dark:bg-secondary-800 px-1 py-0.5 rounded">&lt;body&gt;</code> tag</>
-                                                    : <>Build the widget first, then serve with <code className="text-secondary-500 bg-secondary-100 dark:bg-secondary-800 px-1 py-0.5 rounded">npx vite preview</code> on port 4173</>
-                                                }
-                                            </p>
+                                            <label className="text-[10px] font-bold uppercase tracking-wider text-secondary-400 flex items-center gap-1.5 mb-3">
+                                                <Code2 size={11} /> Integration Guide
+                                            </label>
+                                            {selectedPlatform[bot.id] ? (
+                                                <IntegrationGuide
+                                                    platform={platforms.find((p) => p.id === selectedPlatform[bot.id])}
+                                                    botKey={bot.bot_key}
+                                                    env={currentEmbedTab}
+                                                    onEnvChange={(env) => setEmbedTab({ ...embedTab, [bot.id]: env })}
+                                                    onBack={() => setSelectedPlatform({ ...selectedPlatform, [bot.id]: null })}
+                                                    onCopy={handleCopy}
+                                                    copiedField={copiedField}
+                                                />
+                                            ) : (
+                                                <PlatformSelector
+                                                    platforms={platforms}
+                                                    selectedId={null}
+                                                    onSelect={(id) => setSelectedPlatform({ ...selectedPlatform, [bot.id]: id })}
+                                                />
+                                            )}
                                         </div>
                                     </div>
                                 )}
