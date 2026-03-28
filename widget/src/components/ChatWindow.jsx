@@ -250,6 +250,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Trigger handoff (called from a button or auto-detected)
     const triggerHandoff = () => {
+        // Ensure we have a session for the handoff
+        if (!sessionId) {
+            const newSession = `session_${Date.now()}`;
+            setSessionId(newSession);
+            localStorage.setItem('chat_session_id', newSession);
+        }
+        setShowWelcome(false);
         setChatMode('handoff_form');
     };
 
