@@ -46,6 +46,7 @@ class UpdateBotRequest(BaseModel):
     email_on_qualified: bool | None = None
     email_on_handoff: bool | None = None
     # Live chat settings
+    live_chat_enabled: bool | None = None
     agent_timeout_seconds: int | None = None
 
 
@@ -71,6 +72,7 @@ class BotResponse(BaseModel):
     notification_email: str | None = None
     email_on_qualified: bool = True
     email_on_handoff: bool = True
+    live_chat_enabled: bool = True
     agent_timeout_seconds: int = 120
     is_active: bool
     created_at: str
@@ -115,6 +117,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "orb_color": bot.orb_color,
         "lead_form_enabled": bot.lead_form_enabled,
         "lead_form_fields": bot.lead_form_fields,
+        "live_chat_enabled": bot.live_chat_enabled,
     }
 
 
@@ -156,6 +159,7 @@ def list_bots(request: Request, client: Client = Depends(get_current_client)):
                     notification_email=b.notification_email,
                     email_on_qualified=b.email_on_qualified,
                     email_on_handoff=b.email_on_handoff,
+                    live_chat_enabled=b.live_chat_enabled,
                     agent_timeout_seconds=b.agent_timeout_seconds,
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
@@ -227,6 +231,7 @@ def get_bot(bot_id: int, request: Request, client: Client = Depends(get_current_
             notification_email=bot.notification_email,
             email_on_qualified=bot.email_on_qualified,
             email_on_handoff=bot.email_on_handoff,
+            live_chat_enabled=bot.live_chat_enabled,
             agent_timeout_seconds=bot.agent_timeout_seconds,
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",

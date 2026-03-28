@@ -11,7 +11,7 @@ from sqlalchemy.sql import func
 from app.api.auth import get_current_client
 from app.db.models import Bot, Client, OfflineMessage
 from app.db.session import get_session
-from app.services.email_service import send_offline_message_email
+from app.services.email_service import send_offline_message_email, send_unavailable_callback_email
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +60,26 @@ def submit_offline_message(request: SubmitOfflineMessageRequest):
         session.add(msg)
         session.commit()
 
-        # Send email notification
+        # Send email notification — callback email if phone provided, otherwise generic
         if bot.notification_email:
-            send_offline_message_email(
-                notification_email=bot.notification_email,
-                bot_name=bot.name,
-                visitor_name=request.name.strip(),
-                visitor_email=request.email.strip(),
-                message_preview=request.message.strip()[:200],
-            )
+            if request.phone and request.phone.strip():
+                send_unavailable_callback_email(
+                    notification_email=bot.notification_email,
+                    bot_name=bot.name,
+                    contact={
+                        "name": request.name.strip(),
+                        "email": request.email.strip(),
+                        "phone": request.phone.strip(),
+                    },
+                )
+            else:
+                send_offline_message_email(
+                    notification_email=bot.notification_email,
+                    bot_name=bot.name,
+                    visitor_name=request.name.strip(),
+                    visitor_email=request.email.strip(),
+                    message_preview=request.message.strip()[:200],
+                )
 
         logger.info(f"Offline message saved: {msg.id} from {request.email} for bot {bot.id}")
 

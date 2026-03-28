@@ -624,6 +624,16 @@ export const closeAgentChat = async (sessionId) => {
     }
 };
 
+export const transferChat = async (sessionId, data) => {
+    try {
+        const response = await api.post(`/agents/transfer/${sessionId}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error transferring chat:', error);
+        throw error.response?.data || error.message;
+    }
+};
+
 export const toggleAgentStatus = async () => {
     try {
         const response = await api.post('/agents/status');

@@ -192,6 +192,13 @@ def list_agents(client: Client = Depends(get_current_client)):
     with get_session() as session:
         agents = session.execute(select(Agent).where(Agent.client_id == client.id).order_by(Agent.id)).scalars().all()
 
+        # Build department name lookup
+        dept_ids = {a.department_id for a in agents if a.department_id}
+        dept_names = {}
+        if dept_ids:
+            depts = session.execute(select(Department).where(Department.id.in_(dept_ids))).scalars().all()
+            dept_names = {d.id: d.name for d in depts}
+
         # Count active sessions per agent
         result = []
         for a in agents:
@@ -208,6 +215,7 @@ def list_agents(client: Client = Depends(get_current_client)):
                     "email": a.email,
                     "role": a.role,
                     "department_id": a.department_id,
+                    "department_name": dept_names.get(a.department_id),
                     "is_online": a.is_online,
                     "avatar_url": a.avatar_url,
                     "max_concurrent_chats": a.max_concurrent_chats,
@@ -481,6 +489,91 @@ def close_chat(session_id: str, auth=Depends(get_current_client_or_agent)):
         pass
 
     return {"success": True, "status": "bot"}
+
+
+class TransferRequest(BaseModel):
+    target_agent_id: int | None = None
+    target_department_id: int | None = None
+
+
+@router.post("/transfer/{session_id}")
+def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_current_client_or_agent)):
+    """Transfer a live chat to another agent or department."""
+    import asyncio
+
+    if not request.target_agent_id and not request.target_department_id:
+        raise HTTPException(status_code=400, detail="Must specify target_agent_id or target_department_id.")
+
+    with get_session() as session:
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        if chat_session.status != "live":
+            raise HTTPException(status_code=400, detail="Session is not in live chat mode.")
+
+        # Verify ownership
+        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if not bot or bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+        old_agent_id = chat_session.assigned_agent_id
+
+        if request.target_agent_id:
+            target_agent = session.execute(
+                select(Agent).where(Agent.id == request.target_agent_id, Agent.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not target_agent:
+                raise HTTPException(status_code=404, detail="Target agent not found.")
+
+            chat_session.assigned_agent_id = target_agent.id
+            if target_agent.department_id:
+                chat_session.department_id = target_agent.department_id
+            session.commit()
+
+            target_name = target_agent.name
+
+            # Notify via WebSocket
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(manager.transfer_chat(session_id, old_agent_id, target_agent.id, target_name))
+            except RuntimeError:
+                pass
+
+            return {"success": True, "transferred_to": target_name, "agent_id": target_agent.id}
+
+        # Transfer to department: verify ownership then put back in queue
+        dept = session.execute(
+            select(Department).where(
+                Department.id == request.target_department_id,
+                Department.client_id == auth["client_id"],
+            )
+        ).scalar_one_or_none()
+        if not dept:
+            raise HTTPException(status_code=404, detail="Target department not found.")
+
+        old_agent_id = chat_session.assigned_agent_id
+        chat_session.status = "waiting"
+        chat_session.assigned_agent_id = None
+        chat_session.department_id = request.target_department_id
+        session.commit()
+        dept_name = dept.name
+
+        try:
+            loop = asyncio.get_event_loop()
+            timeout = bot.agent_timeout_seconds or 120
+            # Notify old agent that the chat was transferred away
+            if old_agent_id:
+                loop.create_task(
+                    manager._send_to_agent(
+                        old_agent_id,
+                        {"type": "chat_transferred", "session_id": session_id, "transferred_to": dept_name},
+                    )
+                )
+            loop.create_task(manager.request_handoff(session_id, timeout, request.target_department_id))
+        except RuntimeError:
+            pass
+
+        return {"success": True, "transferred_to_department": dept_name}
 
 
 @router.post("/status")

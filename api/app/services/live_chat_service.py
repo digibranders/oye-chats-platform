@@ -154,6 +154,48 @@ class ConnectionManager:
 
         logger.info(f"Chat {session_id} closed")
 
+    async def transfer_chat(self, session_id: str, old_agent_id: int | None, new_agent_id: int, new_agent_name: str):
+        """Transfer a live chat from one agent to another."""
+        # Update assignment
+        self.assignments[session_id] = new_agent_id
+        self._cancel_timeout(session_id)
+
+        # Notify old agent
+        if old_agent_id:
+            await self._send_to_agent(
+                old_agent_id,
+                {
+                    "type": "chat_transferred",
+                    "session_id": session_id,
+                    "transferred_to": new_agent_name,
+                },
+            )
+
+        # Notify new agent
+        await self._send_to_agent(
+            new_agent_id,
+            {
+                "type": "chat_accepted",
+                "session_id": session_id,
+            },
+        )
+
+        # Notify visitor
+        await self._send_to_visitor(
+            session_id,
+            {
+                "type": "status",
+                "status": "connected",
+                "agent_name": new_agent_name,
+            },
+        )
+
+        # Update all agents' queues
+        for agent_id in list(self.agent_connections.keys()):
+            await self._notify_agent_queue(agent_id)
+
+        logger.info(f"Chat {session_id} transferred from agent {old_agent_id} to {new_agent_id} ({new_agent_name})")
+
     # ── Message routing ──
 
     async def route_visitor_message(self, session_id: str, content: str):

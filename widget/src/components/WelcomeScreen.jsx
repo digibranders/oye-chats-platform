@@ -3,7 +3,7 @@ import { X, Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 import BotAvatar from './BotAvatar';
 
-const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, setInputText, inputRef, isAnimating = true }) => {
+const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, setInputText, inputRef, isAnimating = true, onTalkToHuman }) => {
     const suggestions = settings?.welcome_suggestions || ['Our Services', 'About us', 'Contact us'];
 
     const getGreeting = () => {
@@ -69,6 +69,17 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                             </button>
                         ))}
                     </div>
+
+                    {/* Talk to a human — subtle link */}
+                    {onTalkToHuman && (
+                        <button
+                            onClick={onTalkToHuman}
+                            className="mt-4 text-[12px] text-gray-400 hover:text-indigo-600 transition-colors cursor-pointer"
+                            style={{ animation: `fadeUp 0.3s ease-out ${suggestions.length * 0.08 + 0.1}s both` }}
+                        >
+                            or talk to a human
+                        </button>
+                    )}
                 </div>
             </div>
 

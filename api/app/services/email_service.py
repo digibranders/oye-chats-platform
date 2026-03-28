@@ -1,6 +1,7 @@
 """Email notification service using Brevo (formerly Sendinblue) transactional API."""
 
 import asyncio
+import html
 import json
 import logging
 from urllib.request import Request, urlopen
@@ -83,19 +84,24 @@ def _base_template(title: str, content: str) -> str:
     """
 
 
+def _esc(value: str | None) -> str:
+    """HTML-escape a user-supplied value for safe inclusion in email templates."""
+    return html.escape(str(value)) if value else "—"
+
+
 def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict, contact: dict | None = None):
     """Send email when a lead is fully BANT qualified."""
     contact_section = ""
     if contact:
         parts = []
         if contact.get("name"):
-            parts.append(f"<li><strong>Name:</strong> {contact['name']}</li>")
+            parts.append(f"<li><strong>Name:</strong> {_esc(contact['name'])}</li>")
         if contact.get("email"):
-            parts.append(f"<li><strong>Email:</strong> {contact['email']}</li>")
+            parts.append(f"<li><strong>Email:</strong> {_esc(contact['email'])}</li>")
         if contact.get("phone"):
-            parts.append(f"<li><strong>Phone:</strong> {contact['phone']}</li>")
+            parts.append(f"<li><strong>Phone:</strong> {_esc(contact['phone'])}</li>")
         if contact.get("company"):
-            parts.append(f"<li><strong>Company:</strong> {contact['company']}</li>")
+            parts.append(f"<li><strong>Company:</strong> {_esc(contact['company'])}</li>")
         if parts:
             contact_section = f'<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 16px 0 8px 0;">Contact Info</h3><ul style="margin: 0; padding-left: 20px; color: #4b5563;">{"".join(parts)}</ul>'
 
@@ -106,10 +112,10 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
     <div style="background: #f0fdf4; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
         <h3 style="font-size: 14px; font-weight: 600; color: #166534; margin: 0 0 12px 0;">BANT Summary</h3>
         <ul style="margin: 0; padding-left: 20px; color: #15803d; line-height: 1.8;">
-            <li><strong>Need:</strong> {bant.get("bant_need", "—")}</li>
-            <li><strong>Budget:</strong> {bant.get("bant_budget", "—")}</li>
-            <li><strong>Authority:</strong> {bant.get("bant_authority", "—")}</li>
-            <li><strong>Timeline:</strong> {bant.get("bant_timeline", "—")}</li>
+            <li><strong>Need:</strong> {_esc(bant.get("bant_need"))}</li>
+            <li><strong>Budget:</strong> {_esc(bant.get("bant_budget"))}</li>
+            <li><strong>Authority:</strong> {_esc(bant.get("bant_authority"))}</li>
+            <li><strong>Timeline:</strong> {_esc(bant.get("bant_timeline"))}</li>
         </ul>
     </div>
     {contact_section}
@@ -130,9 +136,9 @@ def send_handoff_request_email(notification_email: str, bot_name: str, reason: s
     if contact:
         parts = []
         if contact.get("name"):
-            parts.append(f"<strong>{contact['name']}</strong>")
+            parts.append(f"<strong>{_esc(contact['name'])}</strong>")
         if contact.get("email"):
-            parts.append(contact["email"])
+            parts.append(_esc(contact["email"]))
         if parts:
             contact_info = f'<p style="color: #4b5563;">From: {" — ".join(parts)}</p>'
 
@@ -141,7 +147,7 @@ def send_handoff_request_email(notification_email: str, bot_name: str, reason: s
         A visitor on <strong>{bot_name}</strong> has requested to speak with a team member.
     </p>
     {contact_info}
-    {f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:</strong> {reason}</p></div>' if reason else ""}
+    {f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:</strong> {_esc(reason)}</p></div>' if reason else ""}
     <a href="https://admin.oyechats.com/live-chat" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
         Open Live Chat
     </a>
@@ -159,9 +165,9 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
     </p>
     <div style="background: #fef2f2; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
         <ul style="margin: 0; padding-left: 20px; color: #991b1b; line-height: 1.8;">
-            <li><strong>Name:</strong> {contact.get("name", "—")}</li>
-            <li><strong>Email:</strong> {contact.get("email", "—")}</li>
-            {f"<li><strong>Phone:</strong> {contact.get('phone')}</li>" if contact.get("phone") else ""}
+            <li><strong>Name:</strong> {_esc(contact.get("name"))}</li>
+            <li><strong>Email:</strong> {_esc(contact.get("email"))}</li>
+            {f"<li><strong>Phone:</strong> {_esc(contact.get('phone'))}</li>" if contact.get("phone") else ""}
         </ul>
     </div>
     <a href="https://admin.oyechats.com/leads" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
@@ -188,8 +194,8 @@ def send_offline_message_email(
         A visitor on <strong>{bot_name}</strong> left a message while no agent was available.
     </p>
     <div style="background: #f0f9ff; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-        <p style="color: #4b5563; margin: 0 0 8px 0;"><strong>From:</strong> {visitor_name} ({visitor_email})</p>
-        <p style="color: #1e3a5f; margin: 0; line-height: 1.6; white-space: pre-wrap;">{message_preview}</p>
+        <p style="color: #4b5563; margin: 0 0 8px 0;"><strong>From:</strong> {_esc(visitor_name)} ({_esc(visitor_email)})</p>
+        <p style="color: #1e3a5f; margin: 0; line-height: 1.6; white-space: pre-wrap;">{_esc(message_preview)}</p>
     </div>
     <a href="https://admin.oyechats.com/messages" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
         View Messages

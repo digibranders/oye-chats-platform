@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Headphones, Send, X, User, Mail, MapPin, Monitor, Target, MessageCircle, Loader2, Circle } from 'lucide-react';
-import { getAgentQueue, acceptChat, closeAgentChat, toggleAgentStatus, getChatHistory } from '../services/api';
+import { Headphones, Send, X, User, Mail, MapPin, Monitor, Target, MessageCircle, Loader2, Circle, ArrowRightLeft } from 'lucide-react';
+import { getAgentQueue, acceptChat, closeAgentChat, toggleAgentStatus, getChatHistory, getCannedResponses, transferChat, getAgents, getDepartments } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { useBotContext } from '../context/BotContext';
@@ -18,6 +18,12 @@ export default function LiveChat() {
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [ws, setWs] = useState(null);
+    const [cannedResponses, setCannedResponses] = useState([]);
+    const [showCannedDropdown, setShowCannedDropdown] = useState(false);
+    const [cannedFilter, setCannedFilter] = useState('');
+    const [showTransferModal, setShowTransferModal] = useState(false);
+    const [transferAgents, setTransferAgents] = useState([]);
+    const [transferDepartments, setTransferDepartments] = useState([]);
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
 
@@ -46,6 +52,19 @@ export default function LiveChat() {
         } catch { /* ignore audio errors */ }
     }, []);
 
+    // Request browser notification permission on mount
+    useEffect(() => {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }, []);
+
+    const sendBrowserNotification = useCallback((title, body) => {
+        if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+            new Notification(title, { body, icon: '/favicon.ico' });
+        }
+    }, []);
+
     // WebSocket connection
     useEffect(() => {
         const apiKey = localStorage.getItem('admin_token');
@@ -64,6 +83,7 @@ export default function LiveChat() {
             switch (data.type) {
                 case 'queue_update':
                     fetchQueue();
+                    sendBrowserNotification('New chat waiting', 'A visitor is waiting for live support');
                     break;
                 case 'message':
                     if (data.session_id === selectedChat) {
@@ -75,8 +95,11 @@ export default function LiveChat() {
                         }]);
                         setIsTyping(false);
                     }
-                    // Play notification sound for new messages
-                    if (data.role === 'user') playNotification();
+                    // Play notification sound + browser notification for new messages
+                    if (data.role === 'user') {
+                        playNotification();
+                        sendBrowserNotification('New message', data.content?.slice(0, 80) || 'Visitor sent a message');
+                    }
                     break;
                 case 'visitor_typing':
                     if (data.session_id === selectedChat) {
@@ -86,6 +109,15 @@ export default function LiveChat() {
                     break;
                 case 'chat_accepted':
                     setActiveChats(prev => [...new Set([...prev, data.session_id])]);
+                    fetchQueue();
+                    break;
+                case 'chat_transferred':
+                    // Chat was transferred away from this agent
+                    setActiveChats(prev => prev.filter(id => id !== data.session_id));
+                    if (selectedChat === data.session_id) {
+                        setSelectedChat(null);
+                        setMessages([]);
+                    }
                     fetchQueue();
                     break;
                 case 'chat_closed':
@@ -102,7 +134,7 @@ export default function LiveChat() {
 
         setWs(socket); // eslint-disable-line react-hooks/set-state-in-effect -- storing WebSocket ref from external subscription
         return () => socket.close();
-    }, [isOnline, selectedChat, fetchQueue, playNotification]);
+    }, [isOnline, selectedChat, fetchQueue, playNotification, sendBrowserNotification]);
 
     useEffect(() => {
         if (isOnline) {
@@ -173,8 +205,72 @@ export default function LiveChat() {
         }
     };
 
+    // Load canned responses once
+    useEffect(() => {
+        getCannedResponses().then(data => setCannedResponses(data.responses || [])).catch(() => {});
+    }, []);
+
+    // Detect `/` command in input for canned responses
+    const handleInputChange = (e) => {
+        const val = e.target.value;
+        setInputText(val);
+        handleAgentTyping();
+
+        if (val.startsWith('/') && val.length >= 1) {
+            const query = val.slice(1).toLowerCase();
+            setCannedFilter(query);
+            setShowCannedDropdown(true);
+        } else {
+            setShowCannedDropdown(false);
+        }
+    };
+
+    const selectCannedResponse = (response) => {
+        setInputText(response.content);
+        setShowCannedDropdown(false);
+        inputRef.current?.focus();
+    };
+
+    const filteredCanned = cannedResponses.filter(r => {
+        if (!cannedFilter) return true;
+        return (
+            r.title.toLowerCase().includes(cannedFilter) ||
+            (r.shortcut && r.shortcut.toLowerCase().includes(cannedFilter)) ||
+            r.content.toLowerCase().includes(cannedFilter)
+        );
+    });
+
+    const openTransferModal = async () => {
+        try {
+            const [agentsData, deptsData] = await Promise.all([getAgents(), getDepartments()]);
+            setTransferAgents((agentsData.agents || []).filter(a => a.is_online));
+            setTransferDepartments(deptsData.departments || []);
+            setShowTransferModal(true);
+        } catch {
+            // silent
+        }
+    };
+
+    const handleTransfer = async (targetAgentId, targetDeptId) => {
+        if (!selectedChat) return;
+        try {
+            const data = targetAgentId
+                ? { target_agent_id: targetAgentId }
+                : { target_department_id: targetDeptId };
+            await transferChat(selectedChat, data);
+            setShowTransferModal(false);
+            setSelectedChat(null);
+            setMessages([]);
+            setActiveChats(prev => prev.filter(c => c !== selectedChat));
+            fetchQueue();
+        } catch (e) {
+            console.error('Transfer failed:', e);
+        }
+    };
+
     const handleSend = (e) => {
         e?.preventDefault();
+        setShowCannedDropdown(false);
         if (!inputText.trim() || !ws || !selectedChat) return;
 
         ws.send(JSON.stringify({
@@ -321,12 +417,22 @@ export default function LiveChat() {
                                             <p className="text-[11px] text-green-600">Connected</p>
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={() => handleCloseChat(selectedChat)}
-                                        className="px-3 py-1.5 text-[12px] font-medium text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 transition-colors"
-                                    >
-                                        End Chat
-                                    </button>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={openTransferModal}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg hover:bg-indigo-100 transition-colors"
+                                            title="Transfer chat"
+                                        >
+                                            <ArrowRightLeft className="w-3.5 h-3.5" />
+                                            Transfer
+                                        </button>
+                                        <button
+                                            onClick={() => handleCloseChat(selectedChat)}
+                                            className="px-3 py-1.5 text-[12px] font-medium text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 transition-colors"
+                                        >
+                                            End Chat
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {/* Messages */}
@@ -359,14 +465,39 @@ export default function LiveChat() {
                                 </div>
 
                                 {/* Input */}
-                                <div className="border-t border-secondary-200 dark:border-secondary-700 px-4 py-3">
+                                <div className="border-t border-secondary-200 dark:border-secondary-700 px-4 py-3 relative">
+                                    {/* Canned responses dropdown */}
+                                    {showCannedDropdown && filteredCanned.length > 0 && (
+                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
+                                            {filteredCanned.slice(0, 8).map(r => (
+                                                <button
+                                                    key={r.id}
+                                                    onClick={() => selectCannedResponse(r)}
+                                                    className="w-full text-left px-4 py-2.5 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors border-b border-secondary-100 dark:border-secondary-700/50 last:border-b-0"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-sm font-medium text-secondary-900 dark:text-white">{r.title}</span>
+                                                        {r.shortcut && (
+                                                            <span className="px-1.5 py-0.5 bg-secondary-100 dark:bg-secondary-700 text-secondary-500 text-[10px] font-mono rounded">
+                                                                /{r.shortcut}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[11px] text-secondary-500 truncate mt-0.5">{r.content}</p>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                     <form onSubmit={handleSend} className="flex items-center gap-2">
                                         <input
                                             ref={inputRef}
                                             type="text"
                                             value={inputText}
-                                            onChange={(e) => { setInputText(e.target.value); handleAgentTyping(); }}
-                                            placeholder="Type your reply..."
+                                            onChange={handleInputChange}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Escape') setShowCannedDropdown(false);
+                                            }}
+                                            placeholder="Type your reply... (/ for quick replies)"
                                             className="flex-1 px-4 py-2.5 text-sm bg-secondary-50 dark:bg-secondary-900 rounded-xl outline-none border border-transparent focus:border-primary-300 transition-colors"
                                         />
                                         <button
@@ -392,6 +523,69 @@ export default function LiveChat() {
                                 </p>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* Transfer Modal */}
+            {showTransferModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white dark:bg-secondary-800 rounded-xl shadow-xl w-full max-w-md">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100 dark:border-secondary-700">
+                            <h2 className="font-semibold text-secondary-900 dark:text-white flex items-center gap-2">
+                                <ArrowRightLeft className="w-4 h-4" />
+                                Transfer Chat
+                            </h2>
+                            <button onClick={() => setShowTransferModal(false)} className="text-secondary-400 hover:text-secondary-600">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            {transferAgents.length > 0 && (
+                                <div>
+                                    <h3 className="text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">Online Agents</h3>
+                                    <div className="space-y-2">
+                                        {transferAgents.map(agent => (
+                                            <button
+                                                key={agent.id}
+                                                onClick={() => handleTransfer(agent.id, null)}
+                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left"
+                                            >
+                                                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 font-bold text-sm">
+                                                    {agent.name?.charAt(0).toUpperCase() || '?'}
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-secondary-900 dark:text-white">{agent.name}</p>
+                                                    <p className="text-[11px] text-secondary-500">{agent.department_name || 'No department'} · {agent.active_chats || 0} active</p>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {transferDepartments.length > 0 && (
+                                <div>
+                                    <h3 className="text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">Departments</h3>
+                                    <div className="space-y-2">
+                                        {transferDepartments.map(dept => (
+                                            <button
+                                                key={dept.id}
+                                                onClick={() => handleTransfer(null, dept.id)}
+                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left"
+                                            >
+                                                <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 font-bold text-sm">
+                                                    {dept.name?.charAt(0).toUpperCase() || '?'}
+                                                </div>
+                                                <p className="text-sm font-medium text-secondary-900 dark:text-white">{dept.name}</p>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {transferAgents.length === 0 && transferDepartments.length === 0 && (
+                                <p className="text-sm text-secondary-500 text-center py-4">No agents online or departments available.</p>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}
