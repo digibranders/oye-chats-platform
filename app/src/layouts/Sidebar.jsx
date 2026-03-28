@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard,
     BookOpen,
@@ -13,7 +13,6 @@ import {
     ChevronDown,
     Plus,
     Check,
-    Loader2,
     Settings,
     Plug,
     Inbox,
@@ -21,13 +20,11 @@ import {
     MessageSquareText,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
-import { createBot } from '../services/api';
 
 export default function Sidebar({ isOpen, isMobile, onClose }) {
     const location = useLocation();
-    const { bots, selectedBot, selectBot, refreshBots, loading } = useBotContext();
+    const { bots, selectedBot, selectBot, loading } = useBotContext();
     const [dropdownOpen, setDropdownOpen] = useState(false);
-    const [creating, setCreating] = useState(false);
     const dropdownRef = useRef(null);
 
     useEffect(() => {
@@ -45,17 +42,11 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         if (isMobile && onClose) onClose();
     };
 
-    const handleCreateBot = async () => {
-        try {
-            setCreating(true);
-            await createBot({ name: `Bot ${bots.length + 1}` });
-            await refreshBots();
-            setDropdownOpen(false);
-        } catch (err) {
-            alert(typeof err === 'string' ? err : err?.detail || 'Failed to create bot');
-        } finally {
-            setCreating(false);
-        }
+    const navigate = useNavigate();
+
+    const handleCreateBot = () => {
+        setDropdownOpen(false);
+        navigate('/chatbot?create=true');
     };
 
     const isAgentRole = localStorage.getItem('auth_type') === 'agent';
@@ -204,11 +195,10 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                                     <div className="border-t border-zinc-800">
                                         <button
                                             onClick={handleCreateBot}
-                                            disabled={creating}
-                                            className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-primary-400 hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-primary-400 hover:bg-zinc-800 transition-colors"
                                         >
-                                            {creating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-                                            {creating ? 'Creating...' : 'Create new bot'}
+                                            <Plus size={13} />
+                                            Create new bot
                                         </button>
                                     </div>
                                 </div>

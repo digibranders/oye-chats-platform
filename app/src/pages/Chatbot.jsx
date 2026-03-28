@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2,
     X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { createBot, deleteBot } from '../services/api';
@@ -15,6 +16,7 @@ import EmptyState from '../components/ui/EmptyState';
 export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading } = useBotContext();
     const { showToast } = useToast();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [isCreateOpen, setIsCreateOpen] = useState(false);
     const [newBotName, setNewBotName] = useState('');
     const [newBotWebsite, setNewBotWebsite] = useState('');
@@ -27,6 +29,14 @@ export default function Chatbot() {
     const [showKeys, setShowKeys] = useState({});
     const [embedTab, setEmbedTab] = useState({});
     const [selectedPlatform, setSelectedPlatform] = useState({});
+
+    // Auto-open create modal when navigated with ?create=true
+    useEffect(() => {
+        if (searchParams.get('create') === 'true') {
+            setIsCreateOpen(true);
+            setSearchParams({}, { replace: true });
+        }
+    }, [searchParams, setSearchParams]);
 
     const handleCopy = (text, field) => {
         navigator.clipboard.writeText(text);
