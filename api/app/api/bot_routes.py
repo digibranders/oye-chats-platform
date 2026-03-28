@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -273,13 +273,6 @@ def delete_bot(bot_id: int, client: Client = Depends(get_current_client)):
         bot = session.execute(stmt).scalars().first()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found.")
-
-        # Don't allow deleting the last bot
-        total_bots = len(session.execute(select(Bot.id).where(Bot.client_id == client.id)).all())
-        if total_bots <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your only bot. Create another one first."
-            )
 
         session.delete(bot)
         session.commit()

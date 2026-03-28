@@ -17,7 +17,7 @@ class Client(Base):
     hashed_password = Column(String, nullable=False)
     api_key = Column(String, unique=True, index=True, nullable=False)
     is_superadmin = Column(sqlalchemy.Boolean, default=False, nullable=False)
-    max_bots = Column(Integer, default=1, server_default="1", nullable=False)
+    max_bots = Column(Integer, default=100, server_default="100", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Password reset fields
