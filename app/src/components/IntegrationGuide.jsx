@@ -46,28 +46,27 @@ export default function IntegrationGuide({
                     </div>
                 </div>
 
+
                 {/* Env toggle + docs link */}
                 <div className="flex items-center gap-2 flex-shrink-0">
                     <div className="flex items-center gap-1 p-0.5 bg-secondary-100 dark:bg-secondary-800 rounded-lg">
                         <button
                             type="button"
                             onClick={() => onEnvChange('production')}
-                            className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
-                                env === 'production'
+                            className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${env === 'production'
                                     ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm'
                                     : 'text-secondary-400'
-                            }`}
+                                }`}
                         >
                             Production
                         </button>
                         <button
                             type="button"
                             onClick={() => onEnvChange('development')}
-                            className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${
-                                env === 'development'
+                            className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${env === 'development'
                                     ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm'
                                     : 'text-secondary-400'
-                            }`}
+                                }`}
                         >
                             Development
                         </button>
@@ -125,11 +124,10 @@ export default function IntegrationGuide({
                                                 </span>
                                             </button>
                                             <pre
-                                                className={`p-4 rounded-xl text-[11px] leading-relaxed overflow-x-auto border font-mono ${
-                                                    env === 'production'
+                                                className={`p-4 rounded-xl text-[11px] leading-relaxed overflow-x-auto border font-mono ${env === 'production'
                                                         ? 'bg-secondary-900 dark:bg-secondary-950 text-green-400 border-secondary-800'
                                                         : 'bg-secondary-900 dark:bg-secondary-950 text-amber-400 border-secondary-800'
-                                                }`}
+                                                    }`}
                                             >
                                                 {step.code}
                                             </pre>
