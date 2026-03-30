@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.auth import get_current_bot, get_current_client
+from app.api.auth import get_current_bot, get_current_client, get_current_client_or_agent
 from app.db.models import Bot, Client
 from app.db.session import get_session
 
@@ -122,10 +122,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
 
 
 @router.get("", response_model=list[BotResponse])
-def list_bots(request: Request, client: Client = Depends(get_current_client)):
-    """List all bots for the authenticated client."""
+def list_bots(request: Request, auth=Depends(get_current_client_or_agent)):
+    """List all bots for the authenticated client or agent's client."""
+    client_id = auth["client_id"]
     with get_session() as session:
-        stmt = select(Bot).where(Bot.client_id == client.id).order_by(Bot.id)
+        stmt = select(Bot).where(Bot.client_id == client_id).order_by(Bot.id)
         bots = session.execute(stmt).scalars().all()
         bots_response = []
         for b in bots:

@@ -38,7 +38,7 @@ export default function Login() {
                 localStorage.setItem('is_superadmin', 'false');
                 sessionStorage.setItem('login_toast', '1');
                 loggedIn = true;
-                navigate('/live-chat');
+                navigate('/support');
             } catch {
                 // Agent login failed — try admin login
             }
@@ -67,7 +67,8 @@ export default function Login() {
 
     if (localStorage.getItem('admin_token')) {
         const isSuper = localStorage.getItem('is_superadmin') === 'true';
-        return <Navigate to={isSuper ? '/superadmin/overview' : '/'} />;
+        const isAgent = localStorage.getItem('auth_type') === 'agent';
+        return <Navigate to={isSuper ? '/superadmin/overview' : isAgent ? '/support' : '/'} />;
     }
 
     return (
