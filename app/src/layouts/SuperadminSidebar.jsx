@@ -31,16 +31,16 @@ export default function SuperadminSidebar({ isOpen }) {
                 to={item.path}
                 className={`flex items-center gap-3 px-3 rounded-xl transition-all group ${isOpen ? 'w-full h-8' : 'w-8 h-8 justify-center'
                     } ${active
-                        ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 font-medium'
-                        : 'text-secondary-600 dark:text-secondary-400 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 hover:text-secondary-900 dark:hover:text-secondary-200'
+                        ? 'bg-primary-50 text-primary-700 font-medium'
+                        : 'text-secondary-600 hover:bg-secondary-50:bg-secondary-700/50 hover:text-secondary-900:text-secondary-200'
                     }`}
                 title={!isOpen ? item.name : undefined}
             >
                 <Icon
                     size={18}
                     className={`flex-shrink-0 transition-colors ${active
-                        ? 'text-primary-600 dark:text-primary-400'
-                        : 'text-secondary-400 dark:text-secondary-500 group-hover:text-secondary-600 dark:group-hover:text-secondary-300'
+                        ? 'text-primary-600'
+                        : 'text-secondary-400 group-hover:text-secondary-600:text-secondary-300'
                         }`}
                 />
                 {isOpen && <span className="truncate text-sm">{item.name}</span>}
@@ -53,17 +53,17 @@ export default function SuperadminSidebar({ isOpen }) {
 
     return (
         <aside
-            className={`fixed top-0 left-0 h-screen overflow-x-hidden bg-white dark:bg-secondary-800 border-r border-secondary-200 dark:border-secondary-700 shadow-sm z-20 transition-all duration-300 ${isOpen ? 'w-58' : 'w-20'
+            className={`fixed top-0 left-0 h-screen overflow-x-hidden bg-white border-r border-secondary-200 shadow-sm z-20 transition-all duration-300 ${isOpen ? 'w-58' : 'w-20'
                 }`}
         >
             {/* Logo */}
-            <div className="flex items-center justify-center h-16 border-b border-secondary-100 dark:border-secondary-700">
+            <div className="flex items-center justify-center h-16 border-b border-secondary-100">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-600 dark:bg-indigo-500 text-white flex items-center justify-center flex-shrink-0 shadow-md">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center flex-shrink-0 shadow-md">
                         <Bot size={20} />
                     </div>
                     {isOpen && (
-                        <span className="text-l font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-900 dark:from-indigo-400 dark:to-indigo-200 truncate pr-4">
+                        <span className="text-l font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-900 truncate pr-4">
                             Superadmin
                         </span>
                     )}

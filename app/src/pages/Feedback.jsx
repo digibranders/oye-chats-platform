@@ -55,13 +55,13 @@ export default function Feedback({ embedded = false }) {
             {!embedded && <PageHeader title="Response Feedback" subtitle="See how users rate your chatbot's responses" />}
 
             {error && (
-                <div className="bg-error-50 dark:bg-error-500/10 text-error-600 dark:text-error-500 p-3 rounded-xl border border-error-500/20 text-sm font-medium">
+                <div className="bg-error-50 text-error-600 p-3 rounded-xl border border-error-500/20 text-sm font-medium">
                     {error}
                 </div>
             )}
 
             {isLoading ? (
-                <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-12 flex flex-col items-center justify-center min-h-[400px]">
+                <div className="bg-white rounded-2xl border border-secondary-200 p-12 flex flex-col items-center justify-center min-h-[400px]">
                     <div className="w-10 h-10 border-3 border-primary-500/20 border-t-primary-500 rounded-full animate-spin" />
                     <p className="mt-4 text-secondary-500 text-sm font-medium">Loading feedback...</p>
                 </div>
@@ -75,20 +75,20 @@ export default function Feedback({ embedded = false }) {
             ) : (
                 <>
                     {/* Summary Bar */}
-                    <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                    <div className="bg-white rounded-2xl border border-secondary-200 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
                         <div className="flex items-center gap-6 flex-1">
                             <div>
-                                <p className="text-2xl font-bold text-secondary-900 dark:text-white">{stats.total}</p>
+                                <p className="text-2xl font-bold text-secondary-900">{stats.total}</p>
                                 <p className="text-xs text-secondary-400">Total ratings</p>
                             </div>
-                            <div className="h-8 w-px bg-secondary-200 dark:bg-secondary-800" />
+                            <div className="h-8 w-px bg-secondary-200" />
                             <div className="flex items-center gap-2">
                                 <ThumbsUp size={16} className="text-success-500" />
-                                <span className="text-sm font-bold text-success-600 dark:text-success-500">{stats.rate}%</span>
+                                <span className="text-sm font-bold text-success-600">{stats.rate}%</span>
                                 <span className="text-xs text-secondary-400">positive</span>
                             </div>
                         </div>
-                        <div className="w-full sm:w-48 h-2 bg-secondary-100 dark:bg-secondary-800 rounded-full overflow-hidden">
+                        <div className="w-full sm:w-48 h-2 bg-secondary-100 rounded-full overflow-hidden">
                             <div className="h-full bg-success-500 rounded-full transition-all duration-700" style={{ width: `${stats.rate}%` }} />
                         </div>
                     </div>
@@ -102,19 +102,19 @@ export default function Feedback({ embedded = false }) {
                             const isExpanded = expandedId === item.message_id;
                             const isPositive = item.feedback === 1;
                             return (
-                                <div key={item.message_id} className="bg-white dark:bg-secondary-900 rounded-xl border border-secondary-200 dark:border-secondary-800 overflow-hidden hover:shadow-sm transition-all">
+                                <div key={item.message_id} className="bg-white rounded-xl border border-secondary-200 overflow-hidden hover:shadow-sm transition-all">
                                     <button
                                         onClick={() => setExpandedId(isExpanded ? null : item.message_id)}
                                         className="w-full flex items-center gap-4 p-4 text-left"
                                     >
-                                        <div className={`p-2 rounded-lg shrink-0 ${isPositive ? 'bg-success-50 dark:bg-success-500/10' : 'bg-error-50 dark:bg-error-500/10'}`}>
+                                        <div className={`p-2 rounded-lg shrink-0 ${isPositive ? 'bg-success-50' : 'bg-error-50'}`}>
                                             {isPositive
                                                 ? <ThumbsUp size={16} className="text-success-500 fill-current" />
                                                 : <ThumbsDown size={16} className="text-error-500 fill-current" />
                                             }
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-secondary-900 dark:text-white truncate">{item.question}</p>
+                                            <p className="text-sm font-medium text-secondary-900 truncate">{item.question}</p>
                                             <div className="flex items-center gap-3 mt-1">
                                                 <span className="text-[11px] text-secondary-400">{formatDate(item.created_at)}</span>
                                                 <span className="text-[11px] text-primary-500 font-medium">{item.user}</span>
@@ -125,13 +125,13 @@ export default function Feedback({ embedded = false }) {
 
                                     {isExpanded && (
                                         <div className="px-4 pb-4 pt-0 space-y-3 animate-fade-in">
-                                            <div className="p-3 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg">
+                                            <div className="p-3 bg-secondary-50 rounded-lg">
                                                 <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-400 mb-1">User Question</p>
-                                                <p className="text-sm text-secondary-900 dark:text-white">{item.question}</p>
+                                                <p className="text-sm text-secondary-900">{item.question}</p>
                                             </div>
-                                            <div className="p-3 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg">
+                                            <div className="p-3 bg-secondary-50 rounded-lg">
                                                 <p className="text-[10px] font-bold uppercase tracking-wider text-secondary-400 mb-1">Bot Answer</p>
-                                                <p className="text-sm text-secondary-600 dark:text-secondary-300">{item.answer}</p>
+                                                <p className="text-sm text-secondary-600">{item.answer}</p>
                                             </div>
                                         </div>
                                     )}

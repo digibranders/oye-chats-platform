@@ -78,7 +78,7 @@ function AdminLayoutInner() {
     };
 
     return (
-        <div className="min-h-screen bg-secondary-50 dark:bg-secondary-950 flex">
+        <div className="min-h-screen bg-secondary-50 flex">
             {/* Mobile backdrop */}
             {isMobile && isSidebarOpen && (
                 <div
@@ -118,7 +118,7 @@ function AdminLayoutInner() {
                 />
             )}
 
-            <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[110] flex items-center gap-2 bg-white dark:bg-secondary-900 shadow-lg border border-secondary-200 dark:border-secondary-800 rounded-full px-4 py-2 text-sm font-medium text-secondary-800 dark:text-white transition-all duration-500 ${
+            <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[110] flex items-center gap-2 bg-white shadow-lg border border-secondary-200 rounded-full px-4 py-2 text-sm font-medium text-secondary-800 transition-all duration-500 ${
                 showLoginToast ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-3 pointer-events-none'
             }`}>
                 <span className="w-2.5 h-2.5 rounded-full bg-success-500 flex-shrink-0" />

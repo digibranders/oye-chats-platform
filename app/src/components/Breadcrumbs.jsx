@@ -23,7 +23,7 @@ export default function Breadcrumbs() {
     // Root/home page
     if (segments.length === 0) {
         return (
-            <span className="text-sm font-medium text-secondary-900 dark:text-white">
+            <span className="text-sm font-medium text-secondary-900">
                 Overview
             </span>
         );
@@ -31,7 +31,7 @@ export default function Breadcrumbs() {
 
     return (
         <nav className="flex items-center gap-1.5 text-sm">
-            <Link to="/" className="text-secondary-400 dark:text-secondary-500 hover:text-secondary-600 dark:hover:text-secondary-300 transition-colors hidden sm:inline">
+            <Link to="/" className="text-secondary-400 hover:text-secondary-600:text-secondary-300 transition-colors hidden sm:inline">
                 Home
             </Link>
             {segments.map((segment, index) => {
@@ -41,11 +41,11 @@ export default function Breadcrumbs() {
 
                 return (
                     <span key={path} className="flex items-center gap-1.5">
-                        <ChevronRight size={14} className="text-secondary-300 dark:text-secondary-600 hidden sm:inline" />
+                        <ChevronRight size={14} className="text-secondary-300 hidden sm:inline" />
                         {isLast ? (
-                            <span className="font-medium text-secondary-900 dark:text-white">{label}</span>
+                            <span className="font-medium text-secondary-900">{label}</span>
                         ) : (
-                            <Link to={path} className="text-secondary-400 dark:text-secondary-500 hover:text-secondary-600 dark:hover:text-secondary-300 transition-colors">
+                            <Link to={path} className="text-secondary-400 hover:text-secondary-600:text-secondary-300 transition-colors">
                                 {label}
                             </Link>
                         )}

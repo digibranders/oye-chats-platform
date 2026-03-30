@@ -101,9 +101,7 @@ body {
   background: var(--color-secondary-300);
   border-radius: 999px;
 }
-.dark ::-webkit-scrollbar-thumb {
-  background: var(--color-secondary-700);
-}
+
 
 /* Orb color picker - compact react-colorful */
 .orb-color-picker .react-colorful {
@@ -133,7 +131,4 @@ body {
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-}
-.dark .glass {
-  background: rgba(24, 24, 27, 0.8);
 }

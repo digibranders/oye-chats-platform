@@ -18,7 +18,7 @@ export default function SuperadminLayout() {
     }, []);
 
     return (
-        <div className="min-h-screen bg-secondary-50 dark:bg-secondary-900 flex">
+        <div className="min-h-screen bg-secondary-50 flex">
             {/* Sidebar */}
             <SuperadminSidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
 
@@ -34,7 +34,7 @@ export default function SuperadminLayout() {
             </div>
 
             {/* Login success pill toast — top center */}
-            <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-white dark:bg-secondary-800 shadow-lg border border-secondary-100 dark:border-secondary-700 rounded-full px-4 py-2 text-sm font-medium text-secondary-800 dark:text-white transition-all duration-500 ${showLoginToast ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-3 pointer-events-none'
+            <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-white shadow-lg border border-secondary-100 rounded-full px-4 py-2 text-sm font-medium text-secondary-800 transition-all duration-500 ${showLoginToast ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-3 pointer-events-none'
                 }`}>
                 <span className="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0"></span>
                 Login successful!

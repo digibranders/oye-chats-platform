@@ -48,7 +48,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                         onClick={() => onSelect(theme.id)}
                         className={`group relative cursor-pointer rounded-lg border-2 transition-all duration-300 overflow-hidden ${isSelected
                                 ? 'border-primary-500 ring-4 ring-primary-500/15'
-                                : 'border-secondary-200 dark:border-secondary-600/60 hover:border-primary-300'
+                                : 'border-secondary-200 hover:border-primary-300'
                             }`}
                     >
                         {/* Card Visual Area */}
@@ -67,9 +67,9 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                         </div>
 
                         {/* Card Footer */}
-                        <div className="p-4 bg-white dark:bg-secondary-800/80 flex items-center justify-between border-t border-secondary-200 dark:border-secondary-600/60">
+                        <div className="p-4 bg-white flex items-center justify-between border-t border-secondary-200">
                             <div>
-                                <h3 className="font-semibold text-sm text-secondary-900 dark:text-white">{theme.name}</h3>
+                                <h3 className="font-semibold text-sm text-secondary-900">{theme.name}</h3>
                                 {isSelected && (
                                     <span className="text-[10px] font-bold text-primary-600 uppercase tracking-widest">Active</span>
                                 )}
@@ -79,7 +79,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                                     e.stopPropagation();
                                     setPreviewTheme(theme.id);
                                 }}
-                                className="flex items-center gap-1.5 px-3 h-8 rounded-md bg-secondary-100 dark:bg-secondary-700 text-secondary-600 dark:text-secondary-300 hover:bg-primary-500 hover:text-white transition-all text-xs font-semibold"
+                                className="flex items-center gap-1.5 px-3 h-8 rounded-md bg-secondary-100 text-secondary-600 hover:bg-primary-500 hover:text-white transition-all text-xs font-semibold"
                             >
                                 <Eye className="w-3.5 h-3.5" />
                                 Preview

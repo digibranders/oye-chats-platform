@@ -10,19 +10,19 @@ export default function NoBotState({ title, subtitle }) {
 
     return (
         <div className="flex flex-col items-center justify-center py-20 animate-slide-up">
-            <div className="bg-white dark:bg-secondary-800 rounded-2xl border border-secondary-200 dark:border-secondary-700 shadow-sm p-12 flex flex-col items-center text-center max-w-md w-full">
+            <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-12 flex flex-col items-center text-center max-w-md w-full">
                 {/* Icon */}
-                <div className="w-20 h-20 rounded-2xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center mb-6">
+                <div className="w-20 h-20 rounded-2xl bg-primary-50 flex items-center justify-center mb-6">
                     <Bot size={36} className="text-primary-500" />
                 </div>
 
                 {/* Title */}
-                <h2 className="text-xl font-bold text-secondary-900 dark:text-white mb-2">
+                <h2 className="text-xl font-bold text-secondary-900 mb-2">
                     {title || 'No Chatbot Yet'}
                 </h2>
 
                 {/* Subtitle */}
-                <p className="text-secondary-500 dark:text-secondary-400 mb-8 leading-relaxed">
+                <p className="text-secondary-500 mb-8 leading-relaxed">
                     {subtitle || 'Create your first chatbot to get started. You can upload documents, customize the interface, and embed it on your website.'}
                 </p>
 

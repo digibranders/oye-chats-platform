@@ -69,7 +69,7 @@ export default function OfflineMessages({ embedded = false }) {
         <div className="space-y-6">
             {!embedded && (
                 <div>
-                    <h1 className="text-2xl font-bold text-secondary-900 dark:text-white">Offline Messages</h1>
+                    <h1 className="text-2xl font-bold text-secondary-900">Offline Messages</h1>
                     <p className="text-secondary-500 text-sm mt-1">Messages left by visitors when no agent was available.</p>
                 </div>
             )}
@@ -93,7 +93,7 @@ export default function OfflineMessages({ embedded = false }) {
 
             <div className="flex gap-6">
                 {/* Message List */}
-                <div className="flex-1 bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 overflow-hidden">
+                <div className="flex-1 bg-white rounded-2xl border border-secondary-200 overflow-hidden">
                     {loading ? (
                         <div className="flex items-center justify-center py-20">
                             <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
@@ -104,7 +104,7 @@ export default function OfflineMessages({ embedded = false }) {
                             <p className="font-medium">No messages</p>
                         </div>
                     ) : (
-                        <div className="divide-y divide-secondary-100 dark:divide-secondary-800">
+                        <div className="divide-y divide-secondary-100">
                             {messages.map((msg) => (
                                 <div
                                     key={msg.id}
@@ -112,20 +112,20 @@ export default function OfflineMessages({ embedded = false }) {
                                         setSelectedMessage(msg);
                                         if (msg.status === 'new') handleMarkRead(msg.id);
                                     }}
-                                    className={`p-4 hover:bg-secondary-50 dark:hover:bg-secondary-800/50 cursor-pointer transition-colors ${
-                                        selectedMessage?.id === msg.id ? 'bg-primary-50/50 dark:bg-secondary-800' : ''
+                                    className={`p-4 hover:bg-secondary-50:bg-secondary-800/50 cursor-pointer transition-colors ${
+                                        selectedMessage?.id === msg.id ? 'bg-primary-50/50' : ''
                                     } ${msg.status === 'new' ? 'border-l-3 border-l-blue-500' : ''}`}
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0 flex-1">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="font-semibold text-sm text-secondary-900 dark:text-white truncate">
+                                                <span className="font-semibold text-sm text-secondary-900 truncate">
                                                     {msg.visitor_name}
                                                 </span>
                                                 {statusBadge(msg.status)}
                                             </div>
                                             <p className="text-xs text-secondary-500 mb-1">{msg.visitor_email}</p>
-                                            <p className="text-sm text-secondary-700 dark:text-secondary-300 line-clamp-2">
+                                            <p className="text-sm text-secondary-700 line-clamp-2">
                                                 {msg.message_body}
                                             </p>
                                         </div>
@@ -140,7 +140,7 @@ export default function OfflineMessages({ embedded = false }) {
 
                     {/* Pagination */}
                     {totalPages > 1 && (
-                        <div className="flex items-center justify-between px-4 py-3 border-t border-secondary-100 dark:border-secondary-800">
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-secondary-100">
                             <span className="text-xs text-secondary-500">{total} messages</span>
                             <div className="flex gap-1">
                                 <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1 rounded disabled:opacity-30">
@@ -157,9 +157,9 @@ export default function OfflineMessages({ embedded = false }) {
 
                 {/* Detail Panel */}
                 {selectedMessage && (
-                    <div className="w-96 bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-5 shrink-0 self-start">
+                    <div className="w-96 bg-white rounded-2xl border border-secondary-200 p-5 shrink-0 self-start">
                         <div className="flex items-center justify-between mb-4">
-                            <h3 className="font-bold text-secondary-900 dark:text-white">Message Details</h3>
+                            <h3 className="font-bold text-secondary-900">Message Details</h3>
                             <div className="flex gap-1">
                                 {selectedMessage.status !== 'replied' && (
                                     <button
@@ -183,7 +183,7 @@ export default function OfflineMessages({ embedded = false }) {
                         <div className="space-y-3">
                             <div>
                                 <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">From</label>
-                                <p className="text-sm font-medium text-secondary-900 dark:text-white">{selectedMessage.visitor_name}</p>
+                                <p className="text-sm font-medium text-secondary-900">{selectedMessage.visitor_name}</p>
                                 <p className="text-xs text-secondary-500">{selectedMessage.visitor_email}</p>
                                 {selectedMessage.visitor_phone && <p className="text-xs text-secondary-500">{selectedMessage.visitor_phone}</p>}
                             </div>
@@ -196,21 +196,21 @@ export default function OfflineMessages({ embedded = false }) {
                             {selectedMessage.bot_name && (
                                 <div>
                                     <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">Bot</label>
-                                    <p className="text-sm text-secondary-700 dark:text-secondary-300">{selectedMessage.bot_name}</p>
+                                    <p className="text-sm text-secondary-700">{selectedMessage.bot_name}</p>
                                 </div>
                             )}
 
                             <div>
                                 <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">Received</label>
-                                <p className="text-sm text-secondary-700 dark:text-secondary-300">
+                                <p className="text-sm text-secondary-700">
                                     {selectedMessage.created_at ? new Date(selectedMessage.created_at).toLocaleString() : 'Unknown'}
                                 </p>
                             </div>
 
                             <div>
                                 <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">Message</label>
-                                <div className="mt-1 p-3 bg-secondary-50 dark:bg-secondary-800 rounded-xl">
-                                    <p className="text-sm text-secondary-800 dark:text-secondary-200 whitespace-pre-wrap leading-relaxed">
+                                <div className="mt-1 p-3 bg-secondary-50 rounded-xl">
+                                    <p className="text-sm text-secondary-800 whitespace-pre-wrap leading-relaxed">
                                         {selectedMessage.message_body}
                                     </p>
                                 </div>

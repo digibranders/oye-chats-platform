@@ -305,13 +305,13 @@ export default function LiveChat({ embedded = false }) {
             <div className="flex items-center justify-between">
                 {!embedded && <PageHeader title="Live Chat" subtitle="Chat with visitors in real-time" />}
                 <div className="flex items-center gap-3">
-                    {agentName && <span className="text-sm text-secondary-500 dark:text-secondary-400">{agentName}</span>}
+                    {agentName && <span className="text-sm text-secondary-500">{agentName}</span>}
                     <button
                         onClick={handleToggleStatus}
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
                             isOnline
-                                ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-700 dark:text-green-400'
-                                : 'bg-secondary-50 dark:bg-secondary-800 border-secondary-200 dark:border-secondary-700 text-secondary-600 dark:text-secondary-400'
+                                ? 'bg-green-50 border-green-200 text-green-700'
+                                : 'bg-secondary-50 border-secondary-200 text-secondary-600'
                         }`}
                     >
                         <Circle className={`w-3 h-3 ${isOnline ? 'fill-green-500 text-green-500' : 'fill-secondary-300 text-secondary-300'}`} />
@@ -322,11 +322,11 @@ export default function LiveChat({ embedded = false }) {
 
             {!isOnline ? (
                 <div className="flex flex-col items-center justify-center h-96 text-center">
-                    <div className="w-16 h-16 rounded-full bg-secondary-100 dark:bg-secondary-800 flex items-center justify-center mb-4">
+                    <div className="w-16 h-16 rounded-full bg-secondary-100 flex items-center justify-center mb-4">
                         <Headphones className="w-8 h-8 text-secondary-400" />
                     </div>
-                    <h3 className="text-lg font-bold text-secondary-900 dark:text-white mb-2">You're offline</h3>
-                    <p className="text-sm text-secondary-500 dark:text-secondary-400 max-w-sm mb-4">
+                    <h3 className="text-lg font-bold text-secondary-900 mb-2">You're offline</h3>
+                    <p className="text-sm text-secondary-500 max-w-sm mb-4">
                         Go online to start receiving live chat requests from visitors.
                     </p>
                     <button
@@ -339,19 +339,19 @@ export default function LiveChat({ embedded = false }) {
             ) : (
                 <div className="flex gap-4 h-full">
                     {/* Left: Queue + Active Chats */}
-                    <div className="w-72 flex-shrink-0 bg-white dark:bg-secondary-800 rounded-2xl border border-secondary-200 dark:border-secondary-700 overflow-hidden flex flex-col">
+                    <div className="w-72 flex-shrink-0 bg-white rounded-2xl border border-secondary-200 overflow-hidden flex flex-col">
                         {/* Waiting Queue */}
                         {queue.length > 0 && (
-                            <div className="border-b border-secondary-200 dark:border-secondary-700">
-                                <div className="px-4 py-3 bg-amber-50 dark:bg-amber-900/20">
-                                    <h4 className="text-[12px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                            <div className="border-b border-secondary-200">
+                                <div className="px-4 py-3 bg-amber-50">
+                                    <h4 className="text-[12px] font-bold uppercase tracking-wider text-amber-700">
                                         Waiting ({queue.length})
                                     </h4>
                                 </div>
                                 {queue.map(item => (
-                                    <div key={item.session_id} className="px-4 py-3 border-b border-secondary-100 dark:border-secondary-700/50 hover:bg-secondary-50 dark:hover:bg-secondary-700/30">
+                                    <div key={item.session_id} className="px-4 py-3 border-b border-secondary-100 hover:bg-secondary-50:bg-secondary-700/30">
                                         <div className="flex items-center justify-between mb-1">
-                                            <span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+                                            <span className="text-sm font-medium text-secondary-900 truncate">
                                                 {item.name || 'Anonymous'}
                                             </span>
                                             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
@@ -384,14 +384,14 @@ export default function LiveChat({ embedded = false }) {
                                     <button
                                         key={sid}
                                         onClick={() => handleSelectChat(sid)}
-                                        className={`w-full px-4 py-3 text-left border-b border-secondary-100 dark:border-secondary-700/50 transition-colors ${
+                                        className={`w-full px-4 py-3 text-left border-b border-secondary-100 transition-colors ${
                                             selectedChat === sid
-                                                ? 'bg-primary-50 dark:bg-primary-900/20 border-l-2 border-l-primary-500'
-                                                : 'hover:bg-secondary-50 dark:hover:bg-secondary-700/30'
+                                                ? 'bg-primary-50 border-l-2 border-l-primary-500'
+                                                : 'hover:bg-secondary-50:bg-secondary-700/30'
                                         }`}
                                     >
                                         <div className="flex items-center justify-between">
-                                            <span className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+                                            <span className="text-sm font-medium text-secondary-900 truncate">
                                                 {sid.substring(0, 16)}...
                                             </span>
                                             <span className="w-2 h-2 rounded-full bg-green-500" />
@@ -403,24 +403,24 @@ export default function LiveChat({ embedded = false }) {
                     </div>
 
                     {/* Center: Chat Panel */}
-                    <div className="flex-1 bg-white dark:bg-secondary-800 rounded-2xl border border-secondary-200 dark:border-secondary-700 overflow-hidden flex flex-col">
+                    <div className="flex-1 bg-white rounded-2xl border border-secondary-200 overflow-hidden flex flex-col">
                         {selectedChat ? (
                             <>
                                 {/* Chat Header */}
-                                <div className="px-4 py-3 border-b border-secondary-200 dark:border-secondary-700 flex items-center justify-between">
+                                <div className="px-4 py-3 border-b border-secondary-200 flex items-center justify-between">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
+                                        <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
                                             <User className="w-4 h-4 text-primary-600" />
                                         </div>
                                         <div>
-                                            <h4 className="text-sm font-semibold text-secondary-900 dark:text-white">Visitor</h4>
+                                            <h4 className="text-sm font-semibold text-secondary-900">Visitor</h4>
                                             <p className="text-[11px] text-green-600">Connected</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <button
                                             onClick={openTransferModal}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg hover:bg-indigo-100 transition-colors"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
                                             title="Transfer chat"
                                         >
                                             <ArrowRightLeft className="w-3.5 h-3.5" />
@@ -428,7 +428,7 @@ export default function LiveChat({ embedded = false }) {
                                         </button>
                                         <button
                                             onClick={() => handleCloseChat(selectedChat)}
-                                            className="px-3 py-1.5 text-[12px] font-medium text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 transition-colors"
+                                            className="px-3 py-1.5 text-[12px] font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
                                         >
                                             End Chat
                                         </button>
@@ -443,8 +443,8 @@ export default function LiveChat({ embedded = false }) {
                                                 msg.role === 'agent'
                                                     ? 'bg-primary-600 text-white rounded-br-md'
                                                     : msg.role === 'user'
-                                                    ? 'bg-secondary-100 dark:bg-secondary-700 text-secondary-800 dark:text-secondary-200 rounded-bl-md'
-                                                    : 'bg-secondary-50 dark:bg-secondary-800 text-secondary-600 italic text-xs rounded-bl-md'
+                                                    ? 'bg-secondary-100 text-secondary-800 rounded-bl-md'
+                                                    : 'bg-secondary-50 text-secondary-600 italic text-xs rounded-bl-md'
                                             }`}>
                                                 {msg.content}
                                             </div>
@@ -452,7 +452,7 @@ export default function LiveChat({ embedded = false }) {
                                     ))}
                                     {isTyping && (
                                         <div className="flex justify-start">
-                                            <div className="bg-secondary-100 dark:bg-secondary-700 px-4 py-3 rounded-2xl rounded-bl-md">
+                                            <div className="bg-secondary-100 px-4 py-3 rounded-2xl rounded-bl-md">
                                                 <div className="flex gap-1.5">
                                                     <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                                                     <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -465,20 +465,20 @@ export default function LiveChat({ embedded = false }) {
                                 </div>
 
                                 {/* Input */}
-                                <div className="border-t border-secondary-200 dark:border-secondary-700 px-4 py-3 relative">
+                                <div className="border-t border-secondary-200 px-4 py-3 relative">
                                     {/* Canned responses dropdown */}
                                     {showCannedDropdown && filteredCanned.length > 0 && (
-                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
+                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-white border border-secondary-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
                                             {filteredCanned.slice(0, 8).map(r => (
                                                 <button
                                                     key={r.id}
                                                     onClick={() => selectCannedResponse(r)}
-                                                    className="w-full text-left px-4 py-2.5 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors border-b border-secondary-100 dark:border-secondary-700/50 last:border-b-0"
+                                                    className="w-full text-left px-4 py-2.5 hover:bg-secondary-50:bg-secondary-700/50 transition-colors border-b border-secondary-100 last:border-b-0"
                                                 >
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-sm font-medium text-secondary-900 dark:text-white">{r.title}</span>
+                                                        <span className="text-sm font-medium text-secondary-900">{r.title}</span>
                                                         {r.shortcut && (
-                                                            <span className="px-1.5 py-0.5 bg-secondary-100 dark:bg-secondary-700 text-secondary-500 text-[10px] font-mono rounded">
+                                                            <span className="px-1.5 py-0.5 bg-secondary-100 text-secondary-500 text-[10px] font-mono rounded">
                                                                 /{r.shortcut}
                                                             </span>
                                                         )}
@@ -498,7 +498,7 @@ export default function LiveChat({ embedded = false }) {
                                                 if (e.key === 'Escape') setShowCannedDropdown(false);
                                             }}
                                             placeholder="Type your reply... (/ for quick replies)"
-                                            className="flex-1 px-4 py-2.5 text-sm bg-secondary-50 dark:bg-secondary-900 rounded-xl outline-none border border-transparent focus:border-primary-300 transition-colors"
+                                            className="flex-1 px-4 py-2.5 text-sm bg-secondary-50 rounded-xl outline-none border border-transparent focus:border-primary-300 transition-colors"
                                         />
                                         <button
                                             type="submit"
@@ -512,11 +512,11 @@ export default function LiveChat({ embedded = false }) {
                             </>
                         ) : (
                             <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
-                                <div className="w-16 h-16 rounded-full bg-secondary-100 dark:bg-secondary-700 flex items-center justify-center mb-4">
+                                <div className="w-16 h-16 rounded-full bg-secondary-100 flex items-center justify-center mb-4">
                                     <MessageCircle className="w-8 h-8 text-secondary-400" />
                                 </div>
-                                <h3 className="text-lg font-bold text-secondary-900 dark:text-white mb-2">No chat selected</h3>
-                                <p className="text-sm text-secondary-500 dark:text-secondary-400">
+                                <h3 className="text-lg font-bold text-secondary-900 mb-2">No chat selected</h3>
+                                <p className="text-sm text-secondary-500">
                                     {queue.length > 0
                                         ? 'Accept a waiting chat from the queue on the left.'
                                         : 'Waiting for visitors to request live support...'}
@@ -530,9 +530,9 @@ export default function LiveChat({ embedded = false }) {
             {/* Transfer Modal */}
             {showTransferModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-secondary-800 rounded-xl shadow-xl w-full max-w-md">
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100 dark:border-secondary-700">
-                            <h2 className="font-semibold text-secondary-900 dark:text-white flex items-center gap-2">
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100">
+                            <h2 className="font-semibold text-secondary-900 flex items-center gap-2">
                                 <ArrowRightLeft className="w-4 h-4" />
                                 Transfer Chat
                             </h2>
@@ -543,19 +543,19 @@ export default function LiveChat({ embedded = false }) {
                         <div className="p-5 space-y-4">
                             {transferAgents.length > 0 && (
                                 <div>
-                                    <h3 className="text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">Online Agents</h3>
+                                    <h3 className="text-sm font-medium text-secondary-700 mb-2">Online Agents</h3>
                                     <div className="space-y-2">
                                         {transferAgents.map(agent => (
                                             <button
                                                 key={agent.id}
                                                 onClick={() => handleTransfer(agent.id, null)}
-                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left"
+                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50:bg-secondary-700/50 transition-colors text-left"
                                             >
-                                                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 font-bold text-sm">
+                                                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
                                                     {agent.name?.charAt(0).toUpperCase() || '?'}
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-secondary-900 dark:text-white">{agent.name}</p>
+                                                    <p className="text-sm font-medium text-secondary-900">{agent.name}</p>
                                                     <p className="text-[11px] text-secondary-500">{agent.department_name || 'No department'} · {agent.active_chats || 0} active</p>
                                                 </div>
                                             </button>
@@ -565,18 +565,18 @@ export default function LiveChat({ embedded = false }) {
                             )}
                             {transferDepartments.length > 0 && (
                                 <div>
-                                    <h3 className="text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-2">Departments</h3>
+                                    <h3 className="text-sm font-medium text-secondary-700 mb-2">Departments</h3>
                                     <div className="space-y-2">
                                         {transferDepartments.map(dept => (
                                             <button
                                                 key={dept.id}
                                                 onClick={() => handleTransfer(null, dept.id)}
-                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left"
+                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50:bg-secondary-700/50 transition-colors text-left"
                                             >
-                                                <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 font-bold text-sm">
+                                                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-sm">
                                                     {dept.name?.charAt(0).toUpperCase() || '?'}
                                                 </div>
-                                                <p className="text-sm font-medium text-secondary-900 dark:text-white">{dept.name}</p>
+                                                <p className="text-sm font-medium text-secondary-900">{dept.name}</p>
                                             </button>
                                         ))}
                                     </div>

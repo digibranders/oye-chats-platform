@@ -105,7 +105,7 @@ export default function Analytics({ embedded = false }) {
     const CustomTooltip = ({ active, payload, label }) => {
         if (active && payload && payload.length) {
             return (
-                <div className="bg-secondary-900 dark:bg-secondary-800 p-3 border border-secondary-700 shadow-xl rounded-xl">
+                <div className="bg-secondary-900 p-3 border border-secondary-700 shadow-xl rounded-xl">
                     <p className="text-secondary-400 font-medium text-xs mb-1">{label}</p>
                     <p className="font-bold text-lg text-white">{payload[0].value} <span className="text-sm font-normal text-secondary-400">messages</span></p>
                 </div>
@@ -135,25 +135,25 @@ export default function Analytics({ embedded = false }) {
             )}
 
             {/* Chart */}
-            <div className="bg-white dark:bg-secondary-900 p-6 rounded-2xl border border-secondary-200 dark:border-secondary-800 shadow-sm">
+            <div className="bg-white p-6 rounded-2xl border border-secondary-200 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <div>
-                        <h2 className="text-lg font-bold text-secondary-900 dark:text-white flex items-center gap-2">
-                            <TrendingUp size={18} className="text-primary-600 dark:text-primary-400" />
+                        <h2 className="text-lg font-bold text-secondary-900 flex items-center gap-2">
+                            <TrendingUp size={18} className="text-primary-600" />
                             Engagement Timeline
                         </h2>
-                        <p className="text-sm text-secondary-500 dark:text-secondary-400 mt-0.5">Daily message volume</p>
+                        <p className="text-sm text-secondary-500 mt-0.5">Daily message volume</p>
                     </div>
                     {/* Time Range Pills */}
-                    <div className="flex items-center gap-1 p-1 bg-secondary-100 dark:bg-secondary-800 rounded-lg">
+                    <div className="flex items-center gap-1 p-1 bg-secondary-100 rounded-lg">
                         {ranges.map((r) => (
                             <button
                                 key={r.id}
                                 onClick={() => setTimeRange(r.id)}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
                                     timeRange === r.id
-                                        ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm'
-                                        : 'text-secondary-500 hover:text-secondary-700 dark:hover:text-secondary-300'
+                                        ? 'bg-white text-secondary-900 shadow-sm'
+                                        : 'text-secondary-500 hover:text-secondary-700:text-secondary-300'
                                 }`}
                             >
                                 {r.label}
@@ -164,12 +164,12 @@ export default function Analytics({ embedded = false }) {
 
                 {isLoading ? (
                     <div className="h-72 flex items-center justify-center">
-                        <div className="animate-pulse w-full h-full bg-secondary-100 dark:bg-secondary-800 rounded-xl" />
+                        <div className="animate-pulse w-full h-full bg-secondary-100 rounded-xl" />
                     </div>
                 ) : filteredData.length === 0 ? (
-                    <div className="h-72 flex flex-col items-center justify-center border-2 border-dashed border-secondary-100 dark:border-secondary-800 rounded-xl">
-                        <TrendingUp className="text-secondary-300 dark:text-secondary-600 mb-3" size={32} />
-                        <p className="text-secondary-500 dark:text-secondary-400 text-sm">No activity data yet</p>
+                    <div className="h-72 flex flex-col items-center justify-center border-2 border-dashed border-secondary-100 rounded-xl">
+                        <TrendingUp className="text-secondary-300 mb-3" size={32} />
+                        <p className="text-secondary-500 text-sm">No activity data yet</p>
                     </div>
                 ) : (
                     <ResponsiveContainer width="100%" height={300}>
@@ -191,25 +191,25 @@ export default function Analytics({ embedded = false }) {
             </div>
 
             {/* Top Questions */}
-            <div className="bg-white dark:bg-secondary-900 p-6 rounded-2xl border border-secondary-200 dark:border-secondary-800 shadow-sm">
+            <div className="bg-white p-6 rounded-2xl border border-secondary-200 shadow-sm">
                 <div className="flex items-center gap-2 mb-5">
-                    <div className="w-9 h-9 rounded-lg bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
-                        <MessageSquare size={18} className="text-primary-600 dark:text-primary-400" />
+                    <div className="w-9 h-9 rounded-lg bg-primary-50 flex items-center justify-center">
+                        <MessageSquare size={18} className="text-primary-600" />
                     </div>
                     <div>
-                        <h2 className="text-lg font-bold text-secondary-900 dark:text-white">Top User Questions</h2>
-                        <p className="text-sm text-secondary-500 dark:text-secondary-400">Most frequent queries</p>
+                        <h2 className="text-lg font-bold text-secondary-900">Top User Questions</h2>
+                        <p className="text-sm text-secondary-500">Most frequent queries</p>
                     </div>
                 </div>
 
                 {isLoading ? (
                     <div className="space-y-3">
                         {[1, 2, 3].map(i => (
-                            <div key={i} className="animate-pulse h-12 bg-secondary-100 dark:bg-secondary-800 rounded-xl" />
+                            <div key={i} className="animate-pulse h-12 bg-secondary-100 rounded-xl" />
                         ))}
                     </div>
                 ) : topQuestions.length === 0 ? (
-                    <div className="py-10 text-center border-2 border-dashed border-secondary-100 dark:border-secondary-800 rounded-xl">
+                    <div className="py-10 text-center border-2 border-dashed border-secondary-100 rounded-xl">
                         <p className="text-secondary-500 text-sm">No questions recorded yet</p>
                     </div>
                 ) : (
@@ -218,17 +218,17 @@ export default function Analytics({ embedded = false }) {
                             const maxCount = topQuestions[0]?.count || 1;
                             const barWidth = Math.max((item.count / maxCount) * 100, 8);
                             return (
-                                <div key={index} className="flex items-center gap-3 p-3 rounded-xl hover:bg-secondary-50 dark:hover:bg-secondary-800/50 transition-all">
-                                    <span className="w-7 h-7 rounded-full bg-secondary-100 dark:bg-secondary-800 flex items-center justify-center text-xs font-bold text-secondary-500 shrink-0">
+                                <div key={index} className="flex items-center gap-3 p-3 rounded-xl hover:bg-secondary-50:bg-secondary-800/50 transition-all">
+                                    <span className="w-7 h-7 rounded-full bg-secondary-100 flex items-center justify-center text-xs font-bold text-secondary-500 shrink-0">
                                         {index + 1}
                                     </span>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium text-secondary-900 dark:text-white truncate">{item.question}</p>
-                                        <div className="mt-1.5 h-1.5 bg-secondary-100 dark:bg-secondary-800 rounded-full overflow-hidden">
+                                        <p className="text-sm font-medium text-secondary-900 truncate">{item.question}</p>
+                                        <div className="mt-1.5 h-1.5 bg-secondary-100 rounded-full overflow-hidden">
                                             <div className="h-full bg-primary-500 rounded-full transition-all duration-700" style={{ width: `${barWidth}%` }} />
                                         </div>
                                     </div>
-                                    <span className="text-sm font-bold text-primary-600 dark:text-primary-400 shrink-0">{item.count}</span>
+                                    <span className="text-sm font-bold text-primary-600 shrink-0">{item.count}</span>
                                 </div>
                             );
                         })}

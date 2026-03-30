@@ -2,11 +2,11 @@ export default function PageHeader({ title, subtitle, children }) {
     return (
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
             <div>
-                <h1 className="text-2xl font-bold text-secondary-900 dark:text-white tracking-tight">
+                <h1 className="text-2xl font-bold text-secondary-900 tracking-tight">
                     {title}
                 </h1>
                 {subtitle && (
-                    <p className="text-secondary-500 dark:text-secondary-400 mt-1 text-sm">
+                    <p className="text-secondary-500 mt-1 text-sm">
                         {subtitle}
                     </p>
                 )}

@@ -127,32 +127,32 @@ export default function Login() {
             </div>
 
             {/* Right Panel — Form */}
-            <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-white dark:bg-secondary-950">
+            <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-white">
                 <div className="w-full max-w-md">
                     {/* Mobile logo */}
                     <div className="flex items-center gap-3 mb-10 lg:hidden">
                         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center shadow-lg shadow-primary-500/20">
                             <Bot size={20} />
                         </div>
-                        <span className="text-lg font-bold text-secondary-900 dark:text-white">OyeChat</span>
+                        <span className="text-lg font-bold text-secondary-900">OyeChat</span>
                     </div>
 
                     <div className="mb-8">
-                        <h1 className="text-2xl font-bold text-secondary-900 dark:text-white">Welcome back</h1>
-                        <p className="text-secondary-500 dark:text-secondary-400 mt-2 text-sm">
+                        <h1 className="text-2xl font-bold text-secondary-900">Welcome back</h1>
+                        <p className="text-secondary-500 mt-2 text-sm">
                             Sign in to your OyeChat account
                         </p>
                     </div>
 
                     {error && (
-                        <div className="mb-5 p-3 bg-error-50 dark:bg-error-500/10 text-error-600 dark:text-error-500 rounded-xl text-sm font-medium border border-error-500/20">
+                        <div className="mb-5 p-3 bg-error-50 text-error-600 rounded-xl text-sm font-medium border border-error-500/20">
                             {error}
                         </div>
                     )}
 
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">
+                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">
                                 Email address
                             </label>
                             <div className="relative">
@@ -161,7 +161,7 @@ export default function Login() {
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="you@company.com"
                                     tabIndex={1}
                                 />
@@ -170,10 +170,10 @@ export default function Login() {
 
                         <div>
                             <div className="flex justify-between items-center mb-1.5">
-                                <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300">
+                                <label className="block text-sm font-medium text-secondary-700">
                                     Password
                                 </label>
-                                <Link to="/forgot-password" tabIndex={5} className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+                                <Link to="/forgot-password" tabIndex={5} className="text-xs font-medium text-primary-600 hover:underline">
                                     Forgot password?
                                 </Link>
                             </div>
@@ -183,14 +183,14 @@ export default function Login() {
                                     type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                                    className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="Enter your password"
                                     tabIndex={2}
                                 />
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300 transition-colors"
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-secondary-400 hover:text-secondary-600:text-secondary-300 transition-colors"
                                     tabIndex={-1}
                                 >
                                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -202,14 +202,14 @@ export default function Login() {
                             <div className="relative flex items-center justify-center">
                                 <input
                                     type="checkbox"
-                                    className="peer appearance-none w-4 h-4 border border-secondary-300 dark:border-secondary-700 rounded bg-white dark:bg-secondary-900 checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
+                                    className="peer appearance-none w-4 h-4 border border-secondary-300 rounded bg-white checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/20 transition-all cursor-pointer"
                                     tabIndex={3}
                                 />
                                 <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                 </svg>
                             </div>
-                            <span className="text-sm text-secondary-600 dark:text-secondary-400">Remember for 30 days</span>
+                            <span className="text-sm text-secondary-600">Remember for 30 days</span>
                         </label>
 
                         <button
@@ -222,9 +222,9 @@ export default function Login() {
                         </button>
                     </form>
 
-                    <p className="text-center text-sm text-secondary-500 dark:text-secondary-400 mt-8">
+                    <p className="text-center text-sm text-secondary-500 mt-8">
                         Don't have an account?{' '}
-                        <Link to="/register" tabIndex={6} className="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
+                        <Link to="/register" tabIndex={6} className="font-semibold text-primary-600 hover:underline">
                             Sign up
                         </Link>
                     </p>

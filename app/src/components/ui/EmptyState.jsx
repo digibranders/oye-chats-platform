@@ -20,15 +20,15 @@ export default function EmptyState({
 
     return (
         <div className={`flex flex-col items-center justify-center text-center ${compact ? 'py-10' : 'py-16'}`}>
-            <div className={`${compact ? 'w-14 h-14' : 'w-20 h-20'} rounded-2xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-5`}>
-                <Icon size={compact ? 24 : 36} className="text-primary-500 dark:text-primary-400" />
+            <div className={`${compact ? 'w-14 h-14' : 'w-20 h-20'} rounded-2xl bg-primary-50 flex items-center justify-center mb-5`}>
+                <Icon size={compact ? 24 : 36} className="text-primary-500" />
             </div>
 
-            <h3 className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-secondary-900 dark:text-white mb-2`}>
+            <h3 className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-secondary-900 mb-2`}>
                 {title}
             </h3>
 
-            <p className="text-secondary-500 dark:text-secondary-400 max-w-sm mb-6 leading-relaxed text-sm">
+            <p className="text-secondary-500 max-w-sm mb-6 leading-relaxed text-sm">
                 {description}
             </p>
 

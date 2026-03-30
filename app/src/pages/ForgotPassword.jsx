@@ -84,25 +84,25 @@ export default function ForgotPassword() {
             </div>
 
             {/* Right Panel — Reset Form */}
-            <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-16 xl:px-24 bg-gray-50 dark:bg-gray-900 relative">
+            <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-16 xl:px-24 bg-gray-50 relative">
                 <div className="w-full max-w-md mx-auto relative z-10">
                     {/* Mobile Logo */}
                     <div className="lg:hidden flex items-center gap-3 mb-10 justify-center">
                         <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center shadow-md">
                             <Bot className="w-5 h-5 text-white" />
                         </div>
-                        <h1 className="text-2xl font-extrabold text-gray-900 dark:text-white tracking-tight">OyeChat</h1>
+                        <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">OyeChat</h1>
                     </div>
 
-                    <div className="bg-white dark:bg-gray-800 p-8 sm:p-10 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700/50">
+                    <div className="bg-white p-8 sm:p-10 rounded-2xl shadow-xl border border-gray-100">
                         <div className="mb-8">
-                            <Link to="/login" className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 mb-6 transition-colors">
+                            <Link to="/login" className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-gray-700:text-gray-300 mb-6 transition-colors">
                                 <ArrowLeft className="w-4 h-4 mr-2" /> Back to login
                             </Link>
-                            <h2 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight mb-2">
+                            <h2 className="text-3xl font-bold text-gray-900 tracking-tight mb-2">
                                 {step === 1 ? 'Reset password' : 'Set new password'}
                             </h2>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                            <p className="text-sm text-gray-500">
                                 {step === 1 
                                     ? "Enter your email address and we'll send you a recovery code." 
                                     : "Enter the code sent to your email and your new password."}
@@ -110,12 +110,12 @@ export default function ForgotPassword() {
                         </div>
 
                         {error && (
-                            <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-sm text-red-600 dark:text-red-400 shadow-sm animate-in slide-in-from-top-2">
+                            <div className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600 shadow-sm animate-in slide-in-from-top-2">
                                 {error}
                             </div>
                         )}
                         {success && (
-                            <div className="mb-6 p-4 rounded-xl bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20 text-sm text-green-600 dark:text-green-400 shadow-sm animate-in slide-in-from-top-2">
+                            <div className="mb-6 p-4 rounded-xl bg-green-50 border border-green-200 text-sm text-green-600 shadow-sm animate-in slide-in-from-top-2">
                                 {success}
                             </div>
                         )}
@@ -123,7 +123,7 @@ export default function ForgotPassword() {
                         {step === 1 ? (
                             <form onSubmit={handleRequestReset} className="space-y-6">
                                 <div className="space-y-1.5 focus-within:text-primary-600">
-                                    <label htmlFor="email" className="block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                                    <label htmlFor="email" className="block text-sm font-semibold text-gray-700">
                                         Email Address
                                     </label>
                                     <div className="relative group">
@@ -136,7 +136,7 @@ export default function ForgotPassword() {
                                             type="email"
                                             required
                                             tabIndex={1}
-                                            className="block w-full pl-11 pr-3 py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow sm:text-sm text-gray-900 dark:text-white placeholder-gray-400 font-medium"
+                                            className="block w-full pl-11 pr-3 py-3 border border-gray-300 bg-white rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow sm:text-sm text-gray-900 placeholder-gray-400 font-medium"
                                             placeholder="you@company.com"
                                             value={email}
                                             onChange={(e) => setEmail(e.target.value)}
@@ -161,7 +161,7 @@ export default function ForgotPassword() {
                         ) : (
                             <form onSubmit={handleResetPassword} className="space-y-6">
                                 <div className="space-y-1.5 focus-within:text-primary-600">
-                                    <label htmlFor="otp" className="block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                                    <label htmlFor="otp" className="block text-sm font-semibold text-gray-700">
                                         Recovery Code
                                     </label>
                                     <div className="relative group">
@@ -174,7 +174,7 @@ export default function ForgotPassword() {
                                             type="text"
                                             required
                                             tabIndex={1}
-                                            className="block w-full pl-11 pr-3 py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow sm:text-sm text-gray-900 dark:text-white placeholder-gray-400 font-medium"
+                                            className="block w-full pl-11 pr-3 py-3 border border-gray-300 bg-white rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow sm:text-sm text-gray-900 placeholder-gray-400 font-medium"
                                             placeholder="6-digit code"
                                             value={otp}
                                             onChange={(e) => setOtp(e.target.value)}
@@ -183,7 +183,7 @@ export default function ForgotPassword() {
                                 </div>
 
                                 <div className="space-y-1.5 focus-within:text-primary-600">
-                                    <label htmlFor="newPassword" className="block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                                    <label htmlFor="newPassword" className="block text-sm font-semibold text-gray-700">
                                         New Password
                                     </label>
                                     <div className="relative group">
@@ -196,7 +196,7 @@ export default function ForgotPassword() {
                                             type={showPassword ? "text" : "password"}
                                             required
                                             tabIndex={2}
-                                            className="block w-full pl-11 pr-10 py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow sm:text-sm text-gray-900 dark:text-white placeholder-gray-400 font-medium"
+                                            className="block w-full pl-11 pr-10 py-3 border border-gray-300 bg-white rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow sm:text-sm text-gray-900 placeholder-gray-400 font-medium"
                                             placeholder="••••••••"
                                             value={newPassword}
                                             onChange={(e) => setNewPassword(e.target.value)}
@@ -204,7 +204,7 @@ export default function ForgotPassword() {
                                         <button
                                             type="button"
                                             tabIndex={-1}
-                                            className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none focus:text-primary-600"
+                                            className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-400 hover:text-gray-600:text-gray-300 focus:outline-none focus:text-primary-600"
                                             onClick={() => setShowPassword(!showPassword)}
                                         >
                                             {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}

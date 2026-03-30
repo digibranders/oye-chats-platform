@@ -83,27 +83,27 @@ export default function TeamManagement() {
     return (
         <div className="space-y-6">
             <div>
-                <h1 className="text-2xl font-bold text-secondary-900 dark:text-white">Team Management</h1>
+                <h1 className="text-2xl font-bold text-secondary-900">Team Management</h1>
                 <p className="text-secondary-500 text-sm mt-1">Manage your agents and departments for live chat support.</p>
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-1 bg-secondary-100 dark:bg-secondary-800 rounded-xl p-1 w-fit">
+            <div className="flex gap-1 bg-secondary-100 rounded-xl p-1 w-fit">
                 <button
                     onClick={() => setActiveTab('agents')}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === 'agents' ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm' : 'text-secondary-500'}`}
+                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === 'agents' ? 'bg-white text-secondary-900 shadow-sm' : 'text-secondary-500'}`}
                 >
                     <UsersRound size={15} className="inline mr-1.5 -mt-0.5" /> Agents
                 </button>
                 <button
                     onClick={() => setActiveTab('departments')}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === 'departments' ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm' : 'text-secondary-500'}`}
+                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === 'departments' ? 'bg-white text-secondary-900 shadow-sm' : 'text-secondary-500'}`}
                 >
                     <Building2 size={15} className="inline mr-1.5 -mt-0.5" /> Departments
                 </button>
                 <button
                     onClick={() => setActiveTab('quick-replies')}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === 'quick-replies' ? 'bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white shadow-sm' : 'text-secondary-500'}`}
+                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === 'quick-replies' ? 'bg-white text-secondary-900 shadow-sm' : 'text-secondary-500'}`}
                 >
                     <MessageSquareText size={15} className="inline mr-1.5 -mt-0.5" /> Quick Replies
                 </button>
@@ -129,9 +129,9 @@ export default function TeamManagement() {
 
                     {/* Create Agent Modal */}
                     {showCreateAgent && (
-                        <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-5">
+                        <div className="bg-white rounded-2xl border border-secondary-200 p-5">
                             <div className="flex items-center justify-between mb-4">
-                                <h3 className="font-bold text-secondary-900 dark:text-white">Create New Agent</h3>
+                                <h3 className="font-bold text-secondary-900">Create New Agent</h3>
                                 <button onClick={() => { setShowCreateAgent(false); setError(''); }} className="text-secondary-400 hover:text-secondary-600">
                                     <X size={18} />
                                 </button>
@@ -141,28 +141,28 @@ export default function TeamManagement() {
                                 <input
                                     type="text" placeholder="Name *" required
                                     value={agentForm.name} onChange={(e) => setAgentForm(p => ({ ...p, name: e.target.value }))}
-                                    className="px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-sm outline-none focus:border-primary-500"
+                                    className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 />
                                 <input
                                     type="email" placeholder="Email *" required
                                     value={agentForm.email} onChange={(e) => setAgentForm(p => ({ ...p, email: e.target.value }))}
-                                    className="px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-sm outline-none focus:border-primary-500"
+                                    className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 />
                                 <input
                                     type="password" placeholder="Password *" required minLength={8}
                                     value={agentForm.password} onChange={(e) => setAgentForm(p => ({ ...p, password: e.target.value }))}
-                                    className="px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-sm outline-none focus:border-primary-500"
+                                    className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 />
                                 <select
                                     value={agentForm.role} onChange={(e) => setAgentForm(p => ({ ...p, role: e.target.value }))}
-                                    className="px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-sm outline-none focus:border-primary-500"
+                                    className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 >
                                     <option value="agent">Agent</option>
                                     <option value="admin">Admin</option>
                                 </select>
                                 <select
                                     value={agentForm.department_id} onChange={(e) => setAgentForm(p => ({ ...p, department_id: e.target.value }))}
-                                    className="px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-sm outline-none focus:border-primary-500"
+                                    className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 >
                                     <option value="">No department</option>
                                     {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -175,10 +175,10 @@ export default function TeamManagement() {
                     )}
 
                     {/* Agents Table */}
-                    <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 overflow-hidden">
+                    <div className="bg-white rounded-2xl border border-secondary-200 overflow-hidden">
                         <table className="w-full">
                             <thead>
-                                <tr className="border-b border-secondary-100 dark:border-secondary-800">
+                                <tr className="border-b border-secondary-100">
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Agent</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Role</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Department</th>
@@ -187,16 +187,16 @@ export default function TeamManagement() {
                                     <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-secondary-100 dark:divide-secondary-800">
+                            <tbody className="divide-y divide-secondary-100">
                                 {agents.map((agent) => (
-                                    <tr key={agent.id} className="hover:bg-secondary-50 dark:hover:bg-secondary-800/50">
+                                    <tr key={agent.id} className="hover:bg-secondary-50:bg-secondary-800/50">
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold">
                                                     {agent.name.charAt(0).toUpperCase()}
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-secondary-900 dark:text-white">{agent.name}</p>
+                                                    <p className="text-sm font-medium text-secondary-900">{agent.name}</p>
                                                     <p className="text-xs text-secondary-500">{agent.email}</p>
                                                 </div>
                                             </div>
@@ -204,10 +204,10 @@ export default function TeamManagement() {
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-1.5">
                                                 {roleIcon(agent.role)}
-                                                <span className="text-sm text-secondary-700 dark:text-secondary-300 capitalize">{agent.role}</span>
+                                                <span className="text-sm text-secondary-700 capitalize">{agent.role}</span>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-sm text-secondary-600 dark:text-secondary-400">
+                                        <td className="px-4 py-3 text-sm text-secondary-600">
                                             {getDeptName(agent.department_id)}
                                         </td>
                                         <td className="px-4 py-3">
@@ -216,7 +216,7 @@ export default function TeamManagement() {
                                                 {agent.is_online ? 'Online' : 'Offline'}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 text-sm text-secondary-600 dark:text-secondary-400">
+                                        <td className="px-4 py-3 text-sm text-secondary-600">
                                             {agent.active_chats || 0}
                                         </td>
                                         <td className="px-4 py-3 text-right">
@@ -257,9 +257,9 @@ export default function TeamManagement() {
                     </div>
 
                     {showCreateDept && (
-                        <div className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-5">
+                        <div className="bg-white rounded-2xl border border-secondary-200 p-5">
                             <div className="flex items-center justify-between mb-4">
-                                <h3 className="font-bold text-secondary-900 dark:text-white">Create Department</h3>
+                                <h3 className="font-bold text-secondary-900">Create Department</h3>
                                 <button onClick={() => setShowCreateDept(false)} className="text-secondary-400 hover:text-secondary-600">
                                     <X size={18} />
                                 </button>
@@ -268,12 +268,12 @@ export default function TeamManagement() {
                                 <input
                                     type="text" placeholder="Department name *" required
                                     value={deptForm.name} onChange={(e) => setDeptForm(p => ({ ...p, name: e.target.value }))}
-                                    className="flex-1 px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-sm outline-none focus:border-primary-500"
+                                    className="flex-1 px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 />
                                 <input
                                     type="text" placeholder="Description (optional)"
                                     value={deptForm.description} onChange={(e) => setDeptForm(p => ({ ...p, description: e.target.value }))}
-                                    className="flex-1 px-3 py-2 rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 text-sm outline-none focus:border-primary-500"
+                                    className="flex-1 px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 />
                                 <button type="submit" className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors shrink-0">
                                     Create
@@ -286,14 +286,14 @@ export default function TeamManagement() {
                         {departments.map((dept) => {
                             const deptAgents = agents.filter(a => a.department_id === dept.id);
                             return (
-                                <div key={dept.id} className="bg-white dark:bg-secondary-900 rounded-2xl border border-secondary-200 dark:border-secondary-800 p-4">
+                                <div key={dept.id} className="bg-white rounded-2xl border border-secondary-200 p-4">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center">
+                                            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
                                                 <Building2 size={18} className="text-blue-600" />
                                             </div>
                                             <div>
-                                                <h3 className="font-semibold text-secondary-900 dark:text-white text-sm">{dept.name}</h3>
+                                                <h3 className="font-semibold text-secondary-900 text-sm">{dept.name}</h3>
                                                 {dept.description && <p className="text-xs text-secondary-500">{dept.description}</p>}
                                             </div>
                                         </div>
@@ -311,9 +311,9 @@ export default function TeamManagement() {
                                     {deptAgents.length > 0 && (
                                         <div className="mt-3 flex flex-wrap gap-2">
                                             {deptAgents.map(a => (
-                                                <div key={a.id} className="flex items-center gap-1.5 px-2.5 py-1 bg-secondary-50 dark:bg-secondary-800 rounded-lg">
+                                                <div key={a.id} className="flex items-center gap-1.5 px-2.5 py-1 bg-secondary-50 rounded-lg">
                                                     <span className={`w-1.5 h-1.5 rounded-full ${a.is_online ? 'bg-green-500' : 'bg-secondary-400'}`} />
-                                                    <span className="text-xs text-secondary-700 dark:text-secondary-300">{a.name}</span>
+                                                    <span className="text-xs text-secondary-700">{a.name}</span>
                                                 </div>
                                             ))}
                                         </div>

@@ -7,10 +7,10 @@ import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const STATUS_CONFIG = {
-    cold: { label: 'Cold', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-    warm: { label: 'Warm', color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' },
-    hot: { label: 'Hot', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' },
-    qualified: { label: 'Qualified', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
+    cold: { label: 'Cold', color: 'bg-blue-100 text-blue-700' },
+    warm: { label: 'Warm', color: 'bg-yellow-100 text-yellow-700' },
+    hot: { label: 'Hot', color: 'bg-orange-100 text-orange-700' },
+    qualified: { label: 'Qualified', color: 'bg-green-100 text-green-700' },
 };
 
 const BANT_LABELS = { need: 'Need', budget: 'Budget', authority: 'Authority', timeline: 'Timeline' };
@@ -94,7 +94,7 @@ export default function Leads() {
                 <button
                     onClick={handleExport}
                     disabled={isExporting || leads.length === 0}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-300 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-xl hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-200 rounded-xl hover:bg-secondary-50:bg-secondary-700 transition-colors disabled:opacity-50"
                 >
                     {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                     Export CSV
@@ -105,7 +105,7 @@ export default function Leads() {
             {stats && (
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     {[
-                        { label: 'Total', value: stats.total, color: 'text-secondary-900 dark:text-white' },
+                        { label: 'Total', value: stats.total, color: 'text-secondary-900' },
                         { label: 'Cold', value: stats.cold, color: 'text-blue-600' },
                         { label: 'Warm', value: stats.warm, color: 'text-yellow-600' },
                         { label: 'Hot', value: stats.hot, color: 'text-orange-600' },
@@ -116,11 +116,11 @@ export default function Leads() {
                             onClick={() => setStatusFilter(s.label === 'Total' ? null : s.label.toLowerCase())}
                             className={`p-4 rounded-xl border transition-all ${
                                 (statusFilter === s.label.toLowerCase() || (!statusFilter && s.label === 'Total'))
-                                    ? 'border-primary-300 dark:border-primary-600 bg-primary-50 dark:bg-primary-900/20 ring-1 ring-primary-200'
-                                    : 'border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-800 hover:border-secondary-300'
+                                    ? 'border-primary-300 bg-primary-50 ring-1 ring-primary-200'
+                                    : 'border-secondary-200 bg-white hover:border-secondary-300'
                             }`}
                         >
-                            <p className="text-[12px] font-medium text-secondary-500 dark:text-secondary-400">{s.label}</p>
+                            <p className="text-[12px] font-medium text-secondary-500">{s.label}</p>
                             <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
                         </button>
                     ))}
@@ -135,22 +135,22 @@ export default function Leads() {
                     placeholder="Search by name, email, or location..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 text-sm bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-xl focus:outline-none focus:border-primary-400"
+                    className="w-full pl-10 pr-4 py-2.5 text-sm bg-white border border-secondary-200 rounded-xl focus:outline-none focus:border-primary-400"
                 />
             </div>
 
             {/* Leads Table */}
-            <div className="bg-white dark:bg-secondary-800 rounded-2xl border border-secondary-200 dark:border-secondary-700 overflow-hidden">
+            <div className="bg-white rounded-2xl border border-secondary-200 overflow-hidden">
                 {isLoading ? (
                     <SkeletonTable rows={8} cols={6} />
                 ) : filtered.length === 0 ? (
-                    <div className="p-12 text-center text-secondary-500 dark:text-secondary-400">
+                    <div className="p-12 text-center text-secondary-500">
                         {leads.length === 0 ? 'No leads yet. Leads are created when visitors chat with your bot.' : 'No leads match your filters.'}
                     </div>
                 ) : (
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="border-b border-secondary-100 dark:border-secondary-700">
+                            <tr className="border-b border-secondary-100">
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-500">Contact</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-500">Score</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-500">Status</th>
@@ -166,12 +166,12 @@ export default function Leads() {
                                 return (
                                     <tr
                                         key={lead.session_id}
-                                        className="border-b border-secondary-50 dark:border-secondary-700/50 hover:bg-secondary-50 dark:hover:bg-secondary-700/30 cursor-pointer transition-colors"
+                                        className="border-b border-secondary-50 hover:bg-secondary-50:bg-secondary-700/30 cursor-pointer transition-colors"
                                         onClick={() => handleViewLead(lead.session_id)}
                                     >
                                         <td className="px-4 py-3">
                                             <div>
-                                                <p className="font-medium text-secondary-900 dark:text-white">
+                                                <p className="font-medium text-secondary-900">
                                                     {lead.contact?.name || 'Anonymous'}
                                                 </p>
                                                 {lead.contact?.email && (
@@ -181,7 +181,7 @@ export default function Leads() {
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-2">
-                                                <div className="w-12 h-2 bg-secondary-100 dark:bg-secondary-700 rounded-full overflow-hidden">
+                                                <div className="w-12 h-2 bg-secondary-100 rounded-full overflow-hidden">
                                                     <div
                                                         className="h-full rounded-full transition-all"
                                                         style={{
@@ -190,7 +190,7 @@ export default function Leads() {
                                                         }}
                                                     />
                                                 </div>
-                                                <span className="text-[12px] font-bold text-secondary-700 dark:text-secondary-300">{lead.score}</span>
+                                                <span className="text-[12px] font-bold text-secondary-700">{lead.score}</span>
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
@@ -205,8 +205,8 @@ export default function Leads() {
                                                         key={key}
                                                         className={`w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center ${
                                                             lead.bant?.[key]
-                                                                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                                                                : 'bg-secondary-100 text-secondary-400 dark:bg-secondary-700 dark:text-secondary-500'
+                                                                ? 'bg-green-100 text-green-700'
+                                                                : 'bg-secondary-100 text-secondary-400'
                                                         }`}
                                                         title={`${label}: ${lead.bant?.[key] || 'Not captured'}`}
                                                     >
@@ -215,7 +215,7 @@ export default function Leads() {
                                                 ))}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-[12px] text-secondary-600 dark:text-secondary-400 max-w-[120px] truncate">
+                                        <td className="px-4 py-3 text-[12px] text-secondary-600 max-w-[120px] truncate">
                                             {(lead.location || '').replace(/\s*\|.*$/, '') || '—'}
                                         </td>
                                         <td className="px-4 py-3 text-[12px] text-secondary-500">
@@ -235,14 +235,14 @@ export default function Leads() {
             {/* Lead Detail Drawer */}
             {selectedLead && (
                 <div className="fixed inset-0 z-50 flex justify-end" onClick={() => { setSelectedLead(null); setLeadDetail(null); }}>
-                    <div className="absolute inset-0 bg-black/30 dark:bg-black/60" />
+                    <div className="absolute inset-0 bg-black/30" />
                     <div
-                        className="relative w-full max-w-lg bg-white dark:bg-secondary-900 shadow-2xl overflow-y-auto animate-slide-in-right"
+                        className="relative w-full max-w-lg bg-white shadow-2xl overflow-y-auto animate-slide-in-right"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Drawer Header */}
-                        <div className="sticky top-0 z-10 bg-white dark:bg-secondary-900 border-b border-secondary-200 dark:border-secondary-700 px-6 py-4 flex items-center justify-between">
-                            <h2 className="text-lg font-bold text-secondary-900 dark:text-white">Lead Detail</h2>
+                        <div className="sticky top-0 z-10 bg-white border-b border-secondary-200 px-6 py-4 flex items-center justify-between">
+                            <h2 className="text-lg font-bold text-secondary-900">Lead Detail</h2>
                             <button onClick={() => { setSelectedLead(null); setLeadDetail(null); }} className="text-secondary-400 hover:text-secondary-600">
                                 <X className="w-5 h-5" />
                             </button>
@@ -257,7 +257,7 @@ export default function Leads() {
                                 {/* Contact Info */}
                                 <div className="space-y-3">
                                     <h3 className="text-[13px] font-bold uppercase tracking-wider text-secondary-500">Contact</h3>
-                                    <div className="bg-secondary-50 dark:bg-secondary-800 rounded-xl p-4 space-y-2">
+                                    <div className="bg-secondary-50 rounded-xl p-4 space-y-2">
                                         {leadDetail.contact?.name && <div className="flex items-center gap-2 text-sm"><User className="w-4 h-4 text-secondary-400" /><span>{leadDetail.contact.name}</span></div>}
                                         {leadDetail.contact?.email && <div className="flex items-center gap-2 text-sm"><Mail className="w-4 h-4 text-secondary-400" /><span>{leadDetail.contact.email}</span></div>}
                                         {leadDetail.contact?.phone && <div className="flex items-center gap-2 text-sm"><Phone className="w-4 h-4 text-secondary-400" /><span>{leadDetail.contact.phone}</span></div>}
@@ -271,7 +271,7 @@ export default function Leads() {
                                     <div className="flex-1">
                                         <p className="text-[12px] font-bold text-secondary-500 mb-1">Lead Score</p>
                                         <div className="flex items-center gap-3">
-                                            <div className="flex-1 h-3 bg-secondary-100 dark:bg-secondary-700 rounded-full overflow-hidden">
+                                            <div className="flex-1 h-3 bg-secondary-100 rounded-full overflow-hidden">
                                                 <div
                                                     className="h-full rounded-full transition-all"
                                                     style={{
@@ -280,7 +280,7 @@ export default function Leads() {
                                                     }}
                                                 />
                                             </div>
-                                            <span className="text-lg font-bold text-secondary-900 dark:text-white">{leadDetail.score}</span>
+                                            <span className="text-lg font-bold text-secondary-900">{leadDetail.score}</span>
                                         </div>
                                     </div>
                                     <span className={`px-3 py-1.5 rounded-full text-[12px] font-bold ${STATUS_CONFIG[leadDetail.status]?.color}`}>
@@ -293,17 +293,17 @@ export default function Leads() {
                                     <h3 className="text-[13px] font-bold uppercase tracking-wider text-secondary-500">BANT Qualification</h3>
                                     <div className="space-y-2">
                                         {Object.entries(BANT_LABELS).map(([key, label]) => (
-                                            <div key={key} className="bg-secondary-50 dark:bg-secondary-800 rounded-lg px-4 py-3">
+                                            <div key={key} className="bg-secondary-50 rounded-lg px-4 py-3">
                                                 <div className="flex items-center justify-between mb-1">
-                                                    <span className="text-[12px] font-bold text-secondary-600 dark:text-secondary-400">{label} (+{BANT_WEIGHTS[key]})</span>
+                                                    <span className="text-[12px] font-bold text-secondary-600">{label} (+{BANT_WEIGHTS[key]})</span>
                                                     {leadDetail.bant?.[key] ? (
-                                                        <span className="text-[10px] font-bold text-green-600 bg-green-100 dark:bg-green-900/30 px-2 py-0.5 rounded-full">Captured</span>
+                                                        <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">Captured</span>
                                                     ) : (
-                                                        <span className="text-[10px] font-bold text-secondary-400 bg-secondary-100 dark:bg-secondary-700 px-2 py-0.5 rounded-full">Missing</span>
+                                                        <span className="text-[10px] font-bold text-secondary-400 bg-secondary-100 px-2 py-0.5 rounded-full">Missing</span>
                                                     )}
                                                 </div>
                                                 {leadDetail.bant?.[key] && (
-                                                    <p className="text-sm text-secondary-700 dark:text-secondary-300">{leadDetail.bant[key]}</p>
+                                                    <p className="text-sm text-secondary-700">{leadDetail.bant[key]}</p>
                                                 )}
                                             </div>
                                         ))}
@@ -327,8 +327,8 @@ export default function Leads() {
                                                     key={i}
                                                     className={`px-3 py-2 rounded-lg text-sm ${
                                                         msg.role === 'user'
-                                                            ? 'bg-primary-50 dark:bg-primary-900/20 text-secondary-800 dark:text-secondary-200 ml-8'
-                                                            : 'bg-secondary-50 dark:bg-secondary-800 text-secondary-700 dark:text-secondary-300 mr-8'
+                                                            ? 'bg-primary-50 text-secondary-800 ml-8'
+                                                            : 'bg-secondary-50 text-secondary-700 mr-8'
                                                     }`}
                                                 >
                                                     <p className="text-[10px] font-bold text-secondary-400 mb-0.5">{msg.role === 'user' ? 'Visitor' : 'Bot'}</p>

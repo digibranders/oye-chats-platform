@@ -56,16 +56,16 @@ const IntegrationMenu = ({ isOpen: sidebarOpen }) => {
             <button
                 onClick={() => setIsOpen(prev => !prev)}
                 className={`flex items-center gap-3 px-3 rounded-xl transition-all group w-full h-8 ${isOpen
-                        ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 font-medium'
-                        : 'text-secondary-600 dark:text-secondary-400 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 hover:text-secondary-900 dark:hover:text-secondary-200'
+                        ? 'bg-primary-50 text-primary-700 font-medium'
+                        : 'text-secondary-600 hover:bg-secondary-50:bg-secondary-700/50 hover:text-secondary-900:text-secondary-200'
                     }`}
                 title={!sidebarOpen ? "Integrations" : undefined}
             >
                 <Blocks
                     size={18}
                     className={`flex-shrink-0 transition-colors ${isOpen
-                            ? 'text-primary-600 dark:text-primary-400'
-                            : 'text-secondary-400 dark:text-secondary-500 group-hover:text-secondary-600 dark:group-hover:text-secondary-300'
+                            ? 'text-primary-600'
+                            : 'text-secondary-400 group-hover:text-secondary-600:text-secondary-300'
                         }`}
                 />
                 {sidebarOpen && <span className="truncate text-sm">Integrations</span>}

@@ -67,7 +67,7 @@ export default function Register() {
 
     const PasswordCheck = ({ met, label }) => (
         <div className={`flex items-center gap-1.5 text-xs transition-colors ${met ? 'text-success-500' : 'text-secondary-400'}`}>
-            <CheckCircle2 size={12} className={met ? 'text-success-500' : 'text-secondary-300 dark:text-secondary-600'} />
+            <CheckCircle2 size={12} className={met ? 'text-success-500' : 'text-secondary-300'} />
             {label}
         </div>
     );
@@ -129,39 +129,39 @@ export default function Register() {
             </div>
 
             {/* Right Panel — Form */}
-            <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-white dark:bg-secondary-950">
+            <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-white">
                 <div className="w-full max-w-md">
                     {/* Mobile logo */}
                     <div className="flex items-center gap-3 mb-8 lg:hidden">
                         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center shadow-lg shadow-primary-500/20">
                             <Bot size={20} />
                         </div>
-                        <span className="text-lg font-bold text-secondary-900 dark:text-white">OyeChat</span>
+                        <span className="text-lg font-bold text-secondary-900">OyeChat</span>
                     </div>
 
                     <div className="mb-6">
-                        <h1 className="text-2xl font-bold text-secondary-900 dark:text-white">Get started free</h1>
-                        <p className="text-secondary-500 dark:text-secondary-400 mt-2 text-sm">
+                        <h1 className="text-2xl font-bold text-secondary-900">Get started free</h1>
+                        <p className="text-secondary-500 mt-2 text-sm">
                             Create your OyeChat account
                         </p>
                     </div>
 
                     {error && (
-                        <div className="mb-4 p-3 bg-error-50 dark:bg-error-500/10 text-error-600 dark:text-error-500 rounded-xl text-sm font-medium border border-error-500/20">
+                        <div className="mb-4 p-3 bg-error-50 text-error-600 rounded-xl text-sm font-medium border border-error-500/20">
                             {error}
                         </div>
                     )}
 
                     <form onSubmit={handleRegister} className="space-y-4">
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Full name</label>
+                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">Full name</label>
                             <div className="relative">
                                 <User size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary-400" />
                                 <input
                                     type="text"
                                     value={name}
                                     onChange={(e) => setName(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="John Doe"
                                     autoComplete="name"
                                     tabIndex={1}
@@ -170,14 +170,14 @@ export default function Register() {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Email address</label>
+                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">Email address</label>
                             <div className="relative">
                                 <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary-400" />
                                 <input
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="you@company.com"
                                     autoComplete="email"
                                     tabIndex={2}
@@ -186,14 +186,14 @@ export default function Register() {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Password</label>
+                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">Password</label>
                             <div className="relative">
                                 <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary-400" />
                                 <input
                                     type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 dark:border-secondary-800 bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                                    className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="Create a strong password"
                                     autoComplete="new-password"
                                     tabIndex={3}
@@ -201,7 +201,7 @@ export default function Register() {
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300 transition-colors"
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-secondary-400 hover:text-secondary-600:text-secondary-300 transition-colors"
                                     tabIndex={-1}
                                 >
                                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -217,19 +217,19 @@ export default function Register() {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1.5">Confirm password</label>
+                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">Confirm password</label>
                             <div className="relative">
                                 <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary-400" />
                                 <input
                                     type={showPassword ? 'text' : 'password'}
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
-                                    className={`w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-secondary-900 text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 outline-none transition-all text-sm ${
+                                    className={`w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 outline-none transition-all text-sm ${
                                         confirmPassword
                                             ? passwordsMatch
                                                 ? 'border-success-500 focus:border-success-500'
                                                 : 'border-error-500 focus:border-error-500'
-                                            : 'border-secondary-200 dark:border-secondary-800 focus:border-primary-500'
+                                            : 'border-secondary-200 focus:border-primary-500'
                                     }`}
                                     placeholder="Re-enter your password"
                                     autoComplete="new-password"
@@ -241,11 +241,11 @@ export default function Register() {
                             )}
                         </div>
 
-                        <p className="text-xs text-secondary-400 dark:text-secondary-500 text-center pt-1">
+                        <p className="text-xs text-secondary-400 text-center pt-1">
                             By creating an account, you agree to our{' '}
-                            <a href="#" tabIndex={-1} className="text-primary-600 dark:text-primary-400 hover:underline">Terms of Service</a>{' '}
+                            <a href="#" tabIndex={-1} className="text-primary-600 hover:underline">Terms of Service</a>{' '}
                             and{' '}
-                            <a href="#" tabIndex={-1} className="text-primary-600 dark:text-primary-400 hover:underline">Privacy Policy</a>.
+                            <a href="#" tabIndex={-1} className="text-primary-600 hover:underline">Privacy Policy</a>.
                         </p>
 
                         <button
@@ -258,9 +258,9 @@ export default function Register() {
                         </button>
                     </form>
 
-                    <p className="text-center text-sm text-secondary-500 dark:text-secondary-400 mt-6">
+                    <p className="text-center text-sm text-secondary-500 mt-6">
                         Already have an account?{' '}
-                        <Link to="/login" tabIndex={8} className="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
+                        <Link to="/login" tabIndex={8} className="font-semibold text-primary-600 hover:underline">
                             Sign in
                         </Link>
                     </p>

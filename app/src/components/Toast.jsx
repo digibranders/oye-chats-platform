@@ -9,10 +9,10 @@ const icons = {
 };
 
 const styles = {
-    success: 'bg-success-50 dark:bg-success-500/10 border-success-500/20 text-success-600 dark:text-success-500',
-    error: 'bg-error-50 dark:bg-error-500/10 border-error-500/20 text-error-600 dark:text-error-500',
-    warning: 'bg-warning-50 dark:bg-warning-500/10 border-warning-500/20 text-warning-600 dark:text-warning-500',
-    info: 'bg-info-50 dark:bg-info-500/10 border-info-500/20 text-info-600 dark:text-info-500',
+    success: 'bg-success-50 border-success-500/20 text-success-600',
+    error: 'bg-error-50 border-error-500/20 text-error-600',
+    warning: 'bg-warning-50 border-warning-500/20 text-warning-600',
+    info: 'bg-info-50 border-info-500/20 text-info-600',
 };
 
 export default function Toast() {
@@ -30,7 +30,7 @@ export default function Toast() {
             <span className="text-sm font-medium">{toast?.message}</span>
             <button
                 onClick={dismissToast}
-                className="ml-1 p-0.5 rounded-md hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                className="ml-1 p-0.5 rounded-md hover:bg-black/5:bg-white/5 transition-colors"
             >
                 <X size={14} />
             </button>

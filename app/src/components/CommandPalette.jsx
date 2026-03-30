@@ -82,9 +82,9 @@ export default function CommandPalette({ isOpen, onClose }) {
     return (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] animate-fade-in">
             <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-            <div className="relative w-full max-w-lg bg-white dark:bg-secondary-900 rounded-2xl shadow-2xl border border-secondary-200 dark:border-secondary-800 overflow-hidden animate-scale-in">
+            <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-secondary-200 overflow-hidden animate-scale-in">
                 {/* Search Input */}
-                <div className="flex items-center gap-3 px-4 py-3 border-b border-secondary-100 dark:border-secondary-800">
+                <div className="flex items-center gap-3 px-4 py-3 border-b border-secondary-100">
                     <Search size={18} className="text-secondary-400 shrink-0" />
                     <input
                         ref={inputRef}
@@ -92,9 +92,9 @@ export default function CommandPalette({ isOpen, onClose }) {
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         placeholder="Search pages and actions..."
-                        className="flex-1 bg-transparent text-secondary-900 dark:text-white placeholder-secondary-400 outline-none text-sm"
+                        className="flex-1 bg-transparent text-secondary-900 placeholder-secondary-400 outline-none text-sm"
                     />
-                    <kbd className="px-1.5 py-0.5 bg-secondary-100 dark:bg-secondary-800 rounded text-[10px] font-semibold text-secondary-400">ESC</kbd>
+                    <kbd className="px-1.5 py-0.5 bg-secondary-100 rounded text-[10px] font-semibold text-secondary-400">ESC</kbd>
                 </div>
 
                 {/* Results */}
@@ -116,13 +116,13 @@ export default function CommandPalette({ isOpen, onClose }) {
                                     onClick={() => { navigate(item.path); onClose(); }}
                                     onMouseEnter={() => setSelectedIndex(currentIdx)}
                                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                                        isSelected ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400' : 'text-secondary-700 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-800'
+                                        isSelected ? 'bg-primary-50 text-primary-700' : 'text-secondary-700 hover:bg-secondary-50:bg-secondary-800'
                                     }`}
                                 >
                                     <Icon size={16} className={isSelected ? 'text-primary-500' : 'text-secondary-400'} />
                                     <span className="text-sm font-medium">{item.name}</span>
                                     {item.type === 'action' && (
-                                        <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-secondary-400 bg-secondary-100 dark:bg-secondary-800 px-1.5 py-0.5 rounded">Action</span>
+                                        <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-secondary-400 bg-secondary-100 px-1.5 py-0.5 rounded">Action</span>
                                     )}
                                 </button>
                             );
