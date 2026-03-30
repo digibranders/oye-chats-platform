@@ -5,13 +5,29 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.auth import get_current_bot, get_current_client, get_current_client_or_agent
-from app.db.models import Bot, Client
+from app.api.auth import get_current_bot, get_current_client_or_agent
+from app.db.models import Bot
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/bots", tags=["bots"])
+
+
+def _get_workspace_bot(session, bot_id: int, client_id: int) -> Bot:
+    bot = session.execute(select(Bot).where(Bot.id == bot_id, Bot.client_id == client_id)).scalars().first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found.")
+    return bot
+
+
+def _require_bot_management_access(auth: dict) -> None:
+    """Allow workspace owners/admins to manage bots while keeping regular agents read-only."""
+    if auth["type"] == "client":
+        return
+
+    if getattr(auth["entity"], "role", "agent") not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="You do not have permission to manage bots.")
 
 
 # ── Request / Response Models ──
@@ -170,11 +186,12 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_agent)):
 
 
 @router.post("", status_code=201)
-def create_bot(request: CreateBotRequest, client: Client = Depends(get_current_client)):
-    """Create a new bot for the authenticated client."""
+def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_agent)):
+    """Create a new bot for the authenticated workspace."""
+    _require_bot_management_access(auth)
     with get_session() as session:
         new_bot = Bot(
-            client_id=client.id,
+            client_id=auth["client_id"],
             bot_key=f"bot-{uuid.uuid4().hex[:12]}",
             name=request.name.strip() if request.name else "AI Assistant",
             website=request.website,
@@ -185,7 +202,7 @@ def create_bot(request: CreateBotRequest, client: Client = Depends(get_current_c
         session.commit()
         session.refresh(new_bot)
 
-        logger.info(f"Client {client.id} created bot {new_bot.id} ({new_bot.name})")
+        logger.info(f"Workspace {auth['client_id']} created bot {new_bot.id} ({new_bot.name})")
 
         return {
             "message": "Bot created successfully",
@@ -196,13 +213,10 @@ def create_bot(request: CreateBotRequest, client: Client = Depends(get_current_c
 
 
 @router.get("/{bot_id}")
-def get_bot(bot_id: int, request: Request, client: Client = Depends(get_current_client)):
-    """Get details of a specific bot owned by the authenticated client."""
+def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_agent)):
+    """Get details of a specific bot owned by the authenticated workspace."""
     with get_session() as session:
-        stmt = select(Bot).where(Bot.id == bot_id, Bot.client_id == client.id)
-        bot = session.execute(stmt).scalars().first()
-        if not bot:
-            raise HTTPException(status_code=404, detail="Bot not found.")
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
         bl = bot.bot_logo
         if bl and not bl.startswith("http"):
             bl = f"{str(request.base_url).rstrip('/')}/files/{bl}"
@@ -240,14 +254,12 @@ def get_bot(bot_id: int, request: Request, client: Client = Depends(get_current_
 
 
 @router.patch("/{bot_id}")
-def update_bot(bot_id: int, request: UpdateBotRequest, client: Client = Depends(get_current_client)):
+def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_client_or_agent)):
     """Update settings for a specific bot."""
     try:
+        _require_bot_management_access(auth)
         with get_session() as session:
-            stmt = select(Bot).where(Bot.id == bot_id, Bot.client_id == client.id)
-            bot = session.execute(stmt).scalars().first()
-            if not bot:
-                raise HTTPException(status_code=404, detail="Bot not found.")
+            bot = _get_workspace_bot(session, bot_id, auth["client_id"])
 
             update_data = request.dict(exclude_unset=True)
             logger.info(f"Updating bot {bot_id} | fields: {list(update_data.keys())}")
@@ -262,7 +274,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, client: Client = Depends(
                 setattr(bot, key, value)
 
             session.commit()
-            logger.info(f"Bot {bot_id} settings saved successfully by client {client.id}")
+            logger.info(f"Bot {bot_id} settings saved successfully by workspace {auth['client_id']}")
             return {"message": "Bot settings updated successfully"}
     except HTTPException:
         raise
@@ -272,15 +284,13 @@ def update_bot(bot_id: int, request: UpdateBotRequest, client: Client = Depends(
 
 
 @router.delete("/{bot_id}")
-def delete_bot(bot_id: int, client: Client = Depends(get_current_client)):
+def delete_bot(bot_id: int, auth=Depends(get_current_client_or_agent)):
     """Delete a bot and all its data (documents, sessions, messages)."""
+    _require_bot_management_access(auth)
     with get_session() as session:
-        stmt = select(Bot).where(Bot.id == bot_id, Bot.client_id == client.id)
-        bot = session.execute(stmt).scalars().first()
-        if not bot:
-            raise HTTPException(status_code=404, detail="Bot not found.")
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
 
         session.delete(bot)
         session.commit()
-        logger.info(f"Bot {bot_id} deleted by client {client.id}")
+        logger.info(f"Bot {bot_id} deleted by workspace {auth['client_id']}")
         return {"message": "Bot deleted successfully"}

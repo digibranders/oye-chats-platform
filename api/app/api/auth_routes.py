@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from app.api.auth import get_current_agent
 from app.core.security import get_password_hash, verify_password
-from app.db.models import Agent, Bot, Client
+from app.db.models import Agent, Bot, ChatSession, Client, Document
 from app.db.session import get_session
 from app.services.email_service import send_password_reset_email
 
@@ -19,18 +19,188 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _agent_login_score(agent: Agent, client_bot_counts: dict[int, int], client_agent_counts: dict[int, int]) -> tuple:
-    """Prefer the workspace with active bot/team data when legacy duplicate agent emails exist."""
-    bot_count = client_bot_counts.get(agent.client_id, 0)
-    agent_count = client_agent_counts.get(agent.client_id, 0)
+def _normalize_workspace_stats(
+    client_ids: set[int], workspace_stats: dict[int, dict[str, int]] | None
+) -> dict[int, dict[str, int]]:
+    """Ensure every candidate client has a complete zero-filled stats record."""
+    normalized = {
+        client_id: {
+            "bot_count": 0,
+            "agent_count": 0,
+            "website_bot_count": 0,
+            "document_count": 0,
+            "session_count": 0,
+        }
+        for client_id in client_ids
+    }
+    if not workspace_stats:
+        return normalized
+
+    for client_id, stats in workspace_stats.items():
+        base = normalized.setdefault(
+            client_id,
+            {
+                "bot_count": 0,
+                "agent_count": 0,
+                "website_bot_count": 0,
+                "document_count": 0,
+                "session_count": 0,
+            },
+        )
+        base.update({key: int(value or 0) for key, value in stats.items()})
+
+    return normalized
+
+
+def _build_workspace_stats(session, client_ids: set[int]) -> dict[int, dict[str, int]]:
+    """Collect signals that indicate which duplicate-email workspace is actually in use."""
+    stats = _normalize_workspace_stats(client_ids, None)
+    if not client_ids:
+        return stats
+
+    bot_rows = session.execute(
+        select(Bot.id, Bot.client_id, Bot.website).where(Bot.client_id.in_(client_ids), Bot.is_active.is_(True))
+    ).all()
+
+    bot_client_lookup: dict[int, int] = {}
+    for bot_id, client_id, website in bot_rows:
+        bot_client_lookup[bot_id] = client_id
+        stats[client_id]["bot_count"] += 1
+        if website and website.strip():
+            stats[client_id]["website_bot_count"] += 1
+
+    agent_count_rows = session.execute(
+        select(Agent.client_id, func.count(Agent.id)).where(Agent.client_id.in_(client_ids)).group_by(Agent.client_id)
+    ).all()
+    for client_id, count in agent_count_rows:
+        stats[client_id]["agent_count"] = int(count or 0)
+
+    if not bot_client_lookup:
+        return stats
+
+    bot_ids = list(bot_client_lookup.keys())
+
+    document_count_rows = session.execute(
+        select(Document.bot_id, func.count(Document.id)).where(Document.bot_id.in_(bot_ids)).group_by(Document.bot_id)
+    ).all()
+    for bot_id, count in document_count_rows:
+        stats[bot_client_lookup[bot_id]]["document_count"] += int(count or 0)
+
+    session_count_rows = session.execute(
+        select(ChatSession.bot_id, func.count(ChatSession.id))
+        .where(ChatSession.bot_id.in_(bot_ids))
+        .group_by(ChatSession.bot_id)
+    ).all()
+    for bot_id, count in session_count_rows:
+        stats[bot_client_lookup[bot_id]]["session_count"] += int(count or 0)
+
+    return stats
+
+
+def _workspace_connection_score(workspace_stats: dict[str, int]) -> tuple:
+    """Rank workspaces by how likely they are to be the real connected customer workspace."""
+    website_bot_count = workspace_stats.get("website_bot_count", 0)
+    session_count = workspace_stats.get("session_count", 0)
+    document_count = workspace_stats.get("document_count", 0)
+    bot_count = workspace_stats.get("bot_count", 0)
+    agent_count = workspace_stats.get("agent_count", 0)
+    has_connected_bot = website_bot_count > 0 or session_count > 0 or document_count > 0
+
+    return (
+        has_connected_bot,
+        website_bot_count > 0,
+        session_count > 0,
+        website_bot_count,
+        session_count,
+        document_count,
+        bot_count,
+        agent_count,
+    )
+
+
+def _agent_login_score(agent: Agent, workspace_stats: dict[int, dict[str, int]] | None = None, **legacy_stats) -> tuple:
+    """Prefer the workspace with the strongest evidence of a real linked bot setup."""
+    client_ids = {agent.client_id}
+    if workspace_stats is None:
+        workspace_stats = _normalize_workspace_stats(client_ids, legacy_stats)
+    else:
+        workspace_stats = _normalize_workspace_stats(client_ids, workspace_stats)
+
+    connection_score = _workspace_connection_score(workspace_stats.get(agent.client_id, {}))
     created_at = agent.created_at or datetime.min.replace(tzinfo=UTC)
-    return (bot_count > 0, bot_count, agent_count, created_at, agent.id)
+    return (*connection_score, created_at, agent.id)
 
 
 def _choose_best_agent_candidate(
-    candidates: list[Agent], client_bot_counts: dict[int, int], client_agent_counts: dict[int, int]
+    candidates: list[Agent], workspace_stats: dict[int, dict[str, int]] | None = None, **legacy_stats
 ) -> Agent:
-    return max(candidates, key=lambda agent: _agent_login_score(agent, client_bot_counts, client_agent_counts))
+    client_ids = {agent.client_id for agent in candidates}
+    if workspace_stats is None:
+        workspace_stats = _normalize_workspace_stats(client_ids, legacy_stats)
+    else:
+        workspace_stats = _normalize_workspace_stats(client_ids, workspace_stats)
+
+    return max(candidates, key=lambda agent: _agent_login_score(agent, workspace_stats))
+
+
+def _choose_default_workspace_bot(bots: list[Bot], bot_activity: dict[int, dict[str, int]] | None = None) -> Bot | None:
+    """Choose the bot that best represents the workspace's existing linked setup."""
+    if not bots:
+        return None
+
+    bot_activity = bot_activity or {}
+
+    def score(bot: Bot) -> tuple:
+        activity = bot_activity.get(bot.id, {})
+        website_present = bool(bot.website and bot.website.strip())
+        session_count = int(activity.get("session_count", 0) or 0)
+        document_count = int(activity.get("document_count", 0) or 0)
+        created_at = bot.created_at or datetime.min.replace(tzinfo=UTC)
+        return (
+            website_present,
+            session_count > 0,
+            document_count > 0,
+            session_count,
+            document_count,
+            created_at,
+            bot.id,
+        )
+
+    return max(bots, key=score)
+
+
+def _get_default_workspace_bot(session, client_id: int) -> Bot | None:
+    """Fetch the best default bot to hydrate immediately after agent login."""
+    bots = (
+        session.execute(
+            select(Bot)
+            .where(Bot.client_id == client_id, Bot.is_active.is_(True))
+            .order_by(Bot.created_at.asc(), Bot.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    if not bots:
+        return None
+
+    bot_ids = [bot.id for bot in bots]
+    bot_activity: dict[int, dict[str, int]] = {bot.id: {"document_count": 0, "session_count": 0} for bot in bots}
+
+    document_rows = session.execute(
+        select(Document.bot_id, func.count(Document.id)).where(Document.bot_id.in_(bot_ids)).group_by(Document.bot_id)
+    ).all()
+    for bot_id, count in document_rows:
+        bot_activity[bot_id]["document_count"] = int(count or 0)
+
+    session_rows = session.execute(
+        select(ChatSession.bot_id, func.count(ChatSession.id))
+        .where(ChatSession.bot_id.in_(bot_ids))
+        .group_by(ChatSession.bot_id)
+    ).all()
+    for bot_id, count in session_rows:
+        bot_activity[bot_id]["session_count"] = int(count or 0)
+
+    return _choose_default_workspace_bot(bots, bot_activity)
 
 
 # ── Request / Response Models ──
@@ -285,6 +455,7 @@ class AgentLoginResponse(BaseModel):
     token_type: str = "bearer"
     agent_id: int
     client_id: int
+    default_bot_id: int | None = None
     name: str
     role: str
     department_id: int | None = None
@@ -340,27 +511,16 @@ def agent_login(request: AgentLoginRequest):
                 agent = valid_agents[0]
             else:
                 client_ids = {agent.client_id for agent in valid_agents}
-                bot_count_rows = session.execute(
-                    select(Bot.client_id, func.count(Bot.id))
-                    .where(Bot.client_id.in_(client_ids))
-                    .group_by(Bot.client_id)
-                ).all()
-                agent_count_rows = session.execute(
-                    select(Agent.client_id, func.count(Agent.id))
-                    .where(Agent.client_id.in_(client_ids))
-                    .group_by(Agent.client_id)
-                ).all()
-
-                client_bot_counts = {client_id: count for client_id, count in bot_count_rows}
-                client_agent_counts = {client_id: count for client_id, count in agent_count_rows}
-                agent = _choose_best_agent_candidate(valid_agents, client_bot_counts, client_agent_counts)
+                workspace_stats = _build_workspace_stats(session, client_ids)
+                agent = _choose_best_agent_candidate(valid_agents, workspace_stats)
 
                 logger.warning(
-                    "Duplicate agent email resolved during login | email=%s | chosen_agent_id=%s | chosen_client_id=%s | candidates=%s",
+                    "Duplicate agent email resolved during login | email=%s | chosen_agent_id=%s | chosen_client_id=%s | candidates=%s | workspace_stats=%s",
                     email,
                     agent.id,
                     agent.client_id,
                     [(candidate.id, candidate.client_id) for candidate in valid_agents],
+                    workspace_stats,
                 )
 
             # Backfill missing API keys for older agent records so subsequent
@@ -370,6 +530,8 @@ def agent_login(request: AgentLoginRequest):
                 session.commit()
                 session.refresh(agent)
 
+            default_bot = _get_default_workspace_bot(session, agent.client_id)
+
             logger.info(f"Successful agent login for agent {agent.id} ({agent.name})")
 
             return {
@@ -377,6 +539,7 @@ def agent_login(request: AgentLoginRequest):
                 "token_type": "bearer",
                 "agent_id": agent.id,
                 "client_id": agent.client_id,
+                "default_bot_id": default_bot.id if default_bot else None,
                 "name": agent.name,
                 "role": agent.role,
                 "department_id": agent.department_id,

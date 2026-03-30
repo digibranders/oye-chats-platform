@@ -104,6 +104,8 @@ const ColorPickerControl = ({ label, color, onChange }) => {
 
 export default function Interface({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const isBotManager = localStorage.getItem('auth_type') !== 'agent'
+        || ['owner', 'admin'].includes(localStorage.getItem('agent_role') || '');
     const [logo, setLogo] = useState(null); // base64 data URL
     const [isSaving, setIsSaving] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
@@ -185,6 +187,7 @@ export default function Interface({ embedded = false }) {
     const tabs = ['General', 'Avatar', 'Leads Form', 'Custom Brand'];
 
     const handleFile = (file) => {
+        if (!isBotManager) return;
         if (!file) return;
         if (!file.type.startsWith('image/')) {
             alert('Please upload an image file.');
@@ -204,6 +207,7 @@ export default function Interface({ embedded = false }) {
     };
 
     const handleCropConfirm = async () => {
+        if (!isBotManager) return;
         if (!croppedAreaPixels || !cropImage) return;
         setShowCropModal(false);
         setIsUploading(true);
@@ -225,6 +229,7 @@ export default function Interface({ embedded = false }) {
     };
 
     const handleSave = async () => {
+        if (!isBotManager) return;
         setIsSaving(true);
         setSaveError(null);
         try {
@@ -261,6 +266,7 @@ export default function Interface({ embedded = false }) {
     };
 
     const handleRemove = () => {
+        if (!isBotManager) return;
         setLogo(null);
         setLauncherLogo(null);
     };
@@ -282,6 +288,11 @@ export default function Interface({ embedded = false }) {
                 <div>
                     <h1 className="text-2xl font-bold text-secondary-900 tracking-tight">Appearance</h1>
                     <p className="text-secondary-500 mt-1 text-sm">Customize how your chatbot looks</p>
+                    {!isBotManager && (
+                        <p className="mt-2 text-sm text-secondary-500">
+                            You have read-only access to this bot configuration.
+                        </p>
+                    )}
                 </div>
             )}
 
@@ -304,7 +315,7 @@ export default function Interface({ embedded = false }) {
 
                 <button
                     onClick={handleSave}
-                    disabled={isSaving || saved}
+                    disabled={!isBotManager || isSaving || saved}
                     className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
                         ? 'bg-success-500 hover:bg-success-600 text-white'
                         : 'bg-primary-600 hover:bg-primary-700 text-white'
