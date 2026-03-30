@@ -29,6 +29,11 @@ Run only the checks relevant to the files you changed:
 3. **Never skip checks** — even for "small" changes. One-line typos can break builds.
 4. **Report the results** — include a brief summary of checks passed in your final message (e.g., "lint ✓ · format ✓ · build ✓").
 
+## Git Workflow
+- **NEVER push directly to `main`.** The `main` branch is production and is only updated via GitHub PR merges.
+- **Always work on the `development` branch.** All commits and pushes go to `development`.
+- When ready to release, create a PR from `development` → `main` on GitHub. The user will merge it from there.
+
 ## How It Works (End-to-End)
 
 1. **Customer signs up** via the Admin Dashboard → gets an account
