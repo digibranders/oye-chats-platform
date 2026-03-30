@@ -38,13 +38,13 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     };
 
     const navigate = useNavigate();
+    const isAgentRole = localStorage.getItem('auth_type') === 'agent';
+    const isBotManager = !isAgentRole || ['owner', 'admin'].includes(localStorage.getItem('agent_role') || '');
 
     const handleCreateBot = () => {
         setDropdownOpen(false);
         navigate('/chatbot?create=true');
     };
-
-    const isAgentRole = localStorage.getItem('auth_type') === 'agent';
 
     // Agent users see a minimal sidebar
     const mainItems = isAgentRole
@@ -142,18 +142,27 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                             </p>
                         </div>
                     ) : bots.length === 0 && !loading ? (
-                        <NavLink
-                            to="/chatbot"
-                            onClick={handleNavClick}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 transition-all text-left"
-                        >
-                            <div className="w-6 h-6 rounded-md bg-primary-500/10 flex items-center justify-center flex-shrink-0">
-                                <Plus size={13} className="text-primary-400" />
+                        isBotManager ? (
+                            <NavLink
+                                to="/chatbot"
+                                onClick={handleNavClick}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 transition-all text-left"
+                            >
+                                <div className="w-6 h-6 rounded-md bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+                                    <Plus size={13} className="text-primary-400" />
+                                </div>
+                                <p className="text-[12px] font-semibold text-primary-400 truncate">
+                                    Create a Chatbot
+                                </p>
+                            </NavLink>
+                        ) : (
+                            <div className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
+                                <p className="text-[11px] font-semibold text-zinc-200">No workspace bots</p>
+                                <p className="mt-1 text-[10px] text-zinc-400">
+                                    An owner or admin needs to add one.
+                                </p>
                             </div>
-                            <p className="text-[12px] font-semibold text-primary-400 truncate">
-                                Create a Chatbot
-                            </p>
-                        </NavLink>
+                        )
                     ) : (
                         <div className="relative">
                             <button
@@ -188,15 +197,17 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                                             </button>
                                         ))}
                                     </div>
-                                    <div className="border-t border-zinc-800">
-                                        <button
-                                            onClick={handleCreateBot}
-                                            className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-primary-400 hover:bg-zinc-800 transition-colors"
-                                        >
-                                            <Plus size={13} />
-                                            Create new bot
-                                        </button>
-                                    </div>
+                                    {isBotManager && (
+                                        <div className="border-t border-zinc-800">
+                                            <button
+                                                onClick={handleCreateBot}
+                                                className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium text-primary-400 hover:bg-zinc-800 transition-colors"
+                                            >
+                                                <Plus size={13} />
+                                                Create new bot
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

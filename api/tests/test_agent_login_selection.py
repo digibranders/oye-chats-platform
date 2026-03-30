@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from app.api.auth_routes import _choose_best_agent_candidate
+from app.api.auth_routes import _choose_best_agent_candidate, _choose_default_workspace_bot
 
 
 class TestAgentLoginSelection:
@@ -13,8 +13,10 @@ class TestAgentLoginSelection:
 
         selected = _choose_best_agent_candidate(
             [newer_empty_workspace, older_active_workspace],
-            client_bot_counts={70: 0, 30: 1},
-            client_agent_counts={70: 1, 30: 2},
+            workspace_stats={
+                70: {"bot_count": 0, "agent_count": 1, "website_bot_count": 0, "document_count": 0, "session_count": 0},
+                30: {"bot_count": 1, "agent_count": 2, "website_bot_count": 0, "document_count": 0, "session_count": 0},
+            },
         )
 
         assert selected is older_active_workspace
@@ -25,8 +27,10 @@ class TestAgentLoginSelection:
 
         selected = _choose_best_agent_candidate(
             [smaller_team, larger_team],
-            client_bot_counts={40: 0, 50: 0},
-            client_agent_counts={40: 1, 50: 4},
+            workspace_stats={
+                40: {"bot_count": 0, "agent_count": 1, "website_bot_count": 0, "document_count": 0, "session_count": 0},
+                50: {"bot_count": 0, "agent_count": 4, "website_bot_count": 0, "document_count": 0, "session_count": 0},
+            },
         )
 
         assert selected is larger_team
@@ -37,8 +41,54 @@ class TestAgentLoginSelection:
 
         selected = _choose_best_agent_candidate(
             [older_agent, newer_agent],
-            client_bot_counts={11: 1, 12: 1},
-            client_agent_counts={11: 2, 12: 2},
+            workspace_stats={
+                11: {"bot_count": 1, "agent_count": 2, "website_bot_count": 0, "document_count": 0, "session_count": 0},
+                12: {"bot_count": 1, "agent_count": 2, "website_bot_count": 0, "document_count": 0, "session_count": 0},
+            },
         )
 
         assert selected is newer_agent
+
+    def test_prefers_workspace_with_connected_bot_signals_when_counts_tie(self):
+        newer_unlinked_workspace = SimpleNamespace(id=14, client_id=140, created_at=datetime(2026, 3, 20, tzinfo=UTC))
+        older_connected_workspace = SimpleNamespace(id=9, client_id=90, created_at=datetime(2026, 2, 10, tzinfo=UTC))
+
+        selected = _choose_best_agent_candidate(
+            [newer_unlinked_workspace, older_connected_workspace],
+            workspace_stats={
+                140: {
+                    "bot_count": 1,
+                    "agent_count": 2,
+                    "website_bot_count": 0,
+                    "document_count": 0,
+                    "session_count": 0,
+                },
+                90: {"bot_count": 1, "agent_count": 2, "website_bot_count": 1, "document_count": 3, "session_count": 8},
+            },
+        )
+
+        assert selected is older_connected_workspace
+
+
+class TestDefaultWorkspaceBotSelection:
+    def test_prefers_bot_with_live_website_and_activity(self):
+        dormant_bot = SimpleNamespace(
+            id=10,
+            website=None,
+            created_at=datetime(2026, 3, 15, tzinfo=UTC),
+        )
+        connected_bot = SimpleNamespace(
+            id=11,
+            website="https://example.com",
+            created_at=datetime(2026, 3, 1, tzinfo=UTC),
+        )
+
+        selected = _choose_default_workspace_bot(
+            [dormant_bot, connected_bot],
+            {
+                10: {"document_count": 0, "session_count": 0},
+                11: {"document_count": 4, "session_count": 12},
+            },
+        )
+
+        assert selected is connected_bot

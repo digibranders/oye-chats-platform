@@ -36,6 +36,9 @@ export default function Login() {
                 localStorage.setItem('agent_role', data.role);
                 localStorage.setItem('agent_id', data.agent_id.toString());
                 localStorage.setItem('is_superadmin', 'false');
+                if (data.default_bot_id) {
+                    localStorage.setItem('selected_bot_id', data.default_bot_id.toString());
+                }
                 sessionStorage.setItem('login_toast', '1');
                 loggedIn = true;
                 navigate('/support');

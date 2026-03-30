@@ -23,6 +23,8 @@ const botPageTabs = [
 export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading, error: botError } = useBotContext();
     const { showToast } = useToast();
+    const isBotManager = localStorage.getItem('auth_type') !== 'agent'
+        || ['owner', 'admin'].includes(localStorage.getItem('agent_role') || '');
     const [searchParams, setSearchParams] = useSearchParams();
     const [botTab, setBotTab] = useState(searchParams.get('tab') || 'bots');
     const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -96,12 +98,14 @@ export default function Chatbot() {
     return (
         <div className="space-y-6 animate-fade-in">
             <PageHeader title="My Bots" subtitle="Manage your chatbot instances and customize appearance">
-                <button
-                    onClick={() => setIsCreateOpen(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-md"
-                >
-                    <Plus size={16} /> Add Chatbot
-                </button>
+                {isBotManager && (
+                    <button
+                        onClick={() => setIsCreateOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-md"
+                    >
+                        <Plus size={16} /> Add Chatbot
+                    </button>
+                )}
             </PageHeader>
             <Tabs tabs={botPageTabs} activeTab={botTab} onChange={setBotTab} />
 
@@ -135,7 +139,14 @@ export default function Chatbot() {
                     </div>
                 </div>
             ) : bots.length === 0 ? (
-                <EmptyState title="No chatbots yet" description="Create your first chatbot to get started. Each bot gets its own embed code and knowledge base." actionLabel="Create Chatbot" onAction={() => setIsCreateOpen(true)} />
+                <EmptyState
+                    title="No chatbots yet"
+                    description={isBotManager
+                        ? 'Create your first chatbot to get started. Each bot gets its own embed code and knowledge base.'
+                        : 'No chatbots are currently available for this workspace.'}
+                    actionLabel={isBotManager ? 'Create Chatbot' : undefined}
+                    onAction={isBotManager ? () => setIsCreateOpen(true) : undefined}
+                />
             ) : (
                 <div className="space-y-3">
                     {bots.map((bot) => {
@@ -165,14 +176,16 @@ export default function Chatbot() {
                                         <button onClick={() => setExpandedBot(isExpanded ? null : bot.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-secondary-600 bg-secondary-100 rounded-lg hover:bg-secondary-200:bg-secondary-700 transition-colors">
                                             <Code2 size={13} /> Embed {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                                         </button>
-                                        {confirmDelete === bot.id ? (
-                                            <div className="flex items-center gap-1.5">
-                                                <span className="text-[10px] text-secondary-400">Sure?</span>
-                                                <button onClick={() => handleDelete(bot.id, bot.name)} disabled={deletingBot === bot.id} className="p-1.5 rounded-lg bg-error-500 text-white hover:bg-error-600 transition-colors">{deletingBot === bot.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>
-                                                <button onClick={() => setConfirmDelete(null)} className="p-1.5 rounded-lg bg-secondary-100 text-secondary-500 transition-colors"><X size={12} /></button>
-                                            </div>
-                                        ) : (
-                                            <button onClick={() => setConfirmDelete(bot.id)} className="p-1.5 rounded-lg text-secondary-400 hover:text-error-500 hover:bg-error-50:bg-error-500/10 transition-colors"><Trash2 size={14} /></button>
+                                        {isBotManager && (
+                                            confirmDelete === bot.id ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-[10px] text-secondary-400">Sure?</span>
+                                                    <button onClick={() => handleDelete(bot.id, bot.name)} disabled={deletingBot === bot.id} className="p-1.5 rounded-lg bg-error-500 text-white hover:bg-error-600 transition-colors">{deletingBot === bot.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>
+                                                    <button onClick={() => setConfirmDelete(null)} className="p-1.5 rounded-lg bg-secondary-100 text-secondary-500 transition-colors"><X size={12} /></button>
+                                                </div>
+                                            ) : (
+                                                <button onClick={() => setConfirmDelete(bot.id)} className="p-1.5 rounded-lg text-secondary-400 hover:text-error-500 hover:bg-error-50:bg-error-500/10 transition-colors"><Trash2 size={14} /></button>
+                                            )
                                         )}
                                     </div>
                                 </div>
@@ -229,7 +242,7 @@ export default function Chatbot() {
             )}
 
             {/* Create Bot Modal */}
-            {isCreateOpen && (
+            {isBotManager && isCreateOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-md border border-secondary-200 overflow-hidden animate-scale-in">
                         <div className="p-6">
