@@ -15,17 +15,20 @@ export default function TeamManagement() {
     const [agentForm, setAgentForm] = useState({ name: '', email: '', password: '', role: 'agent', department_id: '' });
     const [deptForm, setDeptForm] = useState({ name: '', description: '' });
     const [error, setError] = useState('');
+    const [fetchError, setFetchError] = useState(null);
     // Regular agents land on Quick Replies — that's their primary use case on this page.
     const [activeTab, setActiveTab] = useState(isAgent && !isBotManager ? 'quick-replies' : 'agents');
 
     const fetchData = async () => {
         try {
             setLoading(true);
+            setFetchError(null);
             const [agentsData, deptsData] = await Promise.all([getAgents(), getDepartments()]);
             setAgents(agentsData.agents || []);
             setDepartments(deptsData.departments || []);
-        } catch {
-            // silent
+        } catch (err) {
+            setFetchError('Could not load team data. Please refresh the page.');
+            console.error('TeamManagement fetch error:', err);
         } finally {
             setLoading(false);
         }
@@ -112,6 +115,12 @@ export default function TeamManagement() {
                     <MessageSquareText size={15} className="inline mr-1.5 -mt-0.5" /> Quick Replies
                 </button>
             </div>
+
+            {fetchError && (
+                <div className="mb-4 px-4 py-3 bg-error-50 border border-error-200 rounded-xl text-sm text-error-700">
+                    {fetchError}
+                </div>
+            )}
 
             {activeTab === 'quick-replies' ? (
                 <CannedResponses embedded />

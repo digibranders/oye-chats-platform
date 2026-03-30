@@ -42,6 +42,10 @@ class ConnectionManager:
         await ws.accept()
         self.visitor_connections[session_id] = ws
         logger.info(f"Visitor connected: {session_id}")
+        # Sync state to visitor: handles both the REST→WS race condition (visitor WS
+        # opens after handoff REST call but before manager.request_handoff fires) and
+        # server-restart scenarios where in-memory state was cleared.
+        await self._restore_visitor_state(session_id)
 
     def disconnect_visitor(self, session_id: str):
         was_waiting = session_id in self.waiting_queue
@@ -380,6 +384,71 @@ class ConnectionManager:
         except Exception as e:
             # Queue correctness degrades if this fails, but websocket flow should continue.
             logger.warning(f"Failed to persist waiting-exit state for {session_id}: {e}")
+
+    async def _restore_visitor_state(self, session_id: str) -> None:
+        """Push current state to a freshly connected visitor WebSocket.
+
+        Covers two failure scenarios:
+        - Race condition: visitor WS opens after REST /handoff returns but before
+          manager.request_handoff fires — the queued status send lands on a missing
+          connection, so the visitor never receives their queue position.
+        - Server restart: in-memory assignments/queue are cleared but the DB still
+          records live or waiting sessions.
+        """
+        # Happy path: state is already tracked in memory
+        if session_id in self.assignments:
+            agent_id = self.assignments[session_id]
+            agent_name = self._agent_names.get(agent_id, "Support")
+            await self._send_to_visitor(
+                session_id,
+                {"type": "status", "status": "connected", "agent_name": agent_name},
+            )
+            return
+
+        if session_id in self.waiting_queue:
+            await self._send_to_visitor(
+                session_id,
+                {
+                    "type": "status",
+                    "status": "waiting",
+                    "queue_position": self.waiting_queue.index(session_id) + 1,
+                },
+            )
+            return
+
+        # Fall through to DB for restart recovery
+        try:
+            with get_session() as db:
+                chat_session = db.get(ChatSession, session_id)
+                if not chat_session:
+                    return
+
+                if chat_session.status == "live" and chat_session.assigned_agent_id:
+                    # Restore the assignment so message routing works again
+                    self.assignments[session_id] = chat_session.assigned_agent_id
+                    agent_name = self._agent_names.get(chat_session.assigned_agent_id, "Support")
+                    await self._send_to_visitor(
+                        session_id,
+                        {"type": "status", "status": "connected", "agent_name": agent_name},
+                    )
+                    logger.info(f"Restored live assignment for {session_id} → agent {chat_session.assigned_agent_id}")
+
+                elif chat_session.status == "waiting":
+                    if session_id not in self.waiting_queue:
+                        self.waiting_queue.append(session_id)
+                        self._session_departments[session_id] = chat_session.department_id
+                    await self._send_to_visitor(
+                        session_id,
+                        {
+                            "type": "status",
+                            "status": "waiting",
+                            "queue_position": self.waiting_queue.index(session_id) + 1,
+                        },
+                    )
+                    logger.info(f"Restored waiting state for {session_id}")
+        except Exception as e:
+            # Non-fatal: visitor is connected; state sync is best-effort.
+            logger.warning(f"Failed to restore visitor state for {session_id}: {e}")
 
     async def _send_to_visitor(self, session_id: str, data: dict):
         ws = self.visitor_connections.get(session_id)

@@ -74,7 +74,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             data = await ws.receive_json()
             msg_type = data.get("type")
 
-            if msg_type == "message":
+            if msg_type == "ping":
+                await ws.send_json({"type": "pong"})
+
+            elif msg_type == "message":
                 content = data.get("content", "").strip()
                 if not content:
                     continue

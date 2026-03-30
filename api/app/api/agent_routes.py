@@ -1,5 +1,6 @@
 """Agent management, department CRUD, and live chat REST endpoints."""
 
+import asyncio
 import logging
 import uuid
 
@@ -331,10 +332,8 @@ def delete_agent(agent_id: int, client: Client = Depends(get_current_client)):
 
 
 @router.post("/handoff")
-def request_handoff(request: HandoffRequest, client: Client = Depends(get_current_client)):
+async def request_handoff(request: HandoffRequest, client: Client = Depends(get_current_client)):
     """Called by the widget (via REST) to initiate a handoff request."""
-    import asyncio
-
     with get_session() as session:
         chat_session = session.execute(
             select(ChatSession).where(ChatSession.id == request.session_id)
@@ -365,20 +364,18 @@ def request_handoff(request: HandoffRequest, client: Client = Depends(get_curren
                 contact = {"name": lead_info.name, "email": lead_info.email, "phone": lead_info.phone}
             send_handoff_request_email(bot.notification_email, bot.name, request.reason, contact)
 
-    # Request handoff via connection manager (async), passing visitor metadata for queue display
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(
-            manager.request_handoff(
-                request.session_id,
-                timeout,
-                request.department_id,
-                visitor_name=visitor_name,
-                reason=request.reason,
-            )
+    # Schedule in-memory queue update as a background task so the REST response
+    # is not held up by WebSocket sends. asyncio.create_task() is safe here
+    # because async endpoints run directly on the event loop.
+    asyncio.create_task(
+        manager.request_handoff(
+            request.session_id,
+            timeout,
+            request.department_id,
+            visitor_name=visitor_name,
+            reason=request.reason,
         )
-    except RuntimeError:
-        pass
+    )
 
     return {"success": True, "status": "waiting"}
 
@@ -421,14 +418,12 @@ def get_queue(auth=Depends(get_current_client_or_agent)):
 
 
 @router.post("/accept/{session_id}")
-def accept_chat(
+async def accept_chat(
     session_id: str,
     request: AcceptChatRequest | None = None,
     auth=Depends(get_current_client_or_agent),
 ):
     """Agent accepts a waiting chat."""
-    import asyncio
-
     with get_session() as session:
         # Resolve the agent
         if auth["type"] == "agent":
@@ -470,20 +465,14 @@ def accept_chat(
         agent_name = agent.name
         agent_id = agent.id
 
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(manager.accept_chat(session_id, agent_id, agent_name))
-    except RuntimeError:
-        pass
+    asyncio.create_task(manager.accept_chat(session_id, agent_id, agent_name))
 
     return {"success": True, "status": "live", "agent_name": agent_name}
 
 
 @router.post("/close/{session_id}")
-def close_chat(session_id: str, auth=Depends(get_current_client_or_agent)):
+async def close_chat(session_id: str, auth=Depends(get_current_client_or_agent)):
     """Agent closes a live chat."""
-    import asyncio
-
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
@@ -494,11 +483,7 @@ def close_chat(session_id: str, auth=Depends(get_current_client_or_agent)):
         chat_session.assigned_agent_id = None
         session.commit()
 
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(manager.close_chat(session_id, bot.name if bot else "AI Assistant"))
-    except RuntimeError:
-        pass
+    asyncio.create_task(manager.close_chat(session_id, bot.name if bot else "AI Assistant"))
 
     return {"success": True, "status": "bot"}
 
@@ -509,10 +494,8 @@ class TransferRequest(BaseModel):
 
 
 @router.post("/transfer/{session_id}")
-def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_current_client_or_agent)):
+async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_current_client_or_agent)):
     """Transfer a live chat to another agent or department."""
-    import asyncio
-
     if not request.target_agent_id and not request.target_department_id:
         raise HTTPException(status_code=400, detail="Must specify target_agent_id or target_department_id.")
 
@@ -545,11 +528,7 @@ def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_cu
             target_name = target_agent.name
 
             # Notify via WebSocket
-            try:
-                loop = asyncio.get_event_loop()
-                loop.create_task(manager.transfer_chat(session_id, old_agent_id, target_agent.id, target_name))
-            except RuntimeError:
-                pass
+            asyncio.create_task(manager.transfer_chat(session_id, old_agent_id, target_agent.id, target_name))
 
             return {"success": True, "transferred_to": target_name, "agent_id": target_agent.id}
 
@@ -570,20 +549,16 @@ def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_cu
         session.commit()
         dept_name = dept.name
 
-        try:
-            loop = asyncio.get_event_loop()
-            timeout = bot.agent_timeout_seconds or 120
-            # Notify old agent that the chat was transferred away
-            if old_agent_id:
-                loop.create_task(
-                    manager._send_to_agent(
-                        old_agent_id,
-                        {"type": "chat_transferred", "session_id": session_id, "transferred_to": dept_name},
-                    )
+        timeout = bot.agent_timeout_seconds or 120
+        # Notify old agent that the chat was transferred away
+        if old_agent_id:
+            asyncio.create_task(
+                manager._send_to_agent(
+                    old_agent_id,
+                    {"type": "chat_transferred", "session_id": session_id, "transferred_to": dept_name},
                 )
-            loop.create_task(manager.request_handoff(session_id, timeout, request.target_department_id))
-        except RuntimeError:
-            pass
+            )
+        asyncio.create_task(manager.request_handoff(session_id, timeout, request.target_department_id))
 
         return {"success": True, "transferred_to_department": dept_name}
 
