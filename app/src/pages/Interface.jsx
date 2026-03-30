@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { getAuthState } from '../utils/auth';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
 import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus } from 'lucide-react';
@@ -104,8 +105,7 @@ const ColorPickerControl = ({ label, color, onChange }) => {
 
 export default function Interface({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
-    const isBotManager = localStorage.getItem('auth_type') !== 'agent'
-        || ['owner', 'admin'].includes(localStorage.getItem('agent_role') || '');
+    const { isBotManager } = getAuthState();
     const [logo, setLogo] = useState(null); // base64 data URL
     const [isSaving, setIsSaving] = useState(false);
     const [isUploading, setIsUploading] = useState(false);

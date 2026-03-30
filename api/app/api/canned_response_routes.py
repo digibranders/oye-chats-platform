@@ -63,12 +63,28 @@ def list_canned_responses(
         }
 
 
+def _require_canned_response_write_access(auth: dict) -> None:
+    """Allow clients and owner/admin agents to manage shared quick replies.
+
+    Regular agents are read-only: they use quick replies in live chat but
+    cannot add, edit, or delete workspace-level shared responses.
+    """
+    if auth["type"] == "client":
+        return
+    if getattr(auth["entity"], "role", "agent") not in {"owner", "admin"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only workspace owners and admins can modify quick replies.",
+        )
+
+
 @router.post("")
 def create_canned_response(
     request: CreateCannedResponseRequest,
     auth=Depends(get_current_client_or_agent),
 ):
     """Create a new canned response."""
+    _require_canned_response_write_access(auth)
     with get_session() as session:
         response = CannedResponse(
             client_id=auth["client_id"],
@@ -98,6 +114,7 @@ def update_canned_response(
     auth=Depends(get_current_client_or_agent),
 ):
     """Update a canned response."""
+    _require_canned_response_write_access(auth)
     with get_session() as session:
         response = session.execute(
             select(CannedResponse).where(
@@ -127,6 +144,7 @@ def delete_canned_response(
     auth=Depends(get_current_client_or_agent),
 ):
     """Delete a canned response."""
+    _require_canned_response_write_access(auth)
     with get_session() as session:
         response = session.execute(
             select(CannedResponse).where(

@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 import { UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones, MessageSquareText } from 'lucide-react';
 import { getAgents, createAgent, deleteAgent, getDepartments, createDepartment, deleteDepartment } from '../services/api';
 import CannedResponses from './CannedResponses';
+import { getAuthState } from '../utils/auth';
 
 export default function TeamManagement() {
+    const { isAgent, isBotManager } = getAuthState();
+
     const [agents, setAgents] = useState([]);
     const [departments, setDepartments] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -12,7 +15,8 @@ export default function TeamManagement() {
     const [agentForm, setAgentForm] = useState({ name: '', email: '', password: '', role: 'agent', department_id: '' });
     const [deptForm, setDeptForm] = useState({ name: '', description: '' });
     const [error, setError] = useState('');
-    const [activeTab, setActiveTab] = useState('agents');
+    // Regular agents land on Quick Replies — that's their primary use case on this page.
+    const [activeTab, setActiveTab] = useState(isAgent && !isBotManager ? 'quick-replies' : 'agents');
 
     const fetchData = async () => {
         try {
@@ -119,16 +123,18 @@ export default function TeamManagement() {
                 <div className="space-y-4">
                     <div className="flex justify-between items-center">
                         <p className="text-sm text-secondary-500">{agents.length} agent{agents.length !== 1 ? 's' : ''}</p>
-                        <button
-                            onClick={() => setShowCreateAgent(true)}
-                            className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors"
-                        >
-                            <Plus size={15} /> Add Agent
-                        </button>
+                        {isBotManager && (
+                            <button
+                                onClick={() => setShowCreateAgent(true)}
+                                className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors"
+                            >
+                                <Plus size={15} /> Add Agent
+                            </button>
+                        )}
                     </div>
 
-                    {/* Create Agent Modal */}
-                    {showCreateAgent && (
+                    {/* Create Agent Modal — owners/admins only */}
+                    {isBotManager && showCreateAgent && (
                         <div className="bg-white rounded-2xl border border-secondary-200 p-5">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="font-bold text-secondary-900">Create New Agent</h3>
@@ -184,7 +190,9 @@ export default function TeamManagement() {
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Department</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Status</th>
                                     <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Chats</th>
-                                    <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Actions</th>
+                                    {isBotManager && (
+                                        <th className="text-right px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-secondary-400">Actions</th>
+                                    )}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-secondary-100">
@@ -219,20 +227,22 @@ export default function TeamManagement() {
                                         <td className="px-4 py-3 text-sm text-secondary-600">
                                             {agent.active_chats || 0}
                                         </td>
-                                        <td className="px-4 py-3 text-right">
-                                            <button
-                                                onClick={() => handleDeleteAgent(agent.id, agent.name)}
-                                                className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
-                                                title="Delete agent"
-                                            >
-                                                <Trash2 size={15} />
-                                            </button>
-                                        </td>
+                                        {isBotManager && (
+                                            <td className="px-4 py-3 text-right">
+                                                <button
+                                                    onClick={() => handleDeleteAgent(agent.id, agent.name)}
+                                                    className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
+                                                    title="Delete agent"
+                                                >
+                                                    <Trash2 size={15} />
+                                                </button>
+                                            </td>
+                                        )}
                                     </tr>
                                 ))}
                                 {agents.length === 0 && (
                                     <tr>
-                                        <td colSpan={6} className="px-4 py-12 text-center text-secondary-400">
+                                        <td colSpan={isBotManager ? 6 : 5} className="px-4 py-12 text-center text-secondary-400">
                                             <Headphones size={32} className="mx-auto mb-2 opacity-50" />
                                             <p className="font-medium">No agents yet</p>
                                             <p className="text-xs mt-1">Create agents to handle live chat conversations.</p>
@@ -248,15 +258,17 @@ export default function TeamManagement() {
                 <div className="space-y-4">
                     <div className="flex justify-between items-center">
                         <p className="text-sm text-secondary-500">{departments.length} department{departments.length !== 1 ? 's' : ''}</p>
-                        <button
-                            onClick={() => setShowCreateDept(true)}
-                            className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors"
-                        >
-                            <Plus size={15} /> Add Department
-                        </button>
+                        {isBotManager && (
+                            <button
+                                onClick={() => setShowCreateDept(true)}
+                                className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors"
+                            >
+                                <Plus size={15} /> Add Department
+                            </button>
+                        )}
                     </div>
 
-                    {showCreateDept && (
+                    {isBotManager && showCreateDept && (
                         <div className="bg-white rounded-2xl border border-secondary-200 p-5">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="font-bold text-secondary-900">Create Department</h3>
@@ -299,13 +311,15 @@ export default function TeamManagement() {
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <span className="text-xs text-secondary-500">{deptAgents.length} agent{deptAgents.length !== 1 ? 's' : ''}</span>
-                                            <button
-                                                onClick={() => handleDeleteDept(dept.id, dept.name)}
-                                                className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
-                                                title="Delete department"
-                                            >
-                                                <Trash2 size={15} />
-                                            </button>
+                                            {isBotManager && (
+                                                <button
+                                                    onClick={() => handleDeleteDept(dept.id, dept.name)}
+                                                    className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
+                                                    title="Delete department"
+                                                >
+                                                    <Trash2 size={15} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                     {deptAgents.length > 0 && (

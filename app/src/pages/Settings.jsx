@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { MessageSquareWarning } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
+import { getAuthState } from '../utils/auth';
 
 export default function Settings() {
     const { showToast } = useToast();
+    const { isAgent, agentRole } = getAuthState();
     const [feedback, setFeedback] = useState('');
 
     const handleSendFeedback = (e) => {
@@ -29,10 +31,24 @@ export default function Settings() {
                         <span className="text-sm font-medium text-secondary-900">{localStorage.getItem('admin_name') || '—'}</span>
                     </div>
                     <div className="border-t border-secondary-100" />
-                    <div className="flex items-center justify-between py-2">
-                        <span className="text-sm text-secondary-500">Client ID</span>
-                        <span className="text-sm font-mono text-secondary-400">{localStorage.getItem('admin_client_id') || '—'}</span>
-                    </div>
+                    {isAgent ? (
+                        <>
+                            <div className="flex items-center justify-between py-2">
+                                <span className="text-sm text-secondary-500">Agent ID</span>
+                                <span className="text-sm font-mono text-secondary-400">{localStorage.getItem('agent_id') || '—'}</span>
+                            </div>
+                            <div className="border-t border-secondary-100" />
+                            <div className="flex items-center justify-between py-2">
+                                <span className="text-sm text-secondary-500">Role</span>
+                                <span className="text-sm font-medium text-secondary-900 capitalize">{agentRole || '—'}</span>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="flex items-center justify-between py-2">
+                            <span className="text-sm text-secondary-500">Client ID</span>
+                            <span className="text-sm font-mono text-secondary-400">{localStorage.getItem('admin_client_id') || '—'}</span>
+                        </div>
+                    )}
                 </div>
             </div>
 

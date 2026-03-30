@@ -36,6 +36,8 @@ export default function Login() {
                 localStorage.setItem('agent_role', data.role);
                 localStorage.setItem('agent_id', data.agent_id.toString());
                 localStorage.setItem('is_superadmin', 'false');
+                // Agents join an existing workspace — the onboarding wizard is for workspace owners only.
+                localStorage.setItem('onboarding_complete', 'true');
                 if (data.default_bot_id) {
                     localStorage.setItem('selected_bot_id', data.default_bot_id.toString());
                 }
