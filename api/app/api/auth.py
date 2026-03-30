@@ -25,10 +25,13 @@ bot_key_header = APIKeyHeader(name=BOT_KEY_NAME, auto_error=False)
 def get_current_client(
     api_key: str = Security(api_key_header),
     bot_key: str = Security(bot_key_header),
+    agent_key: str = Security(agent_key_header),
 ):
     """
     Dependency: Authenticate a Client via X-API-Key header.
-    Also accepts X-Bot-Key and resolves the owning Client (for widget backward compat).
+    Also accepts:
+    - X-Bot-Key: resolves the owning Client (widget backward compat).
+    - X-Agent-Key: resolves the agent's workspace Client (agent dashboard access).
     Used by admin dashboard endpoints and shared endpoints.
     """
     with get_session() as session:
@@ -61,6 +64,22 @@ def get_current_client(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Bot Key.",
+            )
+
+        # Agent fallback: resolve via X-Agent-Key → agent's workspace Client
+        # Agents belong to a workspace; this gives them read access to their workspace's
+        # resources (bots, analytics, documents) through any client-scoped endpoint.
+        if agent_key:
+            agent = session.execute(select(Agent).where(Agent.agent_api_key == agent_key)).scalars().first()
+            if agent:
+                client = session.execute(select(Client).where(Client.id == agent.client_id)).scalars().first()
+                if client:
+                    _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
+                    session.expunge(client)
+                    return client
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Agent Key.",
             )
 
         raise HTTPException(
