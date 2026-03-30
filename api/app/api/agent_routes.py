@@ -104,11 +104,12 @@ class AcceptChatRequest(BaseModel):
 
 
 @router.get("/departments")
-def list_departments(client: Client = Depends(get_current_client)):
-    """List all departments for the client."""
+def list_departments(auth=Depends(get_current_client_or_agent)):
+    """List all departments for the authenticated client/agent."""
+    client_id = auth["client_id"]
     with get_session() as session:
         departments = (
-            session.execute(select(Department).where(Department.client_id == client.id).order_by(Department.id))
+            session.execute(select(Department).where(Department.client_id == client_id).order_by(Department.id))
             .scalars()
             .all()
         )
@@ -187,10 +188,11 @@ def delete_department(department_id: int, client: Client = Depends(get_current_c
 
 
 @router.get("")
-def list_agents(client: Client = Depends(get_current_client)):
-    """List all agents for the client."""
+def list_agents(auth=Depends(get_current_client_or_agent)):
+    """List all agents for the authenticated client/agent."""
+    client_id = auth["client_id"]
     with get_session() as session:
-        agents = session.execute(select(Agent).where(Agent.client_id == client.id).order_by(Agent.id)).scalars().all()
+        agents = session.execute(select(Agent).where(Agent.client_id == client_id).order_by(Agent.id)).scalars().all()
 
         # Build department name lookup
         dept_ids = {a.department_id for a in agents if a.department_id}
@@ -383,37 +385,28 @@ def request_handoff(request: HandoffRequest, client: Client = Depends(get_curren
 
 @router.get("/queue")
 def get_queue(auth=Depends(get_current_client_or_agent)):
-    """Get the current waiting queue with visitor info."""
+    """Get waiting chat queue from DB source-of-truth with visitor info."""
     client_id = auth["client_id"]
-    agent_dept_id = None
-
-    # If agent, filter by their department
-    if auth["type"] == "agent":
-        agent_dept_id = auth["entity"].department_id
-
-    queue_ids = manager.get_queue()
+    agent_dept_id = auth["entity"].department_id if auth["type"] == "agent" else None
     queue_items = []
 
     with get_session() as session:
-        for sid in queue_ids:
-            chat_session = session.execute(select(ChatSession).where(ChatSession.id == sid)).scalar_one_or_none()
+        waiting_sessions = session.execute(
+            select(ChatSession, Bot)
+            .join(Bot, ChatSession.bot_id == Bot.id)
+            .where(Bot.client_id == client_id, ChatSession.status == "waiting")
+            .order_by(ChatSession.created_at.asc())
+        ).all()
 
-            if not chat_session:
-                continue
-
-            # Verify this session belongs to the same client
-            bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
-            if not bot or bot.client_id != client_id:
-                continue
-
-            # If agent has a department, only show their department's queue
+        for chat_session, _ in waiting_sessions:
+            # Department filtering for agent-scoped queues
             if agent_dept_id and chat_session.department_id and chat_session.department_id != agent_dept_id:
                 continue
 
-            lead_info = get_lead_info_by_session(session, sid)
+            lead_info = get_lead_info_by_session(session, chat_session.id)
             queue_items.append(
                 {
-                    "session_id": sid,
+                    "session_id": chat_session.id,
                     "name": lead_info.name if lead_info else None,
                     "email": lead_info.email if lead_info else None,
                     "reason": chat_session.handoff_reason,

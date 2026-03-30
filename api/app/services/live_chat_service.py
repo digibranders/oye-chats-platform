@@ -7,6 +7,9 @@ from datetime import UTC, datetime
 
 from fastapi import WebSocket
 
+from app.db.models import ChatSession
+from app.db.session import get_session
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,12 +44,14 @@ class ConnectionManager:
         logger.info(f"Visitor connected: {session_id}")
 
     def disconnect_visitor(self, session_id: str):
+        was_waiting = session_id in self.waiting_queue
         self.visitor_connections.pop(session_id, None)
         self._cancel_timeout(session_id)
         self._session_departments.pop(session_id, None)
         self._session_metadata.pop(session_id, None)
-        if session_id in self.waiting_queue:
+        if was_waiting:
             self.waiting_queue.remove(session_id)
+            self._mark_session_waiting_exit(session_id)
         logger.info(f"Visitor disconnected: {session_id}")
 
     # ── Agent connections ──
@@ -347,6 +352,7 @@ class ConnectionManager:
             await asyncio.sleep(timeout_seconds)
             if session_id in self.waiting_queue:
                 self.waiting_queue.remove(session_id)
+                self._mark_session_waiting_exit(session_id)
                 self._session_departments.pop(session_id, None)
                 self._session_metadata.pop(session_id, None)
                 await self._send_to_visitor(
@@ -361,6 +367,19 @@ class ConnectionManager:
             pass
 
     # ── Internal helpers ──
+
+    def _mark_session_waiting_exit(self, session_id: str):
+        """Persist queue exit for waiting sessions to avoid stale DB-backed queues."""
+        try:
+            with get_session() as session:
+                chat_session = session.get(ChatSession, session_id)
+                if chat_session and chat_session.status == "waiting":
+                    chat_session.status = "bot"
+                    chat_session.assigned_agent_id = None
+                    session.commit()
+        except Exception as e:
+            # Queue correctness degrades if this fails, but websocket flow should continue.
+            logger.warning(f"Failed to persist waiting-exit state for {session_id}: {e}")
 
     async def _send_to_visitor(self, session_id: str, data: dict):
         ws = self.visitor_connections.get(session_id)

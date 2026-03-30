@@ -6,13 +6,51 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.db.models import Agent, Bot, ChatSession, Client
-from app.db.repository import add_chat_message
+from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
 from app.services.live_chat_service import manager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
+
+
+async def _send_initial_waiting_queue(
+    ws: WebSocket,
+    client_id: int,
+    agent_department_id: int | None = None,
+):
+    """Send DB-backed waiting queue snapshot on connect."""
+    waiting_items: list[dict] = []
+
+    with get_session() as session:
+        waiting_sessions = session.execute(
+            select(ChatSession, Bot)
+            .join(Bot, ChatSession.bot_id == Bot.id)
+            .where(Bot.client_id == client_id, ChatSession.status == "waiting")
+            .order_by(ChatSession.created_at.asc())
+        ).all()
+
+        for chat_session, _ in waiting_sessions:
+            if agent_department_id and chat_session.department_id and chat_session.department_id != agent_department_id:
+                continue
+
+            lead_info = get_lead_info_by_session(session, chat_session.id)
+            waiting_items.append(
+                {
+                    "session_id": chat_session.id,
+                    "name": lead_info.name if lead_info else "Anonymous",
+                    "reason": chat_session.handoff_reason,
+                }
+            )
+
+    await ws.send_json(
+        {
+            "type": "queue_update",
+            "waiting": waiting_items,
+            "count": len(waiting_items),
+        }
+    )
 
 
 @router.websocket("/ws/chat/{session_id}")
@@ -131,6 +169,7 @@ async def agent_websocket(
     )
 
     try:
+        await _send_initial_waiting_queue(ws, client_id, department_id)
         while True:
             data = await ws.receive_json()
             msg_type = data.get("type")
@@ -179,3 +218,8 @@ async def agent_websocket(
     except Exception as e:
         logger.error(f"Agent WS error for agent {agent_id}: {e}")
         await manager.disconnect_agent_and_broadcast(agent_id)
+        with get_session() as session:
+            agent_obj = session.execute(select(Agent).where(Agent.id == agent_id)).scalar_one_or_none()
+            if agent_obj:
+                agent_obj.is_online = False
+                session.commit()

@@ -316,6 +316,13 @@ def agent_login(request: AgentLoginRequest):
                     detail="Incorrect email or password",
                 )
 
+            # Backfill missing API keys for older agent records so subsequent
+            # authenticated requests don't immediately fail with 401.
+            if not agent.agent_api_key:
+                agent.agent_api_key = uuid.uuid4().hex
+                session.commit()
+                session.refresh(agent)
+
             logger.info(f"Successful agent login for agent {agent.id} ({agent.name})")
 
             return {

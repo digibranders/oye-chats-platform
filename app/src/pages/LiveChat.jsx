@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
     acceptChat, closeAgentChat, toggleAgentStatus, getChatHistory,
-    getCannedResponses, transferChat, getAgents, getDepartments, getSessionDetails,
+    getCannedResponses, transferChat, getAgents, getDepartments, getSessionDetails, getAgentQueue,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
@@ -61,6 +61,8 @@ export default function LiveChat({ embedded = false }) {
     const manualCloseRef = useRef(false);
     const reconnectAttemptsRef = useRef(0);
     const selectedChatRef = useRef(null); // mirrors selectedChat without causing WS reconnects
+    const queuePollIntervalRef = useRef(null);
+    const queueSnapshotRef = useRef(new Set());
 
     // Keep selectedChatRef in sync and react to chat selection
     useEffect(() => {
@@ -115,6 +117,36 @@ export default function LiveChat({ embedded = false }) {
         } catch { /* silent */ }
     }, []);
 
+    const syncQueueState = useCallback((waitingItems = []) => {
+        setQueue(waitingItems);
+
+        const previousIds = queueSnapshotRef.current;
+        const currentIds = new Set(waitingItems.map(item => item.session_id));
+        const hasNewItem = waitingItems.some(item => !previousIds.has(item.session_id));
+
+        if (hasNewItem) {
+            sendBrowserNotification('New chat waiting', 'A visitor is waiting for live support');
+        }
+
+        queueSnapshotRef.current = currentIds;
+    }, [sendBrowserNotification]);
+
+    const fetchQueueSnapshot = useCallback(async () => {
+        try {
+            const data = await getAgentQueue();
+            syncQueueState(data.queue || []);
+        } catch {
+            // silent fallback: WebSocket stream may still be active
+        }
+    }, [syncQueueState]);
+
+    const removeSessionFromQueue = useCallback((sessionId) => {
+        setQueue(prev => prev.filter(item => item.session_id !== sessionId));
+        queueSnapshotRef.current = new Set(
+            [...queueSnapshotRef.current].filter(existingSessionId => existingSessionId !== sessionId)
+        );
+    }, []);
+
     // WebSocket: connect when online, heartbeat, auto-reconnect with exponential backoff
     // NOTE: selectedChat intentionally NOT in deps — use selectedChatRef to prevent reconnect on every chat click
     useEffect(() => {
@@ -125,10 +157,11 @@ export default function LiveChat({ embedded = false }) {
         clearTimeout(reconnectTimerRef.current);
         manualCloseRef.current = false;
 
-        const wsUrl = API_URL.replace(/^http/, 'ws');
+        const wsUrl = API_URL.replace(/^http/, 'ws').replace(/\/+$/, '');
         // Bug fix: agents must use agent_key param (their agent_api_key is stored in admin_token).
         // Owners/clients use api_key param (resolves to their first agent record on the backend).
-        const wsParam = authType === 'agent' ? `agent_key=${apiKey}` : `api_key=${apiKey}`;
+        const encodedKey = encodeURIComponent(apiKey);
+        const wsParam = authType === 'agent' ? `agent_key=${encodedKey}` : `api_key=${encodedKey}`;
         const socket = new WebSocket(`${wsUrl}/ws/agent?${wsParam}`);
         wsRef.current = socket;
 
@@ -159,11 +192,7 @@ export default function LiveChat({ embedded = false }) {
                     break;
 
                 case 'queue_update':
-                    // Use WS payload directly — no REST round-trip needed
-                    setQueue(data.waiting || []);
-                    if ((data.waiting || []).length > 0) {
-                        sendBrowserNotification('New chat waiting', 'A visitor is waiting for live support');
-                    }
+                    syncQueueState(data.waiting || []);
                     break;
 
                 case 'agents_update':
@@ -224,7 +253,7 @@ export default function LiveChat({ embedded = false }) {
                             reason: data.reason || null,
                         },
                     }));
-                    setQueue(prev => prev.filter(item => item.session_id !== data.session_id));
+                    removeSessionFromQueue(data.session_id);
                     break;
 
                 case 'chat_transferred':
@@ -272,7 +301,25 @@ export default function LiveChat({ embedded = false }) {
             wsRef.current = null;
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOnline, reconnectCount]);
+    }, [isOnline, reconnectCount, removeSessionFromQueue, syncQueueState]);
+
+    // Queue fallback polling: keeps queue accurate even if WS events are missed.
+    useEffect(() => {
+        clearInterval(queuePollIntervalRef.current);
+
+        if (!isOnline) {
+            queueSnapshotRef.current = new Set();
+            return undefined;
+        }
+
+        fetchQueueSnapshot();
+        queuePollIntervalRef.current = setInterval(fetchQueueSnapshot, 8000);
+
+        return () => {
+            clearInterval(queuePollIntervalRef.current);
+            queuePollIntervalRef.current = null;
+        };
+    }, [isOnline, fetchQueueSnapshot]);
 
     // Load agents roster when going online
     useEffect(() => {
@@ -299,9 +346,12 @@ export default function LiveChat({ embedded = false }) {
                 manualCloseRef.current = true;
                 clearInterval(pingIntervalRef.current);
                 clearTimeout(reconnectTimerRef.current);
+                clearInterval(queuePollIntervalRef.current);
+                queuePollIntervalRef.current = null;
                 wsRef.current?.close();
                 wsRef.current = null;
                 setQueue([]);
+                queueSnapshotRef.current = new Set();
                 setConnectionLost(false);
                 reconnectAttemptsRef.current = 0;
             }
@@ -319,7 +369,7 @@ export default function LiveChat({ embedded = false }) {
                 [sessionId]: { name: visitorName || 'Anonymous', reason: reason || null },
             }));
             setSelectedChat(sessionId);
-            setQueue(prev => prev.filter(item => item.session_id !== sessionId));
+            removeSessionFromQueue(sessionId);
             try {
                 const history = await getChatHistory(sessionId);
                 setMessages(history.map((m, i) => ({
@@ -327,9 +377,9 @@ export default function LiveChat({ embedded = false }) {
                 })));
             } catch { setMessages([]); }
         } catch (e) {
-            if (e?.response?.status === 409) {
+            if (e?.status === 409) {
                 // Race condition: another agent accepted first — remove from local queue
-                setQueue(prev => prev.filter(item => item.session_id !== sessionId));
+                removeSessionFromQueue(sessionId);
             } else {
                 console.error('Failed to accept chat:', e);
             }
