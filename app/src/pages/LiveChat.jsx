@@ -24,8 +24,12 @@ export default function LiveChat({ embedded = false }) {
     const [showTransferModal, setShowTransferModal] = useState(false);
     const [transferAgents, setTransferAgents] = useState([]);
     const [transferDepartments, setTransferDepartments] = useState([]);
+    const [reconnectCount, setReconnectCount] = useState(0);
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
+    const pingIntervalRef = useRef(null);
+    const reconnectTimerRef = useRef(null);
+    const manualCloseRef = useRef(false);
 
     // Fetch queue on mount and periodically
     const fetchQueue = useCallback(async () => {
@@ -65,20 +69,33 @@ export default function LiveChat({ embedded = false }) {
         }
     }, []);
 
-    // WebSocket connection
+    // WebSocket connection with heartbeat ping and auto-reconnect
     useEffect(() => {
         const apiKey = localStorage.getItem('admin_token');
         if (!apiKey || !isOnline) return;
+
+        clearTimeout(reconnectTimerRef.current);
+        manualCloseRef.current = false;
 
         const wsUrl = API_URL.replace(/^http/, 'ws');
         const socket = new WebSocket(`${wsUrl}/ws/agent?api_key=${apiKey}`);
 
         socket.onopen = () => {
             console.log('[LiveChat] Agent WebSocket connected');
+            // Heartbeat: send ping every 25s to keep connection alive through proxies/NAT
+            clearInterval(pingIntervalRef.current);
+            pingIntervalRef.current = setInterval(() => {
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, 25000);
         };
 
         socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
+
+            // Skip heartbeat responses
+            if (data.type === 'pong') return;
 
             switch (data.type) {
                 case 'queue_update':
@@ -130,11 +147,25 @@ export default function LiveChat({ embedded = false }) {
             }
         };
 
-        socket.onclose = () => console.log('[LiveChat] Agent WebSocket closed');
+        socket.onclose = () => {
+            console.log('[LiveChat] Agent WebSocket closed');
+            clearInterval(pingIntervalRef.current);
+            // Auto-reconnect if this was not an intentional close (agent going offline)
+            if (!manualCloseRef.current) {
+                reconnectTimerRef.current = setTimeout(() => {
+                    setReconnectCount(c => c + 1);
+                }, 3000);
+            }
+        };
 
         setWs(socket); // eslint-disable-line react-hooks/set-state-in-effect -- storing WebSocket ref from external subscription
-        return () => socket.close();
-    }, [isOnline, selectedChat, fetchQueue, playNotification, sendBrowserNotification]);
+        return () => {
+            manualCloseRef.current = true;
+            clearInterval(pingIntervalRef.current);
+            clearTimeout(reconnectTimerRef.current);
+            socket.close();
+        };
+    }, [isOnline, reconnectCount, selectedChat, fetchQueue, playNotification, sendBrowserNotification]);
 
     useEffect(() => {
         if (isOnline) {

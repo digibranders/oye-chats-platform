@@ -134,7 +134,10 @@ async def agent_websocket(
             data = await ws.receive_json()
             msg_type = data.get("type")
 
-            if msg_type == "message":
+            if msg_type == "ping":
+                await ws.send_json({"type": "pong"})
+
+            elif msg_type == "message":
                 target_session = data.get("session_id")
                 content = data.get("content", "").strip()
                 if not target_session or not content:
