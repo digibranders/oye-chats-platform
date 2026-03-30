@@ -83,6 +83,10 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                         setIsAgentTyping(true);
                         setTimeout(() => setIsAgentTyping(false), 3000);
                         break;
+
+                    case 'pong':
+                        // Heartbeat acknowledged — connection is healthy
+                        break;
                 }
             };
 
@@ -116,6 +120,18 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
             setWs(prev => { prev?.close(); return null; });
         };
     }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Heartbeat — keeps the WebSocket alive through load-balancer idle timeouts.
+    // Fires every 30 s; silently ignored when the socket is not yet open.
+    useEffect(() => {
+        if (!ws) return;
+        const interval = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [ws]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
