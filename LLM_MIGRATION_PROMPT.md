@@ -206,6 +206,142 @@ LANGFUSE_HOST=https://cloud.langfuse.com
 # GOOGLE_API_KEY=...                  # No longer needed (unless used by crawler or other service)
 ```
 
+## Async Performance Improvements (Part of This Migration)
+
+While migrating the LLM layer, also fix these performance bottlenecks. No Celery or external task queue needed — use threading and FastAPI BackgroundTasks.
+
+### Fix 1: Move Geolocation to Background (CRITICAL — saves 2-8s per chat)
+
+**File:** `api/app/api/chat_routes.py` (lines 42-116)
+
+**Problem:** Every `/chat` request makes up to 3 blocking `urllib.request.urlopen()` calls for IP geolocation BEFORE starting the RAG pipeline:
+- `api.ipify.org` (2s timeout) — resolve public IP
+- `ip-api.com` (3s timeout) — primary geolocation
+- `ipinfo.io` (3s timeout) — fallback geolocation
+
+Worst case: 8 seconds of blocking before the LLM even starts.
+
+**Fix:** The visitor doesn't need their location resolved before getting an answer. Move geolocation to a fire-and-forget background thread:
+```python
+# Before: blocks 2-8 seconds
+location = resolve_geolocation(ip_address)  # blocking HTTP calls
+result = rag_pipeline(bot, question, location=location, ...)
+
+# After: respond with IP immediately, resolve geo in background
+import threading
+threading.Thread(
+    target=update_session_location,
+    args=(session_id, ip_address),
+    daemon=True,
+).start()
+result = rag_pipeline(bot, question, location=f"IP: {ip_address}", ...)
+```
+
+Create a helper function `update_session_location(session_id, ip_address)` that:
+1. Resolves geolocation via the existing IP API calls
+2. Updates the `ChatSession.location` field in the database
+3. Runs in a daemon thread — fire and forget, no error propagation needed
+
+### Fix 2: Move BANT Extraction to Background (MEDIUM — saves 1-3s per chat)
+
+**File:** `api/app/services/rag_service.py` (lines 308-336 in `rag_pipeline()`, lines 495-523 in `rag_pipeline_stream()`)
+
+**Problem:** After generating the RAG response, the pipeline makes ANOTHER full LLM call for BANT extraction. The user waits for this even though they never see the BANT result — it's internal lead qualification data.
+
+**Fix:** Run BANT extraction in a background thread after sending the response:
+```python
+# Before: user waits for BANT extraction
+answer = generate_response(prompt)
+extracted = extract_bant_from_conversation(...)  # user waits 1-3s for this
+session.commit()
+return {"answer": answer, ...}
+
+# After: return answer immediately, extract BANT in background
+answer = generate_response(prompt)
+bot_msg = add_chat_message(session, session_id, role="bot", content=answer, bot_id=bid)
+session.commit()
+
+# Fire-and-forget BANT extraction
+threading.Thread(
+    target=_background_bant_extraction,
+    args=(session_id, cid, bid, history_context, question, answer, current_bant, bot),
+    daemon=True,
+).start()
+
+return {"answer": answer, ...}
+```
+
+Create a helper `_background_bant_extraction()` that:
+1. Opens its own DB session (cannot share sessions across threads)
+2. Calls `extract_bant_from_conversation()`
+3. Updates BANT state via `update_session_bant()`
+4. Checks if lead is fully qualified → sends email
+5. Handles errors gracefully (log and swallow — never crash the thread)
+
+### Fix 3: Background Document Ingestion (MEDIUM — unblocks API)
+
+**File:** `api/app/api/document_routes.py` (lines 101-142)
+
+**Problem:** `/ingest` endpoint blocks for 10s-2min while processing files (extract → chunk → embed → store). The API worker can't serve other requests during this time.
+
+**Fix:** Use FastAPI `BackgroundTasks` to process after responding:
+```python
+from fastapi import BackgroundTasks
+
+@router.post("/ingest")
+def ingest_documents(
+    ...,
+    background_tasks: BackgroundTasks,
+):
+    # Save files to disk immediately
+    saved_files = save_uploaded_files(files)
+
+    # Queue processing in background
+    background_tasks.add_task(run_folder_ingestion, bot_id, ...)
+
+    # Respond instantly
+    return {"status": "processing", "message": "Documents are being processed"}
+```
+
+### Fix 4: Configure DB Connection Pool (TRIVIAL — prevents connection exhaustion)
+
+**File:** `api/app/db/session.py` (line 11)
+
+**Problem:** No pool configuration. Default is 5 connections + 10 overflow. Under load, this could exhaust connections.
+
+**Fix:**
+```python
+engine = create_engine(
+    DB_URL,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+)
+```
+
+### Fix 5: Wire Up Streaming Endpoint (MEDIUM — better UX)
+
+**Problem:** `rag_pipeline_stream()` and `generate_sdr_stream()` exist as `async def` functions but NO route calls them. The widget hits `/chat` which uses synchronous `rag_pipeline()`. Users wait 3-10s for the complete response instead of seeing text appear word-by-word.
+
+**Fix:** Create a `/chat/stream` endpoint that returns a `StreamingResponse` using `rag_pipeline_stream()`. This is the standard pattern for modern chatbots (like ChatGPT, Intercom, etc.).
+
+**Note:** The streaming functions contain sync blocking calls inside async context (query rewrite, embedding, DB queries). When wiring up the endpoint, either:
+- Use `asyncio.to_thread()` for the blocking calls, OR
+- Keep the pre-streaming setup (query rewrite, search) synchronous and only stream the LLM response portion
+
+### Summary of Async Fixes
+
+| Fix | File | Impact | Effort |
+|-----|------|--------|--------|
+| Geolocation → background | `chat_routes.py` | **Saves 2-8s per chat** | Low |
+| BANT → background | `rag_service.py` | **Saves 1-3s per chat** | Low |
+| Ingestion → background | `document_routes.py` | **Unblocks API** | Low |
+| DB pool config | `session.py` | **Prevents crashes at scale** | Trivial |
+| Streaming endpoint | `chat_routes.py` + routes | **Better UX** | Medium |
+
+**Combined impact on `/chat` latency:** From 10-22s → 2-5s (geolocation + BANT moved to background)
+
 ## Important Notes
 
 - **Pin LiteLLM version** in `pyproject.toml` — e.g., `litellm==1.82.6` (exact pin, not `>=`). This is critical due to the recent supply chain attack on versions 1.82.7-1.82.8.
