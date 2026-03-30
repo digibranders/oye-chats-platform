@@ -21,7 +21,7 @@ const botPageTabs = [
 ];
 
 export default function Chatbot() {
-    const { bots, selectedBot, selectBot, refreshBots, loading } = useBotContext();
+    const { bots, selectedBot, selectBot, refreshBots, loading, error: botError } = useBotContext();
     const { showToast } = useToast();
     const [searchParams, setSearchParams] = useSearchParams();
     const [botTab, setBotTab] = useState(searchParams.get('tab') || 'bots');
@@ -109,6 +109,30 @@ export default function Chatbot() {
                 <div className="flex flex-col items-center py-16 text-secondary-400">
                     <Loader2 className="animate-spin mb-3" size={28} />
                     <p className="text-sm">Loading chatbots...</p>
+                </div>
+            ) : botError ? (
+                <div className="rounded-2xl border border-error-200 bg-error-50 p-6">
+                    <div className="flex items-start gap-3">
+                        <AlertCircle size={18} className="mt-0.5 text-error-600 flex-shrink-0" />
+                        <div className="space-y-2">
+                            <div>
+                                <h3 className="text-sm font-semibold text-error-700">Unable to load chatbots</h3>
+                                <p className="text-sm text-error-600">
+                                    {botError.message}
+                                    {botError.status ? ` (HTTP ${botError.status})` : ''}
+                                </p>
+                            </div>
+                            <p className="text-sm text-error-600">
+                                If this is an agent login, verify the agent belongs to the same workspace as the owner account.
+                            </p>
+                            <button
+                                onClick={() => refreshBots()}
+                                className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-medium text-error-700 shadow-sm ring-1 ring-error-200 transition-colors hover:bg-error-100"
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </div>
                 </div>
             ) : bots.length === 0 ? (
                 <EmptyState title="No chatbots yet" description="Create your first chatbot to get started. Each bot gets its own embed code and knowledge base." actionLabel="Create Chatbot" onAction={() => setIsCreateOpen(true)} />

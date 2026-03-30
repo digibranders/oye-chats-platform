@@ -7,10 +7,12 @@ export function BotProvider({ children }) {
     const [bots, setBots] = useState([]);
     const [selectedBot, setSelectedBot] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
 
     const refreshBots = useCallback(async () => {
         try {
             setLoading(true);
+            setError(null);
             const data = await getBots();
             setBots(data);
 
@@ -18,22 +20,27 @@ export function BotProvider({ children }) {
                 // No bots exist — clear selection
                 setSelectedBot(null);
                 localStorage.removeItem('selected_bot_id');
-            } else if (selectedBot) {
-                // If we already have a selected bot, try to keep it
-                const still = data.find(b => b.id === selectedBot.id);
-                if (still) {
-                    setSelectedBot(still);
-                } else {
-                    setSelectedBot(data[0]);
-                }
             } else {
-                // Check localStorage for last selected bot
-                const savedId = localStorage.getItem('selected_bot_id');
-                const saved = savedId ? data.find(b => b.id === Number(savedId)) : null;
-                setSelectedBot(saved || data[0]);
+                setSelectedBot((currentSelectedBot) => {
+                    if (currentSelectedBot) {
+                        const stillSelected = data.find((bot) => bot.id === currentSelectedBot.id);
+                        return stillSelected || data[0];
+                    }
+
+                    // Check localStorage for last selected bot
+                    const savedId = localStorage.getItem('selected_bot_id');
+                    const saved = savedId ? data.find((bot) => bot.id === Number(savedId)) : null;
+                    return saved || data[0];
+                });
             }
         } catch (err) {
             console.error('Failed to fetch bots:', err);
+            setBots([]);
+            setSelectedBot(null);
+            setError({
+                message: err?.message || 'Failed to load bots',
+                status: err?.status || null,
+            });
         } finally {
             setLoading(false);
         }
@@ -62,6 +69,7 @@ export function BotProvider({ children }) {
             selectBot,
             refreshBots,
             loading,
+            error,
         }}>
             {children}
         </BotContext.Provider>
