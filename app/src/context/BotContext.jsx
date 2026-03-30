@@ -41,7 +41,8 @@ export function BotProvider({ children }) {
 
     useEffect(() => {
         const token = localStorage.getItem('admin_token');
-        if (token) {
+        const authType = localStorage.getItem('auth_type');
+        if (token && authType !== 'agent') {
             refreshBots();
         } else {
             setLoading(false);
