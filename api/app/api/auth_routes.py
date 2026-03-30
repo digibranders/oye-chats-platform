@@ -6,17 +6,32 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.auth import get_current_agent
 from app.core.security import get_password_hash, verify_password
-from app.db.models import Agent, Client
+from app.db.models import Agent, Bot, Client
 from app.db.session import get_session
 from app.services.email_service import send_password_reset_email
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _agent_login_score(agent: Agent, client_bot_counts: dict[int, int], client_agent_counts: dict[int, int]) -> tuple:
+    """Prefer the workspace with active bot/team data when legacy duplicate agent emails exist."""
+    bot_count = client_bot_counts.get(agent.client_id, 0)
+    agent_count = client_agent_counts.get(agent.client_id, 0)
+    created_at = agent.created_at or datetime.min.replace(tzinfo=UTC)
+    return (bot_count > 0, bot_count, agent_count, created_at, agent.id)
+
+
+def _choose_best_agent_candidate(
+    candidates: list[Agent], client_bot_counts: dict[int, int], client_agent_counts: dict[int, int]
+) -> Agent:
+    return max(candidates, key=lambda agent: _agent_login_score(agent, client_bot_counts, client_agent_counts))
+
 
 # ── Request / Response Models ──
 
@@ -299,21 +314,53 @@ def agent_login(request: AgentLoginRequest):
     """
     try:
         with get_session() as session:
-            stmt = select(Agent).where(Agent.email == request.email.strip().lower()).limit(1)
-            agent = session.execute(stmt).scalars().first()
+            email = request.email.strip().lower()
+            agents = (
+                session.execute(
+                    select(Agent).where(Agent.email == email).order_by(Agent.created_at.desc(), Agent.id.desc())
+                )
+                .scalars()
+                .all()
+            )
 
-            if not agent or not agent.hashed_password:
+            valid_agents = [
+                agent
+                for agent in agents
+                if agent.hashed_password and verify_password(request.password, agent.hashed_password)
+            ]
+
+            if not valid_agents:
                 logger.warning(f"Agent login failed: unknown email or no password set for {request.email}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
                 )
 
-            if not verify_password(request.password, agent.hashed_password):
-                logger.warning(f"Agent login failed: incorrect password for {request.email}")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Incorrect email or password",
+            if len(valid_agents) == 1:
+                agent = valid_agents[0]
+            else:
+                client_ids = {agent.client_id for agent in valid_agents}
+                bot_count_rows = session.execute(
+                    select(Bot.client_id, func.count(Bot.id))
+                    .where(Bot.client_id.in_(client_ids))
+                    .group_by(Bot.client_id)
+                ).all()
+                agent_count_rows = session.execute(
+                    select(Agent.client_id, func.count(Agent.id))
+                    .where(Agent.client_id.in_(client_ids))
+                    .group_by(Agent.client_id)
+                ).all()
+
+                client_bot_counts = {client_id: count for client_id, count in bot_count_rows}
+                client_agent_counts = {client_id: count for client_id, count in agent_count_rows}
+                agent = _choose_best_agent_candidate(valid_agents, client_bot_counts, client_agent_counts)
+
+                logger.warning(
+                    "Duplicate agent email resolved during login | email=%s | chosen_agent_id=%s | chosen_client_id=%s | candidates=%s",
+                    email,
+                    agent.id,
+                    agent.client_id,
+                    [(candidate.id, candidate.client_id) for candidate in valid_agents],
                 )
 
             # Backfill missing API keys for older agent records so subsequent
