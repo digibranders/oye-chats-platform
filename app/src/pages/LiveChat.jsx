@@ -9,7 +9,7 @@ import {
     getCannedResponses, transferChat, getAgents, getDepartments, getSessionDetails, getAgentQueue,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
-import EmptyState from '../components/ui/EmptyState';
+import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -495,14 +495,7 @@ export default function LiveChat({ embedded = false }) {
     };
 
     if (!botsLoading && bots.length === 0) {
-        return (
-            <EmptyState
-                title="Live Chat"
-                description="Create a chatbot first to enable live support."
-                actionLabel="Create Chatbot"
-                actionTo="/chatbot"
-            />
-        );
+        return <NoBotState />;
     }
 
     const currentVisitorName = selectedChat ? (chatNames[selectedChat]?.name || 'Visitor') : 'Visitor';
