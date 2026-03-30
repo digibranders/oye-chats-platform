@@ -488,7 +488,7 @@ export const getBots = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching bots:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load bots');
     }
 };
 

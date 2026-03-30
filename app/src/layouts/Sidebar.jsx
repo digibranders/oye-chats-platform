@@ -18,7 +18,7 @@ import { useBotContext } from '../context/BotContext';
 
 export default function Sidebar({ isOpen, isMobile, onClose }) {
     const location = useLocation();
-    const { bots, selectedBot, selectBot, loading } = useBotContext();
+    const { bots, selectedBot, selectBot, loading, error: botError } = useBotContext();
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const dropdownRef = useRef(null);
 
@@ -134,7 +134,14 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             {/* Bot Selector */}
             {isOpen && (
                 <div className="px-3 pb-2" ref={dropdownRef}>
-                    {bots.length === 0 && !loading ? (
+                    {botError && !loading ? (
+                        <div className="w-full rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                            <p className="text-[11px] font-semibold text-amber-300">Bots unavailable</p>
+                            <p className="mt-1 text-[10px] text-amber-200/80">
+                                Workspace bot access could not be loaded for this account.
+                            </p>
+                        </div>
+                    ) : bots.length === 0 && !loading ? (
                         <NavLink
                             to="/chatbot"
                             onClick={handleNavClick}
