@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.api.auth import get_current_client, get_current_client_or_agent
 from app.core.security import get_password_hash
@@ -352,18 +352,29 @@ def request_handoff(request: HandoffRequest, client: Client = Depends(get_curren
 
         session.commit()
 
+        # Get visitor name for queue display
+        lead_info = get_lead_info_by_session(session, request.session_id)
+        visitor_name = lead_info.name if lead_info else None
+
         # Trigger email notification
         if bot and bot.notification_email and bot.email_on_handoff:
-            lead_info = get_lead_info_by_session(session, request.session_id)
             contact = None
             if lead_info:
                 contact = {"name": lead_info.name, "email": lead_info.email, "phone": lead_info.phone}
             send_handoff_request_email(bot.notification_email, bot.name, request.reason, contact)
 
-    # Request handoff via connection manager (async)
+    # Request handoff via connection manager (async), passing visitor metadata for queue display
     try:
         loop = asyncio.get_event_loop()
-        loop.create_task(manager.request_handoff(request.session_id, timeout, request.department_id))
+        loop.create_task(
+            manager.request_handoff(
+                request.session_id,
+                timeout,
+                request.department_id,
+                visitor_name=visitor_name,
+                reason=request.reason,
+            )
+        )
     except RuntimeError:
         pass
 
@@ -446,15 +457,23 @@ def accept_chat(
         if not agent:
             raise HTTPException(status_code=400, detail="No agent profile found.")
 
-        # Update session
-        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
-        if not chat_session:
-            raise HTTPException(status_code=404, detail="Session not found")
+        # DB-level race condition guard: atomically claim the session only if still waiting.
+        # Using UPDATE ... WHERE status='waiting' ensures only one agent wins the race.
+        result = session.execute(
+            update(ChatSession)
+            .where(ChatSession.id == session_id, ChatSession.status == "waiting")
+            .values(status="live", assigned_agent_id=agent.id)
+            .returning(ChatSession.id)
+        )
+        claimed = result.scalar_one_or_none()
+        if not claimed:
+            # Either session doesn't exist or was already accepted by another agent
+            existing = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+            if not existing:
+                raise HTTPException(status_code=404, detail="Session not found")
+            raise HTTPException(status_code=409, detail="Chat was already accepted by another agent")
 
-        chat_session.status = "live"
-        chat_session.assigned_agent_id = agent.id
         session.commit()
-
         agent_name = agent.name
         agent_id = agent.id
 

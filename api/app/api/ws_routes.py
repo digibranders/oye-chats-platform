@@ -18,7 +18,6 @@ router = APIRouter(tags=["websocket"])
 @router.websocket("/ws/chat/{session_id}")
 async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None = None):
     """WebSocket for visitor (widget) side of live chat."""
-    # Auth: verify bot_key
     if not bot_key:
         await ws.close(code=4001, reason="Missing bot_key query param")
         return
@@ -42,12 +41,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 if not content:
                     continue
 
-                # Save to DB
                 with get_session() as session:
                     add_chat_message(session, session_id, role="user", content=content, bot_id=bot_id)
                     session.commit()
 
-                # Route to assigned agent
                 await manager.route_visitor_message(session_id, content)
 
             elif msg_type == "typing":
@@ -60,20 +57,19 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         manager.disconnect_visitor(session_id)
 
 
-def _resolve_agent_from_key(key: str, key_type: str) -> tuple[int, str, int] | None:
-    """Resolve agent_id, agent_name, client_id from an api_key or agent_key.
+def _resolve_agent_from_key(key: str, key_type: str) -> tuple[int, str, int, int | None, bool] | None:
+    """Resolve agent_id, agent_name, client_id, department_id, is_online from an api_key or agent_key.
 
-    Returns (agent_id, agent_name, client_id) or None if auth fails.
+    Returns (agent_id, agent_name, client_id, department_id, is_online) or None if auth fails.
     """
     with get_session() as session:
         if key_type == "agent_key":
-            # Direct agent auth
             agent = session.execute(select(Agent).where(Agent.agent_api_key == key)).scalar_one_or_none()
             if not agent:
                 return None
             agent.is_online = True
             session.commit()
-            return agent.id, agent.name, agent.client_id
+            return agent.id, agent.name, agent.client_id, agent.department_id, True
 
         # Client api_key auth — find or create agent from client profile
         client = session.execute(select(Client).where(Client.api_key == key)).scalar_one_or_none()
@@ -97,7 +93,7 @@ def _resolve_agent_from_key(key: str, key_type: str) -> tuple[int, str, int] | N
             agent.is_online = True
             session.commit()
 
-        return agent.id, agent.name, client.id
+        return agent.id, agent.name, client.id, agent.department_id, agent.is_online
 
 
 @router.websocket("/ws/agent")
@@ -109,10 +105,9 @@ async def agent_websocket(
     """WebSocket for agent (admin dashboard) side of live chat.
 
     Supports dual auth:
-    - api_key: Client API key (backward compat, resolves to first agent)
+    - api_key: Client API key (owner/backward compat, resolves to first agent)
     - agent_key: Agent's own API key (for multi-agent)
     """
-    # Determine which key was provided
     if agent_key:
         result = _resolve_agent_from_key(agent_key, "agent_key")
     elif api_key:
@@ -125,9 +120,15 @@ async def agent_websocket(
         await ws.close(code=4003, reason="Invalid authentication key")
         return
 
-    agent_id, agent_name, client_id = result
+    agent_id, agent_name, client_id, department_id, is_online = result
 
-    await manager.connect_agent(agent_id, ws)
+    await manager.connect_agent(
+        agent_id,
+        ws,
+        department_id=department_id,
+        agent_name=agent_name,
+        is_online=is_online,
+    )
 
     try:
         while True:
@@ -143,12 +144,10 @@ async def agent_websocket(
                 if not target_session or not content:
                     continue
 
-                # Save to DB
                 with get_session() as session:
                     add_chat_message(session, target_session, role="agent", content=content, bot_id=None)
                     session.commit()
 
-                # Route to visitor
                 await manager.route_agent_message(target_session, content, agent_name)
 
             elif msg_type == "typing":
@@ -171,8 +170,7 @@ async def agent_websocket(
                             await manager.close_chat(target_session, bot.name if bot else "AI Assistant")
 
     except WebSocketDisconnect:
-        manager.disconnect_agent(agent_id)
-        # Mark offline
+        await manager.disconnect_agent_and_broadcast(agent_id)
         with get_session() as session:
             agent_obj = session.execute(select(Agent).where(Agent.id == agent_id)).scalar_one_or_none()
             if agent_obj:
@@ -180,4 +178,4 @@ async def agent_websocket(
                 session.commit()
     except Exception as e:
         logger.error(f"Agent WS error for agent {agent_id}: {e}")
-        manager.disconnect_agent(agent_id)
+        await manager.disconnect_agent_and_broadcast(agent_id)

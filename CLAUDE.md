@@ -30,8 +30,13 @@ Run only the checks relevant to the files you changed:
 4. **Report the results** — include a brief summary of checks passed in your final message (e.g., "lint ✓ · format ✓ · build ✓").
 
 ## Git Workflow
+> **STRICT RULE — NO EXCEPTIONS.**
+
+- **NEVER use `main` branch locally.** Do not checkout, commit to, or push from `main`. Ever.
 - **NEVER push directly to `main`.** The `main` branch is production and is only updated via GitHub PR merges.
 - **Always work on the `development` branch.** All commits and pushes go to `development`.
+- Before every commit/push, verify current branch: `git branch --show-current` — must output `development`.
+- If you are on `main` by mistake: `git checkout development` immediately — do not commit.
 - When ready to release, create a PR from `development` → `main` on GitHub. The user will merge it from there.
 
 ## How It Works (End-to-End)
