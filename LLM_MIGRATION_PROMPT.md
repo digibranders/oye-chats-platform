@@ -342,6 +342,208 @@ engine = create_engine(
 
 **Combined impact on `/chat` latency:** From 10-22s → 2-5s (geolocation + BANT moved to background)
 
+## RAG Pipeline Improvements
+
+The current RAG pipeline has several weaknesses that reduce answer quality. Fix these alongside the LLM migration. No architectural changes needed — these are targeted improvements to existing code.
+
+### Current RAG Flow (What Exists)
+```
+Query → LLM Rewrite (every time) → Embed → Vector Search (k=5, no threshold) + Keyword Search (k=5, no ranking)
+→ Deduplicate by ID (no scoring) → Stuff all 10 chunks into prompt → LLM generates answer
+```
+
+### RAG Fix 1: Add Relevance Score Filtering to Vector Search (HIGH impact, LOW effort)
+
+**File:** `api/app/db/repository.py` — `search_similar_documents()` (line 277-290)
+
+**Problem:** Always returns 5 results even if the best match has 0.9 cosine distance (basically irrelevant). No minimum similarity threshold.
+
+**Current code:**
+```python
+def search_similar_documents(session, client_id=None, query_embedding=None, k=5, bot_id=None):
+    stmt = (
+        select(Document)
+        .where(_owner_filter(Document, bot_id, client_id))
+        .order_by(Document.embedding.op("<->")(query_embedding))
+        .limit(k)
+    )
+```
+
+**Fix:** Add a similarity threshold and return the distance score:
+```python
+def search_similar_documents(session, client_id=None, query_embedding=None, k=5, bot_id=None, max_distance=0.8):
+    distance = Document.embedding.op("<->")(query_embedding).label("distance")
+    stmt = (
+        select(Document, distance)
+        .where(_owner_filter(Document, bot_id, client_id))
+        .where(distance < max_distance)
+        .order_by(distance)
+        .limit(k)
+    )
+```
+
+**Impact:** Stops sending irrelevant chunks to the LLM → fewer hallucinations, better answers.
+
+### RAG Fix 2: Add Keyword Search Ranking with ts_rank (HIGH impact, LOW effort)
+
+**File:** `api/app/db/repository.py` — `search_keyword_documents()` (line 262-274)
+
+**Problem:** Uses `match()` but doesn't rank by relevance — returns matches in arbitrary order.
+
+**Current code:**
+```python
+def search_keyword_documents(session, client_id=None, query="", k=5, bot_id=None):
+    stmt = (
+        select(Document)
+        .filter(Document.search_vector.match(query, postgresql_regconfig="english"), ...)
+        .limit(k)
+    )
+```
+
+**Fix:** Add `ts_rank()` for proper relevance ranking:
+```python
+from sqlalchemy import func
+
+def search_keyword_documents(session, client_id=None, query="", k=5, bot_id=None):
+    rank = func.ts_rank(Document.search_vector, func.plainto_tsquery('english', query)).label('rank')
+    stmt = (
+        select(Document, rank)
+        .where(Document.search_vector.match(query, postgresql_regconfig="english"))
+        .where(_owner_filter(Document, bot_id, client_id))
+        .order_by(rank.desc())
+        .limit(k)
+    )
+```
+
+### RAG Fix 3: Reciprocal Rank Fusion for Result Merging (MEDIUM impact, LOW effort)
+
+**File:** `api/app/services/rag_service.py` — inside `rag_pipeline()` (lines 270-279)
+
+**Problem:** Vector and keyword results are merged by simple dedup (`{doc.id: doc}`). Vector result #5 (barely relevant) is treated the same as vector result #1 (highly relevant). No scoring or weighting.
+
+**Current code:**
+```python
+all_results = {doc.id: doc for doc in vector_results}
+for doc in keyword_results:
+    all_results[doc.id] = doc
+final_results = list(all_results.values())
+```
+
+**Fix:** Implement Reciprocal Rank Fusion (RRF) — a proven algorithm for merging ranked lists:
+```python
+def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
+    scores = {}
+    docs = {}
+    for rank, doc in enumerate(vector_results):
+        scores[doc.id] = scores.get(doc.id, 0) + 1.0 / (k + rank + 1)
+        docs[doc.id] = doc
+    for rank, doc in enumerate(keyword_results):
+        scores[doc.id] = scores.get(doc.id, 0) + 1.0 / (k + rank + 1)
+        docs[doc.id] = doc
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [docs[doc_id] for doc_id, _ in ranked]
+```
+
+**Impact:** Best results from both retrieval methods float to the top. Chunks relevant in BOTH vector and keyword search get the highest combined score.
+
+### RAG Fix 4: Skip Unnecessary Query Rewrites (MEDIUM impact, LOW effort)
+
+**File:** `api/app/services/rag_service.py` — `rewrite_query()` (line 125-147)
+
+**Problem:** Every single question triggers an LLM call for query rewriting, even standalone questions like "What's your pricing?" that don't need rewriting. This wastes 500ms-2s + LLM cost on ~60-70% of queries.
+
+**Current code:**
+```python
+def rewrite_query(session_id, question, history):
+    if not history:
+        return question
+    # Always calls LLM if any history exists...
+```
+
+**Fix:** Only rewrite when the question is likely a follow-up:
+```python
+def rewrite_query(session_id, question, history):
+    if not history or len(history) < 2:
+        return question
+
+    # Heuristic: skip rewrite for self-contained questions
+    follow_up_signals = ["it", "that", "this", "they", "them", "those", "the same",
+                         "more about", "what about", "how about", "and the", "also"]
+    question_lower = question.lower()
+    needs_rewrite = any(signal in question_lower for signal in follow_up_signals)
+
+    if not needs_rewrite:
+        return question
+
+    # Only call LLM for actual follow-ups
+    return _llm_rewrite(question, history)
+```
+
+**Impact:** Saves 1 LLM call (~500ms-2s + $0.0005) on the majority of queries.
+
+### RAG Fix 5: Add Reranking After Retrieval (HIGH impact, MEDIUM effort)
+
+**File:** `api/app/services/rag_service.py`, `api/pyproject.toml`
+
+**Problem:** After retrieving up to 10 chunks, they all go straight to the LLM with equal weight. Some are highly relevant, some are noise. The LLM wastes context on low-quality chunks and may generate worse answers.
+
+**Fix:** Add a cross-encoder reranker using FastEmbed (already a dependency):
+```python
+from fastembed.rerank.cross_encoder import TextCrossEncoder
+reranker = TextCrossEncoder("Xenova/ms-marco-MiniLM-L-6-v2")
+
+# After hybrid search, before building prompt:
+reranked = reranker.rerank(
+    query=question,
+    documents=[doc.content for doc in final_results],
+    top_k=5  # Only keep top 5 most relevant
+)
+final_results = [final_results[r["index"]] for r in reranked]
+```
+
+**Impact:** Sending 5 highly-relevant chunks instead of 10 mixed-quality chunks = better answers + fewer input tokens (cost savings of ~30-40% on input).
+
+**Note:** Check if `fastembed` already includes the rerank module. If not, the cross-encoder model is small (~80MB) and runs locally with no API cost.
+
+### RAG Fix 6: Better Context Formatting (LOW impact, LOW effort)
+
+**File:** `api/app/services/rag_service.py` — context formatting (lines 282-285)
+
+**Problem:** All chunks are formatted identically — the LLM has no signal about which chunks are most relevant.
+
+**Current code:**
+```python
+context_parts.append(f"Document: {doc.document_name}\nContent:\n{doc.content}\n")
+```
+
+**Fix:** Add ordering signal:
+```python
+for i, doc in enumerate(final_results):
+    context_parts.append(f"[Source {i+1}] Document: {doc.document_name}\nContent:\n{doc.content}\n")
+```
+
+### RAG Improvements NOT Recommended (For Now)
+
+| Improvement | Why Skip |
+|------------|---------|
+| **GraphRAG** | Overkill — your queries are simple FAQ/support, not multi-hop reasoning. 100-500x more expensive to index. |
+| **Better embedding model** | Requires re-embedding ALL existing documents + DB migration (`Vector(384)` → `Vector(768)`). Do this later as a separate project. |
+| **Semantic chunking** | `RecursiveCharacterTextSplitter` is good enough. Semantic chunking adds LLM cost per chunk during ingestion. |
+| **Custom separators** | The default separators (`\n\n`, `\n`, ` `, `""`) handle most document formats well. |
+
+### Summary of RAG Fixes
+
+| # | Fix | File | Impact | Effort |
+|---|-----|------|--------|--------|
+| 1 | Relevance score filtering | `repository.py` | **High** | Low |
+| 2 | Keyword search ranking (`ts_rank`) | `repository.py` | **High** | Low |
+| 3 | RRF result merging | `rag_service.py` | **Medium** | Low |
+| 4 | Skip unnecessary query rewrites | `rag_service.py` | **Medium** | Low |
+| 5 | Reranking (cross-encoder) | `rag_service.py` | **High** | Medium |
+| 6 | Context formatting | `rag_service.py` | **Low** | Low |
+
+**Apply the same fixes to both `rag_pipeline()` and `rag_pipeline_stream()` in `rag_service.py`.**
+
 ## Important Notes
 
 - **Pin LiteLLM version** in `pyproject.toml` — e.g., `litellm==1.82.6` (exact pin, not `>=`). This is critical due to the recent supply chain attack on versions 1.82.7-1.82.8.
