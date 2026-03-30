@@ -10,6 +10,15 @@ const api = axios.create({
     timeout: 30000,
 });
 
+const buildApiError = (error, fallbackMessage = 'Request failed') => {
+    const detail = error.response?.data?.detail;
+    const message = detail || error.message || fallbackMessage;
+    const apiError = new Error(typeof message === 'string' ? message : fallbackMessage);
+    apiError.status = error.response?.status;
+    apiError.data = error.response?.data;
+    return apiError;
+};
+
 // Request interceptor: inject API key (supports both Client and Agent auth)
 api.interceptors.request.use(
     (config) => {
@@ -31,13 +40,22 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
+        const status = error.response?.status;
+        const authType = localStorage.getItem('auth_type');
+        const detail = (error.response?.data?.detail || '').toString().toLowerCase();
+        const requestUrl = (error.config?.url || '').toString();
+
+        const isLoginAttempt = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/agent-login');
+        const isAgentOnClientOnlyEndpoint = authType === 'agent' && detail.includes('api key');
+
+        if (status === 401 && !isLoginAttempt && !isAgentOnClientOnlyEndpoint) {
             localStorage.removeItem('admin_token');
             localStorage.removeItem('admin_name');
-            localStorage.removeItem('client_id');
+            localStorage.removeItem('admin_client_id');
             localStorage.removeItem('auth_type');
             localStorage.removeItem('agent_role');
             localStorage.removeItem('agent_id');
+            localStorage.removeItem('is_superadmin');
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
             }
@@ -610,7 +628,7 @@ export const acceptChat = async (sessionId) => {
         return response.data;
     } catch (error) {
         console.error('API Error accepting chat:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to accept chat');
     }
 };
 

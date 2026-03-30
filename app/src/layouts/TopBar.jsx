@@ -12,6 +12,10 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
         localStorage.removeItem('admin_token');
         localStorage.removeItem('admin_name');
         localStorage.removeItem('admin_client_id');
+        localStorage.removeItem('auth_type');
+        localStorage.removeItem('agent_role');
+        localStorage.removeItem('agent_id');
+        localStorage.removeItem('is_superadmin');
         navigate('/login');
     };
 

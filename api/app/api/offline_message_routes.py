@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.sql import func
 
-from app.api.auth import get_current_client
-from app.db.models import Bot, Client, OfflineMessage
+from app.api.auth import get_current_client_or_agent
+from app.db.models import Bot, OfflineMessage
 from app.db.session import get_session
 from app.services.email_service import send_offline_message_email, send_unavailable_callback_email
 
@@ -95,12 +95,13 @@ def list_offline_messages(
     bot_id: int | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    client: Client = Depends(get_current_client),
+    auth=Depends(get_current_client_or_agent),
 ):
-    """List offline messages for the client's bots."""
+    """List offline messages for the authenticated client/agent's bots."""
+    client_id = auth["client_id"]
     with get_session() as session:
         # Get client's bot IDs
-        bot_ids = [bid for (bid,) in session.execute(select(Bot.id).where(Bot.client_id == client.id)).all()]
+        bot_ids = [bid for (bid,) in session.execute(select(Bot.id).where(Bot.client_id == client_id)).all()]
         if not bot_ids:
             return {"messages": [], "total": 0, "page": page}
 
@@ -160,9 +161,10 @@ def list_offline_messages(
 def update_offline_message(
     message_id: int,
     request: UpdateOfflineMessageRequest,
-    client: Client = Depends(get_current_client),
+    auth=Depends(get_current_client_or_agent),
 ):
     """Update an offline message status (mark as read/replied)."""
+    client_id = auth["client_id"]
     with get_session() as session:
         msg = session.execute(select(OfflineMessage).where(OfflineMessage.id == message_id)).scalar_one_or_none()
         if not msg:
@@ -170,7 +172,7 @@ def update_offline_message(
 
         # Verify ownership
         bot = session.execute(select(Bot).where(Bot.id == msg.bot_id)).scalar_one_or_none()
-        if not bot or bot.client_id != client.id:
+        if not bot or bot.client_id != client_id:
             raise HTTPException(status_code=403, detail="Access denied.")
 
         if request.status == "read" and msg.status == "new":
@@ -187,15 +189,16 @@ def update_offline_message(
 
 
 @router.delete("/{message_id}")
-def delete_offline_message(message_id: int, client: Client = Depends(get_current_client)):
+def delete_offline_message(message_id: int, auth=Depends(get_current_client_or_agent)):
     """Delete an offline message."""
+    client_id = auth["client_id"]
     with get_session() as session:
         msg = session.execute(select(OfflineMessage).where(OfflineMessage.id == message_id)).scalar_one_or_none()
         if not msg:
             raise HTTPException(status_code=404, detail="Message not found.")
 
         bot = session.execute(select(Bot).where(Bot.id == msg.bot_id)).scalar_one_or_none()
-        if not bot or bot.client_id != client.id:
+        if not bot or bot.client_id != client_id:
             raise HTTPException(status_code=403, detail="Access denied.")
 
         session.delete(msg)
