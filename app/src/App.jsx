@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastProvider } from './context/ToastContext';
+import { getAuthState } from './utils/auth';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
@@ -24,6 +25,9 @@ import SuperadminOverview from './pages/superadmin/Overview';
 import SuperadminClients from './pages/superadmin/Clients';
 import SuperadminFeedback from './pages/superadmin/Feedback';
 
+// Components
+import AccessDenied from './components/AccessDenied';
+
 const ProtectedRoute = ({ children }) => {
     const isAuthenticated = !!localStorage.getItem('admin_token');
     if (!isAuthenticated) return <Navigate to="/login" replace />;
@@ -35,6 +39,17 @@ const SuperadminRoute = ({ children }) => {
     const isSuperadmin = localStorage.getItem('is_superadmin') === 'true';
     if (!isAuthenticated) return <Navigate to="/login" replace />;
     if (!isSuperadmin) return <Navigate to="/" replace />;
+    return children;
+};
+
+/**
+ * Renders children for workspace owners/admins.
+ * Shows an in-place AccessDenied screen for regular agents — does NOT redirect,
+ * so bookmarks continue to work if the user's role is later elevated.
+ */
+const ClientOnlyPage = ({ children, pageName }) => {
+    const { isAgent, isBotManager } = getAuthState();
+    if (isAgent && !isBotManager) return <AccessDenied pageName={pageName} />;
     return children;
 };
 
@@ -57,15 +72,18 @@ function App() {
                             </ProtectedRoute>
                         }
                     >
-                        <Route index element={<Dashboard />} />
-                        <Route path="knowledge" element={<KnowledgeBase />} />
+                        {/* Owner-only pages — regular agents see AccessDenied in-place */}
+                        <Route index element={<ClientOnlyPage pageName="Overview"><Dashboard /></ClientOnlyPage>} />
+                        <Route path="knowledge" element={<ClientOnlyPage pageName="Sources"><KnowledgeBase /></ClientOnlyPage>} />
+                        <Route path="insights" element={<ClientOnlyPage pageName="Insights"><Insights /></ClientOnlyPage>} />
+                        <Route path="leads" element={<ClientOnlyPage pageName="Leads"><Leads /></ClientOnlyPage>} />
+                        <Route path="integrations/email" element={<ClientOnlyPage pageName="Integrations"><Email /></ClientOnlyPage>} />
+
+                        {/* Accessible to all authenticated users */}
                         <Route path="chatbot" element={<Chatbot />} />
-                        <Route path="insights" element={<Insights />} />
                         <Route path="support" element={<Support />} />
-                        <Route path="leads" element={<Leads />} />
                         <Route path="team" element={<TeamManagement />} />
                         <Route path="settings" element={<Settings />} />
-                        <Route path="integrations/email" element={<Email />} />
 
                         {/* Redirects for old URLs */}
                         <Route path="analytics" element={<Navigate to="/insights?tab=analytics" replace />} />

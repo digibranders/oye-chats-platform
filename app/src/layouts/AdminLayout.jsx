@@ -47,9 +47,11 @@ function AdminLayoutInner() {
         }
     }, []);
 
-    // Show onboarding when bots finish loading and none exist
+    // Show onboarding when bots finish loading and none exist.
+    // Agents join an existing workspace and never need the onboarding wizard.
     useEffect(() => {
-        if (!botsLoading && bots.length === 0 && !localStorage.getItem('onboarding_complete')) {
+        const isAgent = localStorage.getItem('auth_type') === 'agent';
+        if (!isAgent && !botsLoading && bots.length === 0 && !localStorage.getItem('onboarding_complete')) {
             setShowOnboarding(true); // eslint-disable-line react-hooks/set-state-in-effect -- one-time init from external state (localStorage)
         }
     }, [botsLoading, bots.length]);

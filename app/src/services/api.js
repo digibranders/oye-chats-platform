@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { AUTH_STORAGE_KEYS } from '../utils/auth';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -49,13 +50,7 @@ api.interceptors.response.use(
         const isAgentOnClientOnlyEndpoint = authType === 'agent' && detail.includes('api key');
 
         if (status === 401 && !isLoginAttempt && !isAgentOnClientOnlyEndpoint) {
-            localStorage.removeItem('admin_token');
-            localStorage.removeItem('admin_name');
-            localStorage.removeItem('admin_client_id');
-            localStorage.removeItem('auth_type');
-            localStorage.removeItem('agent_role');
-            localStorage.removeItem('agent_id');
-            localStorage.removeItem('is_superadmin');
+            AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
             }

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getAuthState } from '../utils/auth';
 import {
     Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2,
     X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, Palette
@@ -23,8 +24,7 @@ const botPageTabs = [
 export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading, error: botError } = useBotContext();
     const { showToast } = useToast();
-    const isBotManager = localStorage.getItem('auth_type') !== 'agent'
-        || ['owner', 'admin'].includes(localStorage.getItem('agent_role') || '');
+    const { isBotManager } = getAuthState();
     const [searchParams, setSearchParams] = useSearchParams();
     const [botTab, setBotTab] = useState(searchParams.get('tab') || 'bots');
     const [isCreateOpen, setIsCreateOpen] = useState(false);

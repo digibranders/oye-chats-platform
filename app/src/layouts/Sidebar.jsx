@@ -15,6 +15,7 @@ import {
     UsersRound,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
+import { getAuthState } from '../utils/auth';
 
 export default function Sidebar({ isOpen, isMobile, onClose }) {
     const location = useLocation();
@@ -38,8 +39,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     };
 
     const navigate = useNavigate();
-    const isAgentRole = localStorage.getItem('auth_type') === 'agent';
-    const isBotManager = !isAgentRole || ['owner', 'admin'].includes(localStorage.getItem('agent_role') || '');
+    const { isAgent: isAgentRole, isBotManager } = getAuthState();
 
     const handleCreateBot = () => {
         setDropdownOpen(false);
@@ -134,14 +134,16 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             {/* Bot Selector */}
             {isOpen && (
                 <div className="px-3 pb-2" ref={dropdownRef}>
-                    {botError && !loading ? (
+                    {loading ? (
+                        <div className="h-9 rounded-lg bg-zinc-800 animate-pulse" />
+                    ) : botError ? (
                         <div className="w-full rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
                             <p className="text-[11px] font-semibold text-amber-300">Bots unavailable</p>
                             <p className="mt-1 text-[10px] text-amber-200/80">
                                 Workspace bot access could not be loaded for this account.
                             </p>
                         </div>
-                    ) : bots.length === 0 && !loading ? (
+                    ) : bots.length === 0 ? (
                         isBotManager ? (
                             <NavLink
                                 to="/chatbot"
@@ -173,7 +175,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                                     <Bot size={13} className="text-primary-400" />
                                 </div>
                                 <p className="text-[12px] font-semibold text-zinc-200 truncate flex-1">
-                                    {loading ? 'Loading...' : (selectedBot?.name || 'Select a Bot')}
+                                    {selectedBot?.name || 'Select a Bot'}
                                 </p>
                                 <ChevronDown size={14} className={`text-zinc-500 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
                             </button>
@@ -218,14 +220,20 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             {/* Collapsed bot indicator */}
             {!isOpen && !isMobile && (
                 <div className="flex justify-center pb-2">
-                    {selectedBot ? (
+                    {loading ? (
+                        <div className="w-9 h-9 rounded-lg bg-zinc-800 animate-pulse" />
+                    ) : selectedBot ? (
                         <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center cursor-pointer" title={selectedBot.name}>
                             <Bot size={15} className="text-primary-400" />
                         </div>
-                    ) : (
+                    ) : isBotManager ? (
                         <NavLink to="/chatbot" className="w-9 h-9 rounded-lg bg-zinc-900 border border-dashed border-zinc-700 flex items-center justify-center" title="Create a chatbot">
                             <Plus size={15} className="text-zinc-500" />
                         </NavLink>
+                    ) : (
+                        <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center" title="No workspace bots">
+                            <Bot size={15} className="text-zinc-600" />
+                        </div>
                     )}
                 </div>
             )}

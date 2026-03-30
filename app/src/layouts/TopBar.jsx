@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, LogOut, Menu, PanelLeftClose } from 'lucide-react';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { AUTH_STORAGE_KEYS } from '../utils/auth';
 
 export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenSearch }) {
     const navigate = useNavigate();
@@ -9,13 +10,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
     const [showUserMenu, setShowUserMenu] = useState(false);
 
     const handleLogout = () => {
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_name');
-        localStorage.removeItem('admin_client_id');
-        localStorage.removeItem('auth_type');
-        localStorage.removeItem('agent_role');
-        localStorage.removeItem('agent_id');
-        localStorage.removeItem('is_superadmin');
+        AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
         navigate('/login');
     };
 
