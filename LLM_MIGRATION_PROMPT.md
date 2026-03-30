@@ -160,6 +160,23 @@ The `chat_routes.py` feedback endpoint still uses `get_langfuse()` → `lf.creat
 3. **`rag_service.py`** — remove manual Langfuse pipeline trace wrappers, calls remain the same
 4. **`langfuse_client.py`** — keep only `get_langfuse()` (for feedback scoring) and `flush_langfuse()`
 
+## Langfuse Review (Senior Engineer Audit)
+
+As part of this migration, act as a **senior software engineer** and perform a thorough review of the existing Langfuse observability implementation across the entire codebase. Evaluate the current integration for:
+
+1. **Correctness** — Are traces, spans, and generations being created properly? Are there orphaned traces or missing parent-child relationships?
+2. **Completeness** — Are all LLM calls being traced? Are there any calls that bypass observability? Is token usage being captured accurately?
+3. **Trace structure** — Should the RAG pipeline (query rewrite → retrieval → generation → BANT extraction) be grouped under a single parent trace? Is the current nesting correct?
+4. **Metadata quality** — Is the right metadata being attached to traces (bot_id, session_id, user_id, device, location, chunk count, TTFT, latency)?
+5. **Feedback scoring** — Is the user feedback (thumbs up/down) → Langfuse score pipeline working correctly? Is the trace_id being stored and linked properly?
+6. **Cost tracking** — With LiteLLM's auto-reporting, is cost per call being sent to Langfuse? Is anything missing vs the current manual implementation?
+7. **Performance** — Are Langfuse calls blocking the response stream? Should any calls be async/fire-and-forget?
+8. **Error handling** — Does Langfuse failure gracefully degrade without affecting user experience?
+
+After the review, fix any issues found and ensure the final Langfuse integration (via LiteLLM callbacks + any remaining manual calls) is production-grade. The goal is clean, complete observability with zero impact on response latency.
+
+Key files to review: `api/app/core/langfuse_client.py`, `api/app/services/llm_service.py`, `api/app/services/rag_service.py`, `api/app/services/sdr_service.py`, `api/app/services/intent_service.py`, `api/app/api/chat_routes.py`
+
 ## Testing & Verification
 
 1. **Unit test each LLM function** — `generate_response()`, `generate_response_stream()` return correct format
