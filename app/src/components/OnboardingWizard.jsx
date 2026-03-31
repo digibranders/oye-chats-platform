@@ -3,7 +3,7 @@ import { Bot, BookOpen, Palette, Code2, Check, ArrowRight, ArrowLeft, Copy, Load
 import { createBot, crawlWebsite } from '../services/api';
 
 const steps = [
-    { id: 'welcome', title: 'Welcome to OyeChat', icon: Sparkles },
+    { id: 'welcome', title: 'Welcome to OyeChats', icon: Sparkles },
     { id: 'create', title: 'Create Your Chatbot', icon: Bot },
     { id: 'knowledge', title: 'Add Knowledge', icon: BookOpen },
     { id: 'embed', title: 'Get Embed Code', icon: Code2 },
@@ -25,7 +25,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
             const result = await createBot({ name: botName.trim(), website: botWebsite.trim() || undefined });
             setCreatedBot(result);
             if (botWebsite.trim()) {
-                crawlWebsite(botWebsite.trim(), result.bot_id).catch(() => {});
+                crawlWebsite(botWebsite.trim(), result.bot_id).catch(() => { });
             }
             if (onRefreshBots) await onRefreshBots();
             setStep(2);
@@ -63,7 +63,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
                             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center mx-auto mb-5 shadow-lg shadow-primary-500/20">
                                 <Bot size={32} />
                             </div>
-                            <h2 className="text-xl font-bold text-secondary-900 mb-2">Welcome to OyeChat</h2>
+                            <h2 className="text-xl font-bold text-secondary-900 mb-2">Welcome to OyeChats</h2>
                             <p className="text-secondary-500 text-sm max-w-sm mx-auto mb-8">
                                 Let's set up your first AI chatbot in just a few steps. It only takes a minute.
                             </p>

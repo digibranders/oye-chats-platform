@@ -47,7 +47,7 @@ export default function Dashboard() {
     if (!botsLoading && bots.length === 0) {
         return (
             <EmptyState
-                title="Welcome to OyeChat"
+                title="Welcome to OyeChats"
                 description="Create your first chatbot to start seeing analytics, visitor data, and conversation insights here."
                 actionLabel="Create Your First Chatbot"
                 actionTo="/chatbot"
@@ -166,11 +166,10 @@ export default function Dashboard() {
                                     className="flex items-center justify-between p-4 rounded-xl hover:bg-secondary-50:bg-secondary-800/50 transition-all group"
                                 >
                                     <div className="flex items-center gap-4 min-w-0">
-                                        <span className={`flex items-center justify-center w-9 h-9 rounded-full text-sm font-bold border ${
-                                            index < 3
+                                        <span className={`flex items-center justify-center w-9 h-9 rounded-full text-sm font-bold border ${index < 3
                                                 ? rankBgs[index]
                                                 : 'bg-secondary-50 border-secondary-200'
-                                        } ${index < 3 ? rankColors[index] : 'text-secondary-400'} group-hover:scale-105 transition-transform`}>
+                                            } ${index < 3 ? rankColors[index] : 'text-secondary-400'} group-hover:scale-105 transition-transform`}>
                                             {index + 1}
                                         </span>
                                         <p className="text-secondary-900 font-medium text-sm truncate">
