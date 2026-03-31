@@ -2,8 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.auth import get_current_client
-from app.db.models import Client
+from app.api.auth import get_current_client_or_agent
 from app.db.repository import (
     get_dashboard_stats,
     get_feedback_data,
@@ -21,12 +20,12 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 @router.get("/dashboard")
 def get_dashboard_analytics_endpoint(
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Retrieve live aggregate statistics for the admin dashboard."""
     try:
         with get_session() as session:
-            stats = get_dashboard_stats(session, client_id=client.id, bot_id=bot_id)
+            stats = get_dashboard_stats(session, client_id=auth["client_id"], bot_id=bot_id)
             return stats
     except Exception as e:
         logger.error(f"Failed to fetch dashboard stats: {e}")
@@ -36,12 +35,12 @@ def get_dashboard_analytics_endpoint(
 @router.get("/activity")
 def get_activity_analytics_endpoint(
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Retrieve message activity over time for charts."""
     try:
         with get_session() as session:
-            activity = get_message_activity(session, client_id=client.id, bot_id=bot_id)
+            activity = get_message_activity(session, client_id=auth["client_id"], bot_id=bot_id)
             return activity
     except Exception as e:
         logger.error(f"Failed to fetch activity stats: {e}")
@@ -51,12 +50,12 @@ def get_activity_analytics_endpoint(
 @router.get("/top-questions")
 def get_top_questions_endpoint(
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Retrieve the most common user queries."""
     try:
         with get_session() as session:
-            top_questions = get_top_questions(session, client_id=client.id, bot_id=bot_id)
+            top_questions = get_top_questions(session, client_id=auth["client_id"], bot_id=bot_id)
             return top_questions
     except Exception as e:
         logger.error(f"Failed to fetch top questions: {e}")
@@ -66,12 +65,12 @@ def get_top_questions_endpoint(
 @router.get("/visitors")
 def get_visitors_endpoint(
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Retrieve all visitor sessions for the admin dashboard."""
     try:
         with get_session() as session:
-            data = get_visitor_data(session, client_id=client.id, bot_id=bot_id)
+            data = get_visitor_data(session, client_id=auth["client_id"], bot_id=bot_id)
 
             unique_visitors = {}
             current_user_index = 1
@@ -119,12 +118,12 @@ def get_visitors_endpoint(
 @router.get("/feedback")
 def get_feedback_endpoint(
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Retrieve all feedback for the admin dashboard."""
     try:
         with get_session() as session:
-            data = get_feedback_data(session, client_id=client.id, bot_id=bot_id)
+            data = get_feedback_data(session, client_id=auth["client_id"], bot_id=bot_id)
 
             session_to_user_map = {}
             current_user_index = 1

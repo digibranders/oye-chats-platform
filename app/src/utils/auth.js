@@ -34,6 +34,7 @@ export function getAuthState() {
         isBotManager: !isAgent || ['owner', 'admin'].includes(agentRole),
         agentId: localStorage.getItem('agent_id'),
         clientId: localStorage.getItem('admin_client_id'),
+        companyWebsite: localStorage.getItem('company_website'),
     };
 }
 
@@ -50,6 +51,7 @@ export const AUTH_STORAGE_KEYS = [
     'agent_id',
     'is_superadmin',
     'company_name',
+    'company_website',
     'onboarding_complete',
     'selected_bot_id',
 ];

@@ -37,6 +37,7 @@ export default function Login() {
                 localStorage.setItem('agent_id', data.agent_id.toString());
                 localStorage.setItem('is_superadmin', 'false');
                 localStorage.setItem('company_name', data.company_name || '');
+                localStorage.setItem('company_website', data.website || '');
                 // Agents join an existing workspace — the onboarding wizard is for workspace owners only.
                 localStorage.setItem('onboarding_complete', 'true');
                 if (data.default_bot_id) {
@@ -57,6 +58,7 @@ export default function Login() {
                 localStorage.setItem('auth_type', 'client');
                 localStorage.setItem('is_superadmin', data.is_superadmin ? 'true' : 'false');
                 localStorage.setItem('company_name', data.company_name || '');
+                localStorage.setItem('company_website', data.website || '');
                 sessionStorage.setItem('login_toast', '1');
 
                 if (data.is_superadmin) {

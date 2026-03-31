@@ -15,7 +15,7 @@ const steps = [
 export default function OnboardingWizard({ onComplete, onRefreshBots }) {
     const [step, setStep] = useState(0);
     const [botName, setBotName] = useState('');
-    const [botWebsite, setBotWebsite] = useState('');
+    const [botWebsite, setBotWebsite] = useState(localStorage.getItem('company_website') || '');
     const [createdBot, setCreatedBot] = useState(null);
     const [isCreating, setIsCreating] = useState(false);
     const [error, setError] = useState('');
