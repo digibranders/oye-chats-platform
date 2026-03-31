@@ -1,18 +1,20 @@
 import json
 import logging
+import threading
 import urllib.request
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
 
 from app.api.auth import get_current_bot, get_current_client
 from app.core.langfuse_client import get_langfuse
-from app.db.models import Bot
+from app.db.models import Bot, ChatSession
 from app.db.repository import create_or_update_lead_info, ensure_chat_session, get_chat_history, update_message_feedback
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
-from app.services.rag_service import rag_pipeline
+from app.services.rag_service import rag_pipeline, rag_pipeline_stream
 from app.services.sdr_service import run_sdr_qualification
 
 
@@ -29,6 +31,101 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 
+def _parse_request_context(fastapi_request: Request):
+    """Extract IP address, device, and browser from the request (no blocking HTTP calls)."""
+    user_agent = fastapi_request.headers.get("user-agent", "Unknown")
+
+    ip_address = (
+        fastapi_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or fastapi_request.headers.get("x-real-ip", "")
+        or (fastapi_request.client.host if fastapi_request.client else "127.0.0.1")
+    )
+
+    device = "Other"
+    if "Mobi" in user_agent:
+        device = "Mobile"
+    elif "Tablet" in user_agent:
+        device = "Tablet"
+    else:
+        device = "Desktop"
+
+    browser = "Unknown Browser"
+    if "Chrome" in user_agent:
+        browser = "Chrome"
+    elif "Firefox" in user_agent:
+        browser = "Firefox"
+    elif "Safari" in user_agent:
+        browser = "Safari"
+    elif "Edge" in user_agent:
+        browser = "Edge"
+
+    formatted_device = f"{browser} on {device}"
+    return ip_address, formatted_device
+
+
+def _resolve_and_update_location(session_id: str, ip_address: str):
+    """Fire-and-forget: resolve geolocation from IP and update the session in DB."""
+    try:
+        # Resolve public IP if local
+        if ip_address in ("127.0.0.1", "localhost", "::1", "") or ip_address.startswith(("10.", "192.168.", "172.")):
+            try:
+                with urllib.request.urlopen("https://api.ipify.org?format=json", timeout=2.0) as resp:
+                    ip_address = json.loads(resp.read().decode()).get("ip", ip_address)
+            except Exception:
+                return
+
+        if not ip_address or ip_address in ("127.0.0.1", "localhost", "::1"):
+            return
+
+        location = None
+
+        # Try ip-api.com first
+        try:
+            req = urllib.request.Request(
+                f"http://ip-api.com/json/{ip_address}",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(req, timeout=3.0) as response:
+                data = json.loads(response.read().decode())
+                if data.get("status") == "success":
+                    city = data.get("city", "")
+                    country = data.get("country", "")
+                    if city and country:
+                        location = f"{city}, {country} | {ip_address}"
+                    elif country:
+                        location = f"{country} | {ip_address}"
+        except Exception as e1:
+            logger.warning(f"ip-api.com failed for {ip_address}: {e1}")
+
+        # Fallback to ipinfo.io
+        if not location:
+            try:
+                req2 = urllib.request.Request(
+                    f"https://ipinfo.io/{ip_address}/json",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                with urllib.request.urlopen(req2, timeout=3.0) as response2:
+                    data2 = json.loads(response2.read().decode())
+                    city = data2.get("city", "")
+                    country = data2.get("country", "")
+                    if city and country:
+                        location = f"{city}, {country} | {ip_address}"
+                    elif country:
+                        location = f"{country} | {ip_address}"
+            except Exception as e2:
+                logger.warning(f"ipinfo.io also failed for {ip_address}: {e2}")
+
+        if location:
+            with get_session() as session:
+                chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+                if chat_session:
+                    chat_session.location = location
+                    session.commit()
+                    logger.info(f"Background geolocation resolved | session={session_id} | location={location}")
+    except Exception as e:
+        logger.warning(f"Background geolocation failed for session {session_id}: {e}")
+
+
 @router.post("/chat")
 def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Depends(get_current_bot)):
     """
@@ -37,85 +134,16 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
     try:
-        user_agent = fastapi_request.headers.get("user-agent", "Unknown")
-
-        ip_address = (
-            fastapi_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or fastapi_request.headers.get("x-real-ip", "")
-            or (fastapi_request.client.host if fastapi_request.client else "127.0.0.1")
-        )
-
-        if ip_address in ("127.0.0.1", "localhost", "::1", "") or ip_address.startswith(("10.", "192.168.", "172.")):
-            try:
-                with urllib.request.urlopen("https://api.ipify.org?format=json", timeout=2.0) as resp:
-                    ip_address = json.loads(resp.read().decode()).get("ip", ip_address)
-            except Exception:
-                pass
-
-        device = "Other"
-        if "Mobi" in user_agent:
-            device = "Mobile"
-        elif "Tablet" in user_agent:
-            device = "Tablet"
-        else:
-            device = "Desktop"
-
-        browser = "Unknown Browser"
-        if "Chrome" in user_agent:
-            browser = "Chrome"
-        elif "Firefox" in user_agent:
-            browser = "Firefox"
-        elif "Safari" in user_agent:
-            browser = "Safari"
-        elif "Edge" in user_agent:
-            browser = "Edge"
-
-        formatted_device = f"{browser} on {device}"
+        ip_address, formatted_device = _parse_request_context(fastapi_request)
         location = f"IP: {ip_address}"
-
-        try:
-            if ip_address and ip_address not in ("127.0.0.1", "localhost", "::1"):
-                geo_success = False
-
-                try:
-                    req = urllib.request.Request(
-                        f"http://ip-api.com/json/{ip_address}",
-                        headers={"User-Agent": "Mozilla/5.0"},
-                    )
-                    with urllib.request.urlopen(req, timeout=3.0) as response:
-                        data = json.loads(response.read().decode())
-                        if data.get("status") == "success":
-                            city = data.get("city", "")
-                            country = data.get("country", "")
-                            if city and country:
-                                location = f"{city}, {country} | {ip_address}"
-                                geo_success = True
-                            elif country:
-                                location = f"{country} | {ip_address}"
-                                geo_success = True
-                except Exception as e1:
-                    logger.warning(f"ip-api.com failed for {ip_address}: {e1}")
-
-                if not geo_success:
-                    try:
-                        req2 = urllib.request.Request(
-                            f"https://ipinfo.io/{ip_address}/json",
-                            headers={"User-Agent": "Mozilla/5.0"},
-                        )
-                        with urllib.request.urlopen(req2, timeout=3.0) as response2:
-                            data2 = json.loads(response2.read().decode())
-                            city = data2.get("city", "")
-                            country = data2.get("country", "")
-                            if city and country:
-                                location = f"{city}, {country} | {ip_address}"
-                            elif country:
-                                location = f"{country} | {ip_address}"
-                    except Exception as e2:
-                        logger.warning(f"ipinfo.io also failed for {ip_address}: {e2}")
-        except Exception as e:
-            logger.warning(f"Failed to geolocate IP {ip_address}: {e}")
-
         session_id = request.session_id or str(uuid.uuid4())
+
+        # Fire-and-forget geolocation (saves 2-8s per request)
+        threading.Thread(
+            target=_resolve_and_update_location,
+            args=(session_id, ip_address),
+            daemon=True,
+        ).start()
 
         logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
@@ -135,6 +163,39 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
     except Exception as e:
         logger.error(f"Chat failed for bot {getattr(bot, 'id', '?')}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/chat/stream")
+async def chat_stream_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Depends(get_current_bot)):
+    """
+    Streaming RAG Endpoint: Streams the response token-by-token via SSE.
+    Protocol: METADATA:{json} → text chunks → FINAL_METADATA:{json}
+    Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
+    """
+    ip_address, formatted_device = _parse_request_context(fastapi_request)
+    location = f"IP: {ip_address}"
+    session_id = request.session_id or str(uuid.uuid4())
+
+    # Fire-and-forget geolocation
+    threading.Thread(
+        target=_resolve_and_update_location,
+        args=(session_id, ip_address),
+        daemon=True,
+    ).start()
+
+    logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
+
+    return StreamingResponse(
+        rag_pipeline_stream(
+            bot,
+            request.question,
+            session_id=session_id,
+            location=location,
+            device=formatted_device,
+            bot_id=bot.id,
+        ),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/chat/lead-capture")

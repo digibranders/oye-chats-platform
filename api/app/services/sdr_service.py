@@ -1,19 +1,16 @@
 import json
 import logging
 
-from google import genai
+import litellm
 from pydantic import BaseModel, Field
 
-from app.config import GEMINI_MODEL, GOOGLE_API_KEY
+from app.config import LLM_MODEL
 from app.db.models import ChatSession
 from app.db.repository import add_chat_message, ensure_chat_session, get_chat_history, update_session_bant
 from app.db.session import get_session
-from app.services.llm_service import generate_response_observed, generate_response_stream_observed
+from app.services.llm_service import generate_response, generate_response_stream
 
 logger = logging.getLogger(__name__)
-
-# Initialize the client
-client = genai.Client(api_key=GOOGLE_API_KEY)
 
 
 class BANTState(BaseModel):
@@ -68,7 +65,7 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
     """
     Industry-level SDR qualification stream.
     Supports bot_id for multi-bot architecture.
-    Instrumented with Langfuse traces when enabled.
+    LiteLLM auto-instruments with Langfuse via callbacks.
     """
     try:
         cid = (
@@ -114,10 +111,10 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
 
             full_answer = ""
 
-            # Use observed streaming wrapper (auto-instruments with Langfuse)
-            for chunk in generate_response_stream_observed(
+            # Stream response (LiteLLM auto-traces via callback)
+            for chunk in generate_response_stream(
                 f"{prompt}\n\nHISTORY:\n{history_str}\nUSER: {question}\n\nRESPONSE:",
-                generation_name="sdr-stream-generation",
+                metadata={"generation_name": "sdr-stream-generation"},
             ):
                 full_answer += chunk
                 yield chunk
@@ -126,13 +123,13 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
             bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=full_answer, bot_id=bid)
             session.commit()
 
-            # 7. Background BANT update (auto-observed via wrapper)
+            # 7. Background BANT update (LiteLLM auto-traces via callback)
             try:
                 extraction_prompt = f'Given this conversation history:\n{history_str}\n\nAnd user\'s last message: \'{question}\'\n\nCurrent BANT: {current_bant}\n\nProvide the updated BANT fields in valid JSON matching this schema: {{"need": string, "timeline": string, "authority": string, "budget": string}}'
 
-                resp_text = generate_response_observed(
+                resp_text = generate_response(
                     extraction_prompt,
-                    generation_name="sdr-bant-extraction",
+                    metadata={"generation_name": "sdr-bant-extraction"},
                 )
                 try:
                     clean_json = resp_text.strip()
@@ -167,9 +164,9 @@ async def generate_sdr_stream(client_obj, question: str, session_id: str, bot_id
 
 def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: int = None):
     """
-    Industry-level SDR qualification flow.
+    Industry-level SDR qualification flow with structured JSON output.
     Supports bot_id for multi-bot architecture.
-    Instrumented with Langfuse traces when enabled.
+    LiteLLM auto-instruments with Langfuse via callbacks.
     """
     try:
         cid = (
@@ -211,24 +208,30 @@ def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: in
                 budget=current_bant["budget"] or "null",
             )
 
-            # Use history in the contents
-            contents = [
-                {"role": "user", "parts": [{"text": prompt}]},
-                {"role": "user", "parts": [{"text": f"Conversation History:\n{history_str}\nUSER: {question}"}]},
-            ]
-
-            # 5. Call Gemini with Structured Output
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=contents,
-                config={"response_mime_type": "application/json", "response_schema": SDRResponse},
+            # 5. Call LLM with Structured Output via LiteLLM
+            response = litellm.completion(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Conversation History:\n{history_str}\nUSER: {question}"},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "SDRResponse",
+                        "strict": True,
+                        "schema": SDRResponse.model_json_schema(),
+                    },
+                },
+                metadata={"generation_name": "sdr-qualification"},
             )
 
-            if not response.text:
-                raise ValueError("Empty response from Gemini")
+            response_text = response.choices[0].message.content
+            if not response_text:
+                raise ValueError("Empty response from LLM")
 
             # 6. Parse and Update
-            data = SDRResponse.model_validate_json(response.text)
+            data = SDRResponse.model_validate_json(response_text)
 
             # Save updated BANT to DB
             bant_updates = {

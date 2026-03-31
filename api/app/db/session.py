@@ -8,7 +8,13 @@ from sqlalchemy.orm import sessionmaker
 from app.config import DB_URL
 
 # Create the SQLAlchemy engine
-engine = create_engine(DB_URL, pool_pre_ping=True)
+engine = create_engine(
+    DB_URL,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+)
 
 # Ensure pgvector extension exists (may require superuser)
 try:
