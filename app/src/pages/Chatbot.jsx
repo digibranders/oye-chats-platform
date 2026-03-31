@@ -7,7 +7,7 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
-import { createBot, deleteBot } from '../services/api';
+import { createBot, deleteBot, crawlWebsite } from '../services/api';
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from '../components/PlatformSelector';
 import IntegrationGuide from '../components/IntegrationGuide';
@@ -60,6 +60,9 @@ export default function Chatbot() {
         setError(''); setIsSubmitting(true);
         try {
             const result = await createBot({ name: newBotName.trim(), website: newBotWebsite.trim() || undefined });
+            if (newBotWebsite.trim()) {
+                crawlWebsite(newBotWebsite.trim(), result.bot_id).catch(() => {});
+            }
             await refreshBots();
             setNewBotName(''); setNewBotWebsite(''); setIsCreateOpen(false);
             showToast('success', `Bot "${result.name}" created!`);
@@ -262,7 +265,7 @@ export default function Chatbot() {
                                     <input type="text" required value={newBotName} onChange={(e) => setNewBotName(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm" placeholder="e.g. Support Bot, Sales Assistant..." maxLength={50} />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-secondary-700 mb-1.5">Website <span className="text-secondary-400">(optional)</span></label>
+                                    <label className="block text-sm font-medium text-secondary-700 mb-1.5">Website</label>
                                     <input type="url" value={newBotWebsite} onChange={(e) => setNewBotWebsite(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm" placeholder="https://yourwebsite.com" />
                                 </div>
                                 <div className="flex gap-3 pt-2">
