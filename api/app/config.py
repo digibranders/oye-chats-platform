@@ -70,7 +70,3 @@ else:
 
 # Crawler Config (read by crawler_script.py subprocess via os.getenv directly)
 # Defaults: MAX_CRAWL_PAGES=25, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=15
-
-
-
-
