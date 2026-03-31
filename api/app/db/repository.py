@@ -260,34 +260,39 @@ def is_document_processed(session, client_id: int = None, file_hash: str = "", b
 
 
 def search_keyword_documents(session, client_id: int = None, query: str = "", k=5, bot_id: int = None):
-    """Find documents using full-text keyword search."""
+    """Find documents using full-text keyword search, ranked by ts_rank relevance."""
+    ts_query = func.plainto_tsquery("english", query)
+    rank = func.ts_rank(Document.search_vector, ts_query).label("rank")
     stmt = (
-        select(Document)
+        select(Document, rank)
         .filter(
             Document.search_vector.match(query, postgresql_regconfig="english"),
             _owner_filter(Document, bot_id, client_id),
         )
+        .order_by(rank.desc())
         .limit(k)
     )
 
-    results = session.execute(stmt).scalars().all()
-    return results
+    return session.execute(stmt).all()
 
 
-def search_similar_documents(session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None):
-    """Find top-k most similar documents using vector similarity."""
+def search_similar_documents(
+    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 0.8
+):
+    """Find top-k most similar documents using vector similarity with distance threshold."""
     if hasattr(query_embedding, "tolist"):
         query_embedding = query_embedding.tolist()
 
+    distance = Document.embedding.op("<->")(query_embedding).label("distance")
     stmt = (
-        select(Document)
+        select(Document, distance)
         .where(_owner_filter(Document, bot_id, client_id))
-        .order_by(Document.embedding.op("<->")(query_embedding))
+        .where(distance < max_distance)
+        .order_by(distance)
         .limit(k)
     )
 
-    results = session.execute(stmt).scalars().all()
-    return results
+    return session.execute(stmt).all()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

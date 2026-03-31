@@ -1,6 +1,7 @@
 import contextlib
 import json
 import logging
+import threading
 
 from app.core.langfuse_client import get_langfuse
 from app.db.models import Bot, ChatSession
@@ -17,11 +18,108 @@ from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks
 from app.services.email_service import send_qualified_lead_email
 from app.services.llm_service import (
-    generate_response_observed,
-    generate_response_stream_observed,
+    generate_response,
+    generate_response_stream,
 )
 
 logger = logging.getLogger(__name__)
+
+# Cross-encoder reranker (lazy-loaded at module level for reuse)
+_reranker = None
+
+
+def _get_reranker():
+    global _reranker
+    if _reranker is None:
+        try:
+            from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+            _reranker = TextCrossEncoder("Xenova/ms-marco-MiniLM-L-6-v2")
+            logger.info("Cross-encoder reranker loaded: Xenova/ms-marco-MiniLM-L-6-v2")
+        except Exception as e:
+            logger.warning(f"Cross-encoder reranker unavailable, skipping reranking: {e}")
+    return _reranker
+
+
+def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
+    """Merge ranked lists using Reciprocal Rank Fusion (RRF).
+
+    Args:
+        vector_results: list of (Document, distance) tuples from vector search
+        keyword_results: list of (Document, rank) tuples from keyword search
+        k: RRF constant (default 60)
+
+    Returns:
+        list of Document objects sorted by combined RRF score
+    """
+    scores = {}
+    docs = {}
+    for rank, (doc, _dist) in enumerate(vector_results):
+        scores[doc.id] = scores.get(doc.id, 0) + 1.0 / (k + rank + 1)
+        docs[doc.id] = doc
+    for rank, (doc, _rank_score) in enumerate(keyword_results):
+        scores[doc.id] = scores.get(doc.id, 0) + 1.0 / (k + rank + 1)
+        docs[doc.id] = doc
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [docs[doc_id] for doc_id, _ in ranked]
+
+
+def _rerank_results(question: str, results: list) -> list:
+    """Rerank results using cross-encoder if available, keeping top 5."""
+    if len(results) <= 1:
+        return results
+    reranker = _get_reranker()
+    if reranker is None:
+        return results
+    try:
+        reranked = list(
+            reranker.rerank(
+                query=question,
+                documents=[doc.content for doc in results],
+                top_k=min(5, len(results)),
+            )
+        )
+        return [results[r["index"]] for r in reranked]
+    except Exception as e:
+        logger.warning(f"Reranking failed, using original order: {e}")
+        return results
+
+
+def _background_bant_extraction(session_id, cid, bid, history_context, question, answer, current_bant, bot):
+    """Fire-and-forget BANT extraction. Opens its own DB session."""
+    try:
+        extracted = extract_bant_from_conversation(history_context, question, answer, current_bant)
+        bant_updates = {
+            "bant_need": extracted.get("need"),
+            "bant_timeline": extracted.get("timeline"),
+            "bant_authority": extracted.get("authority"),
+            "bant_budget": extracted.get("budget"),
+        }
+        with get_session() as session:
+            update_session_bant(session, session_id, client_id=cid, bant_data=bant_updates, bot_id=bid)
+
+            # Check if lead just became fully qualified → trigger email
+            if (
+                all(bant_updates.get(k) for k in ("bant_need", "bant_budget", "bant_authority", "bant_timeline"))
+                and bot
+                and getattr(bot, "notification_email", None)
+                and getattr(bot, "email_on_qualified", False)
+            ):
+                lead_info = get_lead_info_by_session(session, session_id)
+                contact = None
+                if lead_info:
+                    contact = {
+                        "name": lead_info.name,
+                        "email": lead_info.email,
+                        "phone": lead_info.phone,
+                        "company": lead_info.company,
+                    }
+                send_qualified_lead_email(bot.notification_email, bot.name, bant_updates, contact)
+
+            session.commit()
+    except Exception as e:
+        logger.warning(f"Background BANT extraction failed (non-breaking): {e}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hybrid RAG Prompt Builder
@@ -124,7 +222,26 @@ USER QUESTION: {question}
 
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
-    if not history:
+    if not history or len(history) < 2:
+        return question
+
+    # Heuristic: skip LLM rewrite for self-contained questions
+    follow_up_signals = [
+        "it",
+        "that",
+        "this",
+        "they",
+        "them",
+        "those",
+        "the same",
+        "more about",
+        "what about",
+        "how about",
+        "and the",
+        "also",
+    ]
+    question_lower = question.lower()
+    if not any(signal in question_lower for signal in follow_up_signals):
         return question
 
     history_text = "\n".join(f"{msg.role.upper()}: {msg.content}" for msg in history[-4:])
@@ -139,7 +256,7 @@ FOLLOW-UP QUESTION: {question}
 Respond with ONLY the rewritten standalone query, nothing else."""
 
     try:
-        rewritten = generate_response_observed(rewrite_prompt, generation_name="query-rewrite")
+        rewritten = generate_response(rewrite_prompt, metadata={"generation_name": "query-rewrite"})
         return rewritten.strip() if rewritten and rewritten.strip() else question
     except Exception as e:
         logger.warning(f"Query rewrite failed, using original: {e}")
@@ -150,7 +267,7 @@ def extract_bant_from_conversation(history_context: str, question: str, bot_answ
     """
     Lightweight LLM call to extract BANT data from the conversation.
     Returns updated bant dict. On any failure, returns current_bant unchanged.
-    Uses generate_response_observed which auto-instruments with Langfuse when enabled.
+    Uses generate_response which auto-instruments with Langfuse via LiteLLM callbacks.
     """
     try:
         need = current_bant.get("need") or "null"
@@ -182,9 +299,9 @@ INSTRUCTIONS:
 - Return null for fields where no information has been gathered yet.
 - Return ONLY valid JSON: {{"need": string|null, "timeline": string|null, "authority": string|null, "budget": string|null}}"""
 
-        resp_text = generate_response_observed(
+        resp_text = generate_response(
             extraction_prompt,
-            generation_name="bant-extraction",
+            metadata={"generation_name": "bant-extraction"},
         )
         clean_json = resp_text.strip()
         if clean_json.startswith("```json"):
@@ -272,16 +389,14 @@ def rag_pipeline(
             )
             keyword_results = search_keyword_documents(session, client_id=cid, query=question, k=5, bot_id=bid)
 
-            all_results = {doc.id: doc for doc in vector_results}
-            for doc in keyword_results:
-                all_results[doc.id] = doc
-
-            final_results = list(all_results.values())
+            # Merge with Reciprocal Rank Fusion and rerank
+            final_results = reciprocal_rank_fusion(vector_results, keyword_results)
+            final_results = _rerank_results(question, final_results)
 
             # 6. Format Context & History
             context_parts = []
-            for doc in final_results:
-                context_parts.append(f"Document: {doc.document_name}\nContent:\n{doc.content}\n")
+            for i, doc in enumerate(final_results, 1):
+                context_parts.append(f"[Source {i}] {doc.document_name}\nContent:\n{doc.content}\n")
             context_text = "\n---\n".join(context_parts) if context_parts else "No relevant documents found."
 
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
@@ -292,11 +407,10 @@ def rag_pipeline(
                 client, question, context_text, history_context, bant_state=current_bant, bant_enabled=is_bant_enabled
             )
 
-            # 8. Generate Response (auto-observed via generate_response_observed)
-            answer = generate_response_observed(
+            # 8. Generate Response (LiteLLM auto-traces via callback)
+            answer = generate_response(
                 prompt,
-                generation_name="rag-generation",
-                metadata={"context_chunks": len(final_results)},
+                metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
             )
             bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=answer, bot_id=bid)
 
@@ -305,36 +419,15 @@ def rag_pipeline(
                 with contextlib.suppress(Exception):
                     bot_msg.trace_id = lf.get_current_trace_id()
 
-            # 9. Background BANT extraction (auto-observed)
-            if is_bant_enabled:
-                extracted = extract_bant_from_conversation(history_context, question, answer, current_bant)
-                bant_updates = {
-                    "bant_need": extracted.get("need"),
-                    "bant_timeline": extracted.get("timeline"),
-                    "bant_authority": extracted.get("authority"),
-                    "bant_budget": extracted.get("budget"),
-                }
-                update_session_bant(session, session_id, client_id=cid, bant_data=bant_updates, bot_id=bid)
-
-                # Check if lead just became fully qualified → trigger email
-                if (
-                    all(bant_updates.get(k) for k in ("bant_need", "bant_budget", "bant_authority", "bant_timeline"))
-                    and bot
-                    and bot.notification_email
-                    and bot.email_on_qualified
-                ):
-                    lead_info = get_lead_info_by_session(session, session_id)
-                    contact = None
-                    if lead_info:
-                        contact = {
-                            "name": lead_info.name,
-                            "email": lead_info.email,
-                            "phone": lead_info.phone,
-                            "company": lead_info.company,
-                        }
-                    send_qualified_lead_email(bot.notification_email, bot.name, bant_updates, contact)
-
             session.commit()
+
+            # 9. Fire-and-forget BANT extraction in background thread (saves 1-3s)
+            if is_bant_enabled:
+                threading.Thread(
+                    target=_background_bant_extraction,
+                    args=(session_id, cid, bid, history_context, question, answer, current_bant, bot),
+                    daemon=True,
+                ).start()
 
             return {
                 "answer": answer,
@@ -437,11 +530,9 @@ async def rag_pipeline_stream(
         )
         keyword_results = search_keyword_documents(session, client_id=cid, query=search_query, k=5, bot_id=bid)
 
-        all_results = {doc.id: doc for doc in vector_results}
-        for doc in keyword_results:
-            all_results[doc.id] = doc
-
-        final_results = list(all_results.values())
+        # Merge with Reciprocal Rank Fusion and rerank
+        final_results = reciprocal_rank_fusion(vector_results, keyword_results)
+        final_results = _rerank_results(question, final_results)
         sources = [doc.document_name for doc in final_results]
 
         # 4. Yield Metadata
@@ -449,7 +540,9 @@ async def rag_pipeline_stream(
 
         # 5. Format Context
         context_text = (
-            "\n---\n".join([f"Document: {doc.document_name}\nContent:\n{doc.content}" for doc in final_results])
+            "\n---\n".join(
+                [f"[Source {i}] {doc.document_name}\nContent:\n{doc.content}" for i, doc in enumerate(final_results, 1)]
+            )
             if final_results
             else "No relevant documents found."
         )
@@ -462,13 +555,12 @@ async def rag_pipeline_stream(
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
-        # 7. Stream and Accumulate (auto-observed via wrapper)
+        # 7. Stream and Accumulate (LiteLLM auto-traces via callback)
         try:
             chunk_count = 0
-            for chunk in generate_response_stream_observed(
+            for chunk in generate_response_stream(
                 prompt,
-                generation_name="rag-stream-generation",
-                metadata={"context_chunks": len(final_results)},
+                metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
             ):
                 if chunk:
                     chunk_count += 1
@@ -476,7 +568,7 @@ async def rag_pipeline_stream(
                     yield chunk
 
             if chunk_count == 0:
-                logger.warning(f"Gemini returned zero chunks for session {session_id}")
+                logger.warning(f"LLM returned zero chunks for session {session_id}")
                 yield "I'm sorry, I couldn't generate a response. Please try again or ask something else."
                 full_answer = "I'm sorry, I couldn't generate a response. Please try again or ask something else."
         except Exception as e:
@@ -492,36 +584,15 @@ async def rag_pipeline_stream(
             with contextlib.suppress(Exception):
                 bot_msg.trace_id = lf.get_current_trace_id()
 
-        # 9. Background BANT extraction (auto-observed)
-        if is_bant_enabled:
-            extracted = extract_bant_from_conversation(history_context, question, full_answer, current_bant)
-            bant_updates = {
-                "bant_need": extracted.get("need"),
-                "bant_timeline": extracted.get("timeline"),
-                "bant_authority": extracted.get("authority"),
-                "bant_budget": extracted.get("budget"),
-            }
-            update_session_bant(session, session_id, client_id=cid, bant_data=bant_updates, bot_id=bid)
-
-            # Check if lead just became fully qualified → trigger email
-            if (
-                all(bant_updates.get(k) for k in ("bant_need", "bant_budget", "bant_authority", "bant_timeline"))
-                and bot
-                and bot.notification_email
-                and bot.email_on_qualified
-            ):
-                lead_info = get_lead_info_by_session(session, session_id)
-                contact = None
-                if lead_info:
-                    contact = {
-                        "name": lead_info.name,
-                        "email": lead_info.email,
-                        "phone": lead_info.phone,
-                        "company": lead_info.company,
-                    }
-                send_qualified_lead_email(bot.notification_email, bot.name, bant_updates, contact)
-
         session.commit()
+
+        # 9. Fire-and-forget BANT extraction in background thread (saves 1-3s)
+        if is_bant_enabled:
+            threading.Thread(
+                target=_background_bant_extraction,
+                args=(session_id, cid, bid, history_context, question, full_answer, current_bant, bot),
+                daemon=True,
+            ).start()
 
         # 10. Yield final metadata including message_id
         yield f"\nFINAL_METADATA:{json.dumps({'message_id': bot_msg.id})}\n"

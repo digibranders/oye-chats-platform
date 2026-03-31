@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Plus } from 'lucide-react';
-import { sendMessage, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff } from '../services/api';
+import { sendMessageStream, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -162,30 +162,61 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
 
         try {
-            const data = await sendMessage(userMsg.text, sessionId);
-
-            if (data.session_id && data.session_id !== sessionId) {
-                setSessionId(data.session_id);
-                localStorage.setItem('chat_session_id', data.session_id);
-            }
-
-            const botMsgId = data.message_id || Date.now();
+            // Create a placeholder bot message for progressive rendering
+            const placeholderId = Date.now() + 1;
             const botMsg = {
-                id: botMsgId,
-                text: data.answer || "I'm sorry, I couldn't generate a response.",
+                id: placeholderId,
+                text: '',
                 sender: 'bot',
                 timestamp: new Date().toISOString(),
                 feedback: null
             };
 
-            setStreamingId(botMsgId);
             setMessages(prev => [...prev, botMsg]);
+            setStreamingId(placeholderId);
             setIsTyping(false);
 
+            await sendMessageStream(userMsg.text, sessionId, {
+                onMetadata: (metadata) => {
+                    if (metadata.session_id && metadata.session_id !== sessionId) {
+                        setSessionId(metadata.session_id);
+                        localStorage.setItem('chat_session_id', metadata.session_id);
+                    }
+                },
+                onChunk: (chunk) => {
+                    setMessages(prev => prev.map(msg =>
+                        msg.id === placeholderId
+                            ? { ...msg, text: msg.text + chunk }
+                            : msg
+                    ));
+                },
+                onFinalMetadata: (finalMeta) => {
+                    if (finalMeta.message_id) {
+                        setMessages(prev => prev.map(msg =>
+                            msg.id === placeholderId
+                                ? { ...msg, id: finalMeta.message_id }
+                                : msg
+                        ));
+                        setStreamingId(finalMeta.message_id);
+                    }
+                },
+                onError: () => {
+                    setMessages(prev => prev.map(msg =>
+                        msg.id === placeholderId && !msg.text
+                            ? { ...msg, text: "I'm sorry, I couldn't generate a response. Please try again." }
+                            : msg
+                    ));
+                }
+            });
+
             // Smart handoff: detect fallback/low-confidence bot response
-            if (checkBotFallback(botMsg.text)) {
-                setShowProminentHandoff(true);
-            }
+            setMessages(prev => {
+                const lastBot = prev.find(msg => msg.id === placeholderId || msg.sender === 'bot');
+                if (lastBot && checkBotFallback(lastBot.text)) {
+                    setShowProminentHandoff(true);
+                }
+                return prev;
+            });
 
         } catch (error) {
             console.error("Failed to get response:", error);

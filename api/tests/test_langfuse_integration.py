@@ -1,16 +1,10 @@
-"""Tests for Langfuse observability integration.
+"""Tests for Langfuse observability integration and LLM service functions.
 
-These tests mock the google-genai SDK and Langfuse client to test
+These tests mock the LiteLLM SDK and Langfuse client to test
 instrumentation logic without requiring real API keys or connections.
 """
 
-import sys
 from unittest.mock import MagicMock, patch
-
-# Mock google.genai before any app module imports it
-mock_genai = MagicMock()
-sys.modules["google"] = MagicMock()
-sys.modules["google.genai"] = mock_genai
 
 
 class TestLangfuseClient:
@@ -54,127 +48,122 @@ class TestLangfuseClient:
             lfc.flush_langfuse()
 
 
-class TestLLMServiceObserved:
-    """Tests for the observed LLM wrapper functions."""
+class TestLLMService:
+    """Tests for the LiteLLM-based LLM service functions."""
 
-    def test_generate_response_observed_without_trace(self):
-        """Falls through to original generate_response when trace is None."""
-        # We need to mock the genai client before importing
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
-            import app.services.llm_service as llm_svc
-
-            with patch.object(llm_svc, "generate_response", return_value="Hello!"):
-                result = llm_svc.generate_response_observed("test prompt", generation_name="test", trace=None)
-                assert result == "Hello!"
-
-    def test_generate_response_observed_creates_generation(self):
-        """Creates a Langfuse generation context when enabled."""
-        mock_lf = MagicMock()
-        mock_generation = MagicMock()
-        mock_generation.__enter__ = MagicMock(return_value=mock_generation)
-        mock_generation.__exit__ = MagicMock(return_value=False)
-        mock_lf.start_as_current_observation.return_value = mock_generation
-
+    def test_generate_response_returns_content(self):
+        """generate_response() returns the model's content string."""
         mock_response = MagicMock()
-        mock_response.text = "Generated answer"
-        mock_usage = MagicMock()
-        mock_usage.prompt_token_count = 10
-        mock_usage.candidates_token_count = 20
-        mock_usage.total_token_count = 30
-        mock_response.usage_metadata = mock_usage
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Hello from GPT-5 Mini!"
 
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
-            import app.services.llm_service as llm_svc
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+        ):
+            mock_litellm.completion.return_value = mock_response
 
-            with (
-                patch("app.core.langfuse_client.get_langfuse", return_value=mock_lf),
-                patch.object(llm_svc, "GOOGLE_API_KEY", "test-key"),
-                patch.object(llm_svc, "client") as mock_client,
-            ):
-                mock_client.models.generate_content.return_value = mock_response
+            from app.services.llm_service import generate_response
 
-                result = llm_svc.generate_response_observed(
-                    "test prompt",
-                    generation_name="rag-generation",
-                )
+            result = generate_response("test prompt")
+            assert result == "Hello from GPT-5 Mini!"
+            mock_litellm.completion.assert_called_once()
 
-                assert result == "Generated answer"
-                mock_lf.start_as_current_observation.assert_called_once()
-                mock_generation.update.assert_called_once()
-                update_kwargs = mock_generation.update.call_args.kwargs
-                assert update_kwargs["output"] == "Generated answer"
+    def test_generate_response_with_metadata(self):
+        """generate_response() passes metadata to litellm.completion()."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Answer"
 
-    def test_generate_response_stream_observed_without_trace(self):
-        """Falls through to original generator when trace is None."""
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+        ):
+            mock_litellm.completion.return_value = mock_response
 
-        def mock_stream(prompt):
-            yield "chunk1"
-            yield "chunk2"
+            from app.services.llm_service import generate_response
 
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
-            import app.services.llm_service as llm_svc
+            generate_response("test", metadata={"generation_name": "rag-generation"})
+            call_kwargs = mock_litellm.completion.call_args.kwargs
+            assert call_kwargs["metadata"] == {"generation_name": "rag-generation"}
 
-            with patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream):
-                chunks = list(
-                    llm_svc.generate_response_stream_observed("test prompt", generation_name="test", trace=None)
-                )
-                assert chunks == ["chunk1", "chunk2"]
+    def test_generate_response_handles_empty(self):
+        """generate_response() returns fallback message when content is empty."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = None
 
-    def test_generate_response_stream_observed_captures_output(self):
-        """Accumulates full output and updates generation with TTFT."""
-        mock_lf = MagicMock()
-        mock_generation = MagicMock()
-        mock_generation.__enter__ = MagicMock(return_value=mock_generation)
-        mock_generation.__exit__ = MagicMock(return_value=False)
-        mock_lf.start_as_current_observation.return_value = mock_generation
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+        ):
+            mock_litellm.completion.return_value = mock_response
 
-        def mock_stream(prompt):
-            yield "Hello "
-            yield "world!"
+            from app.services.llm_service import generate_response
 
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
-            import app.services.llm_service as llm_svc
+            result = generate_response("test")
+            assert "couldn't generate" in result
 
-            with (
-                patch("app.core.langfuse_client.get_langfuse", return_value=mock_lf),
-                patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream),
-            ):
-                chunks = list(
-                    llm_svc.generate_response_stream_observed(
-                        "test prompt",
-                        generation_name="rag-stream",
-                    )
-                )
+    def test_generate_response_handles_error(self):
+        """generate_response() returns error message on exception."""
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+        ):
+            mock_litellm.completion.side_effect = Exception("API timeout")
 
-                assert chunks == ["Hello ", "world!"]
-                mock_generation.update.assert_called_once()
-                update_kwargs = mock_generation.update.call_args.kwargs
-                assert update_kwargs["output"] == "Hello world!"
-                assert "ttft_ms" in update_kwargs["metadata"]
-                assert "total_time_ms" in update_kwargs["metadata"]
+            from app.services.llm_service import generate_response
 
-    def test_stream_without_langfuse_yields_all_chunks(self):
-        """Streaming works identically when Langfuse is disabled."""
+            result = generate_response("test")
+            assert "error" in result.lower()
 
-        def mock_stream(prompt):
-            yield "chunk1"
-            yield "chunk2"
-            yield "chunk3"
+    def test_generate_response_stream_yields_chunks(self):
+        """generate_response_stream() yields delta content from each chunk."""
+        chunks = []
+        for text in ["Hello ", "world", "!"]:
+            chunk = MagicMock()
+            chunk.choices = [MagicMock()]
+            chunk.choices[0].delta.content = text
+            chunks.append(chunk)
 
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
-            import app.services.llm_service as llm_svc
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+        ):
+            mock_litellm.completion.return_value = iter(chunks)
 
-            with (
-                patch("app.core.langfuse_client.get_langfuse", return_value=None),
-                patch.object(llm_svc, "generate_response_stream", side_effect=mock_stream),
-            ):
-                chunks = list(
-                    llm_svc.generate_response_stream_observed(
-                        "test prompt",
-                        generation_name="test",
-                    )
-                )
-                assert chunks == ["chunk1", "chunk2", "chunk3"]
+            from app.services.llm_service import generate_response_stream
+
+            result = list(generate_response_stream("test"))
+            assert result == ["Hello ", "world", "!"]
+
+    def test_generate_response_stream_skips_none(self):
+        """generate_response_stream() skips chunks with None content."""
+        chunks = []
+        for text in ["Hello ", None, "world"]:
+            chunk = MagicMock()
+            chunk.choices = [MagicMock()]
+            chunk.choices[0].delta.content = text
+            chunks.append(chunk)
+
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+        ):
+            mock_litellm.completion.return_value = iter(chunks)
+
+            from app.services.llm_service import generate_response_stream
+
+            result = list(generate_response_stream("test"))
+            assert result == ["Hello ", "world"]
+
+    def test_generate_response_no_api_key(self):
+        """generate_response() returns config error when API key is missing."""
+        with patch("app.services.llm_service.OPENAI_API_KEY", None):
+            from app.services.llm_service import generate_response
+
+            result = generate_response("test")
+            assert "Configuration error" in result
 
 
 class TestFeedbackScoring:

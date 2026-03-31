@@ -38,6 +38,72 @@ export const sendMessage = async (message, sessionId = null) => {
     }
 };
 
+export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError }) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/stream`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+                question: message,
+                session_id: sessionId
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete lines in the buffer
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // Keep incomplete line in buffer
+
+            for (const line of lines) {
+                if (!line.trim()) continue;
+
+                if (line.startsWith('METADATA:')) {
+                    try {
+                        const metadata = JSON.parse(line.slice(9));
+                        onMetadata?.(metadata);
+                    } catch { /* ignore parse errors */ }
+                } else if (line.startsWith('FINAL_METADATA:')) {
+                    try {
+                        const finalMeta = JSON.parse(line.slice(15));
+                        onFinalMetadata?.(finalMeta);
+                    } catch { /* ignore parse errors */ }
+                } else {
+                    onChunk?.(line);
+                }
+            }
+        }
+
+        // Process any remaining buffer
+        if (buffer.trim()) {
+            if (buffer.startsWith('FINAL_METADATA:')) {
+                try {
+                    const finalMeta = JSON.parse(buffer.slice(15));
+                    onFinalMetadata?.(finalMeta);
+                } catch { /* ignore */ }
+            } else if (!buffer.startsWith('METADATA:')) {
+                onChunk?.(buffer);
+            }
+        }
+    } catch (error) {
+        console.error("[OyeChat] Streaming error:", error);
+        onError?.(error);
+        throw error;
+    }
+};
+
 export const getChatHistory = async (sessionId) => {
     try {
         const response = await fetch(`${API_URL}/chat/history/${sessionId}`, {
