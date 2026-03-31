@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, MessageCircle, Headphones, Clock } from 'lucide-react';
 import { sendMessageStream, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
@@ -42,6 +42,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
+    const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
 
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
@@ -366,6 +367,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         if (chatMode === 'live' && agentName) {
             const primaryColor = settings.primary_color || '#3A0CA3';
+            const isReconnecting = liveConnectionStatus === 'reconnecting';
             return (
                 <div className="flex items-center gap-3">
                     <div className="relative">
@@ -375,11 +377,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         >
                             {agentName.charAt(0).toUpperCase()}
                         </div>
-                        <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
+                        <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${isReconnecting ? 'bg-amber-400' : 'bg-green-500'}`} />
                     </div>
                     <div>
                         <h3 className="font-semibold text-sm text-gray-900">{agentName}</h3>
-                        <p className="text-[10px] text-green-600 font-medium">Online</p>
+                        <p className={`text-[10px] font-medium ${isReconnecting ? 'text-amber-600' : 'text-green-600'}`}>
+                            {isReconnecting ? 'Reconnecting...' : 'Online'}
+                        </p>
                     </div>
                 </div>
             );
@@ -388,7 +392,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             return (
                 <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
-                        <span className="text-sm">⏸</span>
+                        <Clock className="w-4 h-4" />
                     </div>
                     <h3 className="font-semibold text-sm text-gray-500">Support Unavailable</h3>
                 </div>
@@ -433,6 +437,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 <HandoffForm
                     settings={settings}
                     onSubmit={handleHandoffSubmit}
+                    onCancel={() => setChatMode('bot')}
                     existingLeadInfo={null}
                 />
             ) : isLiveMode ? (
@@ -444,6 +449,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     setChatMode={setChatMode}
                     setAgentName={setAgentName}
                     onNewMessage={handleLiveChatMessage}
+                    botMessages={messages.slice(-5)}
+                    onConnectionStatusChange={setLiveConnectionStatus}
                 />
             ) : (
                 /* Normal bot chat mode */
@@ -496,7 +503,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     }`}
                                     style={showProminentHandoff ? { backgroundColor: settings.primary_color || '#3A0CA3' } : undefined}
                                 >
-                                    {showProminentHandoff ? '🙋 Talk to a human' : '💬 Talk to a human'}
+                                    {showProminentHandoff
+                                        ? <><Headphones className="w-3.5 h-3.5" /> Talk to a human</>
+                                        : <><MessageCircle className="w-3.5 h-3.5" /> Talk to a human</>
+                                    }
                                 </button>
                             </div>
                         )}
