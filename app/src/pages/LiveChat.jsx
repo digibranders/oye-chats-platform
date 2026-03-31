@@ -31,11 +31,15 @@ export default function LiveChat({ embedded = false }) {
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [unreadCounts, setUnreadCounts] = useState({}); // session_id → number
+    const [lastMessages, setLastMessages] = useState({}); // session_id → preview string
 
     // Canned responses
     const [cannedResponses, setCannedResponses] = useState([]);
     const [showCannedDropdown, setShowCannedDropdown] = useState(false);
     const [cannedFilter, setCannedFilter] = useState('');
+
+    // Accept loading state
+    const [acceptingSessionId, setAcceptingSessionId] = useState(null);
 
     // Transfer modal
     const [showTransferModal, setShowTransferModal] = useState(false);
@@ -47,6 +51,9 @@ export default function LiveChat({ embedded = false }) {
     const [rightPanelTab, setRightPanelTab] = useState('team'); // 'session' | 'team'
     const [sessionInfo, setSessionInfo] = useState(null);
     const [agentsList, setAgentsList] = useState([]); // full roster from REST + WS updates
+
+    // Visitor connection status per session: session_id → 'online' | 'disconnected'
+    const [visitorStatus, setVisitorStatus] = useState({});
 
     // Connection state
     const [reconnectCount, setReconnectCount] = useState(0);
@@ -61,8 +68,10 @@ export default function LiveChat({ embedded = false }) {
     const manualCloseRef = useRef(false);
     const reconnectAttemptsRef = useRef(0);
     const selectedChatRef = useRef(null); // mirrors selectedChat without causing WS reconnects
+    const lastAgentTypingSentRef = useRef(0);
     const queuePollIntervalRef = useRef(null);
     const queueSnapshotRef = useRef(new Set());
+    const chatNamesRef = useRef({});
 
     // Keep selectedChatRef in sync and react to chat selection
     useEffect(() => {
@@ -80,6 +89,9 @@ export default function LiveChat({ embedded = false }) {
             setSessionInfo(null);
         }
     }, [selectedChat]);
+
+    // Keep chatNamesRef in sync to avoid stale closures in WS handler
+    useEffect(() => { chatNamesRef.current = chatNames; }, [chatNames]);
 
     // Request browser notification permission on mount
     useEffect(() => {
@@ -125,11 +137,12 @@ export default function LiveChat({ embedded = false }) {
         const hasNewItem = waitingItems.some(item => !previousIds.has(item.session_id));
 
         if (hasNewItem) {
+            playNotification();
             sendBrowserNotification('New chat waiting', 'A visitor is waiting for live support');
         }
 
         queueSnapshotRef.current = currentIds;
-    }, [sendBrowserNotification]);
+    }, [playNotification, sendBrowserNotification]);
 
     const fetchQueueSnapshot = useCallback(async () => {
         try {
@@ -196,7 +209,8 @@ export default function LiveChat({ embedded = false }) {
                     break;
 
                 case 'agents_update':
-                    // Merge real-time active_chat counts into roster
+                    // Merge real-time active_chat counts into roster.
+                    // Agents present in the WS update are online; absent ones are offline.
                     setAgentsList(prev => {
                         const wsMap = {};
                         (data.agents || []).forEach(a => { wsMap[a.agent_id] = a; });
@@ -204,13 +218,18 @@ export default function LiveChat({ embedded = false }) {
                             const wsAgent = wsMap[agent.id];
                             return wsAgent
                                 ? { ...agent, active_chats: wsAgent.active_chats, is_online: true }
-                                : agent;
+                                : { ...agent, is_online: false, active_chats: 0 };
                         });
                     });
                     break;
 
                 case 'message': {
                     const currentSelected = selectedChatRef.current;
+                    // Track last message preview for sidebar
+                    setLastMessages(prev => ({
+                        ...prev,
+                        [data.session_id]: data.content?.slice(0, 60) || '',
+                    }));
                     if (data.session_id === currentSelected) {
                         setMessages(prev => [...prev, {
                             id: Date.now(),
@@ -220,7 +239,6 @@ export default function LiveChat({ embedded = false }) {
                         }]);
                         setIsTyping(false);
                     } else {
-                        // Unread badge for non-selected chats
                         setUnreadCounts(prev => ({
                             ...prev,
                             [data.session_id]: (prev[data.session_id] || 0) + 1,
@@ -229,7 +247,7 @@ export default function LiveChat({ embedded = false }) {
                     if (data.role === 'user') {
                         playNotification();
                         sendBrowserNotification(
-                            chatNames[data.session_id]?.name || 'New message',
+                            chatNamesRef.current[data.session_id]?.name || 'New message',
                             data.content?.slice(0, 80) || 'Visitor sent a message'
                         );
                     }
@@ -245,7 +263,6 @@ export default function LiveChat({ embedded = false }) {
 
                 case 'chat_accepted':
                     setActiveChats(prev => [...new Set([...prev, data.session_id])]);
-                    // Store visitor name received from accept event
                     setChatNames(prev => ({
                         ...prev,
                         [data.session_id]: {
@@ -253,6 +270,7 @@ export default function LiveChat({ embedded = false }) {
                             reason: data.reason || null,
                         },
                     }));
+                    setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
                     removeSessionFromQueue(data.session_id);
                     break;
 
@@ -267,9 +285,60 @@ export default function LiveChat({ embedded = false }) {
 
                 case 'chat_closed':
                     setActiveChats(prev => prev.filter(id => id !== data.session_id));
+                    setVisitorStatus(prev => { const next = { ...prev }; delete next[data.session_id]; return next; });
                     if (selectedChatRef.current === data.session_id) {
                         setSelectedChat(null);
                         setMessages([]);
+                    }
+                    break;
+
+                case 'active_chats_restore':
+                    // Server sends active assignments on agent reconnect/page refresh
+                    if (data.chats && data.chats.length > 0) {
+                        setActiveChats(prev => {
+                            const ids = new Set(prev);
+                            data.chats.forEach(c => ids.add(c.session_id));
+                            return [...ids];
+                        });
+                        setChatNames(prev => {
+                            const next = { ...prev };
+                            data.chats.forEach(c => {
+                                next[c.session_id] = { name: c.visitor_name || 'Anonymous', reason: c.reason || null };
+                            });
+                            return next;
+                        });
+                        setVisitorStatus(prev => {
+                            const next = { ...prev };
+                            data.chats.forEach(c => {
+                                next[c.session_id] = c.visitor_online ? 'online' : 'disconnected';
+                            });
+                            return next;
+                        });
+                    }
+                    break;
+
+                case 'visitor_disconnected':
+                    setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'disconnected' }));
+                    // Add a system message to the chat if it's currently selected
+                    if (data.session_id === selectedChatRef.current) {
+                        setMessages(prev => [...prev, {
+                            id: `sys-disc-${Date.now()}`,
+                            role: 'system',
+                            content: 'Visitor has disconnected. They may reconnect shortly.',
+                            timestamp: new Date().toISOString(),
+                        }]);
+                    }
+                    break;
+
+                case 'visitor_reconnected':
+                    setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
+                    if (data.session_id === selectedChatRef.current) {
+                        setMessages(prev => [...prev, {
+                            id: `sys-recon-${Date.now()}`,
+                            role: 'system',
+                            content: 'Visitor has reconnected.',
+                            timestamp: new Date().toISOString(),
+                        }]);
                     }
                     break;
 
@@ -351,6 +420,7 @@ export default function LiveChat({ embedded = false }) {
                 wsRef.current?.close();
                 wsRef.current = null;
                 setQueue([]);
+                setVisitorStatus({});
                 queueSnapshotRef.current = new Set();
                 setConnectionLost(false);
                 reconnectAttemptsRef.current = 0;
@@ -361,6 +431,7 @@ export default function LiveChat({ embedded = false }) {
     };
 
     const handleAcceptChat = async (sessionId, visitorName, reason) => {
+        setAcceptingSessionId(sessionId);
         try {
             await acceptChat(sessionId);
             setActiveChats(prev => [...new Set([...prev, sessionId])]);
@@ -368,6 +439,7 @@ export default function LiveChat({ embedded = false }) {
                 ...prev,
                 [sessionId]: { name: visitorName || 'Anonymous', reason: reason || null },
             }));
+            setVisitorStatus(prev => ({ ...prev, [sessionId]: 'online' }));
             setSelectedChat(sessionId);
             removeSessionFromQueue(sessionId);
             try {
@@ -378,11 +450,12 @@ export default function LiveChat({ embedded = false }) {
             } catch { setMessages([]); }
         } catch (e) {
             if (e?.status === 409) {
-                // Race condition: another agent accepted first — remove from local queue
                 removeSessionFromQueue(sessionId);
             } else {
                 console.error('Failed to accept chat:', e);
             }
+        } finally {
+            setAcceptingSessionId(null);
         }
     };
 
@@ -393,6 +466,9 @@ export default function LiveChat({ embedded = false }) {
             setMessages(history.map((m, i) => ({
                 id: i, role: m.role, content: m.content, timestamp: m.timestamp,
             })));
+            if (history.length > 0) {
+                setLastMessages(prev => ({ ...prev, [sessionId]: history[history.length - 1].content?.slice(0, 60) || '' }));
+            }
         } catch { setMessages([]); }
     };
 
@@ -471,11 +547,15 @@ export default function LiveChat({ embedded = false }) {
         setMessages(prev => [...prev, {
             id: Date.now(), role: 'agent', content: inputText, timestamp: new Date().toISOString(),
         }]);
+        setLastMessages(prev => ({ ...prev, [selectedChat]: inputText.slice(0, 60) }));
         setInputText('');
         inputRef.current?.focus();
     };
 
     const handleAgentTyping = () => {
+        const now = Date.now();
+        if (now - lastAgentTypingSentRef.current < 3000) return;
+        lastAgentTypingSentRef.current = now;
         const socket = wsRef.current;
         if (socket && socket.readyState === WebSocket.OPEN && selectedChatRef.current) {
             socket.send(JSON.stringify({ type: 'typing', session_id: selectedChatRef.current }));
@@ -571,9 +651,12 @@ export default function LiveChat({ embedded = false }) {
                                         )}
                                         <button
                                             onClick={() => handleAcceptChat(item.session_id, item.name, item.reason)}
-                                            className="w-full py-1.5 bg-primary-600 text-white text-[12px] font-medium rounded-lg hover:bg-primary-700 transition-colors"
+                                            disabled={acceptingSessionId === item.session_id}
+                                            className="w-full py-1.5 bg-primary-600 text-white text-[12px] font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
                                         >
-                                            Accept
+                                            {acceptingSessionId === item.session_id ? (
+                                                <><Loader2 className="w-3 h-3 animate-spin" /> Accepting...</>
+                                            ) : 'Accept'}
                                         </button>
                                     </div>
                                 ))}
@@ -595,6 +678,7 @@ export default function LiveChat({ embedded = false }) {
                                 activeChats.map(sid => {
                                     const unread = unreadCounts[sid] || 0;
                                     const name = chatNames[sid]?.name || 'Visitor';
+                                    const vStatus = visitorStatus[sid] || 'online';
                                     return (
                                         <button
                                             key={sid}
@@ -606,16 +690,24 @@ export default function LiveChat({ embedded = false }) {
                                             }`}
                                         >
                                             <div className="flex items-center justify-between gap-2">
-                                                <span className="text-sm font-medium text-secondary-900 truncate">
-                                                    {name}
-                                                </span>
+                                                <div className="min-w-0">
+                                                    <span className="text-sm font-medium text-secondary-900 truncate block">
+                                                        {name}
+                                                    </span>
+                                                    {vStatus === 'disconnected' && (
+                                                        <span className="text-[10px] text-amber-600 block">Disconnected</span>
+                                                    )}
+                                                    {lastMessages[sid] && (
+                                                        <p className="text-[11px] text-secondary-400 truncate">{lastMessages[sid]}</p>
+                                                    )}
+                                                </div>
                                                 <div className="flex items-center gap-1.5 flex-shrink-0">
                                                     {unread > 0 && (
                                                         <span className="min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
                                                             {unread > 9 ? '9+' : unread}
                                                         </span>
                                                     )}
-                                                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                                                    <span className={`w-2 h-2 rounded-full ${vStatus === 'disconnected' ? 'bg-amber-400' : 'bg-green-500'}`} />
                                                 </div>
                                             </div>
                                         </button>
@@ -637,7 +729,9 @@ export default function LiveChat({ embedded = false }) {
                                         </div>
                                         <div>
                                             <h4 className="text-sm font-semibold text-secondary-900">{currentVisitorName}</h4>
-                                            <p className="text-[11px] text-green-600">Connected</p>
+                                            <p className={`text-[11px] ${(visitorStatus[selectedChat] || 'online') === 'disconnected' ? 'text-amber-600' : 'text-green-600'}`}>
+                                                {(visitorStatus[selectedChat] || 'online') === 'disconnected' ? 'Disconnected' : 'Connected'}
+                                            </p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -649,7 +743,7 @@ export default function LiveChat({ embedded = false }) {
                                             Transfer
                                         </button>
                                         <button
-                                            onClick={() => handleCloseChat(selectedChat)}
+                                            onClick={() => { if (window.confirm(`End chat with ${currentVisitorName}?`)) handleCloseChat(selectedChat); }}
                                             className="px-3 py-1.5 text-[12px] font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
                                         >
                                             End Chat
@@ -756,35 +850,42 @@ export default function LiveChat({ embedded = false }) {
                     {/* ── Right: Session Info + Team Roster ── */}
                     {showRightPanel && (
                         <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-secondary-200 overflow-hidden flex flex-col">
-                            {/* Tabs */}
-                            <div className="flex border-b border-secondary-200 flex-shrink-0">
-                                <button
-                                    onClick={() => setRightPanelTab('session')}
-                                    className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-medium transition-colors ${
-                                        rightPanelTab === 'session'
-                                            ? 'text-primary-600 border-b-2 border-primary-500'
-                                            : 'text-secondary-500 hover:text-secondary-700'
-                                    }`}
-                                >
-                                    <Info className="w-3.5 h-3.5" />
-                                    Session
-                                </button>
-                                <button
-                                    onClick={() => setRightPanelTab('team')}
-                                    className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-medium transition-colors ${
-                                        rightPanelTab === 'team'
-                                            ? 'text-primary-600 border-b-2 border-primary-500'
-                                            : 'text-secondary-500 hover:text-secondary-700'
-                                    }`}
-                                >
-                                    <Users className="w-3.5 h-3.5" />
-                                    Team
-                                </button>
-                            </div>
+                            {/* Tabs — only show tab bar when both tabs are relevant */}
+                            {selectedChat ? (
+                                <div className="flex border-b border-secondary-200 flex-shrink-0">
+                                    <button
+                                        onClick={() => setRightPanelTab('session')}
+                                        className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-medium transition-colors ${
+                                            rightPanelTab === 'session'
+                                                ? 'text-primary-600 border-b-2 border-primary-500'
+                                                : 'text-secondary-500 hover:text-secondary-700'
+                                        }`}
+                                    >
+                                        <Info className="w-3.5 h-3.5" />
+                                        Session
+                                    </button>
+                                    <button
+                                        onClick={() => setRightPanelTab('team')}
+                                        className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-medium transition-colors ${
+                                            rightPanelTab === 'team'
+                                                ? 'text-primary-600 border-b-2 border-primary-500'
+                                                : 'text-secondary-500 hover:text-secondary-700'
+                                        }`}
+                                    >
+                                        <Users className="w-3.5 h-3.5" />
+                                        Team
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="flex items-center gap-1.5 px-4 py-3 border-b border-secondary-200 flex-shrink-0">
+                                    <Users className="w-3.5 h-3.5 text-primary-600" />
+                                    <span className="text-[12px] font-medium text-primary-600">Team</span>
+                                </div>
+                            )}
 
                             <div className="flex-1 overflow-y-auto">
                                 {/* Session Info Tab */}
-                                {rightPanelTab === 'session' && (
+                                {selectedChat && rightPanelTab === 'session' && (
                                     <div className="p-4 space-y-4">
                                         {!selectedChat ? (
                                             <p className="text-sm text-secondary-400 text-center py-8">Select a chat to view details</p>
@@ -857,7 +958,7 @@ export default function LiveChat({ embedded = false }) {
                                 )}
 
                                 {/* Team Roster Tab */}
-                                {rightPanelTab === 'team' && (
+                                {(!selectedChat || rightPanelTab === 'team') && (
                                     <div className="p-4">
                                         <h5 className="text-[11px] font-bold uppercase tracking-wider text-secondary-500 mb-3">
                                             Agents ({agentsList.length})

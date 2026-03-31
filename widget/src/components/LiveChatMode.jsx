@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, Send, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone } from 'lucide-react';
+import { Loader2, Send, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
 import { submitOfflineMessage } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName, onNewMessage }) => {
+const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName, onNewMessage, botMessages = [], onConnectionStatusChange }) => {
     const [ws, setWs] = useState(null);
     const [inputText, setInputText] = useState('');
     const [messages, setMessages] = useState([]);
@@ -22,6 +22,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
     const reconnectTimer = useRef(null);
     const intentionalClose = useRef(false);
     const waitingTimerRef = useRef(null);
+    const lastTypingSentRef = useRef(0);
+    const msgIdCounter = useRef(0);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -36,6 +38,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                 console.log('[OyeChat] Live chat WebSocket connected');
                 reconnectAttempt.current = 0;
                 setIsReconnecting(false);
+                onConnectionStatusChange?.('connected');
             };
 
             socket.onmessage = (event) => {
@@ -51,6 +54,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                             setAgentName(data.agent_name || 'Support');
                         } else if (data.status === 'closed') {
                             intentionalClose.current = true;
+                            socket.close();
+                            setMessages([]);
                             setChatMode('bot');
                             setAgentName(null);
                             onNewMessage({
@@ -69,7 +74,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                     case 'message': {
                         setIsAgentTyping(false);
                         const msg = {
-                            id: Date.now(),
+                            id: `live-${++msgIdCounter.current}`,
                             text: data.content,
                             sender: data.role === 'agent' ? 'agent' : 'user',
                             agentName: data.agent_name,
@@ -97,6 +102,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                     const delay = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30000);
                     reconnectAttempt.current += 1;
                     setIsReconnecting(true);
+                    onConnectionStatusChange?.('reconnecting');
                     console.log(`[OyeChat] Reconnecting in ${delay}ms (attempt ${reconnectAttempt.current})`);
                     reconnectTimer.current = setTimeout(() => {
                         connect();
@@ -144,7 +150,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
         ws.send(JSON.stringify({ type: 'message', content: inputText }));
 
         setMessages(prev => [...prev, {
-            id: Date.now(),
+            id: `live-${++msgIdCounter.current}`,
             text: inputText,
             sender: 'user',
             timestamp: new Date().toISOString(),
@@ -155,6 +161,9 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
     };
 
     const handleTyping = () => {
+        const now = Date.now();
+        if (now - lastTypingSentRef.current < 3000) return;
+        lastTypingSentRef.current = now;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'typing' }));
         }
@@ -234,6 +243,17 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                             Leave a message instead
                         </button>
                     )}
+                    <button
+                        onClick={() => {
+                            intentionalClose.current = true;
+                            ws?.close();
+                            setChatMode('bot');
+                            setAgentName(null);
+                        }}
+                        className="mt-3 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                        Cancel and return to AI chat
+                    </button>
                 </div>
                 <style>{`@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
             </div>
@@ -248,7 +268,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                 <div className="flex-1 flex flex-col items-center justify-center px-5 py-6" style={{ backgroundColor: settings.background_color || '#fff' }}>
                     <div className="w-full max-w-sm text-center" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                         <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-                            <span className="text-2xl">!</span>
+                            <AlertCircle className="w-7 h-7 text-red-500" />
                         </div>
                         <h3 className="text-[#16202C] font-bold text-base mb-2">Something went wrong</h3>
                         <p className="text-gray-500 text-sm mb-5">We couldn't send your message. Please try again.</p>
@@ -296,7 +316,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                 <div className="w-full max-w-sm" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                     <div className="text-center mb-5">
                         <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-3">
-                            <span className="text-2xl">🕐</span>
+                            <Clock className="w-6 h-6 text-amber-500" />
                         </div>
                         <h3 className="text-[#16202C] font-bold text-base mb-1">Team is currently unavailable</h3>
                         <p className="text-gray-500 text-sm">Leave us a message and we'll get back to you.</p>
@@ -375,6 +395,29 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                 </div>
             )}
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" style={{ backgroundColor: settings.background_color || '#fff' }}>
+                {/* Previous bot conversation context */}
+                {botMessages.length > 0 && messages.length === 0 && (
+                    <>
+                        {botMessages.map((msg) => (
+                            <div key={`bot-ctx-${msg.id}`} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div
+                                    className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed opacity-50 ${
+                                        msg.sender === 'user' ? 'text-white rounded-br-md' : 'text-gray-900 rounded-bl-md border border-gray-200'
+                                    }`}
+                                    style={msg.sender === 'user' ? { backgroundColor: settings.primary_color || '#3A0CA3' } : { backgroundColor: '#f8f9fa' }}
+                                >
+                                    {msg.text}
+                                </div>
+                            </div>
+                        ))}
+                        <div className="flex items-center gap-2 py-1">
+                            <div className="flex-1 h-px bg-gray-200" />
+                            <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">Transferred to live support</span>
+                            <div className="flex-1 h-px bg-gray-200" />
+                        </div>
+                    </>
+                )}
+
                 {messages.map((msg) => (
                     <div
                         key={msg.id}
@@ -396,6 +439,9 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                                 <p className="text-[11px] font-semibold mb-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.agentName}</p>
                             )}
                             {msg.text}
+                            <p className={`text-[10px] mt-1 ${msg.sender === 'user' ? 'text-white/60' : 'text-gray-400'}`}>
+                                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
                         </div>
                     </div>
                 ))}
@@ -417,6 +463,18 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
 
             {/* Input */}
             <div className="border-t border-gray-200 px-3 py-2.5 bg-white">
+                <div className="flex items-center justify-center mb-2">
+                    <button
+                        onClick={() => {
+                            intentionalClose.current = true;
+                            ws?.close();
+                            handleReturnToBot();
+                        }}
+                        className="text-[11px] text-gray-400 hover:text-red-500 transition-colors"
+                    >
+                        End chat and return to AI
+                    </button>
+                </div>
                 <form onSubmit={handleSend} className="flex items-center gap-2">
                     <input
                         ref={inputRef}
@@ -429,8 +487,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                     <button
                         type="submit"
                         disabled={!inputText.trim()}
-                        className="w-9 h-9 flex items-center justify-center rounded-xl transition-all disabled:opacity-30"
-                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                        className="w-9 h-9 flex items-center justify-center rounded-xl transition-all"
+                        style={{ backgroundColor: inputText.trim() ? (settings.primary_color || '#3A0CA3') : '#d1d5db' }}
                     >
                         <Send className="w-4 h-4 text-white" />
                     </button>

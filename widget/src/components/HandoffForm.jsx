@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, MessageSquare, ArrowRight, Headphones, Building2 } from 'lucide-react';
+import { User, Mail, MessageSquare, ArrowRight, Headphones, Building2, ArrowLeft } from 'lucide-react';
 import { getDepartments } from '../services/api';
 
-const HandoffForm = ({ settings, onSubmit, existingLeadInfo }) => {
+const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo }) => {
     const [formData, setFormData] = useState({
         name: existingLeadInfo?.name || '',
         email: existingLeadInfo?.email || '',
@@ -114,6 +114,17 @@ const HandoffForm = ({ settings, onSubmit, existingLeadInfo }) => {
                             </>
                         )}
                     </button>
+
+                    {onCancel && (
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            className="w-full flex items-center justify-center gap-1.5 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors mt-1"
+                        >
+                            <ArrowLeft className="w-3.5 h-3.5" />
+                            Back to AI chat
+                        </button>
+                    )}
                 </form>
             </div>
 
