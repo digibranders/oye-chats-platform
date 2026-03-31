@@ -16,16 +16,20 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "300"))
 DOCUMENTS_DIR = "documents"
 ARCHIVE_DIR = "archive"
 
-# Gemini Config
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GEMINI_MODEL = "gemini-2.5-flash"
+# LLM Config (OpenAI via LiteLLM)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-5-mini")
 
-# Validate critical config on startup
-if not GOOGLE_API_KEY:
-    logger.warning("GOOGLE_API_KEY not found in env. Trying GOOGLE_API_KEY...")
-    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    logger.error("NO GOOGLE API KEY FOUND! Set GOOGLE_API_KEY or GOOGLE_API_KEY in your .env file.")
+if not OPENAI_API_KEY:
+    logger.error("OPENAI_API_KEY is not set! LLM calls will fail. Set it in your .env file.")
+else:
+    logger.info(f"OpenAI API key loaded (ends with ...{OPENAI_API_KEY[-4:]}), Model: {LLM_MODEL}")
+
+# Configure LiteLLM callbacks for Langfuse auto-instrumentation
+import litellm  # noqa: E402
+
+litellm.success_callback = ["langfuse"]
+litellm.failure_callback = ["langfuse"]
 
 if not DB_URL:
     logger.error("DB_URL is not set! Database connections will fail.")

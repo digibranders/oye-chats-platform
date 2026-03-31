@@ -3,7 +3,7 @@ import os
 import shutil
 
 import psutil
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 
 from app.api.auth import get_current_client
 from app.config import DOCUMENTS_DIR
@@ -98,11 +98,21 @@ def delete_document_endpoint(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | None):
+    """Background task: run document ingestion pipeline."""
+    try:
+        count = run_folder_ingestion(client_id, documents_dir, bot_id=bot_id)
+        logger.info(f"Background ingestion completed: {count} documents processed for client {client_id}")
+    except Exception as e:
+        logger.error(f"Background ingestion failed for client {client_id}: {e}")
+
+
 @router.post("/ingest")
 def ingest_documents(
     files: list[UploadFile] = File(...),
     bot_id: int | None = Query(None),
     client: Client = Depends(get_current_client),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Ingest multiple files (PDF, DOCX, TXT, MD) for a client."""
     if not files:
@@ -129,17 +139,15 @@ def ingest_documents(
     if not saved_files:
         raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) saved.")
 
-    try:
-        logger.info(f"Starting ingestion for {len(saved_files)} files for client {client.id}, bot_id={bot_id}...")
-        count = run_folder_ingestion(client.id, DOCUMENTS_DIR, bot_id=bot_id)
-        return {
-            "message": "Ingestion completed successfully",
-            "files_uploaded": saved_files,
-            "documents_processed_count": count,
-        }
-    except Exception as e:
-        logger.error(f"Ingestion failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}") from e
+    logger.info(
+        f"Starting background ingestion for {len(saved_files)} files for client {client.id}, bot_id={bot_id}..."
+    )
+    background_tasks.add_task(_run_ingestion_background, client.id, DOCUMENTS_DIR, bot_id)
+    return {
+        "message": "Documents are being processed",
+        "files_uploaded": saved_files,
+        "status": "processing",
+    }
 
 
 @router.post("/crawl")
