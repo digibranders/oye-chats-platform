@@ -311,7 +311,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                                 required
                                 value={offlineForm.name}
                                 onChange={(e) => setOfflineForm(prev => ({ ...prev, name: e.target.value }))}
-                                className="flex-1 bg-transparent outline-none text-sm"
+                                className="flex-1 bg-transparent outline-none text-sm text-gray-900 placeholder:text-gray-400"
                             />
                         </div>
                         <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
@@ -322,7 +322,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                                 required
                                 value={offlineForm.email}
                                 onChange={(e) => setOfflineForm(prev => ({ ...prev, email: e.target.value }))}
-                                className="flex-1 bg-transparent outline-none text-sm"
+                                className="flex-1 bg-transparent outline-none text-sm text-gray-900 placeholder:text-gray-400"
                             />
                         </div>
                         <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
@@ -332,7 +332,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                                 placeholder="Phone number (for callback)"
                                 value={offlineForm.phone}
                                 onChange={(e) => setOfflineForm(prev => ({ ...prev, phone: e.target.value }))}
-                                className="flex-1 bg-transparent outline-none text-sm"
+                                className="flex-1 bg-transparent outline-none text-sm text-gray-900 placeholder:text-gray-400"
                             />
                         </div>
                         <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2.5">
@@ -343,7 +343,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                                 rows={3}
                                 value={offlineForm.message}
                                 onChange={(e) => setOfflineForm(prev => ({ ...prev, message: e.target.value }))}
-                                className="flex-1 bg-transparent outline-none text-sm resize-none"
+                                className="flex-1 bg-transparent outline-none text-sm text-gray-900 placeholder:text-gray-400 resize-none"
                             />
                         </div>
                         <button
@@ -383,12 +383,17 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                         <div
                             className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
                                 msg.sender === 'user'
-                                    ? 'bg-[#16202C] text-white rounded-br-md'
-                                    : 'bg-gray-100 text-[#16202C] rounded-bl-md'
+                                    ? 'text-white rounded-br-md shadow-sm'
+                                    : 'text-gray-900 rounded-bl-md border border-gray-200'
                             }`}
+                            style={
+                                msg.sender === 'user'
+                                    ? { backgroundColor: settings.primary_color || '#3A0CA3' }
+                                    : { backgroundColor: '#f8f9fa' }
+                            }
                         >
                             {msg.sender === 'agent' && msg.agentName && (
-                                <p className="text-[10px] font-bold text-gray-500 mb-0.5">{msg.agentName}</p>
+                                <p className="text-[11px] font-semibold mb-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.agentName}</p>
                             )}
                             {msg.text}
                         </div>
@@ -397,11 +402,11 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
 
                 {isAgentTyping && (
                     <div className="flex justify-start">
-                        <div className="bg-gray-100 px-4 py-3 rounded-2xl rounded-bl-md">
+                        <div className="px-4 py-3 rounded-2xl rounded-bl-md border border-gray-200" style={{ backgroundColor: '#f8f9fa' }}>
                             <div className="flex gap-1.5">
-                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                                <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                                <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
                             </div>
                         </div>
                     </div>
@@ -411,7 +416,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
             </div>
 
             {/* Input */}
-            <div className="border-t border-gray-100 px-3 py-2.5">
+            <div className="border-t border-gray-200 px-3 py-2.5 bg-white">
                 <form onSubmit={handleSend} className="flex items-center gap-2">
                     <input
                         ref={inputRef}
@@ -419,7 +424,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                         value={inputText}
                         onChange={(e) => { setInputText(e.target.value); handleTyping(); }}
                         placeholder="Type a message..."
-                        className="flex-1 px-3 py-2 text-sm bg-gray-50 rounded-xl outline-none focus:bg-white border border-transparent focus:border-gray-200 transition-colors"
+                        className="flex-1 px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-xl outline-none focus:bg-white border border-gray-200 focus:border-gray-300 transition-colors placeholder:text-gray-400"
                     />
                     <button
                         type="submit"

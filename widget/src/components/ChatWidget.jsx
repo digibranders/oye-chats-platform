@@ -3,8 +3,8 @@ import Launcher from './Launcher';
 import ChatWindow from './ChatWindow';
 import { getChatbotSettings } from '../services/api';
 
-const OPEN_DURATION = 280;  // ms — matches widgetOpen animation
-const CLOSE_DURATION = 180; // ms — matches widgetClose animation
+const OPEN_DURATION = 300;  // ms — matches widgetOpen animation (280ms + buffer)
+const CLOSE_DURATION = 220; // ms — matches widgetClose animation (200ms + buffer)
 
 const ChatWidget = () => {
   const [isVisible, setIsVisible] = useState(false);   // controls DOM presence

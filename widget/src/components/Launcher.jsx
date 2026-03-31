@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Bot } from 'lucide-react';
+import { Bot, ChevronDown } from 'lucide-react';
 
 const Launcher = ({ isOpen, toggleChat, settings }) => {
     const launcherName = settings?.launcher_name || "Have Questions?";
@@ -25,9 +25,45 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
 
     const showTooltip = !isOpen && !isScrolling;
 
+    const renderBotIcon = () => {
+        if (avatarType === 'orb') {
+            const oc = settings?.orb_color || primaryColor;
+            return (
+                <div
+                    className="w-full h-full rounded-full"
+                    style={{
+                        background: `radial-gradient(circle at 35% 35%, ${oc}44, ${oc}bb, ${oc})`,
+                        boxShadow: `0 0 12px ${oc}55`
+                    }}
+                />
+            );
+        }
+        if (avatarType === 'mascot') {
+            return (
+                <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
+                    <Bot size={28} className="text-white" />
+                </div>
+            );
+        }
+        if (launcherLogo && launcherLogo !== "null") {
+            return (
+                <img
+                    src={launcherLogo}
+                    alt="Launcher"
+                    className="w-full h-full object-cover"
+                />
+            );
+        }
+        return (
+            <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
+                <Bot size={28} className="text-white" />
+            </div>
+        );
+    };
+
     return (
         <div className="relative flex flex-col items-end">
-            {/* Tooltip */}
+            {/* Tooltip — hidden when chat is open */}
             <div className={`absolute bottom-full mb-4 mr-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transition-opacity duration-200 whitespace-nowrap ${showTooltip ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                 <div className="text-sm font-medium text-gray-700">
                     <b>{launcherName}</b>
@@ -35,40 +71,27 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
                 <div className="absolute -bottom-2 right-6 w-4 h-4 bg-white transform rotate-45 border-r border-b border-gray-100"></div>
             </div>
 
-            {/* Main Button — crossfades with widget */}
-            <div className={`transition-all duration-300 ${isOpen ? 'opacity-0 scale-75 pointer-events-none' : 'opacity-100 scale-100'}`}>
-                <button
-                    onClick={toggleChat}
-                    className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden"
+            {/* Pulse ring — visible when chat is open */}
+            <span
+                className={`absolute inset-0 rounded-full pointer-events-none transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0'}`}
+                style={isOpen ? { animation: 'launcherPulse 2s ease-in-out infinite', border: `2px solid ${primaryColor}` } : undefined}
+            />
+
+            {/* Main Button — bot icon always visible */}
+            <button
+                onClick={toggleChat}
+                className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden"
+            >
+                {renderBotIcon()}
+
+                {/* Minimize badge — appears at bottom-right when chat is open */}
+                <span
+                    className={`absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-md transition-all duration-300 ${isOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-0 pointer-events-none'}`}
+                    style={{ backgroundColor: primaryColor }}
                 >
-                    {avatarType === 'orb' ? (() => {
-                        const oc = settings?.orb_color || primaryColor;
-                        return (
-                        <div
-                            className="w-full h-full rounded-full"
-                            style={{
-                                background: `radial-gradient(circle at 35% 35%, ${oc}44, ${oc}bb, ${oc})`,
-                                boxShadow: `0 0 12px ${oc}55`
-                            }}
-                        />
-                        );
-                    })() : avatarType === 'mascot' ? (
-                        <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
-                            <Bot size={28} className="text-white" />
-                        </div>
-                    ) : launcherLogo && launcherLogo !== "null" ? (
-                        <img
-                            src={launcherLogo}
-                            alt="Launcher"
-                            className="w-full h-full object-cover"
-                        />
-                    ) : (
-                        <div className="w-full h-full bg-[#2B66BC] flex items-center justify-center">
-                            <Bot size={28} />
-                        </div>
-                    )}
-                </button>
-            </div>
+                    <ChevronDown size={12} className="text-white" />
+                </span>
+            </button>
         </div>
     );
 };
