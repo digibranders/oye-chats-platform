@@ -80,11 +80,12 @@ export const loginAdmin = async (email, password) => {
  * @param {string} name - Full name
  * @param {string} email - Email address
  * @param {string} password - Password (min 8 chars, letter + number)
+ * @param {string|null} companyName - Optional company name
  * @returns {Promise<Object>} The API response with access_token, client_id, name
  */
-export const registerClient = async (name, email, password) => {
+export const registerClient = async (name, email, password, companyName = null) => {
     try {
-        const response = await api.post('/auth/register', { name, email, password });
+        const response = await api.post('/auth/register', { name, email, password, company_name: companyName });
         return response.data;
     } catch (error) {
         console.error('API Error during registration:', error);

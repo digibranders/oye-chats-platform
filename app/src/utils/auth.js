@@ -49,6 +49,7 @@ export const AUTH_STORAGE_KEYS = [
     'agent_role',
     'agent_id',
     'is_superadmin',
+    'company_name',
     'onboarding_complete',
     'selected_bot_id',
 ];

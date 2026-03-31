@@ -234,7 +234,7 @@ def get_history_endpoint(
         from sqlalchemy import select
 
         from app.db.models import Bot as BotModel
-        from app.db.models import ChatMessage
+        from app.db.models import ChatMessage, ChatSession
 
         with get_session() as session:
             all_history = []
@@ -258,9 +258,15 @@ def get_history_endpoint(
                     history = get_chat_history(session, sid, client_id=client.id, limit=50)
 
                 if not history:
+                    # Ownership-validated fallback: join through session → bot to enforce client scope
                     stmt = (
                         select(ChatMessage)
-                        .where(ChatMessage.session_id == sid)
+                        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                        .join(BotModel, ChatSession.bot_id == BotModel.id)
+                        .where(
+                            ChatMessage.session_id == sid,
+                            BotModel.client_id == client.id,
+                        )
                         .order_by(ChatMessage.created_at)
                         .limit(50)
                     )

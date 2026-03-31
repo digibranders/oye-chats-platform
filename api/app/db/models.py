@@ -14,6 +14,7 @@ class Client(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
+    company_name = Column(String, nullable=True)
     hashed_password = Column(String, nullable=False)
     api_key = Column(String, unique=True, index=True, nullable=False)
     is_superadmin = Column(sqlalchemy.Boolean, default=False, nullable=False)

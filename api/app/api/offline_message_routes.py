@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.sql import func
 
@@ -29,6 +29,17 @@ class SubmitOfflineMessageRequest(BaseModel):
     message: str
     session_id: str | None = None
     department_id: int | None = None
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, v):
+        import re
+
+        v = v.strip().lower()
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not re.match(pattern, v):
+            raise ValueError("Please enter a valid email address.")
+        return v
 
 
 class UpdateOfflineMessageRequest(BaseModel):

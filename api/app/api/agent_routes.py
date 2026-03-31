@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select, update
 
@@ -19,6 +19,17 @@ from app.services.live_chat_service import manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+def _require_team_management_access(auth: dict) -> None:
+    """Only workspace owners, admins, and direct client logins can manage agents/departments."""
+    if auth["type"] == "client":
+        return
+    if getattr(auth["entity"], "role", "agent") not in {"owner", "admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to manage team members.",
+        )
 
 
 # ── Request / Response Models ──
@@ -86,6 +97,19 @@ class UpdateAgentRequest(BaseModel):
     max_concurrent_chats: int | None = None
     notification_preferences: dict | None = None
 
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, v):
+        if v is None:
+            return v
+        import re
+
+        v = v.strip().lower()
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not re.match(pattern, v):
+            raise ValueError("Please enter a valid email address.")
+        return v
+
 
 class CreateDepartmentRequest(BaseModel):
     name: str
@@ -128,11 +152,12 @@ def list_departments(auth=Depends(get_current_client_or_agent)):
 
 
 @router.post("/departments")
-def create_department(request: CreateDepartmentRequest, client: Client = Depends(get_current_client)):
+def create_department(request: CreateDepartmentRequest, auth=Depends(get_current_client_or_agent)):
     """Create a new department."""
+    _require_team_management_access(auth)
     with get_session() as session:
         dept = Department(
-            client_id=client.id,
+            client_id=auth["client_id"],
             name=request.name.strip(),
             description=request.description,
         )
@@ -147,13 +172,12 @@ def create_department(request: CreateDepartmentRequest, client: Client = Depends
 
 
 @router.patch("/departments/{department_id}")
-def update_department(
-    department_id: int, request: UpdateDepartmentRequest, client: Client = Depends(get_current_client)
-):
+def update_department(department_id: int, request: UpdateDepartmentRequest, auth=Depends(get_current_client_or_agent)):
     """Update a department."""
+    _require_team_management_access(auth)
     with get_session() as session:
         dept = session.execute(
-            select(Department).where(Department.id == department_id, Department.client_id == client.id)
+            select(Department).where(Department.id == department_id, Department.client_id == auth["client_id"])
         ).scalar_one_or_none()
         if not dept:
             raise HTTPException(status_code=404, detail="Department not found.")
@@ -166,11 +190,12 @@ def update_department(
 
 
 @router.delete("/departments/{department_id}")
-def delete_department(department_id: int, client: Client = Depends(get_current_client)):
+def delete_department(department_id: int, auth=Depends(get_current_client_or_agent)):
     """Delete a department. Agents in this department are moved to no department."""
+    _require_team_management_access(auth)
     with get_session() as session:
         dept = session.execute(
-            select(Department).where(Department.id == department_id, Department.client_id == client.id)
+            select(Department).where(Department.id == department_id, Department.client_id == auth["client_id"])
         ).scalar_one_or_none()
         if not dept:
             raise HTTPException(status_code=404, detail="Department not found.")
@@ -232,20 +257,24 @@ def list_agents(auth=Depends(get_current_client_or_agent)):
 
 
 @router.post("/create")
-def create_agent(request: CreateAgentRequest, client: Client = Depends(get_current_client)):
+def create_agent(request: CreateAgentRequest, auth=Depends(get_current_client_or_agent)):
     """Create a new agent with login credentials."""
+    _require_team_management_access(auth)
+    client_id = auth["client_id"]
     with get_session() as session:
-        # Check for duplicate email
-        existing = session.execute(select(Agent).where(Agent.email == request.email)).scalar_one_or_none()
+        # Check for duplicate email — scoped to this workspace only
+        existing = session.execute(
+            select(Agent).where(Agent.email == request.email, Agent.client_id == client_id)
+        ).scalar_one_or_none()
         if existing:
             raise HTTPException(status_code=409, detail="An agent with this email already exists.")
 
         # Auto-create default "General" department if none exists
         dept_count = session.execute(
-            select(func.count()).select_from(Department).where(Department.client_id == client.id)
+            select(func.count()).select_from(Department).where(Department.client_id == client_id)
         ).scalar()
         if dept_count == 0:
-            general_dept = Department(client_id=client.id, name="General", description="Default department")
+            general_dept = Department(client_id=client_id, name="General", description="Default department")
             session.add(general_dept)
             session.flush()
             default_dept_id = general_dept.id
@@ -253,7 +282,7 @@ def create_agent(request: CreateAgentRequest, client: Client = Depends(get_curre
             default_dept_id = None
 
         agent = Agent(
-            client_id=client.id,
+            client_id=client_id,
             name=request.name.strip(),
             email=request.email,
             hashed_password=get_password_hash(request.password),
@@ -265,7 +294,7 @@ def create_agent(request: CreateAgentRequest, client: Client = Depends(get_curre
         session.commit()
         session.refresh(agent)
 
-        logger.info(f"Agent created: {agent.id} ({agent.name}) for client {client.id}")
+        logger.info(f"Agent created: {agent.id} ({agent.name}) for client {client_id}")
 
         return {
             "id": agent.id,
@@ -277,11 +306,12 @@ def create_agent(request: CreateAgentRequest, client: Client = Depends(get_curre
 
 
 @router.patch("/{agent_id}")
-def update_agent(agent_id: int, request: UpdateAgentRequest, client: Client = Depends(get_current_client)):
-    """Update an agent's profile (admin only)."""
+def update_agent(agent_id: int, request: UpdateAgentRequest, auth=Depends(get_current_client_or_agent)):
+    """Update an agent's profile (owner/admin only)."""
+    _require_team_management_access(auth)
     with get_session() as session:
         agent = session.execute(
-            select(Agent).where(Agent.id == agent_id, Agent.client_id == client.id)
+            select(Agent).where(Agent.id == agent_id, Agent.client_id == auth["client_id"])
         ).scalar_one_or_none()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found.")
@@ -289,7 +319,17 @@ def update_agent(agent_id: int, request: UpdateAgentRequest, client: Client = De
         if request.name is not None:
             agent.name = request.name.strip()
         if request.email is not None:
-            agent.email = request.email.strip().lower()
+            # Validate workspace-scoped uniqueness, excluding this agent
+            dup = session.execute(
+                select(Agent).where(
+                    Agent.email == request.email,
+                    Agent.client_id == auth["client_id"],
+                    Agent.id != agent_id,
+                )
+            ).scalar_one_or_none()
+            if dup:
+                raise HTTPException(status_code=409, detail="An agent with this email already exists.")
+            agent.email = request.email  # already normalized by field_validator
         if request.role is not None:
             agent.role = request.role
         if request.department_id is not None:
@@ -306,11 +346,15 @@ def update_agent(agent_id: int, request: UpdateAgentRequest, client: Client = De
 
 
 @router.delete("/{agent_id}")
-def delete_agent(agent_id: int, client: Client = Depends(get_current_client)):
-    """Delete an agent."""
+def delete_agent(agent_id: int, auth=Depends(get_current_client_or_agent)):
+    """Delete an agent (owner/admin only)."""
+    _require_team_management_access(auth)
+    # Prevent agents from deleting their own account
+    if auth["type"] == "agent" and auth["agent_id"] == agent_id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
     with get_session() as session:
         agent = session.execute(
-            select(Agent).where(Agent.id == agent_id, Agent.client_id == client.id)
+            select(Agent).where(Agent.id == agent_id, Agent.client_id == auth["client_id"])
         ).scalar_one_or_none()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found.")
@@ -332,7 +376,7 @@ def delete_agent(agent_id: int, client: Client = Depends(get_current_client)):
 
 
 @router.post("/handoff")
-async def request_handoff(request: HandoffRequest, client: Client = Depends(get_current_client)):
+async def request_handoff(request: HandoffRequest, _client: Client = Depends(get_current_client)):
     """Called by the widget (via REST) to initiate a handoff request."""
     with get_session() as session:
         chat_session = session.execute(
@@ -479,6 +523,8 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_agent))
             raise HTTPException(status_code=404, detail="Session not found")
 
         bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if not bot or bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
         chat_session.status = "bot"
         chat_session.assigned_agent_id = None
         session.commit()
