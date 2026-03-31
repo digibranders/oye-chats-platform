@@ -83,9 +83,9 @@ export const loginAdmin = async (email, password) => {
  * @param {string|null} companyName - Optional company name
  * @returns {Promise<Object>} The API response with access_token, client_id, name
  */
-export const registerClient = async (name, email, password, companyName = null) => {
+export const registerClient = async (name, email, password, companyName = null, website = null) => {
     try {
-        const response = await api.post('/auth/register', { name, email, password, company_name: companyName });
+        const response = await api.post('/auth/register', { name, email, password, company_name: companyName, website });
         return response.data;
     } catch (error) {
         console.error('API Error during registration:', error);

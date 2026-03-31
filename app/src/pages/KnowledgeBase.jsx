@@ -19,7 +19,7 @@ export default function KnowledgeBase() {
     const [uploadStatus, setUploadStatus] = useState(null);
     const fileInputRef = useRef(null);
 
-    const [url, setUrl] = useState('');
+    const [url, setUrl] = useState(localStorage.getItem('company_website') || '');
     const [isCrawling, setIsCrawling] = useState(false);
     const [crawlStatus, setCrawlStatus] = useState(null);
     const [scanningUrls, setScanningUrls] = useState([]); // live crawl progress
@@ -300,6 +300,15 @@ export default function KnowledgeBase() {
                                 <FileText className="mx-auto text-secondary-300 mb-3" size={28} />
                                 <p className="text-secondary-500 font-medium text-sm">No documents ingested yet</p>
                                 <p className="text-xs text-secondary-400 mt-1">Upload documents or crawl a website</p>
+                                {localStorage.getItem('company_website') && (
+                                    <button
+                                        onClick={() => setActiveTab('urls')}
+                                        className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-primary-50 hover:bg-primary-100 text-primary-700 rounded-lg text-sm font-medium transition-colors"
+                                    >
+                                        <Globe size={14} />
+                                        Scan {localStorage.getItem('company_website')}
+                                    </button>
+                                )}
                             </div>
                         ) : (
                             <div className="overflow-hidden border border-secondary-200 rounded-xl">

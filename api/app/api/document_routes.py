@@ -5,7 +5,7 @@ import shutil
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 
-from app.api.auth import get_current_client
+from app.api.auth import get_current_client_or_agent
 from app.config import DOCUMENTS_DIR
 from app.db.models import Bot, Client, Document
 from app.db.repository import get_ingested_documents
@@ -32,12 +32,20 @@ def _check_memory():
         )
 
 
+def _require_knowledge_management_access(auth: dict) -> None:
+    """Only workspace owners, admins, and direct client logins can manage knowledge sources."""
+    if auth["type"] == "client":
+        return
+    if getattr(auth["entity"], "role", "agent") not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="You do not have permission to manage knowledge sources.")
+
+
 @router.get("/documents")
-def get_documents_endpoint(bot_id: int | None = Query(None), client: Client = Depends(get_current_client)):
+def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_agent)):
     """Retrieve a list of all ingested documents for the authenticated client."""
     try:
         with get_session() as session:
-            docs = get_ingested_documents(session, client_id=client.id, bot_id=bot_id)
+            docs = get_ingested_documents(session, client_id=auth["client_id"], bot_id=bot_id)
             return docs
     except Exception as e:
         logger.error(f"Failed to fetch documents: {e}")
@@ -48,10 +56,12 @@ def get_documents_endpoint(bot_id: int | None = Query(None), client: Client = De
 def delete_document_endpoint(
     document_name: str,
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Delete all documents associated with a document name for the authenticated client."""
-    logger.info(f"Deletion request for client {client.id}, bot_id={bot_id}, source: {document_name}")
+    _require_knowledge_management_access(auth)
+    client_id = auth["client_id"]
+    logger.info(f"Deletion request for client {client_id}, bot_id={bot_id}, source: {document_name}")
     try:
         from sqlalchemy import func
 
@@ -65,7 +75,7 @@ def delete_document_endpoint(
             if bot_id:
                 base_filter.append(Document.bot_id == bot_id)
             else:
-                base_filter.append(Document.client_id == client.id)
+                base_filter.append(Document.client_id == client_id)
 
             deleted_count = session.query(Document).filter(*base_filter).delete(synchronize_session=False)
             session.commit()
@@ -76,7 +86,7 @@ def delete_document_endpoint(
                 if bot_id:
                     fallback_filter.append(Document.bot_id == bot_id)
                 else:
-                    fallback_filter.append(Document.client_id == client.id)
+                    fallback_filter.append(Document.client_id == client_id)
                 deleted_count = session.query(Document).filter(*fallback_filter).delete(synchronize_session=False)
                 session.commit()
 
@@ -88,7 +98,7 @@ def delete_document_endpoint(
                 os.remove(file_path)
                 logger.info(f"Deleted file from disk: {file_path}")
 
-            logger.info(f"Deleted {deleted_count} chunks for document '{document_name}' (client {client.id})")
+            logger.info(f"Deleted {deleted_count} chunks for document '{document_name}' (client {client_id})")
             return {"message": f"Successfully deleted '{document_name}'", "chunks_removed": deleted_count}
 
     except HTTPException:
@@ -111,10 +121,12 @@ def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | 
 def ingest_documents(
     files: list[UploadFile] = File(...),
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Ingest multiple files (PDF, DOCX, TXT, MD) for a client."""
+    _require_knowledge_management_access(auth)
+    client_id = auth["client_id"]
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
@@ -140,9 +152,9 @@ def ingest_documents(
         raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) saved.")
 
     logger.info(
-        f"Starting background ingestion for {len(saved_files)} files for client {client.id}, bot_id={bot_id}..."
+        f"Starting background ingestion for {len(saved_files)} files for client {client_id}, bot_id={bot_id}..."
     )
-    background_tasks.add_task(_run_ingestion_background, client.id, DOCUMENTS_DIR, bot_id)
+    background_tasks.add_task(_run_ingestion_background, client_id, DOCUMENTS_DIR, bot_id)
     return {
         "message": "Documents are being processed",
         "files_uploaded": saved_files,
@@ -154,9 +166,11 @@ def ingest_documents(
 async def crawl_endpoint(
     request: CrawlRequest,
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Crawl a URL recursively and ingest content for a client."""
+    _require_knowledge_management_access(auth)
+    client_id = auth["client_id"]
     _check_memory()
 
     global _crawl_in_progress  # noqa: PLW0603
@@ -165,7 +179,7 @@ async def crawl_endpoint(
 
     _crawl_in_progress = True
     try:
-        logger.info(f"Crawling URL recursively: {request.url} for client {client.id}, bot_id={bot_id}")
+        logger.info(f"Crawling URL recursively: {request.url} for client {client_id}, bot_id={bot_id}")
         crawl_data = await crawl_website(request.url)
 
         results = crawl_data.get("results")
@@ -177,22 +191,22 @@ async def crawl_endpoint(
         valid_pages = [p for p in results if p.get("url") and p.get("content")]
         pages_processed = len(valid_pages)
         logger.info(f"Batch ingesting {pages_processed} pages")
-        total_chunks = batch_web_ingestion(client.id, valid_pages, bot_id=bot_id)
+        total_chunks = batch_web_ingestion(client_id, valid_pages, bot_id=bot_id)
 
         if recommended_colors:
             with get_session() as session:
                 if bot_id:
                     bot_db = session.query(Bot).get(bot_id)
-                    if bot_db and bot_db.client_id == client.id:
+                    if bot_db and bot_db.client_id == client_id:
                         bot_db.recommended_colors = recommended_colors
                         session.commit()
                         logger.info(f"Saved {len(recommended_colors)} recommended colors for bot {bot_id}")
                 else:
-                    client_db = session.query(Client).get(client.id)
+                    client_db = session.query(Client).get(client_id)
                     if client_db:
                         client_db.recommended_colors = recommended_colors
                         session.commit()
-                        logger.info(f"Saved {len(recommended_colors)} recommended colors for client {client.id}")
+                        logger.info(f"Saved {len(recommended_colors)} recommended colors for client {client_id}")
 
         return {
             "message": "Crawling and ingestion completed successfully",

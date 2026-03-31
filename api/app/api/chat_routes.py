@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
 
-from app.api.auth import get_current_bot, get_current_client
+from app.api.auth import get_current_bot, get_current_client_or_agent
 from app.core.langfuse_client import get_langfuse
 from app.db.models import Bot, ChatSession
 from app.db.repository import create_or_update_lead_info, ensure_chat_session, get_chat_history, update_message_feedback
@@ -288,7 +288,7 @@ def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot
 def get_history_endpoint(
     session_id: str,
     bot_id: int | None = Query(None),
-    client=Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Retrieve chat history for a given session."""
     try:
@@ -303,20 +303,22 @@ def get_history_endpoint(
 
             resolve_bot_ids = []
             if not bot_id:
-                bots = session.execute(select(BotModel.id).where(BotModel.client_id == client.id)).scalars().all()
+                bots = (
+                    session.execute(select(BotModel.id).where(BotModel.client_id == auth["client_id"])).scalars().all()
+                )
                 resolve_bot_ids = list(bots)
 
             for sid in sids:
                 if bot_id:
-                    history = get_chat_history(session, sid, client_id=client.id, limit=50, bot_id=bot_id)
+                    history = get_chat_history(session, sid, client_id=auth["client_id"], limit=50, bot_id=bot_id)
                 elif resolve_bot_ids:
                     history = []
                     for bid in resolve_bot_ids:
-                        history = get_chat_history(session, sid, client_id=client.id, limit=50, bot_id=bid)
+                        history = get_chat_history(session, sid, client_id=auth["client_id"], limit=50, bot_id=bid)
                         if history:
                             break
                 else:
-                    history = get_chat_history(session, sid, client_id=client.id, limit=50)
+                    history = get_chat_history(session, sid, client_id=auth["client_id"], limit=50)
 
                 if not history:
                     # Ownership-validated fallback: join through session → bot to enforce client scope
@@ -326,7 +328,7 @@ def get_history_endpoint(
                         .join(BotModel, ChatSession.bot_id == BotModel.id)
                         .where(
                             ChatMessage.session_id == sid,
-                            BotModel.client_id == client.id,
+                            BotModel.client_id == auth["client_id"],
                         )
                         .order_by(ChatMessage.created_at)
                         .limit(50)

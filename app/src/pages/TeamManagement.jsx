@@ -179,13 +179,6 @@ export default function TeamManagement() {
                                     </button>
                                 </div>
                                 <select
-                                    value={agentForm.role} onChange={(e) => setAgentForm(p => ({ ...p, role: e.target.value }))}
-                                    className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
-                                >
-                                    <option value="agent">Agent</option>
-                                    <option value="admin">Admin</option>
-                                </select>
-                                <select
                                     value={agentForm.department_id} onChange={(e) => setAgentForm(p => ({ ...p, department_id: e.target.value }))}
                                     className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 >

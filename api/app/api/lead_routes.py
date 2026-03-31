@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select
 
-from app.api.auth import get_current_client
-from app.db.models import Bot, ChatMessage, ChatSession, Client, LeadInfo
+from app.api.auth import get_current_client_or_agent
+from app.db.models import Bot, ChatMessage, ChatSession, LeadInfo
 from app.db.session import get_session
 from app.services.lead_service import build_lead_response, calculate_lead_score, get_lead_status
 
@@ -25,7 +25,7 @@ def list_leads(
     min_score: int | None = Query(None, ge=0, le=100),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """List leads with BANT data, scores, and optional filters."""
     with get_session() as session:
@@ -33,7 +33,7 @@ def list_leads(
         if bot_id:
             bot_ids = [bot_id]
         else:
-            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
+            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
 
         if not bot_ids:
             return {"leads": [], "total": 0, "page": page, "limit": limit}
@@ -79,14 +79,14 @@ def list_leads(
 @router.get("/stats")
 def lead_stats(
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Aggregate lead stats: total, cold, warm, hot, qualified counts."""
     with get_session() as session:
         if bot_id:
             bot_ids = [bot_id]
         else:
-            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
+            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
 
         sessions = session.execute(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids))).scalars().all()
 
@@ -110,14 +110,14 @@ def lead_stats(
 @router.get("/export")
 def export_leads_csv(
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Export leads as a CSV file download."""
     with get_session() as session:
         if bot_id:
             bot_ids = [bot_id]
         else:
-            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
+            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
 
         results = session.execute(
             select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
@@ -188,11 +188,11 @@ def export_leads_csv(
 @router.get("/{session_id}")
 def get_lead_detail(
     session_id: str,
-    client: Client = Depends(get_current_client),
+    auth: dict = Depends(get_current_client_or_agent),
 ):
     """Get full lead detail: BANT + contact info + chat history."""
     with get_session() as session:
-        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == client.id)).scalars().all())
+        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
 
         chat_session = session.execute(
             select(ChatSession).where(

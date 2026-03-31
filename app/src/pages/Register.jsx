@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
-import { Bot, Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Zap, BookOpen, BarChart3 } from 'lucide-react';
+import { Bot, Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, Zap, BookOpen, BarChart3 } from 'lucide-react';
 import { registerClient } from '../services/api';
 
 export default function Register() {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [companyName, setCompanyName] = useState('');
+    const [website, setWebsite] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -45,7 +46,7 @@ export default function Register() {
 
         try {
             setIsLoading(true);
-            const data = await registerClient(name.trim(), email.trim(), password, companyName.trim() || null);
+            const data = await registerClient(name.trim(), email.trim(), password, companyName.trim() || null, website.trim() || null);
 
             localStorage.setItem('admin_token', data.access_token);
             localStorage.setItem('admin_name', data.name);
@@ -53,6 +54,7 @@ export default function Register() {
             localStorage.setItem('auth_type', 'client');
             localStorage.setItem('is_superadmin', 'false');
             localStorage.setItem('company_name', data.company_name || '');
+            localStorage.setItem('company_website', data.website || '');
             sessionStorage.setItem('login_toast', 'registered');
 
             navigate('/chatbot');
@@ -202,6 +204,24 @@ export default function Register() {
                                     placeholder="Acme Inc."
                                     autoComplete="organization"
                                     tabIndex={3}
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">
+                                Website <span className="text-secondary-400 font-normal">(optional)</span>
+                            </label>
+                            <div className="relative">
+                                <Globe size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-secondary-400" />
+                                <input
+                                    type="url"
+                                    value={website}
+                                    onChange={(e) => setWebsite(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
+                                    placeholder="https://yourcompany.com"
+                                    autoComplete="url"
+                                    tabIndex={4}
                                 />
                             </div>
                         </div>

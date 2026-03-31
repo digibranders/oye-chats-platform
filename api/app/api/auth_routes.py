@@ -218,6 +218,7 @@ class LoginResponse(BaseModel):
     name: str
     is_superadmin: bool
     company_name: str | None = None
+    website: str | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -225,6 +226,7 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     company_name: str | None = None
+    website: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -262,6 +264,7 @@ class RegisterResponse(BaseModel):
     name: str
     is_superadmin: bool = False
     company_name: str | None = None
+    website: str | None = None
     message: str = "Account created successfully"
 
 
@@ -323,6 +326,7 @@ def login(request: LoginRequest):
                 "name": client.name,
                 "is_superadmin": getattr(client, "is_superadmin", False),
                 "company_name": getattr(client, "company_name", None),
+                "website": getattr(client, "website", None),
             }
     except HTTPException:
         raise
@@ -358,7 +362,7 @@ def register(request: RegisterRequest):
                 company_name=request.company_name.strip() if request.company_name else None,
                 hashed_password=get_password_hash(request.password),
                 api_key=str(uuid.uuid4().hex),
-                website=None,
+                website=request.website.strip() if request.website else None,
                 is_superadmin=False,
             )
 
@@ -382,6 +386,7 @@ def register(request: RegisterRequest):
                 "name": new_client.name,
                 "is_superadmin": False,
                 "company_name": new_client.company_name,
+                "website": new_client.website,
                 "message": "Account created successfully",
             }
     except HTTPException:
@@ -465,6 +470,7 @@ class AgentLoginResponse(BaseModel):
     role: str
     department_id: int | None = None
     company_name: str | None = None
+    website: str | None = None
 
 
 class AgentChangePasswordRequest(BaseModel):
@@ -552,6 +558,7 @@ def agent_login(request: AgentLoginRequest):
                 "role": agent.role,
                 "department_id": agent.department_id,
                 "company_name": getattr(workspace, "company_name", None) if workspace else None,
+                "website": getattr(workspace, "website", None) if workspace else None,
             }
     except HTTPException:
         raise
