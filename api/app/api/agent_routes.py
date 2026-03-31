@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select, update
 
-from app.api.auth import get_current_client, get_current_client_or_agent
+from app.api.auth import get_current_bot, get_current_client_or_agent
 from app.core.security import get_password_hash
-from app.db.models import Agent, Bot, ChatMessage, ChatSession, Client, Department
+from app.db.models import Agent, Bot, ChatMessage, ChatSession, Department
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services.email_service import send_handoff_request_email
@@ -376,14 +376,22 @@ def delete_agent(agent_id: int, auth=Depends(get_current_client_or_agent)):
 
 
 @router.post("/handoff")
-async def request_handoff(request: HandoffRequest, _client: Client = Depends(get_current_client)):
+async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_current_bot)):
     """Called by the widget (via REST) to initiate a handoff request."""
     with get_session() as session:
         chat_session = session.execute(
             select(ChatSession).where(ChatSession.id == request.session_id)
         ).scalar_one_or_none()
+
+        # Create the session if the visitor hasn't chatted yet (direct handoff)
         if not chat_session:
-            raise HTTPException(status_code=404, detail="Session not found")
+            chat_session = ChatSession(
+                id=request.session_id,
+                bot_id=bot.id,
+                client_id=bot.client_id,
+            )
+            session.add(chat_session)
+            session.flush()
 
         # Update session status
         chat_session.status = "waiting"
@@ -391,9 +399,9 @@ async def request_handoff(request: HandoffRequest, _client: Client = Depends(get
         if request.department_id:
             chat_session.department_id = request.department_id
 
-        # Get bot for timeout setting
-        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
-        timeout = bot.agent_timeout_seconds if bot else 120
+        # Get bot for timeout setting (re-fetch within this session)
+        db_bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        timeout = db_bot.agent_timeout_seconds if db_bot else 120
 
         session.commit()
 
