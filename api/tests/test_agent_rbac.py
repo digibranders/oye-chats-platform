@@ -74,12 +74,8 @@ class TestCannedResponseWriteAccess:
     def test_admin_agent_allowed(self):
         _require_canned_response_write_access(_agent_auth("admin"))  # must not raise
 
-    def test_regular_agent_blocked(self):
-        with pytest.raises(HTTPException) as exc_info:
-            _require_canned_response_write_access(_agent_auth("agent"))
-        assert exc_info.value.status_code == 403
+    def test_regular_agent_allowed(self):
+        _require_canned_response_write_access(_agent_auth("agent"))  # must not raise
 
-    def test_unknown_role_blocked(self):
-        with pytest.raises(HTTPException) as exc_info:
-            _require_canned_response_write_access(_agent_auth("viewer"))
-        assert exc_info.value.status_code == 403
+    def test_any_role_allowed(self):
+        _require_canned_response_write_access(_agent_auth("viewer"))  # must not raise

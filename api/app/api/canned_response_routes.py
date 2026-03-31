@@ -64,18 +64,13 @@ def list_canned_responses(
 
 
 def _require_canned_response_write_access(auth: dict) -> None:
-    """Allow clients and owner/admin agents to manage shared quick replies.
+    """Allow clients and all agents to manage shared quick replies.
 
-    Regular agents are read-only: they use quick replies in live chat but
-    cannot add, edit, or delete workspace-level shared responses.
+    All team members can add, edit, and delete workspace-level quick replies
+    since they are the primary users of these responses in live chat.
     """
-    if auth["type"] == "client":
-        return
-    if getattr(auth["entity"], "role", "agent") not in {"owner", "admin"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Only workspace owners and admins can modify quick replies.",
-        )
+    # Both clients and agents of any role are allowed.
+    return
 
 
 @router.post("")
