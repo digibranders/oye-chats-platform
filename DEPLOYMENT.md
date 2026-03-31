@@ -13,7 +13,7 @@
 
 ## GitHub Repos
 
-- **`oyechats/platform`** (monorepo) — Backend, Widget, Admin
+- **`digibranders/oye-chats-platform`** (monorepo) — Backend, Widget, Admin
 - **`oyechats/landing`** (separate) — Next.js landing page
 
 ## DNS Records
@@ -36,44 +36,51 @@ cdn.oyechats.com      CNAME   <r2-public-domain>
 - **Size**: 2GB RAM / 1 vCPU ($12/mo)
 - **Region**: BLR (Bangalore) or closest to users
 - Add your SSH key during creation
+- **User**: root only (no additional users)
 
 ### 1.2 Initial Setup
 ```bash
 ssh root@<droplet-ip>
 
-# Create deploy user
-adduser oyechats
-usermod -aG sudo oyechats
+# Update system
+apt update && apt upgrade -y
 
-# Switch to deploy user
-su - oyechats
+# Install Python 3.11 (Ubuntu 24.04 ships 3.12, we need 3.11)
+apt install -y software-properties-common
+add-apt-repository -y ppa:deadsnakes/ppa
+apt update
+apt install -y python3.11 python3.11-venv python3.11-dev
 
 # Install system dependencies
-sudo apt update && sudo apt install -y \
+apt install -y \
   postgresql-16 postgresql-16-pgvector \
-  python3.11 python3.11-venv \
   nginx certbot python3-certbot-nginx \
   git curl build-essential libpq-dev
 
 # Install uv (Python package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source ~/.bashrc
+source /root/.bashrc
 ```
 
 ### 1.3 Setup PostgreSQL
 ```bash
-sudo -u postgres createuser oyechats
-sudo -u postgres createdb oyechats -O oyechats
-sudo -u postgres psql -c "ALTER USER oyechats PASSWORD '<STRONG_PASSWORD>';"
-sudo -u postgres psql -d oyechats -c "CREATE EXTENSION IF NOT EXISTS vector;"
+systemctl enable postgresql
+systemctl start postgresql
+
+sudo -u postgres psql <<SQL
+CREATE USER oyechats WITH PASSWORD '<STRONG_PASSWORD>';
+CREATE DATABASE oyechats OWNER oyechats;
+\c oyechats
+CREATE EXTENSION IF NOT EXISTS vector;
+SQL
 ```
 
 ### 1.4 Deploy Backend
 ```bash
-sudo mkdir -p /opt/oyechats && sudo chown oyechats:oyechats /opt/oyechats
+mkdir -p /opt/oyechats
 cd /opt/oyechats
-git clone https://github.com/oyechats/platform.git
-cd platform/backend
+git clone https://github.com/digibranders/oye-chats-platform.git platform
+cd platform/api
 
 # Configure environment
 cp .env.example .env
@@ -83,9 +90,24 @@ nano .env
 **Required .env values:**
 ```
 DB_URL=postgresql://oyechats:<STRONG_PASSWORD>@localhost:5432/oyechats
-GOOGLE_API_KEY=<your-gemini-key>
+OPENAI_API_KEY=<your-openai-api-key>
+GOOGLE_API_KEY=<your-gemini-api-key>
 APP_ENV=production
-CORS_ORIGINS=https://oyechats.com,https://admin.oyechats.com
+CORS_ORIGINS=https://oyechats.com,https://admin.oyechats.com,https://www.oyechats.com
+```
+
+**Optional .env values:**
+```
+LLM_MODEL=openai/gpt-5-mini
+R2_KEY_ID=<backblaze-key-id>
+R2_APPLICATION_KEY=<backblaze-app-key>
+R2_BUCKET_NAME=<bucket-name>
+R2_ENDPOINT=<s3-endpoint>
+SENTRY_DSN_BACKEND=<sentry-dsn>
+LANGFUSE_SECRET_KEY=<langfuse-secret>
+LANGFUSE_PUBLIC_KEY=<langfuse-public>
+LANGFUSE_HOST=https://cloud.langfuse.com
+BREVO_API_KEY=<brevo-key>
 ```
 
 ```bash
@@ -94,47 +116,42 @@ uv sync
 uv run alembic upgrade head
 
 # Install Playwright for web crawling
-uv run playwright install chromium --with-deps
+uv run playwright install --with-deps chromium
 ```
 
 ### 1.5 Create Systemd Service
 ```bash
-sudo nano /etc/systemd/system/oyechats-api.service
-```
-
-```ini
+cat > /etc/systemd/system/oyechats-api.service <<'EOF'
 [Unit]
 Description=OyeChat API
 After=network.target postgresql.service
 
 [Service]
-User=oyechats
-WorkingDirectory=/opt/oyechats/platform/backend
-Environment=PATH=/home/oyechats/.local/bin:/usr/bin
-ExecStart=/home/oyechats/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+User=root
+WorkingDirectory=/opt/oyechats/platform/api
+Environment=PATH=/root/.local/bin:/usr/bin:/usr/local/bin
+ExecStart=/root/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable oyechats-api
-sudo systemctl start oyechats-api
+systemctl daemon-reload
+systemctl enable oyechats-api
+systemctl start oyechats-api
 
 # Verify it's running
-sudo systemctl status oyechats-api
+systemctl status oyechats-api
 curl http://localhost:8000/docs  # Should return Swagger HTML
 ```
 
 ### 1.6 Nginx Reverse Proxy
 ```bash
-sudo nano /etc/nginx/sites-available/oyechats-api
-```
-
-```nginx
+cat > /etc/nginx/sites-available/oyechats-api <<'NGINX'
 server {
     server_name api.oyechats.com;
 
@@ -144,35 +161,47 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket support (required for /ws/chat/ and /ws/agent)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
         proxy_buffering off;
         proxy_read_timeout 300s;
     }
 
     client_max_body_size 50M;
 }
+NGINX
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/oyechats-api /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
+ln -s /etc/nginx/sites-available/oyechats-api /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
 
 # SSL (after DNS is pointed)
-sudo certbot --nginx -d api.oyechats.com
+certbot --nginx -d api.oyechats.com
 ```
 
-### 1.7 Database Backups
+### 1.7 Firewall
+```bash
+ufw allow OpenSSH
+ufw allow 'Nginx Full'
+ufw --force enable
+```
+
+### 1.8 Database Backups
 ```bash
 mkdir -p /opt/oyechats/backups
-nano /opt/oyechats/backup.sh
-```
 
-```bash
+cat > /opt/oyechats/backup.sh <<'BASH'
 #!/bin/bash
-pg_dump -U oyechats oyechats | gzip > /opt/oyechats/backups/oyechats-$(date +%Y%m%d).sql.gz
+sudo -u postgres pg_dump oyechats | gzip > /opt/oyechats/backups/oyechats-$(date +%Y%m%d).sql.gz
 find /opt/oyechats/backups -mtime +7 -delete
-```
+BASH
 
-```bash
 chmod +x /opt/oyechats/backup.sh
 crontab -e
 # Add: 0 3 * * * /opt/oyechats/backup.sh
@@ -208,9 +237,9 @@ After this, GitHub Actions handles subsequent deploys automatically.
 ## Step 3: Vercel (Admin + Landing Page)
 
 ### Admin Dashboard
-1. Go to **vercel.com** → Import `oyechats/platform` repo
+1. Go to **vercel.com** → Import `digibranders/oye-chats-platform` repo
 2. Configure:
-   - **Root Directory**: `admin`
+   - **Root Directory**: `app`
    - **Framework Preset**: Vite
    - **Build Command**: `npm run build`
    - **Output Directory**: `dist`
@@ -230,14 +259,25 @@ Both auto-deploy on every push to `main`.
 
 Set these in **GitHub → Settings → Secrets and variables → Actions**:
 
-### Platform Repo (`oyechats/platform`)
+### Platform Repo (`digibranders/oye-chats-platform`)
 | Secret | Value |
 |--------|-------|
 | `DO_HOST` | Droplet IP address |
-| `DO_USER` | `oyechats` |
+| `DO_USER` | `root` |
 | `DO_SSH_KEY` | Private SSH key (for droplet access) |
-| `CF_API_TOKEN` | Cloudflare API token (R2 write access) |
-| `CF_ACCOUNT_ID` | Cloudflare account ID |
+| `DB_URL` | `postgresql://oyechats:<PASSWORD>@localhost:5432/oyechats` |
+| `GOOGLE_API_KEY` | Google Gemini API key (LiteLLM fallback) |
+| `OPENAI_API_KEY` | OpenAI API key (primary LLM) |
+| `CORS_ORIGINS` | `https://oyechats.com,https://admin.oyechats.com,https://www.oyechats.com` |
+| `R2_KEY_ID` | Backblaze B2 key ID |
+| `R2_APPLICATION_KEY` | Backblaze B2 application key |
+| `R2_BUCKET_NAME` | Backblaze B2 bucket name |
+| `R2_ENDPOINT` | Backblaze B2 S3 endpoint |
+| `SENTRY_DSN_BACKEND` | Sentry DSN for backend |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key |
+| `CF_API_TOKEN` | Cloudflare API token (R2 write access, for widget deploy) |
+| `CF_ACCOUNT_ID` | Cloudflare account ID (for widget deploy) |
 
 ---
 
@@ -245,9 +285,9 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 
 ```
 Push to main
-  ├── backend/** changed → SSH deploy to DO → restart service
+  ├── api/** changed → SSH deploy to DO → restart service
   ├── widget/** changed → Build → Upload to R2 CDN
-  └── admin/** changed → Vercel auto-deploys
+  └── app/** changed → Vercel auto-deploys
 ```
 
 ---
@@ -257,19 +297,19 @@ Push to main
 ### On the Droplet
 ```bash
 # View API logs
-sudo journalctl -u oyechats-api -f
+journalctl -u oyechats-api -f
 
 # Restart API
-sudo systemctl restart oyechats-api
+systemctl restart oyechats-api
 
 # Manual deploy
-cd /opt/oyechats/platform && git pull && cd backend && uv sync && uv run alembic upgrade head && sudo systemctl restart oyechats-api
+cd /opt/oyechats/platform && git pull origin main && cd api && uv sync && uv run alembic upgrade head && systemctl restart oyechats-api
 
 # Check Postgres
 sudo -u postgres psql -d oyechats -c "SELECT count(*) FROM bots;"
 
 # Restore backup
-gunzip -c /opt/oyechats/backups/oyechats-YYYYMMDD.sql.gz | psql -U oyechats oyechats
+gunzip -c /opt/oyechats/backups/oyechats-YYYYMMDD.sql.gz | sudo -u postgres psql oyechats
 ```
 
 ### Local Development
