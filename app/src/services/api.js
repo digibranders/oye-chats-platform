@@ -20,14 +20,14 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
     return apiError;
 };
 
-// Request interceptor: inject API key (supports both Client and Agent auth)
+// Request interceptor: inject API key (supports both Client and Operator auth)
 api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('admin_token');
-        const authType = localStorage.getItem('auth_type'); // 'client' or 'agent'
+        const authType = localStorage.getItem('auth_type'); // 'client' or 'operator'
         if (token) {
-            if (authType === 'agent') {
-                config.headers['X-Agent-Key'] = token;
+            if (authType === 'operator') {
+                config.headers['X-Operator-Key'] = token;
             } else {
                 config.headers['X-API-Key'] = token;
             }
@@ -46,10 +46,10 @@ api.interceptors.response.use(
         const detail = (error.response?.data?.detail || '').toString().toLowerCase();
         const requestUrl = (error.config?.url || '').toString();
 
-        const isLoginAttempt = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/agent-login');
-        const isAgentOnClientOnlyEndpoint = authType === 'agent' && detail.includes('api key');
+        const isLoginAttempt = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/operator-login');
+        const isOperatorOnClientOnlyEndpoint = authType === 'operator' && detail.includes('api key');
 
-        if (status === 401 && !isLoginAttempt && !isAgentOnClientOnlyEndpoint) {
+        if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint) {
             AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
@@ -337,7 +337,7 @@ export const getClientSettings = async (botId) => {
                 notification_email: bot.notification_email,
                 email_on_qualified: bot.email_on_qualified,
                 email_on_handoff: bot.email_on_handoff,
-                agent_timeout_seconds: bot.agent_timeout_seconds
+                operator_timeout_seconds: bot.operator_timeout_seconds
             };
         }
         const response = await api.get('/client/settings');
@@ -606,11 +606,11 @@ export const exportLeadsCsv = async (botId) => {
     }
 };
 
-// ── Live Chat / Agent ──
+// ── Live Chat / Operator ──
 
-export const getAgentQueue = async () => {
+export const getOperatorQueue = async () => {
     try {
-        const response = await api.get('/agents/queue');
+        const response = await api.get('/operators/queue');
         return response.data;
     } catch (error) {
         console.error('API Error fetching queue:', error);
@@ -620,7 +620,7 @@ export const getAgentQueue = async () => {
 
 export const acceptChat = async (sessionId) => {
     try {
-        const response = await api.post(`/agents/accept/${sessionId}`);
+        const response = await api.post(`/operators/accept/${sessionId}`);
         return response.data;
     } catch (error) {
         console.error('API Error accepting chat:', error);
@@ -628,9 +628,9 @@ export const acceptChat = async (sessionId) => {
     }
 };
 
-export const closeAgentChat = async (sessionId) => {
+export const closeOperatorChat = async (sessionId) => {
     try {
-        const response = await api.post(`/agents/close/${sessionId}`);
+        const response = await api.post(`/operators/close/${sessionId}`);
         return response.data;
     } catch (error) {
         console.error('API Error closing chat:', error);
@@ -640,7 +640,7 @@ export const closeAgentChat = async (sessionId) => {
 
 export const transferChat = async (sessionId, data) => {
     try {
-        const response = await api.post(`/agents/transfer/${sessionId}`, data);
+        const response = await api.post(`/operators/transfer/${sessionId}`, data);
         return response.data;
     } catch (error) {
         console.error('API Error transferring chat:', error);
@@ -648,9 +648,9 @@ export const transferChat = async (sessionId, data) => {
     }
 };
 
-export const toggleAgentStatus = async () => {
+export const toggleOperatorStatus = async () => {
     try {
-        const response = await api.post('/agents/status');
+        const response = await api.post('/operators/status');
         return response.data;
     } catch (error) {
         console.error('API Error toggling status:', error);
@@ -660,7 +660,7 @@ export const toggleAgentStatus = async () => {
 
 export const getSessionDetails = async (sessionId) => {
     try {
-        const response = await api.get(`/agents/session/${sessionId}/details`);
+        const response = await api.get(`/operators/session/${sessionId}/details`);
         return response.data;
     } catch (error) {
         console.error('API Error fetching session details:', error);
@@ -668,56 +668,56 @@ export const getSessionDetails = async (sessionId) => {
     }
 };
 
-// ── Agent Login ──
+// ── Operator Login ──
 
-export const loginAgent = async (email, password) => {
+export const loginOperator = async (email, password) => {
     try {
-        const response = await api.post('/auth/agent-login', { email, password });
+        const response = await api.post('/auth/operator-login', { email, password });
         return response.data;
     } catch (error) {
-        console.error('API Error agent login:', error);
+        console.error('API Error operator login:', error);
         throw error.response?.data?.detail || error.message;
     }
 };
 
-// ── Agent Management ──
+// ── Operator Management ──
 
-export const getAgents = async () => {
+export const getOperators = async () => {
     try {
-        const response = await api.get('/agents');
+        const response = await api.get('/operators');
         return response.data;
     } catch (error) {
-        console.error('API Error fetching agents:', error);
+        console.error('API Error fetching operators:', error);
         throw error.response?.data || error.message;
     }
 };
 
-export const createAgent = async (data) => {
+export const createOperator = async (data) => {
     try {
-        const response = await api.post('/agents/create', data);
+        const response = await api.post('/operators/create', data);
         return response.data;
     } catch (error) {
-        console.error('API Error creating agent:', error);
+        console.error('API Error creating operator:', error);
         throw error.response?.data?.detail || error.message;
     }
 };
 
-export const updateAgent = async (agentId, data) => {
+export const updateOperator = async (operatorId, data) => {
     try {
-        const response = await api.patch(`/agents/${agentId}`, data);
+        const response = await api.patch(`/operators/${operatorId}`, data);
         return response.data;
     } catch (error) {
-        console.error('API Error updating agent:', error);
+        console.error('API Error updating operator:', error);
         throw error.response?.data || error.message;
     }
 };
 
-export const deleteAgent = async (agentId) => {
+export const deleteOperator = async (operatorId) => {
     try {
-        const response = await api.delete(`/agents/${agentId}`);
+        const response = await api.delete(`/operators/${operatorId}`);
         return response.data;
     } catch (error) {
-        console.error('API Error deleting agent:', error);
+        console.error('API Error deleting operator:', error);
         throw error.response?.data || error.message;
     }
 };
@@ -726,7 +726,7 @@ export const deleteAgent = async (agentId) => {
 
 export const getDepartments = async () => {
     try {
-        const response = await api.get('/agents/departments');
+        const response = await api.get('/operators/departments');
         return response.data;
     } catch (error) {
         console.error('API Error fetching departments:', error);
@@ -736,7 +736,7 @@ export const getDepartments = async () => {
 
 export const createDepartment = async (data) => {
     try {
-        const response = await api.post('/agents/departments', data);
+        const response = await api.post('/operators/departments', data);
         return response.data;
     } catch (error) {
         console.error('API Error creating department:', error);
@@ -746,7 +746,7 @@ export const createDepartment = async (data) => {
 
 export const updateDepartment = async (departmentId, data) => {
     try {
-        const response = await api.patch(`/agents/departments/${departmentId}`, data);
+        const response = await api.patch(`/operators/departments/${departmentId}`, data);
         return response.data;
     } catch (error) {
         console.error('API Error updating department:', error);
@@ -756,7 +756,7 @@ export const updateDepartment = async (departmentId, data) => {
 
 export const deleteDepartment = async (departmentId) => {
     try {
-        const response = await api.delete(`/agents/departments/${departmentId}`);
+        const response = await api.delete(`/operators/departments/${departmentId}`);
         return response.data;
     } catch (error) {
         console.error('API Error deleting department:', error);

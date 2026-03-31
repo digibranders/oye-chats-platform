@@ -6,7 +6,7 @@ import { getAuthState } from '../utils/auth';
 
 export default function Settings() {
     const { showToast } = useToast();
-    const { isAgent, agentRole } = getAuthState();
+    const { isOperator, operatorRole } = getAuthState();
     const [feedback, setFeedback] = useState('');
 
     const handleSendFeedback = (e) => {
@@ -31,16 +31,16 @@ export default function Settings() {
                         <span className="text-sm font-medium text-secondary-900">{localStorage.getItem('admin_name') || '—'}</span>
                     </div>
                     <div className="border-t border-secondary-100" />
-                    {isAgent ? (
+                    {isOperator ? (
                         <>
                             <div className="flex items-center justify-between py-2">
-                                <span className="text-sm text-secondary-500">Agent ID</span>
-                                <span className="text-sm font-mono text-secondary-400">{localStorage.getItem('agent_id') || '—'}</span>
+                                <span className="text-sm text-secondary-500">Operator ID</span>
+                                <span className="text-sm font-mono text-secondary-400">{localStorage.getItem('operator_id') || '—'}</span>
                             </div>
                             <div className="border-t border-secondary-100" />
                             <div className="flex items-center justify-between py-2">
                                 <span className="text-sm text-secondary-500">Role</span>
-                                <span className="text-sm font-medium text-secondary-900 capitalize">{agentRole || '—'}</span>
+                                <span className="text-sm font-medium text-secondary-900 capitalize">{operatorRole || '—'}</span>
                             </div>
                         </>
                     ) : (

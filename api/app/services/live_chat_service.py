@@ -1,4 +1,4 @@
-"""Live chat connection manager — handles WebSocket routing between visitors and agents."""
+"""Live chat connection manager — handles WebSocket routing between visitors and operators."""
 
 import asyncio
 import contextlib
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
-    """Manages WebSocket connections for live chat between visitors and agents."""
+    """Manages WebSocket connections for live chat between visitors and operators."""
 
     # How long to wait for a visitor to reconnect before auto-closing the session.
     VISITOR_DISCONNECT_TIMEOUT = 120  # seconds
@@ -24,11 +24,11 @@ class ConnectionManager:
     def __init__(self):
         # session_id → WebSocket
         self.visitor_connections: dict[str, WebSocket] = {}
-        # agent_id → WebSocket
-        self.agent_connections: dict[int, WebSocket] = {}
-        # session_ids waiting for an agent
+        # operator_id → WebSocket
+        self.operator_connections: dict[int, WebSocket] = {}
+        # session_ids waiting for an operator
         self.waiting_queue: list[str] = []
-        # session_id → agent_id assignment
+        # session_id → operator_id assignment
         self.assignments: dict[str, int] = {}
         # session_id → timeout task
         self._timeout_tasks: dict[str, asyncio.Task] = {}
@@ -36,10 +36,10 @@ class ConnectionManager:
         self._disconnect_tasks: dict[str, asyncio.Task] = {}
         # session_id → department_id (for department-aware routing)
         self._session_departments: dict[str, int | None] = {}
-        # agent_id → department_id (cached on connect)
-        self._agent_departments: dict[int, int | None] = {}
-        # agent_id → agent name (cached on connect for roster broadcasts)
-        self._agent_names: dict[int, str] = {}
+        # operator_id → department_id (cached on connect)
+        self._operator_departments: dict[int, int | None] = {}
+        # operator_id → operator name (cached on connect for roster broadcasts)
+        self._operator_names: dict[int, str] = {}
         # session_id → { name, reason } (visitor metadata for queue display)
         self._session_metadata: dict[str, dict] = {}
 
@@ -66,20 +66,20 @@ class ConnectionManager:
             self._session_metadata.pop(session_id, None)
             self._mark_session_waiting_exit(session_id)
         elif was_in_live_chat:
-            # Visitor left mid-chat — notify agent but keep the assignment alive
+            # Visitor left mid-chat — notify operator but keep the assignment alive
             # so the visitor can reconnect.  Start a cleanup timer.
-            agent_id = self.assignments[session_id]
-            asyncio.ensure_future(self._handle_visitor_disconnect(session_id, agent_id))
+            operator_id = self.assignments[session_id]
+            asyncio.ensure_future(self._handle_visitor_disconnect(session_id, operator_id))
         else:
             self._session_departments.pop(session_id, None)
             self._session_metadata.pop(session_id, None)
 
         logger.info(f"Visitor disconnected: {session_id} (was_waiting={was_waiting}, was_live={was_in_live_chat})")
 
-    async def _handle_visitor_disconnect(self, session_id: str, agent_id: int):
-        """Notify agent that visitor disconnected and start auto-close timer."""
-        await self._send_to_agent(
-            agent_id,
+    async def _handle_visitor_disconnect(self, session_id: str, operator_id: int):
+        """Notify operator that visitor disconnected and start auto-close timer."""
+        await self._send_to_operator(
+            operator_id,
             {
                 "type": "visitor_disconnected",
                 "session_id": session_id,
@@ -99,16 +99,16 @@ class ConnectionManager:
                 logger.info(f"Visitor {session_id} did not reconnect — auto-closing chat")
                 # Persist to DB
                 self._mark_session_closed(session_id)
-                # Clean up in-memory state and notify agent
-                agent_id = self.assignments.pop(session_id, None)
+                # Clean up in-memory state and notify operator
+                operator_id = self.assignments.pop(session_id, None)
                 self._session_departments.pop(session_id, None)
                 self._session_metadata.pop(session_id, None)
-                if agent_id:
-                    await self._send_to_agent(
-                        agent_id,
+                if operator_id:
+                    await self._send_to_operator(
+                        operator_id,
                         {"type": "chat_closed", "session_id": session_id},
                     )
-                await self.broadcast_agents_update()
+                await self.broadcast_operators_update()
         except asyncio.CancelledError:
             pass
         finally:
@@ -126,63 +126,63 @@ class ConnectionManager:
                 chat_session = session.get(ChatSession, session_id)
                 if chat_session and chat_session.status == "live":
                     chat_session.status = "bot"
-                    chat_session.assigned_agent_id = None
+                    chat_session.assigned_operator_id = None
                     session.commit()
         except Exception as e:
             logger.warning(f"Failed to persist session closure for {session_id}: {e}")
 
-    # ── Agent connections ──
+    # ── Operator connections ──
 
-    async def connect_agent(
+    async def connect_operator(
         self,
-        agent_id: int,
+        operator_id: int,
         ws: WebSocket,
         department_id: int | None = None,
-        agent_name: str = "",
+        operator_name: str = "",
         is_online: bool = True,
     ):
-        # If agent already connected (multi-tab), close old connection gracefully
-        old_ws = self.agent_connections.get(agent_id)
+        # If operator already connected (multi-tab), close old connection gracefully
+        old_ws = self.operator_connections.get(operator_id)
         if old_ws and old_ws is not ws:
             with contextlib.suppress(Exception):
                 await old_ws.close(code=1000, reason="Replaced by new connection")
 
         await ws.accept()
-        self.agent_connections[agent_id] = ws
-        self._agent_departments[agent_id] = department_id
-        self._agent_names[agent_id] = agent_name
-        logger.info(f"Agent connected: {agent_id} ({agent_name}, dept={department_id})")
+        self.operator_connections[operator_id] = ws
+        self._operator_departments[operator_id] = department_id
+        self._operator_names[operator_id] = operator_name
+        logger.info(f"Operator connected: {operator_id} ({operator_name}, dept={department_id})")
 
-        # Send init state to this agent
-        await self._send_to_agent(
-            agent_id,
+        # Send init state to this operator
+        await self._send_to_operator(
+            operator_id,
             {
                 "type": "init",
-                "agent_id": agent_id,
-                "agent_name": agent_name,
+                "operator_id": operator_id,
+                "operator_name": operator_name,
                 "is_online": is_online,
             },
         )
 
         # Send current queue
-        await self._notify_agent_queue(agent_id)
+        await self._notify_operator_queue(operator_id)
 
-        # Send active chats so agent can restore state after page refresh
-        await self._send_active_chats(agent_id)
+        # Send active chats so operator can restore state after page refresh
+        await self._send_active_chats(operator_id)
 
-        # Broadcast updated roster to all agents
-        await self.broadcast_agents_update()
+        # Broadcast updated roster to all operators
+        await self.broadcast_operators_update()
 
-    def disconnect_agent(self, agent_id: int):
-        self.agent_connections.pop(agent_id, None)
-        self._agent_departments.pop(agent_id, None)
-        self._agent_names.pop(agent_id, None)
-        logger.info(f"Agent disconnected: {agent_id}")
+    def disconnect_operator(self, operator_id: int):
+        self.operator_connections.pop(operator_id, None)
+        self._operator_departments.pop(operator_id, None)
+        self._operator_names.pop(operator_id, None)
+        logger.info(f"Operator disconnected: {operator_id}")
 
-    async def disconnect_agent_and_broadcast(self, agent_id: int):
-        """Disconnect agent and broadcast the updated roster."""
-        self.disconnect_agent(agent_id)
-        await self.broadcast_agents_update()
+    async def disconnect_operator_and_broadcast(self, operator_id: int):
+        """Disconnect operator and broadcast the updated roster."""
+        self.disconnect_operator(operator_id)
+        await self.broadcast_operators_update()
 
     # ── Handoff flow ──
 
@@ -194,7 +194,7 @@ class ConnectionManager:
         visitor_name: str | None = None,
         reason: str | None = None,
     ):
-        """Add visitor to the waiting queue and notify agents."""
+        """Add visitor to the waiting queue and notify operators."""
         if session_id not in self.waiting_queue:
             self.waiting_queue.append(session_id)
         self._session_departments[session_id] = department_id
@@ -213,35 +213,35 @@ class ConnectionManager:
             },
         )
 
-        # Notify relevant agents (department-aware)
-        for agent_id in list(self.agent_connections.keys()):
-            if self._should_notify_agent(agent_id, department_id):
-                await self._notify_agent_queue(agent_id)
+        # Notify relevant operators (department-aware)
+        for operator_id in list(self.operator_connections.keys()):
+            if self._should_notify_operator(operator_id, department_id):
+                await self._notify_operator_queue(operator_id)
 
         # Start timeout
         self._start_timeout(session_id, timeout_seconds)
 
-    def _should_notify_agent(self, agent_id: int, department_id: int | None) -> bool:
-        """Check if an agent should be notified about a queue item."""
+    def _should_notify_operator(self, operator_id: int, department_id: int | None) -> bool:
+        """Check if an operator should be notified about a queue item."""
         if department_id is None:
             return True
-        agent_dept = self._agent_departments.get(agent_id)
-        if agent_dept is None:
+        operator_dept = self._operator_departments.get(operator_id)
+        if operator_dept is None:
             return True
-        return agent_dept == department_id
+        return operator_dept == department_id
 
-    async def accept_chat(self, session_id: str, agent_id: int, agent_name: str) -> bool:
-        """Agent accepts a waiting chat. Returns False if already accepted."""
+    async def accept_chat(self, session_id: str, operator_id: int, operator_name: str) -> bool:
+        """Operator accepts a waiting chat. Returns False if already accepted."""
         # Concurrency guard: bail if already assigned
         if session_id in self.assignments:
             logger.warning(
-                f"Chat {session_id} already assigned to agent {self.assignments[session_id]}, ignoring accept from {agent_id}"
+                f"Chat {session_id} already assigned to operator {self.assignments[session_id]}, ignoring accept from {operator_id}"
             )
             return False
 
         if session_id in self.waiting_queue:
             self.waiting_queue.remove(session_id)
-        self.assignments[session_id] = agent_id
+        self.assignments[session_id] = operator_id
         self._cancel_timeout(session_id)
 
         # Notify visitor
@@ -250,13 +250,13 @@ class ConnectionManager:
             {
                 "type": "status",
                 "status": "connected",
-                "agent_name": agent_name,
+                "agent_name": operator_name,
             },
         )
 
-        # Notify accepting agent
-        await self._send_to_agent(
-            agent_id,
+        # Notify accepting operator
+        await self._send_to_operator(
+            operator_id,
             {
                 "type": "chat_accepted",
                 "session_id": session_id,
@@ -265,18 +265,18 @@ class ConnectionManager:
             },
         )
 
-        # Notify all other agents: updated queue + roster
-        for other_agent_id in list(self.agent_connections.keys()):
-            if other_agent_id != agent_id:
-                await self._notify_agent_queue(other_agent_id)
+        # Notify all other operators: updated queue + roster
+        for other_operator_id in list(self.operator_connections.keys()):
+            if other_operator_id != operator_id:
+                await self._notify_operator_queue(other_operator_id)
 
-        await self.broadcast_agents_update()
-        logger.info(f"Agent {agent_id} ({agent_name}) accepted chat {session_id}")
+        await self.broadcast_operators_update()
+        logger.info(f"Operator {operator_id} ({operator_name}) accepted chat {session_id}")
         return True
 
     async def close_chat(self, session_id: str, bot_name: str = "AI Assistant"):
-        """Agent closes a live chat, returns to bot mode."""
-        agent_id = self.assignments.pop(session_id, None)
+        """Operator closes a live chat, returns to bot mode."""
+        operator_id = self.assignments.pop(session_id, None)
         self._cancel_timeout(session_id)
         self._cancel_disconnect_task(session_id)
         self._session_departments.pop(session_id, None)
@@ -291,37 +291,39 @@ class ConnectionManager:
             },
         )
 
-        if agent_id:
-            await self._send_to_agent(
-                agent_id,
+        if operator_id:
+            await self._send_to_operator(
+                operator_id,
                 {
                     "type": "chat_closed",
                     "session_id": session_id,
                 },
             )
 
-        await self.broadcast_agents_update()
+        await self.broadcast_operators_update()
         logger.info(f"Chat {session_id} closed")
 
-    async def transfer_chat(self, session_id: str, old_agent_id: int | None, new_agent_id: int, new_agent_name: str):
-        """Transfer a live chat from one agent to another."""
-        self.assignments[session_id] = new_agent_id
+    async def transfer_chat(
+        self, session_id: str, old_operator_id: int | None, new_operator_id: int, new_operator_name: str
+    ):
+        """Transfer a live chat from one operator to another."""
+        self.assignments[session_id] = new_operator_id
         self._cancel_timeout(session_id)
 
-        # Notify old agent
-        if old_agent_id:
-            await self._send_to_agent(
-                old_agent_id,
+        # Notify old operator
+        if old_operator_id:
+            await self._send_to_operator(
+                old_operator_id,
                 {
                     "type": "chat_transferred",
                     "session_id": session_id,
-                    "transferred_to": new_agent_name,
+                    "transferred_to": new_operator_name,
                 },
             )
 
-        # Notify new agent
-        await self._send_to_agent(
-            new_agent_id,
+        # Notify new operator
+        await self._send_to_operator(
+            new_operator_id,
             {
                 "type": "chat_accepted",
                 "session_id": session_id,
@@ -336,47 +338,49 @@ class ConnectionManager:
             {
                 "type": "status",
                 "status": "connected",
-                "agent_name": new_agent_name,
+                "agent_name": new_operator_name,
             },
         )
 
-        # Update all agents: queue + roster
-        for agent_id in list(self.agent_connections.keys()):
-            await self._notify_agent_queue(agent_id)
+        # Update all operators: queue + roster
+        for operator_id in list(self.operator_connections.keys()):
+            await self._notify_operator_queue(operator_id)
 
-        await self.broadcast_agents_update()
-        logger.info(f"Chat {session_id} transferred from agent {old_agent_id} to {new_agent_id} ({new_agent_name})")
+        await self.broadcast_operators_update()
+        logger.info(
+            f"Chat {session_id} transferred from operator {old_operator_id} to {new_operator_id} ({new_operator_name})"
+        )
 
     # ── Roster broadcast ──
 
-    async def broadcast_agents_update(self):
-        """Push current agent roster (connected agents + their active chat counts) to all agents."""
-        agents_payload = []
-        for aid in list(self.agent_connections.keys()):
-            active_count = len([sid for sid, a_id in self.assignments.items() if a_id == aid])
-            agents_payload.append(
+    async def broadcast_operators_update(self):
+        """Push current operator roster (connected operators + their active chat counts) to all operators."""
+        operators_payload = []
+        for oid in list(self.operator_connections.keys()):
+            active_count = len([sid for sid, o_id in self.assignments.items() if o_id == oid])
+            operators_payload.append(
                 {
-                    "agent_id": aid,
-                    "name": self._agent_names.get(aid, ""),
+                    "operator_id": oid,
+                    "name": self._operator_names.get(oid, ""),
                     "active_chats": active_count,
                 }
             )
 
         msg = {
-            "type": "agents_update",
-            "agents": agents_payload,
+            "type": "operators_update",
+            "operators": operators_payload,
         }
-        for agent_id in list(self.agent_connections.keys()):
-            await self._send_to_agent(agent_id, msg)
+        for operator_id in list(self.operator_connections.keys()):
+            await self._send_to_operator(operator_id, msg)
 
     # ── Message routing ──
 
     async def route_visitor_message(self, session_id: str, content: str):
-        """Route a message from visitor to their assigned agent."""
-        agent_id = self.assignments.get(session_id)
-        if agent_id and agent_id in self.agent_connections:
-            await self._send_to_agent(
-                agent_id,
+        """Route a message from visitor to their assigned operator."""
+        operator_id = self.assignments.get(session_id)
+        if operator_id and operator_id in self.operator_connections:
+            await self._send_to_operator(
+                operator_id,
                 {
                     "type": "message",
                     "session_id": session_id,
@@ -386,29 +390,29 @@ class ConnectionManager:
                 },
             )
 
-    async def route_agent_message(self, session_id: str, content: str, agent_name: str):
-        """Route a message from agent to visitor."""
+    async def route_operator_message(self, session_id: str, content: str, operator_name: str):
+        """Route a message from operator to visitor."""
         await self._send_to_visitor(
             session_id,
             {
                 "type": "message",
-                "role": "agent",
+                "role": "operator",
                 "content": content,
-                "agent_name": agent_name,
+                "agent_name": operator_name,
                 "timestamp": datetime.now(UTC).isoformat(),
             },
         )
 
     async def send_typing_to_visitor(self, session_id: str):
-        """Notify visitor that agent is typing."""
-        await self._send_to_visitor(session_id, {"type": "agent_typing"})
+        """Notify visitor that operator is typing."""
+        await self._send_to_visitor(session_id, {"type": "operator_typing"})
 
-    async def send_typing_to_agent(self, session_id: str):
-        """Notify agent that visitor is typing."""
-        agent_id = self.assignments.get(session_id)
-        if agent_id:
-            await self._send_to_agent(
-                agent_id,
+    async def send_typing_to_operator(self, session_id: str):
+        """Notify operator that visitor is typing."""
+        operator_id = self.assignments.get(session_id)
+        if operator_id:
+            await self._send_to_operator(
+                operator_id,
                 {
                     "type": "visitor_typing",
                     "session_id": session_id,
@@ -428,7 +432,7 @@ class ConnectionManager:
             task.cancel()
 
     async def _timeout_handler(self, session_id: str, timeout_seconds: int):
-        """If no agent accepts within timeout, mark as unavailable."""
+        """If no operator accepts within timeout, mark as unavailable."""
         try:
             await asyncio.sleep(timeout_seconds)
             if session_id in self.waiting_queue:
@@ -443,7 +447,7 @@ class ConnectionManager:
                         "status": "unavailable",
                     },
                 )
-                logger.info(f"Timeout: no agent accepted chat {session_id} within {timeout_seconds}s")
+                logger.info(f"Timeout: no operator accepted chat {session_id} within {timeout_seconds}s")
         except asyncio.CancelledError:
             pass
 
@@ -456,7 +460,7 @@ class ConnectionManager:
                 chat_session = session.get(ChatSession, session_id)
                 if chat_session and chat_session.status == "waiting":
                     chat_session.status = "bot"
-                    chat_session.assigned_agent_id = None
+                    chat_session.assigned_operator_id = None
                     session.commit()
         except Exception as e:
             # Queue correctness degrades if this fails, but websocket flow should continue.
@@ -474,17 +478,17 @@ class ConnectionManager:
         """
         # Happy path: state is already tracked in memory
         if session_id in self.assignments:
-            agent_id = self.assignments[session_id]
-            agent_name = self._agent_names.get(agent_id, "Support")
+            operator_id = self.assignments[session_id]
+            operator_name = self._operator_names.get(operator_id, "Support")
             await self._send_to_visitor(
                 session_id,
-                {"type": "status", "status": "connected", "agent_name": agent_name},
+                {"type": "status", "status": "connected", "agent_name": operator_name},
             )
             # Cancel any pending disconnect cleanup — visitor is back
             if session_id in self._disconnect_tasks:
                 self._cancel_disconnect_task(session_id)
-                await self._send_to_agent(
-                    agent_id,
+                await self._send_to_operator(
+                    operator_id,
                     {"type": "visitor_reconnected", "session_id": session_id},
                 )
                 logger.info(f"Visitor reconnected: {session_id}")
@@ -508,15 +512,17 @@ class ConnectionManager:
                 if not chat_session:
                     return
 
-                if chat_session.status == "live" and chat_session.assigned_agent_id:
+                if chat_session.status == "live" and chat_session.assigned_operator_id:
                     # Restore the assignment so message routing works again
-                    self.assignments[session_id] = chat_session.assigned_agent_id
-                    agent_name = self._agent_names.get(chat_session.assigned_agent_id, "Support")
+                    self.assignments[session_id] = chat_session.assigned_operator_id
+                    operator_name = self._operator_names.get(chat_session.assigned_operator_id, "Support")
                     await self._send_to_visitor(
                         session_id,
-                        {"type": "status", "status": "connected", "agent_name": agent_name},
+                        {"type": "status", "status": "connected", "agent_name": operator_name},
                     )
-                    logger.info(f"Restored live assignment for {session_id} → agent {chat_session.assigned_agent_id}")
+                    logger.info(
+                        f"Restored live assignment for {session_id} → operator {chat_session.assigned_operator_id}"
+                    )
 
                 elif chat_session.status == "waiting":
                     if session_id not in self.waiting_queue:
@@ -544,23 +550,23 @@ class ConnectionManager:
                 logger.warning(f"Failed to send to visitor {session_id}: {e}")
                 self.disconnect_visitor(session_id)
 
-    async def _send_to_agent(self, agent_id: int, data: dict):
-        ws = self.agent_connections.get(agent_id)
+    async def _send_to_operator(self, operator_id: int, data: dict):
+        ws = self.operator_connections.get(operator_id)
         if ws:
             try:
                 await ws.send_json(data)
             except Exception as e:
-                logger.warning(f"Failed to send to agent {agent_id}: {e}")
-                self.disconnect_agent(agent_id)
+                logger.warning(f"Failed to send to operator {operator_id}: {e}")
+                self.disconnect_operator(operator_id)
 
-    async def _notify_agent_queue(self, agent_id: int):
-        """Send current queue to a specific agent (filtered by department), with visitor metadata."""
-        agent_dept = self._agent_departments.get(agent_id)
+    async def _notify_operator_queue(self, operator_id: int):
+        """Send current queue to a specific operator (filtered by department), with visitor metadata."""
+        operator_dept = self._operator_departments.get(operator_id)
 
         visible_queue = []
         for sid in self.waiting_queue:
             session_dept = self._session_departments.get(sid)
-            if session_dept is None or agent_dept is None or session_dept == agent_dept:
+            if session_dept is None or operator_dept is None or session_dept == operator_dept:
                 meta = self._session_metadata.get(sid, {})
                 visible_queue.append(
                     {
@@ -570,8 +576,8 @@ class ConnectionManager:
                     }
                 )
 
-        await self._send_to_agent(
-            agent_id,
+        await self._send_to_operator(
+            operator_id,
             {
                 "type": "queue_update",
                 "waiting": visible_queue,
@@ -579,11 +585,11 @@ class ConnectionManager:
             },
         )
 
-    async def _send_active_chats(self, agent_id: int):
-        """Send this agent's active chat assignments so they can restore state after page refresh."""
+    async def _send_active_chats(self, operator_id: int):
+        """Send this operator's active chat assignments so they can restore state after page refresh."""
         active = []
-        for sid, aid in self.assignments.items():
-            if aid == agent_id:
+        for sid, oid in self.assignments.items():
+            if oid == operator_id:
                 meta = self._session_metadata.get(sid, {})
                 visitor_online = sid in self.visitor_connections
                 active.append(
@@ -602,7 +608,7 @@ class ConnectionManager:
                     sessions = (
                         db.execute(
                             select(ChatSession).where(
-                                ChatSession.assigned_agent_id == agent_id,
+                                ChatSession.assigned_operator_id == operator_id,
                                 ChatSession.status == "live",
                             )
                         )
@@ -611,7 +617,7 @@ class ConnectionManager:
                     )
                     for cs in sessions:
                         if cs.id not in self.assignments:
-                            self.assignments[cs.id] = agent_id
+                            self.assignments[cs.id] = operator_id
                             lead = get_lead_info_by_session(db, cs.id)
                             visitor_online = cs.id in self.visitor_connections
                             active.append(
@@ -623,11 +629,11 @@ class ConnectionManager:
                                 }
                             )
             except Exception as e:
-                logger.warning(f"Failed to restore active chats from DB for agent {agent_id}: {e}")
+                logger.warning(f"Failed to restore active chats from DB for operator {operator_id}: {e}")
 
         if active:
-            await self._send_to_agent(
-                agent_id,
+            await self._send_to_operator(
+                operator_id,
                 {
                     "type": "active_chats_restore",
                     "chats": active,
@@ -639,8 +645,8 @@ class ConnectionManager:
     def get_queue(self) -> list[str]:
         return list(self.waiting_queue)
 
-    def get_agent_chats(self, agent_id: int) -> list[str]:
-        return [sid for sid, aid in self.assignments.items() if aid == agent_id]
+    def get_operator_chats(self, operator_id: int) -> list[str]:
+        return [sid for sid, oid in self.assignments.items() if oid == operator_id]
 
     def is_visitor_in_live_chat(self, session_id: str) -> bool:
         return session_id in self.assignments

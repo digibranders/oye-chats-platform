@@ -5,7 +5,7 @@ import shutil
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 
-from app.api.auth import get_current_client_or_agent
+from app.api.auth import get_current_client_or_operator
 from app.config import DOCUMENTS_DIR
 from app.db.models import Bot, Client, Document
 from app.db.repository import get_ingested_documents
@@ -41,7 +41,7 @@ def _require_knowledge_management_access(auth: dict) -> None:
 
 
 @router.get("/documents")
-def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_agent)):
+def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_operator)):
     """Retrieve a list of all ingested documents for the authenticated client."""
     try:
         with get_session() as session:
@@ -56,7 +56,7 @@ def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depend
 def delete_document_endpoint(
     document_name: str,
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Delete all documents associated with a document name for the authenticated client."""
     _require_knowledge_management_access(auth)
@@ -121,7 +121,7 @@ def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | 
 def ingest_documents(
     files: list[UploadFile] = File(...),
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Ingest multiple files (PDF, DOCX, TXT, MD) for a client."""
@@ -166,7 +166,7 @@ def ingest_documents(
 async def crawl_endpoint(
     request: CrawlRequest,
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Crawl a URL recursively and ingest content for a client."""
     _require_knowledge_management_access(auth)

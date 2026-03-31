@@ -5,34 +5,34 @@
  * All components should use these helpers instead of reading localStorage directly.
  *
  * Account types:
- *   - "client"  = workspace owner (company account). Full platform access.
- *   - "agent"   = employee account. Live-chat only; sees owner's bots automatically.
+ *   - "client"   = workspace owner (company account). Full platform access.
+ *   - "operator" = employee account. Live-chat only; sees owner's bots automatically.
  *
- * Agent roles (only relevant when auth_type === "agent"):
- *   - "owner" / "admin" — can manage bots, agents, departments, quick replies
- *   - "agent"           — read-only on management; can only handle live chat
+ * Operator roles (only relevant when auth_type === "operator"):
+ *   - "owner" / "admin" — can manage bots, operators, departments, quick replies
+ *   - "operator"        — read-only on management; can only handle live chat
  */
 
 /**
  * Returns the current user's auth state derived from localStorage.
  *
  * @returns {{
- *   isAgent: boolean,
- *   agentRole: string,
+ *   isOperator: boolean,
+ *   operatorRole: string,
  *   isBotManager: boolean,
- *   agentId: string | null,
+ *   operatorId: string | null,
  *   clientId: string | null,
  * }}
  */
 export function getAuthState() {
-    const isAgent = localStorage.getItem('auth_type') === 'agent';
-    const agentRole = localStorage.getItem('agent_role') || '';
+    const isOperator = localStorage.getItem('auth_type') === 'operator';
+    const operatorRole = localStorage.getItem('operator_role') || '';
     return {
-        isAgent,
-        agentRole,
-        /** True for clients (owners) and for agents with role "owner" or "admin". */
-        isBotManager: !isAgent || ['owner', 'admin'].includes(agentRole),
-        agentId: localStorage.getItem('agent_id'),
+        isOperator,
+        operatorRole,
+        /** True for clients (owners) and for operators with role "owner" or "admin". */
+        isBotManager: !isOperator || ['owner', 'admin'].includes(operatorRole),
+        operatorId: localStorage.getItem('operator_id'),
         clientId: localStorage.getItem('admin_client_id'),
         companyWebsite: localStorage.getItem('company_website'),
     };
@@ -47,8 +47,8 @@ export const AUTH_STORAGE_KEYS = [
     'admin_name',
     'admin_client_id',
     'auth_type',
-    'agent_role',
-    'agent_id',
+    'operator_role',
+    'operator_id',
     'is_superadmin',
     'company_name',
     'company_website',

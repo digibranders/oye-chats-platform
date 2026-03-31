@@ -4,7 +4,7 @@ from fastapi import Depends, HTTPException, Query, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import select
 
-from app.db.models import Agent, Bot, Client
+from app.db.models import Bot, Client, Operator
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -13,27 +13,42 @@ logger = logging.getLogger(__name__)
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# ── Agent Auth (Agent Dashboard) ──
-AGENT_KEY_NAME = "X-Agent-Key"
-agent_key_header = APIKeyHeader(name=AGENT_KEY_NAME, auto_error=False)
+# ── Operator Auth (Operator Dashboard) ──
+OPERATOR_KEY_NAME = "X-Operator-Key"
+operator_key_header = APIKeyHeader(name=OPERATOR_KEY_NAME, auto_error=False)
+
+# ── Backward compat: accept old X-Agent-Key during transition ──
+LEGACY_AGENT_KEY_NAME = "X-Agent-Key"
+legacy_agent_key_header = APIKeyHeader(name=LEGACY_AGENT_KEY_NAME, auto_error=False)
 
 # ── Bot Auth (Widget Embed) ──
 BOT_KEY_NAME = "X-Bot-Key"
 bot_key_header = APIKeyHeader(name=BOT_KEY_NAME, auto_error=False)
 
 
+def _resolve_operator_key(
+    operator_key: str | None,
+    legacy_agent_key: str | None,
+) -> str | None:
+    """Return the effective operator key, preferring the new header over the legacy one."""
+    return operator_key or legacy_agent_key
+
+
 def get_current_client(
     api_key: str = Security(api_key_header),
     bot_key: str = Security(bot_key_header),
-    agent_key: str = Security(agent_key_header),
+    operator_key: str = Security(operator_key_header),
+    legacy_agent_key: str = Security(legacy_agent_key_header),
 ):
     """
     Dependency: Authenticate a Client via X-API-Key header.
     Also accepts:
     - X-Bot-Key: resolves the owning Client (widget backward compat).
-    - X-Agent-Key: resolves the agent's workspace Client (agent dashboard access).
+    - X-Operator-Key / X-Agent-Key: resolves the operator's workspace Client.
     Used by admin dashboard endpoints and shared endpoints.
     """
+    effective_operator_key = _resolve_operator_key(operator_key, legacy_agent_key)
+
     with get_session() as session:
         # Primary: resolve via X-API-Key
         if api_key:
@@ -66,20 +81,24 @@ def get_current_client(
                 detail="Invalid Bot Key.",
             )
 
-        # Agent fallback: resolve via X-Agent-Key → agent's workspace Client
-        # Agents belong to a workspace; this gives them read access to their workspace's
+        # Operator fallback: resolve via X-Operator-Key → operator's workspace Client
+        # Operators belong to a workspace; this gives them read access to their workspace's
         # resources (bots, analytics, documents) through any client-scoped endpoint.
-        if agent_key:
-            agent = session.execute(select(Agent).where(Agent.agent_api_key == agent_key)).scalars().first()
-            if agent:
-                client = session.execute(select(Client).where(Client.id == agent.client_id)).scalars().first()
+        if effective_operator_key:
+            operator = (
+                session.execute(select(Operator).where(Operator.operator_api_key == effective_operator_key))
+                .scalars()
+                .first()
+            )
+            if operator:
+                client = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
                 if client:
                     _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
                     session.expunge(client)
                     return client
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid Agent Key.",
+                detail="Invalid Operator Key.",
             )
 
         raise HTTPException(
@@ -88,69 +107,83 @@ def get_current_client(
         )
 
 
-def get_current_agent(
-    agent_key: str = Security(agent_key_header),
+def get_current_operator(
+    operator_key: str = Security(operator_key_header),
+    legacy_agent_key: str = Security(legacy_agent_key_header),
 ):
     """
-    Dependency: Authenticate an Agent via X-Agent-Key header.
-    Returns the Agent object with client_id accessible for scoping queries.
+    Dependency: Authenticate an Operator via X-Operator-Key header.
+    Returns the Operator object with client_id accessible for scoping queries.
     """
-    if not agent_key:
+    effective_key = _resolve_operator_key(operator_key, legacy_agent_key)
+    if not effective_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-Agent-Key header.",
+            detail="Missing X-Operator-Key header.",
         )
 
     with get_session() as session:
-        stmt = select(Agent).where(Agent.agent_api_key == agent_key)
-        agent = session.execute(stmt).scalars().first()
-        if not agent:
-            logger.warning("Failed authentication attempt with invalid Agent Key.")
+        stmt = select(Operator).where(Operator.operator_api_key == effective_key)
+        operator = session.execute(stmt).scalars().first()
+        if not operator:
+            logger.warning("Failed authentication attempt with invalid Operator Key.")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid Agent Key.",
+                detail="Invalid Operator Key.",
             )
         # Eagerly access attributes before session closes
         _ = (
-            agent.id,
-            agent.name,
-            agent.email,
-            agent.client_id,
-            agent.role,
-            agent.department_id,
-            agent.agent_api_key,
-            agent.is_online,
+            operator.id,
+            operator.name,
+            operator.email,
+            operator.client_id,
+            operator.role,
+            operator.department_id,
+            operator.operator_api_key,
+            operator.is_online,
         )
-        session.expunge(agent)
-        return agent
+        session.expunge(operator)
+        return operator
 
 
-def get_current_client_or_agent(
+def get_current_client_or_operator(
     api_key: str = Security(api_key_header),
-    agent_key: str = Security(agent_key_header),
+    operator_key: str = Security(operator_key_header),
+    legacy_agent_key: str = Security(legacy_agent_key_header),
 ):
     """
-    Dependency: Authenticate via X-API-Key (Client) or X-Agent-Key (Agent).
-    Returns a dict with 'type' ('client'|'agent'), the entity, and 'client_id'.
-    Used by endpoints that both admins and agents can access.
+    Dependency: Authenticate via X-API-Key (Client) or X-Operator-Key (Operator).
+    Returns a dict with 'type' ('client'|'operator'), the entity, and 'client_id'.
+    Used by endpoints that both admins and operators can access.
     """
-    # Try agent key first (more specific)
-    if agent_key:
+    effective_operator_key = _resolve_operator_key(operator_key, legacy_agent_key)
+
+    # Try operator key first (more specific)
+    if effective_operator_key:
         with get_session() as session:
-            agent = session.execute(select(Agent).where(Agent.agent_api_key == agent_key)).scalars().first()
-            if agent:
+            operator = (
+                session.execute(select(Operator).where(Operator.operator_api_key == effective_operator_key))
+                .scalars()
+                .first()
+            )
+            if operator:
                 _ = (
-                    agent.id,
-                    agent.name,
-                    agent.email,
-                    agent.client_id,
-                    agent.role,
-                    agent.department_id,
-                    agent.agent_api_key,
-                    agent.is_online,
+                    operator.id,
+                    operator.name,
+                    operator.email,
+                    operator.client_id,
+                    operator.role,
+                    operator.department_id,
+                    operator.operator_api_key,
+                    operator.is_online,
                 )
-                session.expunge(agent)
-                return {"type": "agent", "entity": agent, "client_id": agent.client_id, "agent_id": agent.id}
+                session.expunge(operator)
+                return {
+                    "type": "operator",
+                    "entity": operator,
+                    "client_id": operator.client_id,
+                    "operator_id": operator.id,
+                }
 
     # Try client key
     if api_key:
@@ -159,11 +192,11 @@ def get_current_client_or_agent(
             if client:
                 _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
                 session.expunge(client)
-                return {"type": "client", "entity": client, "client_id": client.id, "agent_id": None}
+                return {"type": "client", "entity": client, "client_id": client.id, "operator_id": None}
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Missing authentication. Provide X-API-Key or X-Agent-Key header.",
+        detail="Missing authentication. Provide X-API-Key or X-Operator-Key header.",
     )
 
 

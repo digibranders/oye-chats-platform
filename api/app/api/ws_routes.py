@@ -1,11 +1,11 @@
-"""WebSocket endpoints for live chat between visitors and agents."""
+"""WebSocket endpoints for live chat between visitors and operators."""
 
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
-from app.db.models import Agent, Bot, ChatSession, Client
+from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
 from app.services.live_chat_service import manager
@@ -18,7 +18,7 @@ router = APIRouter(tags=["websocket"])
 async def _send_initial_waiting_queue(
     ws: WebSocket,
     client_id: int,
-    agent_department_id: int | None = None,
+    operator_department_id: int | None = None,
 ):
     """Send DB-backed waiting queue snapshot on connect."""
     waiting_items: list[dict] = []
@@ -32,7 +32,11 @@ async def _send_initial_waiting_queue(
         ).all()
 
         for chat_session, _ in waiting_sessions:
-            if agent_department_id and chat_session.department_id and chat_session.department_id != agent_department_id:
+            if (
+                operator_department_id
+                and chat_session.department_id
+                and chat_session.department_id != operator_department_id
+            ):
                 continue
 
             lead_info = get_lead_info_by_session(session, chat_session.id)
@@ -89,7 +93,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 await manager.route_visitor_message(session_id, content)
 
             elif msg_type == "typing":
-                await manager.send_typing_to_agent(session_id)
+                await manager.send_typing_to_operator(session_id)
 
     except WebSocketDisconnect:
         manager.disconnect_visitor(session_id)
@@ -98,79 +102,84 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         manager.disconnect_visitor(session_id)
 
 
-def _resolve_agent_from_key(key: str, key_type: str) -> tuple[int, str, int, int | None, bool] | None:
-    """Resolve agent_id, agent_name, client_id, department_id, is_online from an api_key or agent_key.
+def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, int | None, bool] | None:
+    """Resolve operator_id, operator_name, client_id, department_id, is_online from an api_key or operator_key.
 
-    Returns (agent_id, agent_name, client_id, department_id, is_online) or None if auth fails.
+    Returns (operator_id, operator_name, client_id, department_id, is_online) or None if auth fails.
     """
     with get_session() as session:
-        if key_type == "agent_key":
-            agent = session.execute(select(Agent).where(Agent.agent_api_key == key)).scalar_one_or_none()
-            if not agent:
+        if key_type == "operator_key":
+            operator = session.execute(select(Operator).where(Operator.operator_api_key == key)).scalar_one_or_none()
+            if not operator:
                 return None
-            agent.is_online = True
+            operator.is_online = True
             session.commit()
-            return agent.id, agent.name, agent.client_id, agent.department_id, True
+            return operator.id, operator.name, operator.client_id, operator.department_id, True
 
-        # Client api_key auth — find or create agent from client profile
+        # Client api_key auth — find or create operator from client profile
         client = session.execute(select(Client).where(Client.api_key == key)).scalar_one_or_none()
         if not client:
             return None
 
-        agent = session.execute(select(Agent).where(Agent.client_id == client.id).limit(1)).scalar_one_or_none()
+        operator = session.execute(
+            select(Operator).where(Operator.client_id == client.id).limit(1)
+        ).scalar_one_or_none()
 
-        if not agent:
+        if not operator:
             import uuid as _uuid
 
-            agent = Agent(
+            operator = Operator(
                 client_id=client.id,
                 name=client.name,
                 email=client.email,
                 is_online=True,
                 role="owner",
-                agent_api_key=_uuid.uuid4().hex,
+                operator_api_key=_uuid.uuid4().hex,
             )
-            session.add(agent)
+            session.add(operator)
             session.commit()
-            session.refresh(agent)
+            session.refresh(operator)
         else:
-            agent.is_online = True
+            operator.is_online = True
             session.commit()
 
-        return agent.id, agent.name, client.id, agent.department_id, agent.is_online
+        return operator.id, operator.name, client.id, operator.department_id, operator.is_online
 
 
-@router.websocket("/ws/agent")
-async def agent_websocket(
+@router.websocket("/ws/operator")
+async def operator_websocket(
     ws: WebSocket,
     api_key: str | None = None,
+    operator_key: str | None = None,
     agent_key: str | None = None,
 ):
-    """WebSocket for agent (admin dashboard) side of live chat.
+    """WebSocket for operator (admin dashboard) side of live chat.
 
     Supports dual auth:
-    - api_key: Client API key (owner/backward compat, resolves to first agent)
-    - agent_key: Agent's own API key (for multi-agent)
+    - api_key: Client API key (owner/backward compat, resolves to first operator)
+    - operator_key: Operator's own API key (for multi-operator)
+    - agent_key: Legacy alias for operator_key (backward compat during transition)
     """
-    if agent_key:
-        result = _resolve_agent_from_key(agent_key, "agent_key")
+    effective_key = operator_key or agent_key
+    if effective_key:
+        result = _resolve_operator_from_key(effective_key, "operator_key")
     elif api_key:
-        result = _resolve_agent_from_key(api_key, "api_key")
+        result = _resolve_operator_from_key(api_key, "api_key")
     else:
-        await ws.close(code=4001, reason="Missing api_key or agent_key query param")
+        await ws.close(code=4001, reason="Missing api_key or operator_key query param")
         return
 
     if not result:
         await ws.close(code=4003, reason="Invalid authentication key")
         return
 
-    agent_id, agent_name, client_id, department_id, is_online = result
+    operator_id, operator_name, client_id, department_id, is_online = result
 
-    await manager.connect_agent(
-        agent_id,
+    await manager.connect_operator(
+        operator_id,
         ws,
         department_id=department_id,
-        agent_name=agent_name,
+        operator_name=operator_name,
         is_online=is_online,
     )
 
@@ -190,10 +199,10 @@ async def agent_websocket(
                     continue
 
                 with get_session() as session:
-                    add_chat_message(session, target_session, role="agent", content=content, bot_id=None)
+                    add_chat_message(session, target_session, role="operator", content=content, bot_id=None)
                     session.commit()
 
-                await manager.route_agent_message(target_session, content, agent_name)
+                await manager.route_operator_message(target_session, content, operator_name)
 
             elif msg_type == "typing":
                 target_session = data.get("session_id")
@@ -210,22 +219,34 @@ async def agent_websocket(
                         if chat_session:
                             bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
                             chat_session.status = "bot"
-                            chat_session.assigned_agent_id = None
+                            chat_session.assigned_operator_id = None
                             session.commit()
                             await manager.close_chat(target_session, bot.name if bot else "AI Assistant")
 
     except WebSocketDisconnect:
-        await manager.disconnect_agent_and_broadcast(agent_id)
+        await manager.disconnect_operator_and_broadcast(operator_id)
         with get_session() as session:
-            agent_obj = session.execute(select(Agent).where(Agent.id == agent_id)).scalar_one_or_none()
-            if agent_obj:
-                agent_obj.is_online = False
+            op_obj = session.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
+            if op_obj:
+                op_obj.is_online = False
                 session.commit()
     except Exception as e:
-        logger.error(f"Agent WS error for agent {agent_id}: {e}")
-        await manager.disconnect_agent_and_broadcast(agent_id)
+        logger.error(f"Operator WS error for operator {operator_id}: {e}")
+        await manager.disconnect_operator_and_broadcast(operator_id)
         with get_session() as session:
-            agent_obj = session.execute(select(Agent).where(Agent.id == agent_id)).scalar_one_or_none()
-            if agent_obj:
-                agent_obj.is_online = False
+            op_obj = session.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
+            if op_obj:
+                op_obj.is_online = False
                 session.commit()
+
+
+# ── Backward compat: keep /ws/agent as alias during transition ──
+@router.websocket("/ws/agent")
+async def legacy_agent_websocket(
+    ws: WebSocket,
+    api_key: str | None = None,
+    agent_key: str | None = None,
+    operator_key: str | None = None,
+):
+    """Legacy WebSocket endpoint — delegates to operator_websocket."""
+    await operator_websocket(ws, api_key=api_key, operator_key=operator_key, agent_key=agent_key)

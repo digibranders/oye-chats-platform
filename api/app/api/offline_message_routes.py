@@ -1,4 +1,4 @@
-"""Offline message endpoints — messages left by visitors when no agent is available."""
+"""Offline message endpoints — messages left by visitors when no operator is available."""
 
 import logging
 from datetime import UTC, datetime
@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.sql import func
 
-from app.api.auth import get_current_client_or_agent
+from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, OfflineMessage
 from app.db.session import get_session
 from app.services.email_service import send_offline_message_email, send_unavailable_callback_email
@@ -106,7 +106,7 @@ def list_offline_messages(
     bot_id: int | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    auth=Depends(get_current_client_or_agent),
+    auth=Depends(get_current_client_or_operator),
 ):
     """List offline messages for the authenticated client/agent's bots."""
     client_id = auth["client_id"]
@@ -172,7 +172,7 @@ def list_offline_messages(
 def update_offline_message(
     message_id: int,
     request: UpdateOfflineMessageRequest,
-    auth=Depends(get_current_client_or_agent),
+    auth=Depends(get_current_client_or_operator),
 ):
     """Update an offline message status (mark as read/replied)."""
     client_id = auth["client_id"]
@@ -200,7 +200,7 @@ def update_offline_message(
 
 
 @router.delete("/{message_id}")
-def delete_offline_message(message_id: int, auth=Depends(get_current_client_or_agent)):
+def delete_offline_message(message_id: int, auth=Depends(get_current_client_or_operator)):
     """Delete an offline message."""
     client_id = auth["client_id"]
     with get_session() as session:

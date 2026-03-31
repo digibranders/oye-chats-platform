@@ -89,7 +89,7 @@ class Bot(Base):
 
     # Live chat settings
     live_chat_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
-    agent_timeout_seconds = Column(Integer, default=120, server_default="120", nullable=False)
+    operator_timeout_seconds = Column(Integer, default=120, server_default="120", nullable=False)
     business_hours = Column(sqlalchemy.JSON, nullable=True)  # e.g. {"mon":{"start":"09:00","end":"17:00"}, ...}
 
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
@@ -163,7 +163,7 @@ class ChatSession(Base):
 
     # Live chat state
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed
-    assigned_agent_id = Column(Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    assigned_operator_id = Column(Integer, ForeignKey("operators.id", ondelete="SET NULL"), nullable=True)
     handoff_reason = Column(Text, nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
@@ -175,11 +175,11 @@ class ChatSession(Base):
     bot = relationship("Bot", back_populates="chat_sessions")
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     lead_info = relationship("LeadInfo", back_populates="session", uselist=False, cascade="all, delete-orphan")
-    assigned_agent = relationship("Agent", back_populates="active_sessions")
+    assigned_operator = relationship("Operator", back_populates="active_sessions")
 
 
 class Department(Base):
-    """Department grouping for agents (e.g. Sales, Support, Billing)."""
+    """Department grouping for operators (e.g. Sales, Support, Billing)."""
 
     __tablename__ = "departments"
 
@@ -190,13 +190,13 @@ class Department(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     client = relationship("Client")
-    agents = relationship("Agent", back_populates="department")
+    operators = relationship("Operator", back_populates="department")
 
 
-class Agent(Base):
-    """Live chat agent — a team member who can handle customer conversations."""
+class Operator(Base):
+    """Live chat operator — a team member who can handle customer conversations."""
 
-    __tablename__ = "agents"
+    __tablename__ = "operators"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
@@ -206,12 +206,12 @@ class Agent(Base):
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Auth credentials (for separate agent login)
+    # Auth credentials (for separate operator login)
     hashed_password = Column(String, nullable=True)
-    agent_api_key = Column(String, unique=True, index=True, nullable=True)
+    operator_api_key = Column(String, unique=True, index=True, nullable=True)
 
     # Role & department
-    role = Column(String, default="agent", server_default="agent", nullable=False)  # owner|admin|agent
+    role = Column(String, default="operator", server_default="operator", nullable=False)  # owner|admin|operator
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
 
     # Profile & settings
@@ -220,15 +220,15 @@ class Agent(Base):
     notification_preferences = Column(JSONB, nullable=True)
 
     client = relationship("Client")
-    department = relationship("Department", back_populates="agents")
-    active_sessions = relationship("ChatSession", back_populates="assigned_agent")
+    department = relationship("Department", back_populates="operators")
+    active_sessions = relationship("ChatSession", back_populates="assigned_operator")
 
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
-    role = Column(String, nullable=False)  # user|bot|agent|system
+    role = Column(String, nullable=False)  # user|bot|operator|system
     content = Column(Text, nullable=False)
     feedback = Column(Integer, nullable=True)
     trace_id = Column(String(255), nullable=True)  # Langfuse trace ID for feedback linking
@@ -238,7 +238,7 @@ class ChatMessage(Base):
 
 
 class OfflineMessage(Base):
-    """Message left by a visitor when no agent is available."""
+    """Message left by a visitor when no operator is available."""
 
     __tablename__ = "offline_messages"
 
@@ -259,7 +259,7 @@ class OfflineMessage(Base):
 
 
 class CannedResponse(Base):
-    """Pre-saved quick replies for agents."""
+    """Pre-saved quick replies for operators."""
 
     __tablename__ = "canned_responses"
 
@@ -269,7 +269,7 @@ class CannedResponse(Base):
     content = Column(Text, nullable=False)
     shortcut = Column(String, nullable=True)  # e.g. "/hello"
     category = Column(String, nullable=True)
-    created_by_agent_id = Column(Integer, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    created_by_operator_id = Column(Integer, ForeignKey("operators.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

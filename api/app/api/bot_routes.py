@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.auth import get_current_bot, get_current_client_or_agent
+from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.db.models import Bot
 from app.db.session import get_session
 
@@ -26,7 +26,7 @@ def _require_bot_management_access(auth: dict) -> None:
     if auth["type"] == "client":
         return
 
-    if getattr(auth["entity"], "role", "agent") not in {"owner", "admin"}:
+    if getattr(auth["entity"], "role", "operator") not in {"owner", "admin"}:
         raise HTTPException(status_code=403, detail="You do not have permission to manage bots.")
 
 
@@ -63,7 +63,7 @@ class UpdateBotRequest(BaseModel):
     email_on_handoff: bool | None = None
     # Live chat settings
     live_chat_enabled: bool | None = None
-    agent_timeout_seconds: int | None = None
+    operator_timeout_seconds: int | None = None
 
 
 class BotResponse(BaseModel):
@@ -89,7 +89,7 @@ class BotResponse(BaseModel):
     email_on_qualified: bool = True
     email_on_handoff: bool = True
     live_chat_enabled: bool = True
-    agent_timeout_seconds: int = 120
+    operator_timeout_seconds: int = 120
     is_active: bool
     created_at: str
 
@@ -138,7 +138,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
 
 
 @router.get("", response_model=list[BotResponse])
-def list_bots(request: Request, auth=Depends(get_current_client_or_agent)):
+def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
     """List all bots for the authenticated client or agent's client."""
     client_id = auth["client_id"]
     with get_session() as session:
@@ -177,7 +177,7 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_agent)):
                     email_on_qualified=b.email_on_qualified,
                     email_on_handoff=b.email_on_handoff,
                     live_chat_enabled=b.live_chat_enabled,
-                    agent_timeout_seconds=b.agent_timeout_seconds,
+                    operator_timeout_seconds=b.operator_timeout_seconds,
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
                 )
@@ -186,7 +186,7 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_agent)):
 
 
 @router.post("", status_code=201)
-def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_agent)):
+def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_operator)):
     """Create a new bot for the authenticated workspace."""
     _require_bot_management_access(auth)
     with get_session() as session:
@@ -213,7 +213,7 @@ def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_age
 
 
 @router.get("/{bot_id}")
-def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_agent)):
+def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_operator)):
     """Get details of a specific bot owned by the authenticated workspace."""
     with get_session() as session:
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
@@ -247,14 +247,14 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_ag
             email_on_qualified=bot.email_on_qualified,
             email_on_handoff=bot.email_on_handoff,
             live_chat_enabled=bot.live_chat_enabled,
-            agent_timeout_seconds=bot.agent_timeout_seconds,
+            operator_timeout_seconds=bot.operator_timeout_seconds,
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )
 
 
 @router.patch("/{bot_id}")
-def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_client_or_agent)):
+def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_client_or_operator)):
     """Update settings for a specific bot."""
     try:
         _require_bot_management_access(auth)
@@ -284,7 +284,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
 
 
 @router.delete("/{bot_id}")
-def delete_bot(bot_id: int, auth=Depends(get_current_client_or_agent)):
+def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
     """Delete a bot and all its data (documents, sessions, messages)."""
     _require_bot_management_access(auth)
     with get_session() as session:

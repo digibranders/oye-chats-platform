@@ -1,4 +1,4 @@
-"""Agent management, department CRUD, and live chat REST endpoints."""
+"""Operator management, department CRUD, and live chat REST endpoints."""
 
 import asyncio
 import logging
@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select, update
 
-from app.api.auth import get_current_bot, get_current_client_or_agent
+from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.security import get_password_hash
-from app.db.models import Agent, Bot, ChatMessage, ChatSession, Department
+from app.db.models import Bot, ChatMessage, ChatSession, Department, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services.email_service import send_handoff_request_email
@@ -18,14 +18,14 @@ from app.services.live_chat_service import manager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/agents", tags=["agents"])
+router = APIRouter(prefix="/operators", tags=["operators"])
 
 
 def _require_team_management_access(auth: dict) -> None:
-    """Only workspace owners, admins, and direct client logins can manage agents/departments."""
+    """Only workspace owners, admins, and direct client logins can manage operators/departments."""
     if auth["type"] == "client":
         return
-    if getattr(auth["entity"], "role", "agent") not in {"owner", "admin"}:
+    if getattr(auth["entity"], "role", "operator") not in {"owner", "admin"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to manage team members.",
@@ -41,11 +41,11 @@ class HandoffRequest(BaseModel):
     department_id: int | None = None
 
 
-class CreateAgentRequest(BaseModel):
+class CreateOperatorRequest(BaseModel):
     name: str
     email: str
     password: str
-    role: str = "agent"
+    role: str = "operator"
     department_id: int | None = None
 
     @field_validator("name")
@@ -83,12 +83,12 @@ class CreateAgentRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def valid_role(cls, v):
-        if v not in ("owner", "admin", "agent"):
-            raise ValueError("Role must be owner, admin, or agent.")
+        if v not in ("owner", "admin", "operator"):
+            raise ValueError("Role must be owner, admin, or operator.")
         return v
 
 
-class UpdateAgentRequest(BaseModel):
+class UpdateOperatorRequest(BaseModel):
     name: str | None = None
     email: str | None = None
     role: str | None = None
@@ -122,15 +122,15 @@ class UpdateDepartmentRequest(BaseModel):
 
 
 class AcceptChatRequest(BaseModel):
-    agent_id: int | None = None
+    operator_id: int | None = None
 
 
 # ── Department Endpoints ──
 
 
 @router.get("/departments")
-def list_departments(auth=Depends(get_current_client_or_agent)):
-    """List all departments for the authenticated client/agent."""
+def list_departments(auth=Depends(get_current_client_or_operator)):
+    """List all departments for the authenticated client/operator."""
     client_id = auth["client_id"]
     with get_session() as session:
         departments = (
@@ -152,7 +152,7 @@ def list_departments(auth=Depends(get_current_client_or_agent)):
 
 
 @router.post("/departments")
-def create_department(request: CreateDepartmentRequest, auth=Depends(get_current_client_or_agent)):
+def create_department(request: CreateDepartmentRequest, auth=Depends(get_current_client_or_operator)):
     """Create a new department."""
     _require_team_management_access(auth)
     with get_session() as session:
@@ -172,7 +172,9 @@ def create_department(request: CreateDepartmentRequest, auth=Depends(get_current
 
 
 @router.patch("/departments/{department_id}")
-def update_department(department_id: int, request: UpdateDepartmentRequest, auth=Depends(get_current_client_or_agent)):
+def update_department(
+    department_id: int, request: UpdateDepartmentRequest, auth=Depends(get_current_client_or_operator)
+):
     """Update a department."""
     _require_team_management_access(auth)
     with get_session() as session:
@@ -190,8 +192,8 @@ def update_department(department_id: int, request: UpdateDepartmentRequest, auth
 
 
 @router.delete("/departments/{department_id}")
-def delete_department(department_id: int, auth=Depends(get_current_client_or_agent)):
-    """Delete a department. Agents in this department are moved to no department."""
+def delete_department(department_id: int, auth=Depends(get_current_client_or_operator)):
+    """Delete a department. Operators in this department are moved to no department."""
     _require_team_management_access(auth)
     with get_session() as session:
         dept = session.execute(
@@ -200,40 +202,44 @@ def delete_department(department_id: int, auth=Depends(get_current_client_or_age
         if not dept:
             raise HTTPException(status_code=404, detail="Department not found.")
 
-        # Unassign agents from this department
-        agents = session.execute(select(Agent).where(Agent.department_id == department_id)).scalars().all()
-        for agent in agents:
-            agent.department_id = None
+        # Unassign operators from this department
+        operators = session.execute(select(Operator).where(Operator.department_id == department_id)).scalars().all()
+        for op in operators:
+            op.department_id = None
 
         session.delete(dept)
         session.commit()
         return {"success": True, "message": f"Department '{dept.name}' deleted."}
 
 
-# ── Agent CRUD Endpoints ──
+# ── Operator CRUD Endpoints ──
 
 
 @router.get("")
-def list_agents(auth=Depends(get_current_client_or_agent)):
-    """List all agents for the authenticated client/agent."""
+def list_operators(auth=Depends(get_current_client_or_operator)):
+    """List all operators for the authenticated client/operator."""
     client_id = auth["client_id"]
     with get_session() as session:
-        agents = session.execute(select(Agent).where(Agent.client_id == client_id).order_by(Agent.id)).scalars().all()
+        operators = (
+            session.execute(select(Operator).where(Operator.client_id == client_id).order_by(Operator.id))
+            .scalars()
+            .all()
+        )
 
         # Build department name lookup
-        dept_ids = {a.department_id for a in agents if a.department_id}
+        dept_ids = {a.department_id for a in operators if a.department_id}
         dept_names = {}
         if dept_ids:
             depts = session.execute(select(Department).where(Department.id.in_(dept_ids))).scalars().all()
             dept_names = {d.id: d.name for d in depts}
 
-        # Count active sessions per agent
+        # Count active sessions per operator
         result = []
-        for a in agents:
+        for a in operators:
             active_count = session.execute(
                 select(func.count())
                 .select_from(ChatSession)
-                .where(ChatSession.assigned_agent_id == a.id, ChatSession.status == "live")
+                .where(ChatSession.assigned_operator_id == a.id, ChatSession.status == "live")
             ).scalar()
 
             result.append(
@@ -253,21 +259,21 @@ def list_agents(auth=Depends(get_current_client_or_agent)):
                 }
             )
 
-        return {"agents": result}
+        return {"operators": result}
 
 
 @router.post("/create")
-def create_agent(request: CreateAgentRequest, auth=Depends(get_current_client_or_agent)):
-    """Create a new agent with login credentials."""
+def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_client_or_operator)):
+    """Create a new operator with login credentials."""
     _require_team_management_access(auth)
     client_id = auth["client_id"]
     with get_session() as session:
         # Check for duplicate email — scoped to this workspace only
         existing = session.execute(
-            select(Agent).where(Agent.email == request.email, Agent.client_id == client_id)
+            select(Operator).where(Operator.email == request.email, Operator.client_id == client_id)
         ).scalar_one_or_none()
         if existing:
-            raise HTTPException(status_code=409, detail="An agent with this email already exists.")
+            raise HTTPException(status_code=409, detail="An operator with this email already exists.")
 
         # Auto-create default "General" department if none exists
         dept_count = session.execute(
@@ -281,95 +287,95 @@ def create_agent(request: CreateAgentRequest, auth=Depends(get_current_client_or
         else:
             default_dept_id = None
 
-        agent = Agent(
+        operator = Operator(
             client_id=client_id,
             name=request.name.strip(),
             email=request.email,
             hashed_password=get_password_hash(request.password),
-            agent_api_key=uuid.uuid4().hex,
+            operator_api_key=uuid.uuid4().hex,
             role=request.role,
             department_id=request.department_id or default_dept_id,
         )
-        session.add(agent)
+        session.add(operator)
         session.commit()
-        session.refresh(agent)
+        session.refresh(operator)
 
-        logger.info(f"Agent created: {agent.id} ({agent.name}) for client {client_id}")
+        logger.info(f"Operator created: {operator.id} ({operator.name}) for client {client_id}")
 
         return {
-            "id": agent.id,
-            "name": agent.name,
-            "email": agent.email,
-            "role": agent.role,
-            "department_id": agent.department_id,
+            "id": operator.id,
+            "name": operator.name,
+            "email": operator.email,
+            "role": operator.role,
+            "department_id": operator.department_id,
         }
 
 
-@router.patch("/{agent_id}")
-def update_agent(agent_id: int, request: UpdateAgentRequest, auth=Depends(get_current_client_or_agent)):
-    """Update an agent's profile (owner/admin only)."""
+@router.patch("/{operator_id}")
+def update_operator(operator_id: int, request: UpdateOperatorRequest, auth=Depends(get_current_client_or_operator)):
+    """Update an operator's profile (owner/admin only)."""
     _require_team_management_access(auth)
     with get_session() as session:
-        agent = session.execute(
-            select(Agent).where(Agent.id == agent_id, Agent.client_id == auth["client_id"])
+        operator = session.execute(
+            select(Operator).where(Operator.id == operator_id, Operator.client_id == auth["client_id"])
         ).scalar_one_or_none()
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found.")
+        if not operator:
+            raise HTTPException(status_code=404, detail="Operator not found.")
 
         if request.name is not None:
-            agent.name = request.name.strip()
+            operator.name = request.name.strip()
         if request.email is not None:
-            # Validate workspace-scoped uniqueness, excluding this agent
+            # Validate workspace-scoped uniqueness, excluding this operator
             dup = session.execute(
-                select(Agent).where(
-                    Agent.email == request.email,
-                    Agent.client_id == auth["client_id"],
-                    Agent.id != agent_id,
+                select(Operator).where(
+                    Operator.email == request.email,
+                    Operator.client_id == auth["client_id"],
+                    Operator.id != operator_id,
                 )
             ).scalar_one_or_none()
             if dup:
-                raise HTTPException(status_code=409, detail="An agent with this email already exists.")
-            agent.email = request.email  # already normalized by field_validator
+                raise HTTPException(status_code=409, detail="An operator with this email already exists.")
+            operator.email = request.email  # already normalized by field_validator
         if request.role is not None:
-            agent.role = request.role
+            operator.role = request.role
         if request.department_id is not None:
-            agent.department_id = request.department_id
+            operator.department_id = request.department_id
         if request.avatar_url is not None:
-            agent.avatar_url = request.avatar_url
+            operator.avatar_url = request.avatar_url
         if request.max_concurrent_chats is not None:
-            agent.max_concurrent_chats = request.max_concurrent_chats
+            operator.max_concurrent_chats = request.max_concurrent_chats
         if request.notification_preferences is not None:
-            agent.notification_preferences = request.notification_preferences
+            operator.notification_preferences = request.notification_preferences
 
         session.commit()
-        return {"success": True, "message": f"Agent '{agent.name}' updated."}
+        return {"success": True, "message": f"Operator '{operator.name}' updated."}
 
 
-@router.delete("/{agent_id}")
-def delete_agent(agent_id: int, auth=Depends(get_current_client_or_agent)):
-    """Delete an agent (owner/admin only)."""
+@router.delete("/{operator_id}")
+def delete_operator(operator_id: int, auth=Depends(get_current_client_or_operator)):
+    """Delete an operator (owner/admin only)."""
     _require_team_management_access(auth)
-    # Prevent agents from deleting their own account
-    if auth["type"] == "agent" and auth["agent_id"] == agent_id:
+    # Prevent operators from deleting their own account
+    if auth["type"] == "operator" and auth["operator_id"] == operator_id:
         raise HTTPException(status_code=400, detail="You cannot delete your own account.")
     with get_session() as session:
-        agent = session.execute(
-            select(Agent).where(Agent.id == agent_id, Agent.client_id == auth["client_id"])
+        operator = session.execute(
+            select(Operator).where(Operator.id == operator_id, Operator.client_id == auth["client_id"])
         ).scalar_one_or_none()
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found.")
+        if not operator:
+            raise HTTPException(status_code=404, detail="Operator not found.")
 
         # Unassign active sessions
         active_sessions = (
-            session.execute(select(ChatSession).where(ChatSession.assigned_agent_id == agent_id)).scalars().all()
+            session.execute(select(ChatSession).where(ChatSession.assigned_operator_id == operator_id)).scalars().all()
         )
         for cs in active_sessions:
-            cs.assigned_agent_id = None
+            cs.assigned_operator_id = None
             cs.status = "bot"
 
-        session.delete(agent)
+        session.delete(operator)
         session.commit()
-        return {"success": True, "message": f"Agent '{agent.name}' deleted."}
+        return {"success": True, "message": f"Operator '{operator.name}' deleted."}
 
 
 # ── Live Chat Flow Endpoints ──
@@ -401,7 +407,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
 
         # Get bot for timeout setting (re-fetch within this session)
         db_bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
-        timeout = db_bot.agent_timeout_seconds if db_bot else 120
+        timeout = db_bot.operator_timeout_seconds if db_bot else 120
 
         session.commit()
 
@@ -433,10 +439,10 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
 
 
 @router.get("/queue")
-def get_queue(auth=Depends(get_current_client_or_agent)):
+def get_queue(auth=Depends(get_current_client_or_operator)):
     """Get waiting chat queue from DB source-of-truth with visitor info."""
     client_id = auth["client_id"]
-    agent_dept_id = auth["entity"].department_id if auth["type"] == "agent" else None
+    operator_dept_id = auth["entity"].department_id if auth["type"] == "operator" else None
     queue_items = []
 
     with get_session() as session:
@@ -448,8 +454,8 @@ def get_queue(auth=Depends(get_current_client_or_agent)):
         ).all()
 
         for chat_session, _ in waiting_sessions:
-            # Department filtering for agent-scoped queues
-            if agent_dept_id and chat_session.department_id and chat_session.department_id != agent_dept_id:
+            # Department filtering for operator-scoped queues
+            if operator_dept_id and chat_session.department_id and chat_session.department_id != operator_dept_id:
                 continue
 
             lead_info = get_lead_info_by_session(session, chat_session.id)
@@ -473,58 +479,58 @@ def get_queue(auth=Depends(get_current_client_or_agent)):
 async def accept_chat(
     session_id: str,
     request: AcceptChatRequest | None = None,
-    auth=Depends(get_current_client_or_agent),
+    auth=Depends(get_current_client_or_operator),
 ):
-    """Agent accepts a waiting chat."""
+    """Operator accepts a waiting chat."""
     with get_session() as session:
-        # Resolve the agent
-        if auth["type"] == "agent":
-            agent = session.execute(select(Agent).where(Agent.id == auth["agent_id"])).scalar_one_or_none()
-        elif request and request.agent_id:
-            agent = session.execute(
-                select(Agent).where(Agent.id == request.agent_id, Agent.client_id == auth["client_id"])
+        # Resolve the operator
+        if auth["type"] == "operator":
+            operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
+        elif request and request.operator_id:
+            operator = session.execute(
+                select(Operator).where(Operator.id == request.operator_id, Operator.client_id == auth["client_id"])
             ).scalar_one_or_none()
         else:
-            # Fallback: first online agent for this client
-            agent = session.execute(
-                select(Agent).where(Agent.client_id == auth["client_id"], Agent.is_online.is_(True)).limit(1)
+            # Fallback: first online operator for this client
+            operator = session.execute(
+                select(Operator).where(Operator.client_id == auth["client_id"], Operator.is_online.is_(True)).limit(1)
             ).scalar_one_or_none()
-            if not agent:
-                agent = session.execute(
-                    select(Agent).where(Agent.client_id == auth["client_id"]).limit(1)
+            if not operator:
+                operator = session.execute(
+                    select(Operator).where(Operator.client_id == auth["client_id"]).limit(1)
                 ).scalar_one_or_none()
 
-        if not agent:
-            raise HTTPException(status_code=400, detail="No agent profile found.")
+        if not operator:
+            raise HTTPException(status_code=400, detail="No operator profile found.")
 
         # DB-level race condition guard: atomically claim the session only if still waiting.
-        # Using UPDATE ... WHERE status='waiting' ensures only one agent wins the race.
+        # Using UPDATE ... WHERE status='waiting' ensures only one operator wins the race.
         result = session.execute(
             update(ChatSession)
             .where(ChatSession.id == session_id, ChatSession.status == "waiting")
-            .values(status="live", assigned_agent_id=agent.id)
+            .values(status="live", assigned_operator_id=operator.id)
             .returning(ChatSession.id)
         )
         claimed = result.scalar_one_or_none()
         if not claimed:
-            # Either session doesn't exist or was already accepted by another agent
+            # Either session doesn't exist or was already accepted by another operator
             existing = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
             if not existing:
                 raise HTTPException(status_code=404, detail="Session not found")
-            raise HTTPException(status_code=409, detail="Chat was already accepted by another agent")
+            raise HTTPException(status_code=409, detail="Chat was already accepted by another operator")
 
         session.commit()
-        agent_name = agent.name
-        agent_id = agent.id
+        operator_name = operator.name
+        operator_id = operator.id
 
-    asyncio.create_task(manager.accept_chat(session_id, agent_id, agent_name))
+    asyncio.create_task(manager.accept_chat(session_id, operator_id, operator_name))
 
-    return {"success": True, "status": "live", "agent_name": agent_name}
+    return {"success": True, "status": "live", "operator_name": operator_name}
 
 
 @router.post("/close/{session_id}")
-async def close_chat(session_id: str, auth=Depends(get_current_client_or_agent)):
-    """Agent closes a live chat."""
+async def close_chat(session_id: str, auth=Depends(get_current_client_or_operator)):
+    """Operator closes a live chat."""
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
@@ -534,7 +540,7 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_agent))
         if not bot or bot.client_id != auth["client_id"]:
             raise HTTPException(status_code=403, detail="Access denied.")
         chat_session.status = "bot"
-        chat_session.assigned_agent_id = None
+        chat_session.assigned_operator_id = None
         session.commit()
 
     asyncio.create_task(manager.close_chat(session_id, bot.name if bot else "AI Assistant"))
@@ -543,15 +549,15 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_agent))
 
 
 class TransferRequest(BaseModel):
-    target_agent_id: int | None = None
+    target_operator_id: int | None = None
     target_department_id: int | None = None
 
 
 @router.post("/transfer/{session_id}")
-async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_current_client_or_agent)):
-    """Transfer a live chat to another agent or department."""
-    if not request.target_agent_id and not request.target_department_id:
-        raise HTTPException(status_code=400, detail="Must specify target_agent_id or target_department_id.")
+async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(get_current_client_or_operator)):
+    """Transfer a live chat to another operator or department."""
+    if not request.target_operator_id and not request.target_department_id:
+        raise HTTPException(status_code=400, detail="Must specify target_operator_id or target_department_id.")
 
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
@@ -565,26 +571,28 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
         if not bot or bot.client_id != auth["client_id"]:
             raise HTTPException(status_code=403, detail="Access denied.")
 
-        old_agent_id = chat_session.assigned_agent_id
+        old_operator_id = chat_session.assigned_operator_id
 
-        if request.target_agent_id:
-            target_agent = session.execute(
-                select(Agent).where(Agent.id == request.target_agent_id, Agent.client_id == auth["client_id"])
+        if request.target_operator_id:
+            target_operator = session.execute(
+                select(Operator).where(
+                    Operator.id == request.target_operator_id, Operator.client_id == auth["client_id"]
+                )
             ).scalar_one_or_none()
-            if not target_agent:
-                raise HTTPException(status_code=404, detail="Target agent not found.")
+            if not target_operator:
+                raise HTTPException(status_code=404, detail="Target operator not found.")
 
-            chat_session.assigned_agent_id = target_agent.id
-            if target_agent.department_id:
-                chat_session.department_id = target_agent.department_id
+            chat_session.assigned_operator_id = target_operator.id
+            if target_operator.department_id:
+                chat_session.department_id = target_operator.department_id
             session.commit()
 
-            target_name = target_agent.name
+            target_name = target_operator.name
 
             # Notify via WebSocket
-            asyncio.create_task(manager.transfer_chat(session_id, old_agent_id, target_agent.id, target_name))
+            asyncio.create_task(manager.transfer_chat(session_id, old_operator_id, target_operator.id, target_name))
 
-            return {"success": True, "transferred_to": target_name, "agent_id": target_agent.id}
+            return {"success": True, "transferred_to": target_name, "operator_id": target_operator.id}
 
         # Transfer to department: verify ownership then put back in queue
         dept = session.execute(
@@ -596,19 +604,19 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
         if not dept:
             raise HTTPException(status_code=404, detail="Target department not found.")
 
-        old_agent_id = chat_session.assigned_agent_id
+        old_operator_id = chat_session.assigned_operator_id
         chat_session.status = "waiting"
-        chat_session.assigned_agent_id = None
+        chat_session.assigned_operator_id = None
         chat_session.department_id = request.target_department_id
         session.commit()
         dept_name = dept.name
 
-        timeout = bot.agent_timeout_seconds or 120
-        # Notify old agent that the chat was transferred away
-        if old_agent_id:
+        timeout = bot.operator_timeout_seconds or 120
+        # Notify old operator that the chat was transferred away
+        if old_operator_id:
             asyncio.create_task(
-                manager._send_to_agent(
-                    old_agent_id,
+                manager._send_to_operator(
+                    old_operator_id,
                     {"type": "chat_transferred", "session_id": session_id, "transferred_to": dept_name},
                 )
             )
@@ -618,39 +626,41 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
 
 
 @router.post("/status")
-def toggle_agent_status(auth=Depends(get_current_client_or_agent)):
-    """Toggle agent online/offline status."""
+def toggle_operator_status(auth=Depends(get_current_client_or_operator)):
+    """Toggle operator online/offline status."""
     with get_session() as session:
-        if auth["type"] == "agent":
-            agent = session.execute(select(Agent).where(Agent.id == auth["agent_id"])).scalar_one_or_none()
-            if not agent:
-                raise HTTPException(status_code=404, detail="Agent not found.")
-            agent.is_online = not agent.is_online
+        if auth["type"] == "operator":
+            operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
+            if not operator:
+                raise HTTPException(status_code=404, detail="Operator not found.")
+            operator.is_online = not operator.is_online
             session.commit()
-            return {"is_online": agent.is_online, "agent_name": agent.name, "agent_id": agent.id}
+            return {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
 
-        # Client: backward compat — find or create agent from client profile
+        # Client: backward compat — find or create operator from client profile
         client = auth["entity"]
-        agent = session.execute(select(Agent).where(Agent.client_id == client.id).limit(1)).scalar_one_or_none()
+        operator = session.execute(
+            select(Operator).where(Operator.client_id == client.id).limit(1)
+        ).scalar_one_or_none()
 
-        if not agent:
-            agent = Agent(client_id=client.id, name=client.name, email=client.email, is_online=True, role="owner")
-            session.add(agent)
+        if not operator:
+            operator = Operator(client_id=client.id, name=client.name, email=client.email, is_online=True, role="owner")
+            session.add(operator)
             session.commit()
-            session.refresh(agent)
-            return {"is_online": True, "agent_name": agent.name, "agent_id": agent.id}
+            session.refresh(operator)
+            return {"is_online": True, "operator_name": operator.name, "operator_id": operator.id}
 
-        agent.is_online = not agent.is_online
+        operator.is_online = not operator.is_online
         session.commit()
-        return {"is_online": agent.is_online, "agent_name": agent.name, "agent_id": agent.id}
+        return {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
 
 
 # ── Session Details Endpoint ──
 
 
 @router.get("/session/{session_id}/details")
-def get_session_details(session_id: str, auth=Depends(get_current_client_or_agent)):
-    """Get full visitor/session details for the agent sidebar."""
+def get_session_details(session_id: str, auth=Depends(get_current_client_or_operator)):
+    """Get full visitor/session details for the operator sidebar."""
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
@@ -674,13 +684,13 @@ def get_session_details(session_id: str, auth=Depends(get_current_client_or_agen
             ).scalar_one_or_none()
             dept_name = dept.name if dept else None
 
-        # Get assigned agent name
-        agent_name = None
-        if chat_session.assigned_agent_id:
-            agent = session.execute(
-                select(Agent).where(Agent.id == chat_session.assigned_agent_id)
+        # Get assigned operator name
+        operator_name = None
+        if chat_session.assigned_operator_id:
+            operator = session.execute(
+                select(Operator).where(Operator.id == chat_session.assigned_operator_id)
             ).scalar_one_or_none()
-            agent_name = agent.name if agent else None
+            operator_name = operator.name if operator else None
 
         return {
             "session_id": session_id,
@@ -708,7 +718,7 @@ def get_session_details(session_id: str, auth=Depends(get_current_client_or_agen
             "message_count": message_count,
             "bot_name": bot.name,
             "department_name": dept_name,
-            "agent_name": agent_name,
+            "operator_name": operator_name,
         }
 
 

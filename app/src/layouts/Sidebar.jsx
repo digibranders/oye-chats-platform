@@ -39,15 +39,15 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     };
 
     const navigate = useNavigate();
-    const { isAgent: isAgentRole, isBotManager } = getAuthState();
+    const { isOperator: isOperatorRole, isBotManager } = getAuthState();
 
     const handleCreateBot = () => {
         setDropdownOpen(false);
         navigate('/chatbot?create=true');
     };
 
-    // Agent users see a minimal sidebar
-    const mainItems = isAgentRole
+    // Operator users see a minimal sidebar
+    const mainItems = isOperatorRole
         ? [
             { path: '/support', name: 'Support', icon: Headphones },
         ]
@@ -59,7 +59,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             { path: '/leads', name: 'Leads', icon: Target },
         ];
 
-    const configItems = isAgentRole
+    const configItems = isOperatorRole
         ? [
             { path: '/team', name: 'Team', icon: UsersRound },
         ]

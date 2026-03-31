@@ -5,8 +5,8 @@ import {
     Users, Info, Phone, Building2, Clock,
 } from 'lucide-react';
 import {
-    acceptChat, closeAgentChat, toggleAgentStatus, getChatHistory,
-    getCannedResponses, transferChat, getAgents, getDepartments, getSessionDetails, getAgentQueue,
+    acceptChat, closeOperatorChat, toggleOperatorStatus, getChatHistory,
+    getCannedResponses, transferChat, getOperators, getDepartments, getSessionDetails, getOperatorQueue,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
@@ -18,9 +18,9 @@ const MAX_RECONNECT_ATTEMPTS = 8;
 export default function LiveChat({ embedded = false }) {
     const { bots, loading: botsLoading } = useBotContext();
 
-    // Core agent state
+    // Core operator state
     const [isOnline, setIsOnline] = useState(false);
-    const [agentName, setAgentName] = useState('');
+    const [operatorName, setOperatorName] = useState('');
 
     // Chat state
     const [queue, setQueue] = useState([]);             // [{ session_id, name, reason }]
@@ -43,14 +43,14 @@ export default function LiveChat({ embedded = false }) {
 
     // Transfer modal
     const [showTransferModal, setShowTransferModal] = useState(false);
-    const [transferAgents, setTransferAgents] = useState([]);
+    const [transferOperators, setTransferOperators] = useState([]);
     const [transferDepartments, setTransferDepartments] = useState([]);
 
     // Right panel (session info + team roster)
     const [showRightPanel, setShowRightPanel] = useState(true);
     const [rightPanelTab, setRightPanelTab] = useState('team'); // 'session' | 'team'
     const [sessionInfo, setSessionInfo] = useState(null);
-    const [agentsList, setAgentsList] = useState([]); // full roster from REST + WS updates
+    const [operatorsList, setOperatorsList] = useState([]); // full roster from REST + WS updates
 
     // Visitor connection status per session: session_id → 'online' | 'disconnected'
     const [visitorStatus, setVisitorStatus] = useState({});
@@ -121,11 +121,11 @@ export default function LiveChat({ embedded = false }) {
         }
     }, []);
 
-    // Load full agents roster (for Team panel)
-    const fetchAgentsList = useCallback(async () => {
+    // Load full operators roster (for Team panel)
+    const fetchOperatorsList = useCallback(async () => {
         try {
-            const data = await getAgents();
-            setAgentsList(data.agents || []);
+            const data = await getOperators();
+            setOperatorsList(data.operators || []);
         } catch { /* silent */ }
     }, []);
 
@@ -146,7 +146,7 @@ export default function LiveChat({ embedded = false }) {
 
     const fetchQueueSnapshot = useCallback(async () => {
         try {
-            const data = await getAgentQueue();
+            const data = await getOperatorQueue();
             syncQueueState(data.queue || []);
         } catch {
             // silent fallback: WebSocket stream may still be active
@@ -171,11 +171,11 @@ export default function LiveChat({ embedded = false }) {
         manualCloseRef.current = false;
 
         const wsUrl = API_URL.replace(/^http/, 'ws').replace(/\/+$/, '');
-        // Bug fix: agents must use agent_key param (their agent_api_key is stored in admin_token).
-        // Owners/clients use api_key param (resolves to their first agent record on the backend).
+        // Bug fix: operators must use operator_key param (their operator_api_key is stored in admin_token).
+        // Owners/clients use api_key param (resolves to their first operator record on the backend).
         const encodedKey = encodeURIComponent(apiKey);
-        const wsParam = authType === 'agent' ? `agent_key=${encodedKey}` : `api_key=${encodedKey}`;
-        const socket = new WebSocket(`${wsUrl}/ws/agent?${wsParam}`);
+        const wsParam = authType === 'operator' ? `operator_key=${encodedKey}` : `api_key=${encodedKey}`;
+        const socket = new WebSocket(`${wsUrl}/ws/operator?${wsParam}`);
         wsRef.current = socket;
 
         socket.onopen = () => {
@@ -200,25 +200,25 @@ export default function LiveChat({ embedded = false }) {
                     break;
 
                 case 'init':
-                    // Server sends agent name + online status on first connect
-                    if (data.agent_name) setAgentName(data.agent_name);
+                    // Server sends operator name + online status on first connect
+                    if (data.operator_name) setOperatorName(data.operator_name);
                     break;
 
                 case 'queue_update':
                     syncQueueState(data.waiting || []);
                     break;
 
-                case 'agents_update':
+                case 'operators_update':
                     // Merge real-time active_chat counts into roster.
-                    // Agents present in the WS update are online; absent ones are offline.
-                    setAgentsList(prev => {
+                    // Operators present in the WS update are online; absent ones are offline.
+                    setOperatorsList(prev => {
                         const wsMap = {};
-                        (data.agents || []).forEach(a => { wsMap[a.agent_id] = a; });
-                        return prev.map(agent => {
-                            const wsAgent = wsMap[agent.id];
-                            return wsAgent
-                                ? { ...agent, active_chats: wsAgent.active_chats, is_online: true }
-                                : { ...agent, is_online: false, active_chats: 0 };
+                        (data.operators || []).forEach(a => { wsMap[a.operator_id] = a; });
+                        return prev.map(operator => {
+                            const wsOp = wsMap[operator.id];
+                            return wsOp
+                                ? { ...operator, active_chats: wsOp.active_chats, is_online: true }
+                                : { ...operator, is_online: false, active_chats: 0 };
                         });
                     });
                     break;
@@ -390,10 +390,10 @@ export default function LiveChat({ embedded = false }) {
         };
     }, [isOnline, fetchQueueSnapshot]);
 
-    // Load agents roster when going online
+    // Load operators roster when going online
     useEffect(() => {
-        if (isOnline) fetchAgentsList();
-    }, [isOnline, fetchAgentsList]);
+        if (isOnline) fetchOperatorsList();
+    }, [isOnline, fetchOperatorsList]);
 
     // Auto-scroll messages
     useEffect(() => {
@@ -407,9 +407,9 @@ export default function LiveChat({ embedded = false }) {
 
     const handleToggleStatus = async () => {
         try {
-            const result = await toggleAgentStatus();
+            const result = await toggleOperatorStatus();
             setIsOnline(result.is_online);
-            setAgentName(result.agent_name);
+            setOperatorName(result.operator_name);
             if (!result.is_online) {
                 // Going offline — close WS without triggering reconnect
                 manualCloseRef.current = true;
@@ -474,7 +474,7 @@ export default function LiveChat({ embedded = false }) {
 
     const handleCloseChat = async (sessionId) => {
         try {
-            await closeAgentChat(sessionId);
+            await closeOperatorChat(sessionId);
             setActiveChats(prev => prev.filter(id => id !== sessionId));
             if (selectedChat === sessionId) {
                 setSelectedChat(null);
@@ -514,18 +514,18 @@ export default function LiveChat({ embedded = false }) {
 
     const openTransferModal = async () => {
         try {
-            const [agentsData, deptsData] = await Promise.all([getAgents(), getDepartments()]);
-            setTransferAgents((agentsData.agents || []).filter(a => a.is_online));
+            const [operatorsData, deptsData] = await Promise.all([getOperators(), getDepartments()]);
+            setTransferOperators((operatorsData.operators || []).filter(a => a.is_online));
             setTransferDepartments(deptsData.departments || []);
             setShowTransferModal(true);
         } catch { /* silent */ }
     };
 
-    const handleTransfer = async (targetAgentId, targetDeptId) => {
+    const handleTransfer = async (targetOperatorId, targetDeptId) => {
         if (!selectedChat) return;
         try {
-            const payload = targetAgentId
-                ? { target_agent_id: targetAgentId }
+            const payload = targetOperatorId
+                ? { target_agent_id: targetOperatorId }
                 : { target_department_id: targetDeptId };
             await transferChat(selectedChat, payload);
             setShowTransferModal(false);
@@ -562,9 +562,9 @@ export default function LiveChat({ embedded = false }) {
         }
     };
 
-    const getAgentStatus = (agent) => {
-        if (!agent.is_online) return 'offline';
-        if ((agent.active_chats || 0) > 0) return 'busy';
+    const getOperatorStatus = (operator) => {
+        if (!operator.is_online) return 'offline';
+        if ((operator.active_chats || 0) > 0) return 'busy';
         return 'online';
     };
 
@@ -589,7 +589,7 @@ export default function LiveChat({ embedded = false }) {
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
                 {!embedded && <PageHeader title="Live Chat" subtitle="Chat with visitors in real-time" />}
                 <div className={`flex items-center gap-3 ${embedded ? 'w-full justify-between' : ''}`}>
-                    {agentName && <span className="text-sm text-secondary-500">{agentName}</span>}
+                    {operatorName && <span className="text-sm text-secondary-500">{operatorName}</span>}
                     {connectionLost && (
                         <span className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-lg">
                             Connection lost — refresh to reconnect
@@ -961,27 +961,27 @@ export default function LiveChat({ embedded = false }) {
                                 {(!selectedChat || rightPanelTab === 'team') && (
                                     <div className="p-4">
                                         <h5 className="text-[11px] font-bold uppercase tracking-wider text-secondary-500 mb-3">
-                                            Agents ({agentsList.length})
+                                            Operators ({operatorsList.length})
                                         </h5>
-                                        {agentsList.length === 0 ? (
-                                            <p className="text-sm text-secondary-400 text-center py-6">No agents yet</p>
+                                        {operatorsList.length === 0 ? (
+                                            <p className="text-sm text-secondary-400 text-center py-6">No operators yet</p>
                                         ) : (
                                             <div className="space-y-2">
-                                                {agentsList.map(agent => {
-                                                    const status = getAgentStatus(agent);
+                                                {operatorsList.map(operator => {
+                                                    const status = getOperatorStatus(operator);
                                                     return (
-                                                        <div key={agent.id} className="flex items-center gap-2.5 py-1.5">
+                                                        <div key={operator.id} className="flex items-center gap-2.5 py-1.5">
                                                             <div className="relative flex-shrink-0">
                                                                 <div className="w-7 h-7 rounded-full bg-secondary-100 flex items-center justify-center text-secondary-600 font-bold text-[11px]">
-                                                                    {agent.name?.charAt(0).toUpperCase() || '?'}
+                                                                    {operator.name?.charAt(0).toUpperCase() || '?'}
                                                                 </div>
                                                                 <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${statusDotClass(status)}`} />
                                                             </div>
                                                             <div className="min-w-0">
-                                                                <p className="text-sm font-medium text-secondary-900 truncate">{agent.name}</p>
+                                                                <p className="text-sm font-medium text-secondary-900 truncate">{operator.name}</p>
                                                                 <p className="text-[10px] text-secondary-400">
                                                                     {status === 'online' && 'Online'}
-                                                                    {status === 'busy' && `Busy · ${agent.active_chats} chat${agent.active_chats !== 1 ? 's' : ''}`}
+                                                                    {status === 'busy' && `Busy · ${operator.active_chats} chat${operator.active_chats !== 1 ? 's' : ''}`}
                                                                     {status === 'offline' && 'Offline'}
                                                                 </p>
                                                             </div>
@@ -1012,23 +1012,23 @@ export default function LiveChat({ embedded = false }) {
                             </button>
                         </div>
                         <div className="p-5 space-y-4">
-                            {transferAgents.length > 0 && (
+                            {transferOperators.length > 0 && (
                                 <div>
-                                    <h3 className="text-sm font-medium text-secondary-700 mb-2">Online Agents</h3>
+                                    <h3 className="text-sm font-medium text-secondary-700 mb-2">Online Operators</h3>
                                     <div className="space-y-1">
-                                        {transferAgents.map(agent => (
+                                        {transferOperators.map(operator => (
                                             <button
-                                                key={agent.id}
-                                                onClick={() => handleTransfer(agent.id, null)}
+                                                key={operator.id}
+                                                onClick={() => handleTransfer(operator.id, null)}
                                                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 transition-colors text-left"
                                             >
                                                 <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
-                                                    {agent.name?.charAt(0).toUpperCase() || '?'}
+                                                    {operator.name?.charAt(0).toUpperCase() || '?'}
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-secondary-900">{agent.name}</p>
+                                                    <p className="text-sm font-medium text-secondary-900">{operator.name}</p>
                                                     <p className="text-[11px] text-secondary-500">
-                                                        {agent.department_name || 'No department'} · {agent.active_chats || 0} active
+                                                        {operator.department_name || 'No department'} · {operator.active_chats || 0} active
                                                     </p>
                                                 </div>
                                             </button>
@@ -1055,8 +1055,8 @@ export default function LiveChat({ embedded = false }) {
                                     </div>
                                 </div>
                             )}
-                            {transferAgents.length === 0 && transferDepartments.length === 0 && (
-                                <p className="text-sm text-secondary-500 text-center py-4">No agents online or departments available.</p>
+                            {transferOperators.length === 0 && transferDepartments.length === 0 && (
+                                <p className="text-sm text-secondary-500 text-center py-4">No operators online or departments available.</p>
                             )}
                         </div>
                     </div>

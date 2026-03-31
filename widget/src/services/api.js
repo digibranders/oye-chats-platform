@@ -160,7 +160,7 @@ export const submitLeadCapture = async (sessionId, formData) => {
 
 export const requestHandoff = async (sessionId, formData) => {
     try {
-        const response = await fetch(`${API_URL}/agents/handoff`, {
+        const response = await fetch(`${API_URL}/operators/handoff`, {
             method: 'POST',
             headers: getHeaders(),
             body: JSON.stringify({
@@ -189,7 +189,7 @@ export const requestHandoff = async (sessionId, formData) => {
 export const getDepartments = async () => {
     try {
         const botKey = window.OYECHAT_BOT_KEY || '';
-        const response = await fetch(`${API_URL}/agents/departments/public?bot_key=${botKey}`);
+        const response = await fetch(`${API_URL}/operators/departments/public?bot_key=${botKey}`);
         if (!response.ok) return { departments: [] };
         return await response.json();
     } catch (error) {

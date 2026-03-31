@@ -38,7 +38,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showWelcome, setShowWelcome] = useState(true);
     const [showLeadForm, setShowLeadForm] = useState(false);
     const [chatMode, setChatMode] = useState('bot'); // bot|handoff_form|waiting|live|unavailable
-    const [agentName, setAgentName] = useState(null);
+    const [operatorName, setOperatorName] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
@@ -293,7 +293,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // --- Smart handoff emphasis logic ---
-    const HANDOFF_KEYWORDS = /\b(human|agent|speak to someone|real person|support|talk to a person|representative|help me)\b/i;
+    const HANDOFF_KEYWORDS = /\b(human|agent|operator|speak to someone|real person|support|talk to a person|representative|help me)\b/i;
     const FALLBACK_PATTERNS = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
 
     // Detect frustration: 3+ user messages within 30 seconds
@@ -365,7 +365,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </div>
             );
         }
-        if (chatMode === 'live' && agentName) {
+        if (chatMode === 'live' && operatorName) {
             const primaryColor = settings.primary_color || '#3A0CA3';
             const isReconnecting = liveConnectionStatus === 'reconnecting';
             return (
@@ -375,12 +375,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm"
                             style={{ backgroundColor: primaryColor }}
                         >
-                            {agentName.charAt(0).toUpperCase()}
+                            {operatorName.charAt(0).toUpperCase()}
                         </div>
                         <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${isReconnecting ? 'bg-amber-400' : 'bg-green-500'}`} />
                     </div>
                     <div>
-                        <h3 className="font-semibold text-sm text-gray-900">{agentName}</h3>
+                        <h3 className="font-semibold text-sm text-gray-900">{operatorName}</h3>
                         <p className={`text-[10px] font-medium ${isReconnecting ? 'text-amber-600' : 'text-green-600'}`}>
                             {isReconnecting ? 'Reconnecting...' : 'Online'}
                         </p>
@@ -447,7 +447,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     settings={settings}
                     chatMode={chatMode}
                     setChatMode={setChatMode}
-                    setAgentName={setAgentName}
+                    setOperatorName={setOperatorName}
                     onNewMessage={handleLiveChatMessage}
                     botMessages={messages.slice(-5)}
                     onConnectionStatusChange={setLiveConnectionStatus}

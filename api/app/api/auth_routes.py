@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
-from app.api.auth import get_current_agent
+from app.api.auth import get_current_operator
 from app.core.security import get_password_hash, verify_password
-from app.db.models import Agent, Bot, ChatSession, Client, Document
+from app.db.models import Bot, ChatSession, Client, Document, Operator
 from app.db.session import get_session
 from app.services.email_service import send_password_reset_email
 
@@ -26,7 +26,7 @@ def _normalize_workspace_stats(
     normalized = {
         client_id: {
             "bot_count": 0,
-            "agent_count": 0,
+            "operator_count": 0,
             "website_bot_count": 0,
             "document_count": 0,
             "session_count": 0,
@@ -41,7 +41,7 @@ def _normalize_workspace_stats(
             client_id,
             {
                 "bot_count": 0,
-                "agent_count": 0,
+                "operator_count": 0,
                 "website_bot_count": 0,
                 "document_count": 0,
                 "session_count": 0,
@@ -69,11 +69,13 @@ def _build_workspace_stats(session, client_ids: set[int]) -> dict[int, dict[str,
         if website and website.strip():
             stats[client_id]["website_bot_count"] += 1
 
-    agent_count_rows = session.execute(
-        select(Agent.client_id, func.count(Agent.id)).where(Agent.client_id.in_(client_ids)).group_by(Agent.client_id)
+    operator_count_rows = session.execute(
+        select(Operator.client_id, func.count(Operator.id))
+        .where(Operator.client_id.in_(client_ids))
+        .group_by(Operator.client_id)
     ).all()
-    for client_id, count in agent_count_rows:
-        stats[client_id]["agent_count"] = int(count or 0)
+    for client_id, count in operator_count_rows:
+        stats[client_id]["operator_count"] = int(count or 0)
 
     if not bot_client_lookup:
         return stats
@@ -103,7 +105,7 @@ def _workspace_connection_score(workspace_stats: dict[str, int]) -> tuple:
     session_count = workspace_stats.get("session_count", 0)
     document_count = workspace_stats.get("document_count", 0)
     bot_count = workspace_stats.get("bot_count", 0)
-    agent_count = workspace_stats.get("agent_count", 0)
+    agent_count = workspace_stats.get("operator_count", 0)
     has_connected_bot = website_bot_count > 0 or session_count > 0 or document_count > 0
 
     return (
@@ -118,29 +120,31 @@ def _workspace_connection_score(workspace_stats: dict[str, int]) -> tuple:
     )
 
 
-def _agent_login_score(agent: Agent, workspace_stats: dict[int, dict[str, int]] | None = None, **legacy_stats) -> tuple:
+def _operator_login_score(
+    operator: Operator, workspace_stats: dict[int, dict[str, int]] | None = None, **legacy_stats
+) -> tuple:
     """Prefer the workspace with the strongest evidence of a real linked bot setup."""
-    client_ids = {agent.client_id}
+    client_ids = {operator.client_id}
     if workspace_stats is None:
         workspace_stats = _normalize_workspace_stats(client_ids, legacy_stats)
     else:
         workspace_stats = _normalize_workspace_stats(client_ids, workspace_stats)
 
-    connection_score = _workspace_connection_score(workspace_stats.get(agent.client_id, {}))
-    created_at = agent.created_at or datetime.min.replace(tzinfo=UTC)
-    return (*connection_score, created_at, agent.id)
+    connection_score = _workspace_connection_score(workspace_stats.get(operator.client_id, {}))
+    created_at = operator.created_at or datetime.min.replace(tzinfo=UTC)
+    return (*connection_score, created_at, operator.id)
 
 
-def _choose_best_agent_candidate(
-    candidates: list[Agent], workspace_stats: dict[int, dict[str, int]] | None = None, **legacy_stats
-) -> Agent:
-    client_ids = {agent.client_id for agent in candidates}
+def _choose_best_operator_candidate(
+    candidates: list[Operator], workspace_stats: dict[int, dict[str, int]] | None = None, **legacy_stats
+) -> Operator:
+    client_ids = {operator.client_id for operator in candidates}
     if workspace_stats is None:
         workspace_stats = _normalize_workspace_stats(client_ids, legacy_stats)
     else:
         workspace_stats = _normalize_workspace_stats(client_ids, workspace_stats)
 
-    return max(candidates, key=lambda agent: _agent_login_score(agent, workspace_stats))
+    return max(candidates, key=lambda operator: _operator_login_score(operator, workspace_stats))
 
 
 def _choose_default_workspace_bot(bots: list[Bot], bot_activity: dict[int, dict[str, int]] | None = None) -> Bot | None:
@@ -170,7 +174,7 @@ def _choose_default_workspace_bot(bots: list[Bot], bot_activity: dict[int, dict[
 
 
 def _get_default_workspace_bot(session, client_id: int) -> Bot | None:
-    """Fetch the best default bot to hydrate immediately after agent login."""
+    """Fetch the best default bot to hydrate immediately after operator login."""
     bots = (
         session.execute(
             select(Bot)
@@ -452,18 +456,18 @@ def reset_password(request: ResetPasswordRequest):
         raise HTTPException(status_code=500, detail="An error occurred.") from e
 
 
-# ── Agent Authentication ──
+# ── Operator Authentication ──
 
 
-class AgentLoginRequest(BaseModel):
+class OperatorLoginRequest(BaseModel):
     email: str
     password: str
 
 
-class AgentLoginResponse(BaseModel):
+class OperatorLoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    agent_id: int
+    operator_id: int
     client_id: int
     default_bot_id: int | None = None
     name: str
@@ -473,7 +477,7 @@ class AgentLoginResponse(BaseModel):
     website: str | None = None
 
 
-class AgentChangePasswordRequest(BaseModel):
+class OperatorChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
@@ -489,108 +493,108 @@ class AgentChangePasswordRequest(BaseModel):
         return v
 
 
-@router.post("/agent-login", response_model=AgentLoginResponse)
-def agent_login(request: AgentLoginRequest):
+@router.post("/operator-login", response_model=OperatorLoginResponse)
+def operator_login(request: OperatorLoginRequest):
     """
-    Authenticate an Agent via email and password.
-    Returns the Agent's API Key for subsequent requests via X-Agent-Key header.
+    Authenticate an Operator via email and password.
+    Returns the Operator's API Key for subsequent requests via X-Operator-Key header.
     """
     try:
         with get_session() as session:
             email = request.email.strip().lower()
-            agents = (
+            operators = (
                 session.execute(
-                    select(Agent).where(Agent.email == email).order_by(Agent.created_at.desc(), Agent.id.desc())
+                    select(Operator)
+                    .where(Operator.email == email)
+                    .order_by(Operator.created_at.desc(), Operator.id.desc())
                 )
                 .scalars()
                 .all()
             )
 
-            valid_agents = [
-                agent
-                for agent in agents
-                if agent.hashed_password and verify_password(request.password, agent.hashed_password)
+            valid_operators = [
+                op for op in operators if op.hashed_password and verify_password(request.password, op.hashed_password)
             ]
 
-            if not valid_agents:
-                logger.warning(f"Agent login failed: unknown email or no password set for {request.email}")
+            if not valid_operators:
+                logger.warning(f"Operator login failed: unknown email or no password set for {request.email}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
                 )
 
-            if len(valid_agents) == 1:
-                agent = valid_agents[0]
+            if len(valid_operators) == 1:
+                operator = valid_operators[0]
             else:
-                client_ids = {agent.client_id for agent in valid_agents}
+                client_ids = {op.client_id for op in valid_operators}
                 workspace_stats = _build_workspace_stats(session, client_ids)
-                agent = _choose_best_agent_candidate(valid_agents, workspace_stats)
+                operator = _choose_best_operator_candidate(valid_operators, workspace_stats)
 
                 logger.warning(
-                    "Duplicate agent email resolved during login | email=%s | chosen_agent_id=%s | chosen_client_id=%s | candidates=%s | workspace_stats=%s",
+                    "Duplicate operator email resolved during login | email=%s | chosen_operator_id=%s | chosen_client_id=%s | candidates=%s | workspace_stats=%s",
                     email,
-                    agent.id,
-                    agent.client_id,
-                    [(candidate.id, candidate.client_id) for candidate in valid_agents],
+                    operator.id,
+                    operator.client_id,
+                    [(candidate.id, candidate.client_id) for candidate in valid_operators],
                     workspace_stats,
                 )
 
-            # Backfill missing API keys for older agent records so subsequent
+            # Backfill missing API keys for older operator records so subsequent
             # authenticated requests don't immediately fail with 401.
-            if not agent.agent_api_key:
-                agent.agent_api_key = uuid.uuid4().hex
+            if not operator.operator_api_key:
+                operator.operator_api_key = uuid.uuid4().hex
                 session.commit()
-                session.refresh(agent)
+                session.refresh(operator)
 
-            default_bot = _get_default_workspace_bot(session, agent.client_id)
+            default_bot = _get_default_workspace_bot(session, operator.client_id)
 
-            workspace = session.execute(select(Client).where(Client.id == agent.client_id)).scalars().first()
+            workspace = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
 
-            logger.info(f"Successful agent login for agent {agent.id} ({agent.name})")
+            logger.info(f"Successful operator login for operator {operator.id} ({operator.name})")
 
             return {
-                "access_token": agent.agent_api_key,
+                "access_token": operator.operator_api_key,
                 "token_type": "bearer",
-                "agent_id": agent.id,
-                "client_id": agent.client_id,
+                "operator_id": operator.id,
+                "client_id": operator.client_id,
                 "default_bot_id": default_bot.id if default_bot else None,
-                "name": agent.name,
-                "role": agent.role,
-                "department_id": agent.department_id,
+                "name": operator.name,
+                "role": operator.role,
+                "department_id": operator.department_id,
                 "company_name": getattr(workspace, "company_name", None) if workspace else None,
                 "website": getattr(workspace, "website", None) if workspace else None,
             }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"AGENT LOGIN FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(f"OPERATOR LOGIN FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}",
         ) from e
 
 
-@router.post("/agent-change-password")
-def agent_change_password(
-    request: AgentChangePasswordRequest,
-    agent: Agent = Depends(get_current_agent),
+@router.post("/operator-change-password")
+def operator_change_password(
+    request: OperatorChangePasswordRequest,
+    operator: Operator = Depends(get_current_operator),
 ):
-    """Agent changes their own password."""
+    """Operator changes their own password."""
     try:
         with get_session() as session:
-            db_agent = session.execute(select(Agent).where(Agent.id == agent.id)).scalar_one_or_none()
-            if not db_agent or not db_agent.hashed_password:
-                raise HTTPException(status_code=400, detail="Agent account not properly configured.")
+            db_operator = session.execute(select(Operator).where(Operator.id == operator.id)).scalar_one_or_none()
+            if not db_operator or not db_operator.hashed_password:
+                raise HTTPException(status_code=400, detail="Operator account not properly configured.")
 
-            if not verify_password(request.current_password, db_agent.hashed_password):
+            if not verify_password(request.current_password, db_operator.hashed_password):
                 raise HTTPException(status_code=400, detail="Current password is incorrect.")
 
-            db_agent.hashed_password = get_password_hash(request.new_password)
+            db_operator.hashed_password = get_password_hash(request.new_password)
             session.commit()
 
             return {"message": "Password changed successfully."}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Agent password change failed for agent {agent.id}: {e}")
+        logger.error(f"Operator password change failed for operator {operator.id}: {e}")
         raise HTTPException(status_code=500, detail="An error occurred.") from e
