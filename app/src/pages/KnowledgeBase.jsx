@@ -11,7 +11,7 @@ import { SkeletonTable } from '../components/ui/SkeletonLoader';
 export default function KnowledgeBase() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
-    const [activeTab, setActiveTab] = useState('urls');
+    const [activeTab, setActiveTab] = useState('list');
 
     const [isDragging, setIsDragging] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState([]);
@@ -154,9 +154,9 @@ export default function KnowledgeBase() {
     };
 
     const tabs = [
+        { id: 'list', label: 'All Sources', icon: ListIcon },
         { id: 'urls', label: 'Website Scan', icon: LinkIcon },
         { id: 'files', label: 'Documents', icon: UploadCloud },
-        { id: 'list', label: 'All Sources', icon: ListIcon },
     ];
 
     return (
