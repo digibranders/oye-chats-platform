@@ -365,16 +365,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             );
         }
         if (chatMode === 'live' && agentName) {
+            const primaryColor = settings.primary_color || '#3A0CA3';
             return (
                 <div className="flex items-center gap-3">
                     <div className="relative">
-                        <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
+                        <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                            style={{ backgroundColor: primaryColor }}
+                        >
                             {agentName.charAt(0).toUpperCase()}
                         </div>
                         <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
                     </div>
                     <div>
-                        <h3 className="font-semibold text-sm text-[#16202C]">{agentName}</h3>
+                        <h3 className="font-semibold text-sm text-gray-900">{agentName}</h3>
                         <p className="text-[10px] text-green-600 font-medium">Online</p>
                     </div>
                 </div>

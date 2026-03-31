@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Bot } from 'lucide-react';
+import { Bot, X } from 'lucide-react';
 
 const Launcher = ({ isOpen, toggleChat, settings }) => {
     const launcherName = settings?.launcher_name || "Have Questions?";
@@ -27,7 +27,7 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
 
     return (
         <div className="relative flex flex-col items-end">
-            {/* Tooltip */}
+            {/* Tooltip — hidden when chat is open */}
             <div className={`absolute bottom-full mb-4 mr-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-gray-100 transition-opacity duration-200 whitespace-nowrap ${showTooltip ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                 <div className="text-sm font-medium text-gray-700">
                     <b>{launcherName}</b>
@@ -35,12 +35,18 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
                 <div className="absolute -bottom-2 right-6 w-4 h-4 bg-white transform rotate-45 border-r border-b border-gray-100"></div>
             </div>
 
-            {/* Main Button — crossfades with widget */}
-            <div className={`transition-all duration-300 ${isOpen ? 'opacity-0 scale-75 pointer-events-none' : 'opacity-100 scale-100'}`}>
-                <button
-                    onClick={toggleChat}
-                    className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden"
-                >
+            {/* Main Button — always visible, shows close icon when chat is open */}
+            <button
+                onClick={toggleChat}
+                className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden transition-transform duration-300"
+            >
+                {/* Close icon — shown when chat is open */}
+                <div className={`absolute inset-0 flex items-center justify-center transition-all duration-300 ${isOpen ? 'opacity-100 rotate-0 scale-100' : 'opacity-0 rotate-90 scale-75 pointer-events-none'}`} style={{ backgroundColor: primaryColor }}>
+                    <X size={24} className="text-white" />
+                </div>
+
+                {/* Launcher icon — shown when chat is closed */}
+                <div className={`absolute inset-0 flex items-center justify-center transition-all duration-300 ${isOpen ? 'opacity-0 -rotate-90 scale-75' : 'opacity-100 rotate-0 scale-100'}`}>
                     {avatarType === 'orb' ? (() => {
                         const oc = settings?.orb_color || primaryColor;
                         return (
@@ -67,8 +73,8 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
                             <Bot size={28} />
                         </div>
                     )}
-                </button>
-            </div>
+                </div>
+            </button>
         </div>
     );
 };
