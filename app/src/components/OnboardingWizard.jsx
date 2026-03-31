@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Bot, BookOpen, Palette, Code2, Check, ArrowRight, ArrowLeft, Copy, Loader2, X, Sparkles } from 'lucide-react';
-import { createBot } from '../services/api';
+import { createBot, crawlWebsite } from '../services/api';
 
 const steps = [
     { id: 'welcome', title: 'Welcome to OyeChat', icon: Sparkles },
@@ -24,6 +24,9 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
         try {
             const result = await createBot({ name: botName.trim(), website: botWebsite.trim() || undefined });
             setCreatedBot(result);
+            if (botWebsite.trim()) {
+                crawlWebsite(botWebsite.trim(), result.bot_id).catch(() => {});
+            }
             if (onRefreshBots) await onRefreshBots();
             setStep(2);
         } catch (err) {
@@ -82,7 +85,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
                                     <input type="text" value={botName} onChange={(e) => setBotName(e.target.value)} placeholder="e.g. Support Bot, Sales Assistant..." className="w-full px-3.5 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm" maxLength={50} />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-secondary-700 mb-1.5">Website <span className="text-secondary-400">(optional)</span></label>
+                                    <label className="block text-sm font-medium text-secondary-700 mb-1.5">Website</label>
                                     <input type="url" value={botWebsite} onChange={(e) => setBotWebsite(e.target.value)} placeholder="https://yourwebsite.com" className="w-full px-3.5 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm" />
                                 </div>
                             </div>

@@ -217,6 +217,7 @@ class LoginResponse(BaseModel):
     client_id: int
     name: str
     is_superadmin: bool
+    company_name: str | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -260,6 +261,7 @@ class RegisterResponse(BaseModel):
     client_id: int
     name: str
     is_superadmin: bool = False
+    company_name: str | None = None
     message: str = "Account created successfully"
 
 
@@ -320,6 +322,7 @@ def login(request: LoginRequest):
                 "client_id": client.id,
                 "name": client.name,
                 "is_superadmin": getattr(client, "is_superadmin", False),
+                "company_name": getattr(client, "company_name", None),
             }
     except HTTPException:
         raise
@@ -352,6 +355,7 @@ def register(request: RegisterRequest):
             new_client = Client(
                 name=request.name.strip(),
                 email=request.email,  # already lowercased by validator
+                company_name=request.company_name.strip() if request.company_name else None,
                 hashed_password=get_password_hash(request.password),
                 api_key=str(uuid.uuid4().hex),
                 website=None,
@@ -377,6 +381,7 @@ def register(request: RegisterRequest):
                 "client_id": new_client.id,
                 "name": new_client.name,
                 "is_superadmin": False,
+                "company_name": new_client.company_name,
                 "message": "Account created successfully",
             }
     except HTTPException:
@@ -459,6 +464,7 @@ class AgentLoginResponse(BaseModel):
     name: str
     role: str
     department_id: int | None = None
+    company_name: str | None = None
 
 
 class AgentChangePasswordRequest(BaseModel):
@@ -532,6 +538,8 @@ def agent_login(request: AgentLoginRequest):
 
             default_bot = _get_default_workspace_bot(session, agent.client_id)
 
+            workspace = session.execute(select(Client).where(Client.id == agent.client_id)).scalars().first()
+
             logger.info(f"Successful agent login for agent {agent.id} ({agent.name})")
 
             return {
@@ -543,6 +551,7 @@ def agent_login(request: AgentLoginRequest):
                 "name": agent.name,
                 "role": agent.role,
                 "department_id": agent.department_id,
+                "company_name": getattr(workspace, "company_name", None) if workspace else None,
             }
     except HTTPException:
         raise

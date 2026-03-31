@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones, MessageSquareText } from 'lucide-react';
+import { UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones, MessageSquareText, Eye, EyeOff } from 'lucide-react';
 import { getAgents, createAgent, deleteAgent, getDepartments, createDepartment, deleteDepartment } from '../services/api';
 import CannedResponses from './CannedResponses';
 import { getAuthState } from '../utils/auth';
@@ -12,6 +12,7 @@ export default function TeamManagement() {
     const [loading, setLoading] = useState(true);
     const [showCreateAgent, setShowCreateAgent] = useState(false);
     const [showCreateDept, setShowCreateDept] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const [agentForm, setAgentForm] = useState({ name: '', email: '', password: '', role: 'agent', department_id: '' });
     const [deptForm, setDeptForm] = useState({ name: '', description: '' });
     const [error, setError] = useState('');
@@ -147,7 +148,7 @@ export default function TeamManagement() {
                         <div className="bg-white rounded-2xl border border-secondary-200 p-5">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="font-bold text-secondary-900">Create New Agent</h3>
-                                <button onClick={() => { setShowCreateAgent(false); setError(''); }} className="text-secondary-400 hover:text-secondary-600">
+                                <button onClick={() => { setShowCreateAgent(false); setError(''); setShowPassword(false); }} className="text-secondary-400 hover:text-secondary-600">
                                     <X size={18} />
                                 </button>
                             </div>
@@ -163,11 +164,20 @@ export default function TeamManagement() {
                                     value={agentForm.email} onChange={(e) => setAgentForm(p => ({ ...p, email: e.target.value }))}
                                     className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
                                 />
-                                <input
-                                    type="password" placeholder="Password *" required minLength={8}
-                                    value={agentForm.password} onChange={(e) => setAgentForm(p => ({ ...p, password: e.target.value }))}
-                                    className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
-                                />
+                                <div className="relative">
+                                    <input
+                                        type={showPassword ? 'text' : 'password'} placeholder="Password *" required minLength={8}
+                                        value={agentForm.password} onChange={(e) => setAgentForm(p => ({ ...p, password: e.target.value }))}
+                                        className="w-full px-3 py-2 pr-9 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(v => !v)}
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-secondary-400 hover:text-secondary-600"
+                                    >
+                                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                    </button>
+                                </div>
                                 <select
                                     value={agentForm.role} onChange={(e) => setAgentForm(p => ({ ...p, role: e.target.value }))}
                                     className="px-3 py-2 rounded-xl border border-secondary-200 bg-white text-sm outline-none focus:border-primary-500"

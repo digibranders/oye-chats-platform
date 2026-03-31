@@ -109,7 +109,6 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
                 "email": c.email,
                 "is_superadmin": c.is_superadmin,
                 "website": c.website,
-                "api_key": c.api_key,
                 "created_at": c.created_at.isoformat() if c.created_at else None,
             }
             for c in clients

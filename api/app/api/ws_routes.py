@@ -120,12 +120,15 @@ def _resolve_agent_from_key(key: str, key_type: str) -> tuple[int, str, int, int
         agent = session.execute(select(Agent).where(Agent.client_id == client.id).limit(1)).scalar_one_or_none()
 
         if not agent:
+            import uuid as _uuid
+
             agent = Agent(
                 client_id=client.id,
                 name=client.name,
                 email=client.email,
                 is_online=True,
                 role="owner",
+                agent_api_key=_uuid.uuid4().hex,
             )
             session.add(agent)
             session.commit()

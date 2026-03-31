@@ -49,14 +49,17 @@ def list_leads(
 
         results = session.execute(stmt).all()
 
-        # Build leads with scores
+        # Batch-load all LeadInfo records for these sessions in a single query
+        session_ids = [cs.id for cs, _ in results]
+        lead_info_map: dict = {}
+        if session_ids:
+            lead_infos = session.execute(select(LeadInfo).where(LeadInfo.session_id.in_(session_ids))).scalars().all()
+            lead_info_map = {li.session_id: li for li in lead_infos}
+
+        # Build leads with scores — filters are Python-computed (score/status not in DB)
         leads = []
         for chat_session, msg_count in results:
-            lead_info = session.execute(
-                select(LeadInfo).where(LeadInfo.session_id == chat_session.id).limit(1)
-            ).scalar_one_or_none()
-
-            lead = build_lead_response(chat_session, lead_info, msg_count)
+            lead = build_lead_response(chat_session, lead_info_map.get(chat_session.id), msg_count)
 
             # Apply filters
             if status and lead["status"] != status:
@@ -67,7 +70,6 @@ def list_leads(
             leads.append(lead)
 
         total = len(leads)
-        # Paginate
         start = (page - 1) * limit
         paginated = leads[start : start + limit]
 
