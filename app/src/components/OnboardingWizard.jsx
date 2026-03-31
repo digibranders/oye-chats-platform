@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Bot, BookOpen, Palette, Code2, Check, ArrowRight, ArrowLeft, Copy, Loader2, X, Sparkles } from 'lucide-react';
+import { Bot, BookOpen, Code2, Check, ArrowRight, ArrowLeft, Loader2, Sparkles } from 'lucide-react';
 import { createBot, crawlWebsite } from '../services/api';
+import { platforms } from '../data/platformIntegrations';
+import PlatformSelector from './PlatformSelector';
+import IntegrationGuide from './IntegrationGuide';
 
 const steps = [
     { id: 'welcome', title: 'Welcome to OyeChats', icon: Sparkles },
     { id: 'create', title: 'Create Your Chatbot', icon: Bot },
     { id: 'knowledge', title: 'Add Knowledge', icon: BookOpen },
-    { id: 'embed', title: 'Get Embed Code', icon: Code2 },
+    { id: 'install', title: 'Install on Your Platform', icon: Code2 },
 ];
 
 export default function OnboardingWizard({ onComplete, onRefreshBots }) {
@@ -16,7 +19,9 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
     const [createdBot, setCreatedBot] = useState(null);
     const [isCreating, setIsCreating] = useState(false);
     const [error, setError] = useState('');
-    const [copied, setCopied] = useState(false);
+    const [selectedPlatform, setSelectedPlatform] = useState(null);
+    const [copiedField, setCopiedField] = useState(null);
+    const [env, setEnv] = useState('production');
 
     const handleCreateBot = async () => {
         if (!botName.trim()) return;
@@ -34,11 +39,10 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
         } finally { setIsCreating(false); }
     };
 
-    const handleCopy = () => {
-        const script = `<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="${createdBot?.bot_key}"></script>`;
-        navigator.clipboard.writeText(script);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+    const handleCopy = (text, fieldId) => {
+        navigator.clipboard.writeText(text);
+        setCopiedField(fieldId);
+        setTimeout(() => setCopiedField(null), 2000);
     };
 
     const handleFinish = () => {
@@ -48,7 +52,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
 
     return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-secondary-950/80 backdrop-blur-md animate-fade-in">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-secondary-200 overflow-hidden animate-scale-in">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-secondary-200 overflow-hidden animate-scale-in">
                 {/* Progress */}
                 <div className="flex items-center gap-1 px-6 pt-5">
                     {steps.map((s, i) => (
@@ -56,7 +60,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
                     ))}
                 </div>
 
-                <div className="p-6">
+                <div className="p-6 max-h-[90vh] overflow-y-auto">
                     {/* Step 0: Welcome */}
                     {step === 0 && (
                         <div className="text-center py-6 animate-fade-in">
@@ -121,7 +125,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
                         </div>
                     )}
 
-                    {/* Step 3: Embed Code */}
+                    {/* Step 3: Platform Selection & Install Guide */}
                     {step === 3 && (
                         <div className="animate-fade-in">
                             <div className="flex items-center gap-3 mb-1">
@@ -130,17 +134,29 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
                                 </div>
                                 <h2 className="text-lg font-bold text-secondary-900">Your chatbot is ready!</h2>
                             </div>
-                            <p className="text-sm text-secondary-500 mb-5 ml-11">Add this script to your website to embed the chatbot</p>
+                            <p className="text-sm text-secondary-500 mb-5 ml-11">
+                                {selectedPlatform
+                                    ? 'Follow the steps below to add it to your site'
+                                    : 'Choose your platform to get installation instructions'}
+                            </p>
 
-                            <div className="relative">
-                                <pre className="bg-secondary-900 text-green-400 p-4 rounded-xl text-[11px] leading-relaxed overflow-x-auto border border-secondary-800 font-mono">
-                                    {`<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="${createdBot?.bot_key || 'bot-xxx'}"></script>`}
-                                </pre>
-                                <button onClick={handleCopy} className="absolute top-2 right-2 flex items-center gap-1 px-2.5 py-1 bg-secondary-800 hover:bg-secondary-700 text-secondary-300 rounded-lg text-[10px] font-bold transition-colors">
-                                    {copied ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy</>}
-                                </button>
-                            </div>
-                            <p className="text-[11px] text-secondary-400 mt-2">Paste this in your website's <code className="bg-secondary-100 px-1 py-0.5 rounded text-secondary-500">&lt;body&gt;</code> tag</p>
+                            {selectedPlatform ? (
+                                <IntegrationGuide
+                                    platform={platforms.find((p) => p.id === selectedPlatform)}
+                                    botKey={createdBot?.bot_key || 'bot-xxx'}
+                                    env={env}
+                                    onEnvChange={setEnv}
+                                    onBack={() => setSelectedPlatform(null)}
+                                    onCopy={handleCopy}
+                                    copiedField={copiedField}
+                                />
+                            ) : (
+                                <PlatformSelector
+                                    platforms={platforms}
+                                    selectedId={null}
+                                    onSelect={setSelectedPlatform}
+                                />
+                            )}
 
                             <button onClick={handleFinish} className="w-full mt-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium shadow-sm transition-all flex items-center justify-center gap-2">
                                 Go to Dashboard <ArrowRight size={14} />
