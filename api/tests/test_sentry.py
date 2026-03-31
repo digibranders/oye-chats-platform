@@ -3,6 +3,7 @@
 import os
 from unittest.mock import patch
 
+
 class TestSentryConfig:
     def test_sentry_disabled_when_dsn_missing(self):
         """SENTRY_ENABLED is False when SENTRY_DSN is not set."""
