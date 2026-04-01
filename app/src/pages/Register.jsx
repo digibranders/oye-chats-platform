@@ -237,7 +237,7 @@ export default function Register() {
                                     className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="Create a strong password"
                                     autoComplete="new-password"
-                                    tabIndex={3}
+                                    tabIndex={5}
                                 />
                                 <button
                                     type="button"
@@ -274,7 +274,7 @@ export default function Register() {
                                     }`}
                                     placeholder="Re-enter your password"
                                     autoComplete="new-password"
-                                    tabIndex={4}
+                                    tabIndex={6}
                                 />
                             </div>
                             {confirmPassword && !passwordsMatch && (
