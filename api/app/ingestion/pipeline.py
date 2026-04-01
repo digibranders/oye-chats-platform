@@ -24,7 +24,7 @@ def calculate_hash(text: str) -> str:
 
 
 def _ingest_document(
-    client_id: int, source_name: str, full_text: str, pages_data: list[dict[str, Any]], bot_id: int = None
+    client_id: int, source_name: str, full_text: str, pages_data: list[dict[str, Any]], bot_id: int | None = None
 ) -> int:
     """
     Common ingestion logic for both files and web content.
@@ -77,7 +77,7 @@ def _ingest_document(
     return len(chunk_contents)
 
 
-def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int = None):
+def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = None):
     """
     Scan folder and ingest all supported files.
     Supports bot_id for multi-bot architecture.
@@ -127,7 +127,7 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int = None):
     return processed_count
 
 
-def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int = None) -> int:
+def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int | None = None) -> int:
     """
     Ingest content from a URL for a specific client.
     Supports bot_id for multi-bot architecture.
@@ -148,7 +148,7 @@ def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int = None
         raise e
 
 
-def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int = None) -> int:
+def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = None) -> int:
     """
     Batch ingest multiple web pages: chunk all, embed all at once, insert all.
     Much faster than per-page ingestion because embedding is batched.

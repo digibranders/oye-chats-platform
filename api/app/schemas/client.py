@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class ClientSettingsUpdate(BaseModel):
@@ -13,3 +13,14 @@ class ClientSettingsUpdate(BaseModel):
 
 class CrawlRequest(BaseModel):
     url: str
+    max_pages: int | None = Field(default=None, ge=1, le=100)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("URL must not be empty")
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        return v

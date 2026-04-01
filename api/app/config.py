@@ -69,4 +69,5 @@ else:
     logger.info("Email notifications disabled (no BREVO_API_KEY)")
 
 # Crawler Config (read by crawler_script.py subprocess via os.getenv directly)
-# Defaults: MAX_CRAWL_PAGES=25, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=15
+# Defaults: MAX_CRAWL_PAGES=50, CRAWL_CONCURRENCY=5, CRAWL_PAGE_TIMEOUT=20, MAX_CRAWL_DEPTH=3
+# CRAWL_SUBPROCESS_TIMEOUT=600 (read by crawler_service.py)
