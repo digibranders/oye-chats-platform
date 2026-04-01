@@ -595,7 +595,7 @@ export default function LiveChat({ embedded = false }) {
         if (!selectedChat) return;
         try {
             const payload = targetOperatorId
-                ? { target_agent_id: targetOperatorId }
+                ? { target_operator_id: targetOperatorId }
                 : { target_department_id: targetDeptId };
             await transferChat(selectedChat, payload);
             setShowTransferModal(false);
@@ -615,7 +615,7 @@ export default function LiveChat({ embedded = false }) {
 
         socket.send(JSON.stringify({ type: 'message', session_id: selectedChat, content: inputText }));
         setMessages(prev => [...prev, {
-            id: Date.now(), role: 'agent', content: inputText, timestamp: new Date().toISOString(),
+            id: Date.now(), role: 'operator', content: inputText, timestamp: new Date().toISOString(),
         }]);
         setLastMessages(prev => ({ ...prev, [selectedChat]: inputText.slice(0, 60) }));
         setInputText('');
@@ -848,9 +848,9 @@ export default function LiveChat({ embedded = false }) {
                                 {/* Messages area */}
                                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
                                     {messages.map((msg) => (
-                                        <div key={msg.id} className={`flex ${msg.role === 'agent' ? 'justify-end' : 'justify-start'}`}>
+                                        <div key={msg.id} className={`flex ${msg.role === 'operator' ? 'justify-end' : 'justify-start'}`}>
                                             <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                                                msg.role === 'agent'
+                                                msg.role === 'operator'
                                                     ? 'bg-primary-600 text-white rounded-br-md'
                                                     : msg.role === 'user'
                                                     ? 'bg-secondary-100 text-secondary-800 rounded-bl-md'

@@ -305,7 +305,7 @@ class ConnectionManager:
             {
                 "type": "status",
                 "status": "connected",
-                "agent_name": operator_name,
+                "operator_name": operator_name,
             },
         )
 
@@ -393,7 +393,7 @@ class ConnectionManager:
             {
                 "type": "status",
                 "status": "connected",
-                "agent_name": new_operator_name,
+                "operator_name": new_operator_name,
             },
         )
 
@@ -476,7 +476,7 @@ class ConnectionManager:
                 "type": "message",
                 "role": "operator",
                 "content": content,
-                "agent_name": operator_name,
+                "operator_name": operator_name,
                 "timestamp": datetime.now(UTC).isoformat(),
             },
         )
@@ -560,7 +560,7 @@ class ConnectionManager:
             operator_name = self._operator_names.get(operator_id, "Support")
             await self._send_to_visitor(
                 session_id,
-                {"type": "status", "status": "connected", "agent_name": operator_name},
+                {"type": "status", "status": "connected", "operator_name": operator_name},
             )
             # Cancel any pending disconnect cleanup — visitor is back
             if session_id in self._disconnect_tasks:
@@ -596,7 +596,7 @@ class ConnectionManager:
                     operator_name = self._operator_names.get(chat_session.assigned_operator_id, "Support")
                     await self._send_to_visitor(
                         session_id,
-                        {"type": "status", "status": "connected", "agent_name": operator_name},
+                        {"type": "status", "status": "connected", "operator_name": operator_name},
                     )
                     logger.info(
                         f"Restored live assignment for {session_id} → operator {chat_session.assigned_operator_id}"

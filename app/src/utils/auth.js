@@ -24,6 +24,32 @@
  *   clientId: string | null,
  * }}
  */
+/**
+ * One-time migration for sessions created before the agent → operator rename.
+ * Runs at module load time so any component that imports auth.js benefits
+ * automatically without requiring an explicit call.
+ *
+ * Migrates:
+ *   auth_type  : 'agent'  → 'operator'
+ *   agent_role            → operator_role  (then removes agent_role)
+ *   agent_id              → operator_id    (then removes agent_id)
+ */
+(function migrateAgentToOperatorStorage() {
+    if (localStorage.getItem('auth_type') === 'agent') {
+        localStorage.setItem('auth_type', 'operator');
+    }
+    const agentRole = localStorage.getItem('agent_role');
+    if (agentRole !== null) {
+        localStorage.setItem('operator_role', agentRole);
+        localStorage.removeItem('agent_role');
+    }
+    const agentId = localStorage.getItem('agent_id');
+    if (agentId !== null) {
+        localStorage.setItem('operator_id', agentId);
+        localStorage.removeItem('agent_id');
+    }
+})();
+
 export function getAuthState() {
     const isOperator = localStorage.getItem('auth_type') === 'operator';
     const operatorRole = localStorage.getItem('operator_role') || '';
@@ -49,6 +75,10 @@ export const AUTH_STORAGE_KEYS = [
     'auth_type',
     'operator_role',
     'operator_id',
+    // Legacy keys from before the agent → operator rename — cleared on logout
+    // in case the migration shim above ran but the user logs out on an old session.
+    'agent_role',
+    'agent_id',
     'is_superadmin',
     'company_name',
     'company_website',
