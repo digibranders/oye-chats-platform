@@ -94,41 +94,6 @@ TRACKING_PARAMS: frozenset[str] = frozenset(
     }
 )
 
-HIGH_PRIORITY_PATHS: frozenset[str] = frozenset(
-    {
-        "/",
-        "/about",
-        "/about-us",
-        "/pricing",
-        "/features",
-        "/faq",
-        "/faqs",
-        "/contact",
-        "/contact-us",
-        "/docs",
-        "/documentation",
-        "/products",
-        "/services",
-        "/support",
-        "/help",
-        "/terms",
-        "/privacy",
-        "/team",
-    }
-)
-
-LOW_PRIORITY_PATTERNS: tuple[str, ...] = (
-    "/blog/",
-    "/news/",
-    "/archive/",
-    "/tag/",
-    "/tags/",
-    "/category/",
-    "/categories/",
-    "/author/",
-    "/page/",
-    "/comment",
-)
 
 # ---------------------------------------------------------------------------
 # URL normalization & filtering
@@ -187,21 +152,19 @@ def should_skip_url(url: str) -> bool:
     return ext in SKIP_EXTENSIONS
 
 
-def url_priority(url: str, depth: int) -> int:
-    """Lower number = higher priority (crawled first)."""
-    path = urlparse(url).path.rstrip("/") or "/"
+def url_priority(depth: int, *, from_sitemap: bool = False) -> int:
+    """Lower number = higher priority (crawled first).
 
-    if path.lower() in HIGH_PRIORITY_PATHS:
-        return 0
+    Priority is determined by two signals:
+    - **Sitemap presence**: URLs the site owner listed in sitemap.xml are
+      treated as high-priority (1) regardless of depth.
+    - **Crawl depth**: shallower pages are more important than deeper ones.
 
-    for pattern in LOW_PRIORITY_PATTERNS:
-        if pattern in path.lower():
-            return 3
-
-    if depth <= 1:
+    The seed URL (depth 0) always gets priority 0 via its direct push.
+    """
+    if from_sitemap:
         return 1
-
-    return 2
+    return depth
 
 
 def is_html_content(html: str) -> bool:
@@ -514,7 +477,7 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
     # Priority queue: (priority, counter, url, depth)
     pq: list[tuple[int, int, str, int]] = []
 
-    def push_url(url: str, depth: int) -> None:
+    def push_url(url: str, depth: int, *, from_sitemap: bool = False) -> None:
         nonlocal counter
         norm = normalize_url(url)
         if norm in visited or norm in enqueued:
@@ -522,7 +485,7 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
         if should_skip_url(url):
             return
         enqueued.add(norm)
-        priority = url_priority(url, depth)
+        priority = url_priority(depth, from_sitemap=from_sitemap)
         heapq.heappush(pq, (priority, counter, url, depth))
         counter += 1
 
@@ -548,7 +511,7 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
             and parsed_surl.scheme in ("http", "https")
             and not should_skip_url(surl)
         ):
-            push_url(surl, 1)
+            push_url(surl, 1, from_sitemap=True)
             sitemap_seeded += 1
     if sitemap_seeded:
         print(json.dumps({"log": f"Seeded {sitemap_seeded} URLs from sitemap"}))
