@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import shutil
@@ -12,13 +13,13 @@ from app.db.repository import get_ingested_documents
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
 from app.schemas.client import CrawlRequest
-from app.services.crawler_service import crawl_website
+from app.services.crawler_service import CrawlerError, crawl_website
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["documents"])
 
-_crawl_in_progress = False
+_crawl_lock = asyncio.Lock()
 
 
 def _check_memory():
@@ -173,14 +174,16 @@ async def crawl_endpoint(
     client_id = auth["client_id"]
     _check_memory()
 
-    global _crawl_in_progress  # noqa: PLW0603
-    if _crawl_in_progress:
+    # In a single-threaded asyncio event loop, locked() + acquire() without an
+    # intervening await is safe from race conditions. We reject immediately
+    # (429) instead of making the second caller wait.
+    if _crawl_lock.locked():
         raise HTTPException(status_code=429, detail="A crawl job is already running. Please wait.")
 
-    _crawl_in_progress = True
+    await _crawl_lock.acquire()
     try:
         logger.info(f"Crawling URL recursively: {request.url} for client {client_id}, bot_id={bot_id}")
-        crawl_data = await crawl_website(request.url)
+        crawl_data = await crawl_website(request.url, max_pages=request.max_pages)
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])
@@ -196,13 +199,13 @@ async def crawl_endpoint(
         if recommended_colors:
             with get_session() as session:
                 if bot_id:
-                    bot_db = session.query(Bot).get(bot_id)
+                    bot_db = session.get(Bot, bot_id)
                     if bot_db and bot_db.client_id == client_id:
                         bot_db.recommended_colors = recommended_colors
                         session.commit()
                         logger.info(f"Saved {len(recommended_colors)} recommended colors for bot {bot_id}")
                 else:
-                    client_db = session.query(Client).get(client_id)
+                    client_db = session.get(Client, client_id)
                     if client_db:
                         client_db.recommended_colors = recommended_colors
                         session.commit()
@@ -217,8 +220,11 @@ async def crawl_endpoint(
         }
     except HTTPException:
         raise
-    except Exception as e:
+    except CrawlerError as e:
         logger.error(f"Crawling failed: {e}")
         raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
+    except Exception as e:
+        logger.error(f"Crawling failed unexpectedly: {e}")
+        raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
     finally:
-        _crawl_in_progress = False
+        _crawl_lock.release()
