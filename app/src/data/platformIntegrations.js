@@ -1,5 +1,5 @@
 /**
- * Platform integration configurations for the OyeChat widget.
+ * Platform integration configurations for the OyeChats widget.
  *
  * Each platform provides:
  *  - id, name, category, description  — metadata for the selector grid
@@ -51,7 +51,7 @@ const nextjs = {
         {
             title: 'Add the Script component to your root layout',
             description:
-                'Open your root layout file (app/layout.tsx or pages/_app.tsx) and add the OyeChat widget using the next/script component.',
+                'Open your root layout file (app/layout.tsx or pages/_app.tsx) and add the OyeChats widget using the next/script component.',
             code: `import Script from 'next/script';
 
 export default function RootLayout({ children }) {
@@ -276,26 +276,26 @@ const wordpress = {
             title: 'Option B: Add via functions.php',
             description:
                 'If you prefer code, open your theme\'s functions.php file (Appearance → Theme File Editor → functions.php) and add:',
-            code: `// Add OyeChat Widget
-function oyechat_enqueue_widget() {
+            code: `// Add OyeChats Widget
+function oyechats_enqueue_widget() {
     wp_enqueue_script(
-        'oyechat-widget',
+        'oyechats-widget',
         '${cdnUrl(env)}',
         array(),
         null,
         true
     );
 }
-add_action('wp_enqueue_scripts', 'oyechat_enqueue_widget');
+add_action('wp_enqueue_scripts', 'oyechats_enqueue_widget');
 
 // Pass the bot key as a data attribute
-function oyechat_add_bot_key($tag, $handle) {
-    if ('oyechat-widget' === $handle) {
+function oyechats_add_bot_key($tag, $handle) {
+    if ('oyechats-widget' === $handle) {
         return str_replace(' src', ' data-bot-key="${botKey}" src', $tag);
     }
     return $tag;
 }
-add_filter('script_loader_tag', 'oyechat_add_bot_key', 10, 2);`,
+add_filter('script_loader_tag', 'oyechats_add_bot_key', 10, 2);`,
             language: 'php',
         },
         {
@@ -326,7 +326,7 @@ const shopify = {
             title: 'Edit theme.liquid',
             description:
                 'In the Layout section, open theme.liquid. Paste the script just before the closing </body> tag.',
-            code: `<!-- OyeChat Widget -->
+            code: `<!-- OyeChats Widget -->
 <script src="${cdnUrl(env)}" data-bot-key="${botKey}"></script>
 </body>`,
             language: 'html',
@@ -520,7 +520,7 @@ const gtm = {
         {
             title: 'Set the trigger',
             description:
-                'Add a trigger: choose "All Pages" so the widget loads site-wide. Name the tag "OyeChat Widget" and click Save.',
+                'Add a trigger: choose "All Pages" so the widget loads site-wide. Name the tag "OyeChats Widget" and click Save.',
             code: null,
         },
         {

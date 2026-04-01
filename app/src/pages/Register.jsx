@@ -59,7 +59,7 @@ export default function Register() {
 
             navigate('/chatbot');
         } catch (err) {
-            setError(err.toString());
+            setError(err.message || 'Registration failed. Please try again.');
         } finally {
             setIsLoading(false);
         }
@@ -91,7 +91,7 @@ export default function Register() {
                     <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-lg">
                         <Bot size={22} />
                     </div>
-                    <span className="text-xl font-bold tracking-tight">OyeChat</span>
+                    <span className="text-xl font-bold tracking-tight">OyeChats</span>
                 </div>
 
                 {/* Hero text */}
@@ -141,13 +141,13 @@ export default function Register() {
                         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center shadow-lg shadow-primary-500/20">
                             <Bot size={20} />
                         </div>
-                        <span className="text-lg font-bold text-secondary-900">OyeChat</span>
+                        <span className="text-lg font-bold text-secondary-900">OyeChats</span>
                     </div>
 
                     <div className="mb-6">
                         <h1 className="text-2xl font-bold text-secondary-900">Get started free</h1>
                         <p className="text-secondary-500 mt-2 text-sm">
-                            Create your OyeChat account
+                            Create your OyeChats account
                         </p>
                     </div>
 
@@ -237,7 +237,7 @@ export default function Register() {
                                     className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-secondary-200 bg-white text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                                     placeholder="Create a strong password"
                                     autoComplete="new-password"
-                                    tabIndex={3}
+                                    tabIndex={5}
                                 />
                                 <button
                                     type="button"
@@ -274,7 +274,7 @@ export default function Register() {
                                     }`}
                                     placeholder="Re-enter your password"
                                     autoComplete="new-password"
-                                    tabIndex={4}
+                                    tabIndex={6}
                                 />
                             </div>
                             {confirmPassword && !passwordsMatch && (

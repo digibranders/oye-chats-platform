@@ -66,8 +66,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
             // Check if lead form should be shown (new visitors only)
             const resolvedSettings = initialSettings || settings;
-            const botKey = window.OYECHAT_BOT_KEY || window.OYECHAT_API_KEY || 'default';
-            const leadCapturedKey = `oyechat_lead_captured_${botKey}`;
+            const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
+            const leadCapturedKey = `oyechats_lead_captured_${botKey}`;
             if (resolvedSettings?.lead_form_enabled && !localStorage.getItem(leadCapturedKey) && !sessionId) {
                 setShowLeadForm(true);
                 setShowWelcome(false);
@@ -268,8 +268,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             localStorage.setItem('chat_session_id', newSessionId);
         }
         await submitLeadCapture(newSessionId, formData);
-        const botKey = window.OYECHAT_BOT_KEY || window.OYECHAT_API_KEY || 'default';
-        localStorage.setItem(`oyechat_lead_captured_${botKey}`, 'true');
+        const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
+        localStorage.setItem(`oyechats_lead_captured_${botKey}`, 'true');
         setShowLeadForm(false);
         setShowWelcome(true);
     };

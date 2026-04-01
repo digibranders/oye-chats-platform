@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OyeChats — Developer Documentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0F111A;
+      --bg-surface: #161927;
+      --bg-raised: #1C2035;
+      --bg-hover: #242842;
+      --border: #2A2E45;
+      --text: #E2E8F0;
+      --text-muted: #8892B0;
+      --text-dim: #5A6380;
+      --accent: #6366F1;
+      --accent-light: #818CF8;
+      --accent-bg: rgba(99, 102, 241, 0.12);
+      --green: #10B981;
+      --green-bg: rgba(16, 185, 129, 0.12);
+      --orange: #F59E0B;
+      --red: #EF4444;
+      --sidebar-w: 280px;
+      --header-h: 60px;
+      --radius: 8px;
+      --radius-sm: 5px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    /* ── HEADER ── */
+    .header {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--header-h);
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 24px;
+      z-index: 100;
+      gap: 16px;
+    }
+    .header-logo {
+      font-size: 18px; font-weight: 700;
+      color: var(--accent-light);
+      letter-spacing: -0.3px;
+      white-space: nowrap;
+    }
+    .header-logo span { color: var(--text-muted); font-weight: 400; margin-left: 8px; font-size: 14px; }
+    .header-search {
+      flex: 1; max-width: 480px;
+      position: relative;
+    }
+    .header-search input {
+      width: 100%;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 14px 8px 38px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .header-search input:focus { border-color: var(--accent); }
+    .header-search input::placeholder { color: var(--text-dim); }
+    .header-search svg {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      color: var(--text-dim); width: 16px; height: 16px;
+    }
+    .search-shortcut {
+      position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      padding: 1px 6px; font-size: 11px; color: var(--text-dim); font-family: inherit;
+    }
+    .hamburger {
+      display: none; background: none; border: none; color: var(--text); cursor: pointer;
+      padding: 4px;
+    }
+
+    /* ── SIDEBAR ── */
+    .sidebar {
+      position: fixed;
+      top: var(--header-h); left: 0; bottom: 0;
+      width: var(--sidebar-w);
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 16px 0;
+      z-index: 90;
+      transition: transform 0.25s ease;
+    }
+    .sidebar::-webkit-scrollbar { width: 4px; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .nav-section { padding: 0 16px; margin-bottom: 6px; }
+    .nav-section-title {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.8px; color: var(--text-dim);
+      padding: 8px 0 4px;
+    }
+    .nav-link {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 16px; margin: 1px 8px;
+      font-size: 13.5px; color: var(--text-muted);
+      text-decoration: none; border-radius: var(--radius-sm);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .nav-link:hover { background: var(--bg-hover); color: var(--text); }
+    .nav-link.active { background: var(--accent-bg); color: var(--accent-light); font-weight: 500; }
+    .nav-link svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .nav-sub { margin-left: 24px; }
+    .nav-sub .nav-link { font-size: 12.5px; padding: 5px 12px; }
+
+    /* ── MAIN CONTENT ── */
+    .main {
+      margin-left: var(--sidebar-w);
+      margin-top: var(--header-h);
+      height: calc(100vh - var(--header-h));
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+    .content {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 40px 48px 80px;
+    }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* ── TYPOGRAPHY ── */
+    h1 {
+      font-size: 32px; font-weight: 700; letter-spacing: -0.5px;
+      margin-bottom: 8px; color: #F8FAFC;
+    }
+    h2 {
+      font-size: 22px; font-weight: 600; letter-spacing: -0.3px;
+      margin: 40px 0 12px; color: #F1F5F9;
+      padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    }
+    h3 {
+      font-size: 17px; font-weight: 600;
+      margin: 28px 0 8px; color: #E2E8F0;
+    }
+    h4 { font-size: 14px; font-weight: 600; margin: 20px 0 6px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    p { margin-bottom: 14px; color: var(--text); font-size: 14.5px; }
+    .subtitle { color: var(--text-muted); font-size: 16px; margin-bottom: 28px; }
+
+    /* ── CODE ── */
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      background: var(--bg-raised);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent-light);
+    }
+    pre {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      overflow-x: auto;
+      margin: 12px 0 20px;
+      position: relative;
+    }
+    pre code {
+      background: none; padding: 0;
+      color: var(--text); font-size: 13px; line-height: 1.65;
+    }
+    .copy-btn {
+      position: absolute; top: 8px; right: 8px;
+      background: var(--bg-hover); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 4px 8px;
+      color: var(--text-dim); font-size: 11px; cursor: pointer;
+      font-family: inherit; transition: all 0.15s;
+    }
+    .copy-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
+    /* Syntax highlighting */
+    .kw { color: #C792EA; }
+    .str { color: #C3E88D; }
+    .num { color: #F78C6C; }
+    .cm { color: #546E7A; font-style: italic; }
+    .fn { color: #82AAFF; }
+    .type { color: #FFCB6B; }
+    .op { color: #89DDFF; }
+    .var { color: #F07178; }
+
+    /* ── TABLES ── */
+    table {
+      width: 100%; border-collapse: collapse;
+      margin: 12px 0 20px; font-size: 13.5px;
+    }
+    th {
+      text-align: left; padding: 10px 14px;
+      background: var(--bg-raised); color: var(--text-muted);
+      font-weight: 600; font-size: 12px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--bg-raised); }
+
+    /* ── BADGES & TAGS ── */
+    .method {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.5px; margin-right: 8px; vertical-align: middle;
+    }
+    .method-get { background: rgba(16, 185, 129, 0.15); color: #34D399; }
+    .method-post { background: rgba(99, 102, 241, 0.15); color: #818CF8; }
+    .method-patch { background: rgba(245, 158, 11, 0.15); color: #FBBF24; }
+    .method-delete { background: rgba(239, 68, 68, 0.15); color: #F87171; }
+    .method-ws { background: rgba(168, 85, 247, 0.15); color: #C084FC; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+    }
+    .badge-required { background: rgba(239, 68, 68, 0.12); color: #F87171; }
+    .badge-optional { background: rgba(99, 102, 241, 0.12); color: #818CF8; }
+
+    /* ── ENDPOINT BLOCKS ── */
+    .endpoint {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin: 16px 0;
+      overflow: hidden;
+    }
+    .endpoint-header {
+      padding: 12px 16px;
+      display: flex; align-items: center; gap: 10px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .endpoint-header:hover { background: var(--bg-hover); }
+    .endpoint-path {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px; color: var(--text); font-weight: 500;
+    }
+    .endpoint-desc { color: var(--text-muted); font-size: 13px; margin-left: auto; }
+    .endpoint-body {
+      display: none; padding: 0 16px 16px;
+      border-top: 1px solid var(--border);
+    }
+    .endpoint.open .endpoint-body { display: block; }
+
+    /* ── CALLOUTS ── */
+    .callout {
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      margin: 16px 0;
+      font-size: 13.5px;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .callout-info { background: var(--accent-bg); border-left: 3px solid var(--accent); }
+    .callout-warn { background: rgba(245, 158, 11, 0.1); border-left: 3px solid var(--orange); }
+    .callout-success { background: var(--green-bg); border-left: 3px solid var(--green); }
+    .callout svg { flex-shrink: 0; margin-top: 1px; }
+
+    /* ── DIAGRAM / FLOW ── */
+    .flow-diagram {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin: 16px 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      line-height: 1.8;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--text-muted);
+    }
+
+    /* ── SEARCH RESULTS ── */
+    .search-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 200;
+      justify-content: center;
+      padding-top: 120px;
+    }
+    .search-overlay.active { display: flex; }
+    .search-results {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 560px; max-height: 420px;
+      overflow-y: auto; padding: 8px;
+    }
+    .search-result {
+      padding: 10px 14px; border-radius: var(--radius-sm);
+      cursor: pointer; transition: background 0.15s;
+    }
+    .search-result:hover { background: var(--bg-hover); }
+    .search-result-title { font-weight: 600; font-size: 14px; color: var(--text); }
+    .search-result-context { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+    .search-result mark { background: var(--accent-bg); color: var(--accent-light); border-radius: 2px; padding: 0 2px; }
+    .search-empty { padding: 24px; text-align: center; color: var(--text-dim); font-size: 14px; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      .sidebar { transform: translateX(-100%); }
+      .sidebar.open { transform: translateX(0); }
+      .main { margin-left: 0; }
+      .hamburger { display: block; }
+      .content { padding: 24px 20px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════ HEADER ═══════════ -->
+<header class="header">
+  <button class="hamburger" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle menu">
+    <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="header-logo">OyeChats <span>Developer Docs</span></div>
+  <div class="header-search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+    <input type="text" id="searchInput" placeholder="Search documentation..." autocomplete="off">
+    <span class="search-shortcut">⌘K</span>
+  </div>
+</header>
+
+<!-- ═══════════ SEARCH OVERLAY ═══════════ -->
+<div class="search-overlay" id="searchOverlay" onclick="if(event.target===this)closeSearch()">
+  <div class="search-results" id="searchResults"></div>
+</div>
+
+<!-- ═══════════ SIDEBAR ═══════════ -->
+<nav class="sidebar" id="sidebar">
+  <div class="nav-section">
+    <div class="nav-section-title">Getting Started</div>
+    <a class="nav-link active" data-section="overview" onclick="showSection('overview')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>
+      Overview
+    </a>
+    <a class="nav-link" data-section="architecture" onclick="showSection('architecture')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      Architecture
+    </a>
+    <a class="nav-link" data-section="dev-setup" onclick="showSection('dev-setup')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16,18 22,12 16,6"/><polyline points="8,6 2,12 8,18"/></svg>
+      Development Setup
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">Backend</div>
+    <a class="nav-link" data-section="api-ref" onclick="showSection('api-ref')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+      API Reference
+    </a>
+    <a class="nav-link" data-section="database" onclick="showSection('database')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      Database Schema
+    </a>
+    <a class="nav-link" data-section="rag" onclick="showSection('rag')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      RAG Pipeline
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">Frontend</div>
+    <a class="nav-link" data-section="widget" onclick="showSection('widget')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      Widget Embedding
+    </a>
+    <a class="nav-link" data-section="admin" onclick="showSection('admin')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      Admin Dashboard
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">Reference</div>
+    <a class="nav-link" data-section="config" onclick="showSection('config')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      Configuration
+    </a>
+  </div>
+</nav>
+
+<!-- ═══════════ MAIN CONTENT ═══════════ -->
+<main class="main" id="mainContent">
+<div class="content">
+
+<!-- ────── OVERVIEW ────── -->
+<div class="section active" id="section-overview">
+  <h1>OyeChats Platform Documentation</h1>
+  <p class="subtitle">Internal developer documentation for the OyeChats SaaS chatbot platform.</p>
+
+  <h2>What is OyeChats?</h2>
+  <p>OyeChats is a SaaS chatbot platform where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.</p>
+
+  <h2>How It Works</h2>
+  <div class="flow-diagram">Customer signs up → Creates a bot → Uploads docs / crawls URL
+    → Documents chunked, embedded, stored in pgvector
+    → Copies embed script into their website
+    → Visitors see chat widget → Ask questions
+    → RAG pipeline: hybrid search → LLM generation → Streaming response</div>
+
+  <h2>Quick Reference</h2>
+  <table>
+    <tr><th>Application</th><th>Directory</th><th>Port</th><th>Stack</th></tr>
+    <tr><td>Backend API</td><td><code>api/</code></td><td>8000</td><td>FastAPI, SQLAlchemy, pgvector</td></tr>
+    <tr><td>Chat Widget</td><td><code>widget/</code></td><td>5173 / 4173</td><td>React 19, Vite, Tailwind</td></tr>
+    <tr><td>Admin Dashboard</td><td><code>admin/</code></td><td>5174</td><td>React 19, Vite, React Router</td></tr>
+    <tr><td>Landing Page</td><td><code>../landing/</code></td><td>3000</td><td>Next.js 16, Tailwind v4</td></tr>
+  </table>
+
+  <h2>Technology Stack</h2>
+  <table>
+    <tr><th>Layer</th><th>Technology</th></tr>
+    <tr><td>LLM</td><td>LiteLLM (OpenAI / Gemini)</td></tr>
+    <tr><td>Embeddings</td><td>OpenAI text-embedding-3-small (1536-dim)</td></tr>
+    <tr><td>Vector DB</td><td>PostgreSQL 16 + pgvector</td></tr>
+    <tr><td>Backend</td><td>FastAPI + SQLAlchemy + Alembic</td></tr>
+    <tr><td>Frontend</td><td>React 19 + Vite + Tailwind CSS</td></tr>
+    <tr><td>Scraping</td><td>Playwright (Chromium)</td></tr>
+    <tr><td>Storage</td><td>Backblaze B2 (S3-compatible)</td></tr>
+    <tr><td>Observability</td><td>Langfuse + Sentry</td></tr>
+  </table>
+
+  <h2>Documentation Index</h2>
+  <table>
+    <tr><th>Document</th><th>Description</th></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('architecture')">Architecture Overview</a></td><td>System architecture, application map, data flow</td></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('dev-setup')">Development Setup</a></td><td>Environment setup, running services, dev workflow</td></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('api-ref')">API Reference</a></td><td>REST endpoints, authentication, request/response schemas</td></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('database')">Database Schema</a></td><td>ORM models, relationships, indexes, migrations</td></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('rag')">RAG Pipeline</a></td><td>Document processing, embedding, hybrid search, LLM</td></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('widget')">Widget Embedding</a></td><td>Embeddable chat widget, build process, integration</td></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('admin')">Admin Dashboard</a></td><td>Bot management UI, analytics, configuration</td></tr>
+    <tr><td><a class="nav-jump" onclick="showSection('config')">Configuration</a></td><td>Environment variables, feature flags, dependencies</td></tr>
+  </table>
+</div>
+
+<!-- ────── ARCHITECTURE ────── -->
+<div class="section" id="section-architecture">
+  <h1>Architecture Overview</h1>
+  <p class="subtitle">System architecture, application map, and data flow diagrams.</p>
+
+  <h2>System Map</h2>
+  <div class="flow-diagram">oye-chats/
+├── platform/
+│   ├── api/          → FastAPI REST API + RAG pipeline       (port 8000)
+│   ├── widget/       → Embeddable chat widget IIFE bundle    (port 5173 / 4173)
+│   ├── admin/        → React admin dashboard SPA             (port 5174)
+│   └── docs/         → This documentation
+└── landing/          → Next.js marketing site                (port 3000)</div>
+
+  <h2>Application Responsibilities</h2>
+
+  <h3>Backend API (<code>api/</code>)</h3>
+  <p>The central nervous system. Handles business logic, data persistence, and AI orchestration. Built on FastAPI 0.115+ with SQLAlchemy 2.0 ORM, PostgreSQL 16 with pgvector, and LiteLLM for LLM abstraction.</p>
+
+  <h3>Chat Widget (<code>widget/</code>)</h3>
+  <p>A self-contained IIFE JavaScript bundle (~416KB) that customers embed on their websites. Bundles its own React 19 instance for full isolation. Communicates with the backend via REST + SSE streaming.</p>
+
+  <h3>Admin Dashboard (<code>admin/</code>)</h3>
+  <p>React SPA for bot management, document uploads, analytics dashboards, and live chat operator tools. Uses React Router 7 and Recharts for data visualization.</p>
+
+  <h2>Authentication Model</h2>
+  <table>
+    <tr><th>Client Type</th><th>Header</th><th>Value</th><th>Used By</th></tr>
+    <tr><td>Admin / Operator</td><td><code>X-API-Key</code></td><td>Client or Operator API key</td><td>Admin dashboard</td></tr>
+    <tr><td>Widget (Visitor)</td><td><code>X-Bot-Key</code></td><td>Public bot key (e.g., <code>bot-6a427d4529b9</code>)</td><td>Embedded widget</td></tr>
+  </table>
+
+  <h2>Visitor Chat Flow</h2>
+  <div class="flow-diagram">1. Visitor loads page     → Widget script executes, reads data-bot-key
+2. Widget fetches config  → GET /bots/settings/public (colors, logo, prompt)
+3. Visitor asks question  → POST /chat/stream with X-Bot-Key header
+4. Backend runs RAG:
+   a. Hybrid search       → Vector similarity + keyword (TSVECTOR)
+   b. Context assembly    → Top chunks + chat history + system prompt
+   c. LLM generation      → LiteLLM → streaming SSE response
+   d. BANT extraction     → Background sales qualification (if enabled)
+5. Response streams back  → Widget renders markdown in real-time
+6. Message stored         → ChatMessage record with Langfuse trace_id</div>
+
+  <h2>Live Chat Handoff Flow</h2>
+  <div class="flow-diagram">1. Visitor requests handoff  → POST /operators/handoff
+2. Session status changes    → bot → waiting → live
+3. Operator matched          → Round-robin from available operators
+4. Real-time messaging       → WebSocket (/ws)
+5. If no operator available  → Offline message queued</div>
+
+  <h2>Middleware Stack</h2>
+  <table>
+    <tr><th>Order</th><th>Middleware</th><th>Purpose</th></tr>
+    <tr><td>1</td><td>CORS</td><td>Dynamic origins (dev: localhost:*; prod: CORS_ORIGINS env)</td></tr>
+    <tr><td>2</td><td>Timeout</td><td>60s limit; exempts /chat/stream, /crawl, /ws</td></tr>
+    <tr><td>3</td><td>Rate Limiter</td><td>slowapi — 30 req/min per bot key on chat endpoints</td></tr>
+    <tr><td>4</td><td>Sentry</td><td>Optional error tracking (requires SENTRY_DSN)</td></tr>
+  </table>
+
+  <h2>Observability</h2>
+  <h3>Langfuse (LLM Tracing)</h3>
+  <p>Every LLM call is traced via LiteLLM auto-callbacks. Trace IDs are stored on <code>ChatMessage.trace_id</code> for end-to-end debugging. Widget feedback (thumbs up/down) is linked back to traces. Requires <code>LANGFUSE_SECRET_KEY</code> and <code>LANGFUSE_PUBLIC_KEY</code>.</p>
+
+  <h3>Sentry (Error Tracking)</h3>
+  <p>Runtime errors are captured with automatic endpoint tagging. 10% trace and profile sample rates (configurable). Widget has its own optional Sentry via <code>VITE_SENTRY_DSN</code>.</p>
+</div>
+
+<!-- ────── DEV SETUP ────── -->
+<div class="section" id="section-dev-setup">
+  <h1>Local Development Setup</h1>
+  <p class="subtitle">Prerequisites, installation, and development workflow.</p>
+
+  <h2>Prerequisites</h2>
+  <table>
+    <tr><th>Tool</th><th>Version</th></tr>
+    <tr><td>Python</td><td>3.11+ (via Miniconda/Anaconda)</td></tr>
+    <tr><td>Node.js</td><td>20+ with npm</td></tr>
+    <tr><td>PostgreSQL</td><td>16 with pgvector extension</td></tr>
+    <tr><td>uv</td><td>Latest (Python dependency manager)</td></tr>
+  </table>
+
+  <h2>Backend Setup</h2>
+  <pre><code><span class="cm"># Create and activate conda environment</span>
+conda create -n oye python=3.11 -y
+conda activate oye
+
+<span class="cm"># Install dependencies</span>
+<span class="kw">cd</span> api
+uv sync
+
+<span class="cm"># Configure environment</span>
+cp .env.example .env
+<span class="cm"># Edit .env with your DB URL, API keys, etc.</span>
+
+<span class="cm"># Run database migrations</span>
+uv run alembic upgrade head
+
+<span class="cm"># Install Playwright browser</span>
+uv run playwright install chromium
+
+<span class="cm"># Start dev server</span>
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload</code></pre>
+
+  <h2>Widget Setup</h2>
+  <pre><code><span class="kw">cd</span> widget
+npm install
+cp .env.example .env      <span class="cm"># Set VITE_API_URL=http://localhost:8000</span>
+npm run dev               <span class="cm"># → http://localhost:5173</span></code></pre>
+
+  <div class="callout callout-warn">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div>The Vite dev server <strong>cannot be embedded</strong> on external sites. Use <code>npm run build && npx vite preview --port 4173</code> for embed testing.</div>
+  </div>
+
+  <h2>Admin Dashboard Setup</h2>
+  <pre><code><span class="kw">cd</span> admin
+npm install
+cp .env.example .env
+npm run dev               <span class="cm"># → http://localhost:5174</span></code></pre>
+
+  <h2>Git Workflow</h2>
+  <div class="callout callout-info">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+    <div><strong>Always</strong> work on the <code>development</code> branch. Never commit to or push to <code>main</code>. Verify with <code>git branch --show-current</code> before every commit.</div>
+  </div>
+
+  <h2>Pre-Commit Checks</h2>
+  <p>Run only the checks relevant to files you changed. All must pass before pushing.</p>
+
+  <h3>Backend (Python)</h3>
+  <pre><code>conda activate oye && <span class="kw">cd</span> api
+uv run ruff check .       <span class="cm"># Lint</span>
+uv run ruff format .      <span class="cm"># Format</span>
+uv run pytest             <span class="cm"># Tests</span></code></pre>
+
+  <h3>Widget / Admin (JavaScript)</h3>
+  <pre><code><span class="kw">cd</span> widget   <span class="cm"># or cd admin</span>
+npm run lint
+npm run build</code></pre>
+
+  <h2>Running All Services</h2>
+  <table>
+    <tr><th>Terminal</th><th>Command</th><th>URL</th></tr>
+    <tr><td>1</td><td><code>conda activate oye && cd api && uv run uvicorn ...</code></td><td>localhost:8000</td></tr>
+    <tr><td>2</td><td><code>cd widget && npm run dev</code></td><td>localhost:5173</td></tr>
+    <tr><td>3</td><td><code>cd admin && npm run dev</code></td><td>localhost:5174</td></tr>
+  </table>
+
+  <h2>Database Migrations</h2>
+  <pre><code>conda activate oye && <span class="kw">cd</span> api
+
+<span class="cm"># Create migration after model changes</span>
+uv run alembic revision --autogenerate -m <span class="str">"add lead_form_fields to bot"</span>
+
+<span class="cm"># Apply pending migrations</span>
+uv run alembic upgrade head
+
+<span class="cm"># Rollback one step</span>
+uv run alembic downgrade -1</code></pre>
+</div>
+
+<!-- ────── API REFERENCE ────── -->
+<div class="section" id="section-api-ref">
+  <h1>API Reference</h1>
+  <p class="subtitle">REST endpoints, authentication, and request/response schemas.</p>
+
+  <p>Base URL: <code>https://api.oyechats.com</code> (production) / <code>http://localhost:8000</code> (development)</p>
+
+  <h2>Authentication</h2>
+  <table>
+    <tr><th>Header</th><th>Purpose</th><th>Example</th></tr>
+    <tr><td><code>X-Bot-Key</code></td><td>Widget endpoints</td><td><code>bot-6a427d4529b9</code></td></tr>
+    <tr><td><code>X-API-Key</code></td><td>Admin/operator endpoints</td><td>Client or Operator API key</td></tr>
+  </table>
+
+  <h2>Auth Routes</h2>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/auth/register</span>
+      <span class="endpoint-desc">Create a new client account</span>
+    </div>
+    <div class="endpoint-body">
+      <h4>Request Body</h4>
+      <pre><code>{
+  <span class="str">"name"</span>: <span class="str">"Acme Corp"</span>,
+  <span class="str">"email"</span>: <span class="str">"admin@acme.com"</span>,
+  <span class="str">"password"</span>: <span class="str">"securePass123"</span>
+}</code></pre>
+      <h4>Response — 201 Created</h4>
+      <pre><code>{
+  <span class="str">"id"</span>: <span class="num">1</span>,
+  <span class="str">"name"</span>: <span class="str">"Acme Corp"</span>,
+  <span class="str">"email"</span>: <span class="str">"admin@acme.com"</span>,
+  <span class="str">"api_key"</span>: <span class="str">"ck_abc123..."</span>
+}</code></pre>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/auth/login</span>
+      <span class="endpoint-desc">Authenticate and receive API key</span>
+    </div>
+    <div class="endpoint-body">
+      <h4>Request Body</h4>
+      <pre><code>{
+  <span class="str">"email"</span>: <span class="str">"admin@acme.com"</span>,
+  <span class="str">"password"</span>: <span class="str">"securePass123"</span>
+}</code></pre>
+      <h4>Response — 200 OK</h4>
+      <pre><code>{
+  <span class="str">"id"</span>: <span class="num">1</span>,
+  <span class="str">"name"</span>: <span class="str">"Acme Corp"</span>,
+  <span class="str">"api_key"</span>: <span class="str">"ck_abc123..."</span>
+}</code></pre>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/auth/request-password-reset</span>
+      <span class="endpoint-desc">Request OTP via email</span>
+    </div>
+    <div class="endpoint-body">
+      <h4>Request Body</h4>
+      <pre><code>{ <span class="str">"email"</span>: <span class="str">"admin@acme.com"</span> }</code></pre>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/auth/reset-password</span>
+      <span class="endpoint-desc">Reset password with OTP</span>
+    </div>
+    <div class="endpoint-body">
+      <h4>Request Body</h4>
+      <pre><code>{
+  <span class="str">"email"</span>: <span class="str">"admin@acme.com"</span>,
+  <span class="str">"otp"</span>: <span class="str">"123456"</span>,
+  <span class="str">"new_password"</span>: <span class="str">"newSecurePass"</span>
+}</code></pre>
+    </div>
+  </div>
+
+  <h2>Bot Routes</h2>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-get">GET</span>
+      <span class="endpoint-path">/bots/settings/public</span>
+      <span class="endpoint-desc">Widget: fetch bot settings — Auth: X-Bot-Key</span>
+    </div>
+    <div class="endpoint-body">
+      <h4>Response</h4>
+      <pre><code>{
+  <span class="str">"name"</span>: <span class="str">"Support Bot"</span>,
+  <span class="str">"primary_color"</span>: <span class="str">"#6366F1"</span>,
+  <span class="str">"header_color"</span>: <span class="str">"#1E1B4B"</span>,
+  <span class="str">"bot_logo"</span>: <span class="str">"https://..."</span>,
+  <span class="str">"avatar_type"</span>: <span class="str">"orb"</span>,
+  <span class="str">"lead_form_enabled"</span>: <span class="kw">true</span>,
+  <span class="str">"live_chat_enabled"</span>: <span class="kw">false</span>
+}</code></pre>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-get">GET</span>
+      <span class="endpoint-path">/bots</span>
+      <span class="endpoint-desc">List all bots — Auth: X-API-Key</span>
+    </div>
+    <div class="endpoint-body"><p>Returns an array of bot objects with <code>id</code>, <code>bot_key</code>, <code>name</code>, <code>website</code>, <code>created_at</code>.</p></div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/bots</span>
+      <span class="endpoint-desc">Create a new bot — Auth: X-API-Key</span>
+    </div>
+    <div class="endpoint-body">
+      <h4>Request Body</h4>
+      <pre><code>{
+  <span class="str">"name"</span>: <span class="str">"Sales Bot"</span>,
+  <span class="str">"website"</span>: <span class="str">"https://acme.com"</span>,
+  <span class="str">"system_prompt"</span>: <span class="str">"You are a helpful sales assistant..."</span>
+}</code></pre>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-patch">PATCH</span>
+      <span class="endpoint-path">/bots/{id}</span>
+      <span class="endpoint-desc">Update bot settings — Auth: X-API-Key</span>
+    </div>
+    <div class="endpoint-body"><p>Accepts any subset of bot fields: name, colors, system_prompt, feature flags, notification settings.</p></div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-delete">DELETE</span>
+      <span class="endpoint-path">/bots/{id}</span>
+      <span class="endpoint-desc">Delete bot and all data — Auth: X-API-Key</span>
+    </div>
+    <div class="endpoint-body"><p>Permanently deletes the bot and all associated documents, sessions, and messages.</p></div>
+  </div>
+
+  <h2>Chat Routes</h2>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/chat/stream</span>
+      <span class="endpoint-desc">Send message, receive SSE stream — Auth: X-Bot-Key</span>
+    </div>
+    <div class="endpoint-body">
+      <h4>Request Body</h4>
+      <pre><code>{
+  <span class="str">"message"</span>: <span class="str">"What are your pricing plans?"</span>,
+  <span class="str">"session_id"</span>: <span class="str">"sess_abc123"</span>  <span class="cm">// optional</span>
+}</code></pre>
+      <h4>SSE Response Protocol</h4>
+      <pre><code>METADATA:{"sources": ["pricing.pdf"], "session_id": "sess_abc123"}
+Here is information about our pricing...
+We offer three tiers:
+...
+FINAL_METADATA:{"message_id": 456, "trace_id": "tr_xyz789"}</code></pre>
+      <p>Lines prefixed with <code>METADATA:</code> contain JSON with sources and session ID. <code>FINAL_METADATA:</code> contains the message ID and Langfuse trace ID. All other lines are response text chunks.</p>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/chat/feedback/{message_id}</span>
+      <span class="endpoint-desc">Submit feedback — Auth: X-Bot-Key</span>
+    </div>
+    <div class="endpoint-body">
+      <pre><code>{ <span class="str">"feedback"</span>: <span class="num">1</span> }  <span class="cm">// 1 = up, -1 = down, 0 = reset</span></code></pre>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-get">GET</span>
+      <span class="endpoint-path">/chat/history/{session_id}</span>
+      <span class="endpoint-desc">Get session messages — Auth: X-Bot-Key</span>
+    </div>
+    <div class="endpoint-body"><p>Returns an array of messages with <code>id</code>, <code>role</code>, <code>content</code>, <code>feedback</code>, <code>trace_id</code>, <code>created_at</code>.</p></div>
+  </div>
+
+  <h2>Document Routes</h2>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/upload</span>
+      <span class="endpoint-desc">Upload document (PDF/DOCX/TXT) — Auth: X-API-Key</span>
+    </div>
+    <div class="endpoint-body">
+      <p><code>multipart/form-data</code> with <code>file</code> and <code>bot_id</code> fields. Triggers the full ingestion pipeline.</p>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-post">POST</span>
+      <span class="endpoint-path">/crawl</span>
+      <span class="endpoint-desc">Crawl a website — Auth: X-API-Key</span>
+    </div>
+    <div class="endpoint-body">
+      <pre><code>{
+  <span class="str">"url"</span>: <span class="str">"https://acme.com/docs"</span>,
+  <span class="str">"bot_id"</span>: <span class="num">1</span>
+}</code></pre>
+      <p>Crawls up to 50 pages at max depth 3. Each page is processed through the ingestion pipeline.</p>
+    </div>
+  </div>
+
+  <h2>Other Route Groups</h2>
+  <table>
+    <tr><th>Prefix</th><th>Key Endpoints</th><th>Auth</th></tr>
+    <tr><td><code>/analytics</code></td><td>dashboard, activity, top-questions, visitors, feedback</td><td>X-API-Key</td></tr>
+    <tr><td><code>/operators</code></td><td>CRUD, handoff, departments</td><td>X-API-Key / X-Bot-Key</td></tr>
+    <tr><td><code>/client</code></td><td>settings, api-key regeneration</td><td>X-API-Key</td></tr>
+    <tr><td><code>/leads</code></td><td>list, detail, update qualification</td><td>X-API-Key</td></tr>
+    <tr><td><code>/offline-messages</code></td><td>create, list, mark read/replied</td><td>X-Bot-Key / X-API-Key</td></tr>
+    <tr><td><code>/canned-responses</code></td><td>CRUD for operator reply templates</td><td>X-API-Key</td></tr>
+    <tr><td><code>/ws</code></td><td>WebSocket for live chat</td><td>Token param</td></tr>
+  </table>
+
+  <h2>Error Responses</h2>
+  <pre><code>{ <span class="str">"detail"</span>: <span class="str">"Description of the error"</span> }</code></pre>
+  <table>
+    <tr><th>Code</th><th>Meaning</th></tr>
+    <tr><td>400</td><td>Bad Request — invalid input or business rule violation</td></tr>
+    <tr><td>401</td><td>Unauthorized — missing or invalid key</td></tr>
+    <tr><td>403</td><td>Forbidden — insufficient permissions</td></tr>
+    <tr><td>404</td><td>Not Found</td></tr>
+    <tr><td>422</td><td>Validation Error — Pydantic schema failure</td></tr>
+    <tr><td>429</td><td>Rate limit exceeded</td></tr>
+    <tr><td>504</td><td>Gateway Timeout — exceeded 60s</td></tr>
+  </table>
+</div>
+
+<!-- ────── DATABASE ────── -->
+<div class="section" id="section-database">
+  <h1>Database Schema</h1>
+  <p class="subtitle">PostgreSQL 16 + pgvector. ORM: SQLAlchemy 2.0. Migrations: Alembic.</p>
+
+  <h2>Entity Relationships</h2>
+  <div class="flow-diagram">Client (1) ──→ (N) Bot (1) ──→ (N) Document
+                    │
+                    ├──→ (N) ChatSession (1) ──→ (N) ChatMessage
+                    │         │
+                    │         └──→ (0..1) LeadInfo
+                    │
+                    ├──→ (N) OfflineMessage
+                    └──→ (N) CannedResponse
+
+Client (1) ──→ (N) Operator
+Client (1) ──→ (N) Department</div>
+
+  <h2>Client</h2>
+  <p>Workspace owner / account holder.</p>
+  <table>
+    <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+    <tr><td><code>id</code></td><td>Integer PK</td><td>Auto-increment</td></tr>
+    <tr><td><code>name</code></td><td>String</td><td>Not null</td></tr>
+    <tr><td><code>email</code></td><td>String</td><td>Unique, not null</td></tr>
+    <tr><td><code>hashed_password</code></td><td>String</td><td>bcrypt hash</td></tr>
+    <tr><td><code>api_key</code></td><td>String</td><td>Unique — admin auth</td></tr>
+    <tr><td><code>is_superadmin</code></td><td>Boolean</td><td>Default: false</td></tr>
+    <tr><td><code>max_bots</code></td><td>Integer</td><td>Default: 100</td></tr>
+  </table>
+
+  <h2>Bot</h2>
+  <p>Individual chatbot instance with settings, appearance, and feature flags.</p>
+  <table>
+    <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+    <tr><td><code>id</code></td><td>Integer PK</td><td></td></tr>
+    <tr><td><code>client_id</code></td><td>FK → Client</td><td></td></tr>
+    <tr><td><code>bot_key</code></td><td>String</td><td>Unique — public widget key</td></tr>
+    <tr><td><code>name</code></td><td>String</td><td>Display name</td></tr>
+    <tr><td><code>system_prompt</code></td><td>Text</td><td>Custom LLM instructions</td></tr>
+    <tr><td><code>primary_color</code></td><td>String</td><td>Hex color</td></tr>
+    <tr><td><code>bant_enabled</code></td><td>Boolean</td><td>Sales qualification</td></tr>
+    <tr><td><code>lead_form_enabled</code></td><td>Boolean</td><td></td></tr>
+    <tr><td><code>lead_form_fields</code></td><td>JSONB</td><td>e.g., ["name","email"]</td></tr>
+    <tr><td><code>live_chat_enabled</code></td><td>Boolean</td><td></td></tr>
+  </table>
+
+  <h2>Document</h2>
+  <p>A chunked piece of ingested content with its vector embedding.</p>
+  <table>
+    <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+    <tr><td><code>id</code></td><td>Integer PK</td><td></td></tr>
+    <tr><td><code>bot_id</code></td><td>FK → Bot</td><td></td></tr>
+    <tr><td><code>document_name</code></td><td>String</td><td>Source filename or URL</td></tr>
+    <tr><td><code>file_hash</code></td><td>String</td><td>SHA-256 — indexed for dedup</td></tr>
+    <tr><td><code>content</code></td><td>Text</td><td>The text chunk</td></tr>
+    <tr><td><code>embedding</code></td><td>Vector(1536)</td><td>pgvector column</td></tr>
+    <tr><td><code>search_vector</code></td><td>TSVECTOR</td><td>GIN indexed — keyword search</td></tr>
+    <tr><td><code>metadata_info</code></td><td>JSONB</td><td>Page numbers, sections, URLs</td></tr>
+  </table>
+
+  <h2>ChatSession</h2>
+  <p>A conversation with visitor metadata and BANT state.</p>
+  <table>
+    <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+    <tr><td><code>id</code></td><td>String PK</td><td>Session identifier</td></tr>
+    <tr><td><code>bot_id</code></td><td>FK → Bot</td><td></td></tr>
+    <tr><td><code>status</code></td><td>String</td><td>bot | waiting | live | closed</td></tr>
+    <tr><td><code>location</code></td><td>String</td><td>Geolocation</td></tr>
+    <tr><td><code>device</code></td><td>String</td><td>Browser + OS</td></tr>
+    <tr><td><code>bant_need/timeline/authority/budget</code></td><td>String</td><td>Sales qualification state</td></tr>
+  </table>
+
+  <h2>ChatMessage</h2>
+  <table>
+    <tr><th>Column</th><th>Type</th><th>Notes</th></tr>
+    <tr><td><code>id</code></td><td>Integer PK</td><td></td></tr>
+    <tr><td><code>session_id</code></td><td>FK → ChatSession</td><td></td></tr>
+    <tr><td><code>role</code></td><td>String</td><td>user | bot | operator | system</td></tr>
+    <tr><td><code>content</code></td><td>Text</td><td></td></tr>
+    <tr><td><code>feedback</code></td><td>Integer</td><td>-1 / 0 / 1</td></tr>
+    <tr><td><code>trace_id</code></td><td>String</td><td>Langfuse trace link</td></tr>
+  </table>
+
+  <h2>Other Models</h2>
+  <table>
+    <tr><th>Model</th><th>Purpose</th><th>Key Fields</th></tr>
+    <tr><td>LeadInfo</td><td>Contact info from lead form</td><td>name, email, phone, company</td></tr>
+    <tr><td>Operator</td><td>Live chat team member</td><td>role (owner/admin/operator), is_online, department</td></tr>
+    <tr><td>Department</td><td>Operator grouping</td><td>name, description</td></tr>
+    <tr><td>OfflineMessage</td><td>Visitor messages when offline</td><td>message, is_read, is_replied</td></tr>
+    <tr><td>CannedResponse</td><td>Quick reply templates</td><td>title, content</td></tr>
+  </table>
+
+  <h2>Migrations</h2>
+  <pre><code><span class="cm"># Create migration after model changes</span>
+uv run alembic revision --autogenerate -m <span class="str">"description"</span>
+
+<span class="cm"># Apply migrations</span>
+uv run alembic upgrade head
+
+<span class="cm"># Rollback</span>
+uv run alembic downgrade -1</code></pre>
+</div>
+
+<!-- ────── RAG PIPELINE ────── -->
+<div class="section" id="section-rag">
+  <h1>RAG Pipeline &amp; Ingestion</h1>
+  <p class="subtitle">Document processing, embedding, hybrid search, and LLM generation.</p>
+
+  <h2>Ingestion Pipeline</h2>
+  <div class="flow-diagram">Upload / Crawl
+    ↓
+Extract text (PDF → pypdf, DOCX → python-docx, TXT → direct)
+    ↓
+Clean text (normalize whitespace, fix encoding)
+    ↓
+Hash (SHA-256) → skip if duplicate
+    ↓
+Chunk (recursive split, 2000 chars, 300 overlap)
+    ↓
+Embed (OpenAI text-embedding-3-small → 1536-dim vectors)
+    ↓
+Store (PostgreSQL + pgvector + TSVECTOR)</div>
+
+  <h2>Chunking Configuration</h2>
+  <table>
+    <tr><th>Parameter</th><th>Default</th><th>Env Variable</th></tr>
+    <tr><td>Chunk size</td><td>2,000 characters</td><td><code>CHUNK_SIZE</code></td></tr>
+    <tr><td>Chunk overlap</td><td>300 characters</td><td><code>CHUNK_OVERLAP</code></td></tr>
+  </table>
+
+  <h2>Web Crawler Settings</h2>
+  <table>
+    <tr><th>Setting</th><th>Value</th></tr>
+    <tr><td>Max pages</td><td>50</td></tr>
+    <tr><td>Max depth</td><td>3</td></tr>
+    <tr><td>Concurrency</td><td>5</td></tr>
+    <tr><td>Page timeout</td><td>20 seconds</td></tr>
+    <tr><td>robots.txt</td><td>Respected</td></tr>
+  </table>
+
+  <h2>Query Pipeline</h2>
+  <div class="flow-diagram">User Question
+    ↓
+Hybrid Search:
+  ├── Vector: embed question → ANN search over bot documents
+  └── Keyword: tsquery → full-text search over TSVECTOR column
+    ↓
+Reciprocal Rank Fusion (merge + re-rank)
+    ↓
+Context Assembly:
+  ├── System prompt (from bot config)
+  ├── Top retrieved chunks (with source attribution)
+  ├── Chat history (recent messages)
+  └── BANT instructions (if enabled)
+    ↓
+LLM Generation (LiteLLM → streaming SSE)
+    ↓
+Background: BANT extraction (fire-and-forget)
+    ↓
+Store response + trace_id</div>
+
+  <h2>Hybrid Search: Reciprocal Rank Fusion</h2>
+  <p>The <code>reciprocal_rank_fusion()</code> function merges vector similarity results with keyword search results. Each document gets a combined score that balances semantic relevance with lexical precision. This ensures the system catches both meaning-based matches and exact keyword hits.</p>
+
+  <h2>BANT Qualification</h2>
+  <p>When <code>bant_enabled = true</code> on a bot, the system subtly qualifies visitors for sales readiness:</p>
+  <table>
+    <tr><th>Dimension</th><th>What It Tracks</th></tr>
+    <tr><td>Budget</td><td>Has the visitor mentioned pricing, cost, or budget?</td></tr>
+    <tr><td>Authority</td><td>Are they a decision-maker or influencer?</td></tr>
+    <tr><td>Need</td><td>What problem are they solving?</td></tr>
+    <tr><td>Timeline</td><td>When do they need a solution?</td></tr>
+  </table>
+  <p>BANT prompts are woven naturally into helpful answers — one question per turn, only when buying signals are detected. When all four fields are populated, an email notification is sent (if configured).</p>
+
+  <h2>Key Files</h2>
+  <table>
+    <tr><th>Purpose</th><th>Path</th></tr>
+    <tr><td>Ingestion orchestrator</td><td><code>api/app/ingestion/pipeline.py</code></td></tr>
+    <tr><td>File extraction</td><td><code>api/app/ingestion/extraction.py</code></td></tr>
+    <tr><td>Text chunking</td><td><code>api/app/ingestion/chunking.py</code></td></tr>
+    <tr><td>Embedding generation</td><td><code>api/app/ingestion/embedder.py</code></td></tr>
+    <tr><td>RAG query pipeline</td><td><code>api/app/services/rag_service.py</code></td></tr>
+    <tr><td>LLM service</td><td><code>api/app/services/llm_service.py</code></td></tr>
+    <tr><td>BANT service</td><td><code>api/app/services/sdr_service.py</code></td></tr>
+    <tr><td>Web crawler</td><td><code>api/app/services/crawler_service.py</code></td></tr>
+  </table>
+</div>
+
+<!-- ────── WIDGET ────── -->
+<div class="section" id="section-widget">
+  <h1>Widget Embedding Guide</h1>
+  <p class="subtitle">How the embeddable chat widget works, build process, and integration.</p>
+
+  <h2>Production Embed</h2>
+  <p>Add this single line before the closing <code>&lt;/body&gt;</code> tag:</p>
+  <pre><code>&lt;<span class="kw">script</span> <span class="var">src</span>=<span class="str">"https://cdn.oyechats.com/oyechats-widget.js"</span> <span class="var">data-bot-key</span>=<span class="str">"bot-xxx"</span>&gt;&lt;/<span class="kw">script</span>&gt;</code></pre>
+
+  <h2>How It Works</h2>
+  <p>The widget (<code>oyechats-widget.js</code>) is a ~416KB IIFE bundle that:</p>
+  <table>
+    <tr><th>Step</th><th>Action</th></tr>
+    <tr><td>1</td><td>Finds its <code>&lt;script&gt;</code> tag, reads <code>data-bot-key</code></td></tr>
+    <tr><td>2</td><td>Sets <code>window.OYECHATS_BOT_KEY</code> globally</td></tr>
+    <tr><td>3</td><td>Auto-injects sibling CSS (<code>oyechats-widget.css</code>)</td></tr>
+    <tr><td>4</td><td>Creates <code>&lt;div id="oyechats-widget-root"&gt;</code></td></tr>
+    <tr><td>5</td><td>Renders its own React 19 app (isolated from host)</td></tr>
+    <tr><td>6</td><td>Communicates via REST + SSE with <code>X-Bot-Key</code> header</td></tr>
+  </table>
+
+  <h2>Build Process</h2>
+  <pre><code><span class="kw">cd</span> widget
+npm run build       <span class="cm"># → dist/oyechats-widget.js + oyechats-widget.css</span></code></pre>
+
+  <h2>Testing Embeds Locally</h2>
+  <pre><code><span class="kw">cd</span> widget
+npm run build
+npx vite preview --port 4173</code></pre>
+  <p>Then embed on your test page:</p>
+  <pre><code>&lt;<span class="kw">script</span> <span class="var">src</span>=<span class="str">"http://localhost:4173/oyechats-widget.js"</span> <span class="var">data-bot-key</span>=<span class="str">"bot-xxx"</span>&gt;&lt;/<span class="kw">script</span>&gt;</code></pre>
+
+  <div class="callout callout-warn">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div>The Vite dev server (<code>localhost:5173</code>) <strong>cannot</strong> be embedded on external sites. Always use the preview build for embed testing.</div>
+  </div>
+
+  <h2>Isolation &amp; Compatibility</h2>
+  <p>The widget is designed for zero conflicts with host pages. It bundles its own React instance, scopes all DOM and CSS to <code>#oyechats-widget-root</code>, and only sets two window globals. Works on Next.js, WordPress, Webflow, Shopify, plain HTML — anything with a <code>&lt;body&gt;</code> tag.</p>
+
+  <h2>Naming Conventions</h2>
+  <table>
+    <tr><th>Item</th><th>Value</th></tr>
+    <tr><td>Bundle</td><td><code>oyechats-widget.js</code> / <code>oyechats-widget.css</code></td></tr>
+    <tr><td>DOM container</td><td><code>oyechats-widget-root</code></td></tr>
+    <tr><td>Window globals</td><td><code>OYECHATS_BOT_KEY</code>, <code>OYECHATS_API_KEY</code></td></tr>
+    <tr><td>Console prefix</td><td><code>[OyeChats]</code></td></tr>
+    <tr><td>CDN</td><td><code>cdn.oyechats.com</code></td></tr>
+  </table>
+</div>
+
+<!-- ────── ADMIN ────── -->
+<div class="section" id="section-admin">
+  <h1>Admin Dashboard</h1>
+  <p class="subtitle">Bot management, knowledge base, analytics, and operator tools.</p>
+
+  <h2>Stack</h2>
+  <table>
+    <tr><th>Technology</th><th>Purpose</th></tr>
+    <tr><td>React 19 + Vite 8</td><td>UI framework + build</td></tr>
+    <tr><td>React Router 7</td><td>Navigation</td></tr>
+    <tr><td>Recharts</td><td>Analytics charts</td></tr>
+    <tr><td>react-colorful</td><td>Color pickers (theming)</td></tr>
+    <tr><td>react-easy-crop</td><td>Logo image cropping</td></tr>
+  </table>
+
+  <h2>Pages</h2>
+  <h3>Bot Management</h3>
+  <p>Create, edit, delete bots. View bot keys, generate embed scripts, configure all bot settings including appearance, system prompt, lead capture, BANT qualification, and live chat.</p>
+
+  <h3>Knowledge Base</h3>
+  <p>Upload documents (PDF, DOCX, TXT) or crawl websites. View and delete ingested documents.</p>
+
+  <h3>Analytics</h3>
+  <p>Dashboard with conversation counts, top questions, visitor devices/locations, and feedback distribution — all powered by Recharts.</p>
+
+  <h3>Operators &amp; Live Chat</h3>
+  <p>CRUD for operators (with roles: owner, admin, operator), department management, and canned response templates.</p>
+
+  <h3>Leads</h3>
+  <p>View captured leads with contact info and BANT qualification status.</p>
+
+  <h2>Context Providers</h2>
+  <table>
+    <tr><th>Context</th><th>Purpose</th></tr>
+    <tr><td>AuthContext</td><td>User auth state, login/logout</td></tr>
+    <tr><td>BotContext</td><td>Selected bot, bot list, refresh</td></tr>
+    <tr><td>ToastContext</td><td>Toast notifications</td></tr>
+  </table>
+
+  <h2>Running Locally</h2>
+  <pre><code><span class="kw">cd</span> admin
+npm install
+cp .env.example .env
+npm run dev    <span class="cm"># → http://localhost:5174</span></code></pre>
+</div>
+
+<!-- ────── CONFIG ────── -->
+<div class="section" id="section-config">
+  <h1>Configuration Reference</h1>
+  <p class="subtitle">Environment variables for all applications.</p>
+
+  <h2>Backend API (<code>api/.env</code>)</h2>
+
+  <h3>Core</h3>
+  <table>
+    <tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>DB_URL</code></td><td><span class="badge badge-required">Required</span></td><td>—</td><td>PostgreSQL connection string</td></tr>
+    <tr><td><code>APP_ENV</code></td><td></td><td>development</td><td>development | production</td></tr>
+    <tr><td><code>CORS_ORIGINS</code></td><td>Prod only</td><td>—</td><td>Comma-separated allowed origins</td></tr>
+  </table>
+
+  <h3>LLM &amp; Embeddings</h3>
+  <table>
+    <tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>OPENAI_API_KEY</code></td><td><span class="badge badge-required">Required</span></td><td>—</td><td>OpenAI API key</td></tr>
+    <tr><td><code>LLM_MODEL</code></td><td></td><td>openai/gpt-5-mini</td><td>LiteLLM model identifier</td></tr>
+    <tr><td><code>EMBEDDING_MODEL</code></td><td></td><td>text-embedding-3-small</td><td>OpenAI embedding model</td></tr>
+  </table>
+
+  <h3>Ingestion</h3>
+  <table>
+    <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>CHUNK_SIZE</code></td><td>2000</td><td>Max characters per chunk</td></tr>
+    <tr><td><code>CHUNK_OVERLAP</code></td><td>300</td><td>Overlap between chunks</td></tr>
+  </table>
+
+  <h3>Observability</h3>
+  <table>
+    <tr><th>Variable</th><th>Description</th></tr>
+    <tr><td><code>SENTRY_DSN</code></td><td>Sentry error tracking (omit to disable)</td></tr>
+    <tr><td><code>LANGFUSE_SECRET_KEY</code></td><td>Langfuse LLM tracing (omit to disable)</td></tr>
+    <tr><td><code>LANGFUSE_PUBLIC_KEY</code></td><td>Langfuse public key</td></tr>
+  </table>
+
+  <h3>Cloud Storage &amp; Email</h3>
+  <table>
+    <tr><th>Variable</th><th>Description</th></tr>
+    <tr><td><code>R2_KEY_ID</code></td><td>Backblaze B2 key ID</td></tr>
+    <tr><td><code>R2_APPLICATION_KEY</code></td><td>B2 application key</td></tr>
+    <tr><td><code>R2_BUCKET_NAME</code></td><td>B2 bucket name</td></tr>
+    <tr><td><code>BREVO_API_KEY</code></td><td>Brevo email API key</td></tr>
+  </table>
+
+  <h2>Widget (<code>widget/.env</code>)</h2>
+  <table>
+    <tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>VITE_API_URL</code></td><td><span class="badge badge-required">Required</span></td><td>https://api.oyechats.com</td><td>Backend API base URL</td></tr>
+    <tr><td><code>VITE_SENTRY_DSN</code></td><td></td><td>—</td><td>Widget error tracking</td></tr>
+  </table>
+
+  <h2>Admin Dashboard (<code>admin/.env</code>)</h2>
+  <table>
+    <tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>VITE_API_URL</code></td><td><span class="badge badge-required">Required</span></td><td>—</td><td>Backend API base URL</td></tr>
+    <tr><td><code>VITE_SENTRY_DSN</code></td><td></td><td>—</td><td>Admin error tracking</td></tr>
+  </table>
+
+  <h2>Minimal Local Setup</h2>
+  <pre><code><span class="cm"># api/.env</span>
+DB_URL=<span class="str">postgresql://postgres:postgres@localhost:5432/oyechats</span>
+OPENAI_API_KEY=<span class="str">sk-your-key-here</span>
+APP_ENV=<span class="str">development</span>
+
+<span class="cm"># widget/.env</span>
+VITE_API_URL=<span class="str">http://localhost:8000</span>
+
+<span class="cm"># admin/.env</span>
+VITE_API_URL=<span class="str">http://localhost:8000</span></code></pre>
+
+  <div class="callout callout-success">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22,4 12,14.01 9,11.01"/></svg>
+    <div>Everything beyond the minimal setup is optional. Sentry, Langfuse, Brevo, and B2 features gracefully degrade when their keys are absent.</div>
+  </div>
+</div>
+
+</div>
+</main>
+
+<!-- ═══════════ SCRIPTS ═══════════ -->
+<script>
+// ── Navigation ──
+function showSection(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+  const section = document.getElementById('section-' + id);
+  const link = document.querySelector(`[data-section="${id}"]`);
+  if (section) section.classList.add('active');
+  if (link) link.classList.add('active');
+  document.getElementById('mainContent').scrollTop = 0;
+  document.querySelector('.sidebar').classList.remove('open');
+}
+
+// ── Search ──
+const searchIndex = [];
+document.querySelectorAll('.section').forEach(section => {
+  const id = section.id.replace('section-', '');
+  const title = section.querySelector('h1')?.textContent || id;
+  section.querySelectorAll('h2, h3, p, td, code').forEach(el => {
+    const text = el.textContent.trim();
+    if (text.length > 5 && text.length < 300) {
+      searchIndex.push({ sectionId: id, sectionTitle: title, text, heading: el.tagName === 'H2' || el.tagName === 'H3' });
+    }
+  });
+});
+
+const searchInput = document.getElementById('searchInput');
+const searchOverlay = document.getElementById('searchOverlay');
+const searchResults = document.getElementById('searchResults');
+
+function openSearch() { searchOverlay.classList.add('active'); searchInput.focus(); }
+function closeSearch() { searchOverlay.classList.remove('active'); searchInput.value = ''; searchResults.innerHTML = ''; }
+
+searchInput.addEventListener('input', function() {
+  const q = this.value.toLowerCase().trim();
+  if (q.length < 2) { searchResults.innerHTML = ''; searchOverlay.classList.remove('active'); return; }
+  searchOverlay.classList.add('active');
+  const matches = searchIndex.filter(i => i.text.toLowerCase().includes(q)).slice(0, 12);
+  if (!matches.length) {
+    searchResults.innerHTML = '<div class="search-empty">No results found</div>';
+    return;
+  }
+  searchResults.innerHTML = matches.map(m => {
+    const idx = m.text.toLowerCase().indexOf(q);
+    const start = Math.max(0, idx - 40);
+    const end = Math.min(m.text.length, idx + q.length + 40);
+    let snippet = (start > 0 ? '...' : '') + m.text.slice(start, end) + (end < m.text.length ? '...' : '');
+    snippet = snippet.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'), '<mark>$1</mark>');
+    return `<div class="search-result" onclick="showSection('${m.sectionId}');closeSearch()">
+      <div class="search-result-title">${m.sectionTitle}</div>
+      <div class="search-result-context">${snippet}</div>
+    </div>`;
+  }).join('');
+});
+
+searchInput.addEventListener('focus', function() { if (this.value.trim().length >= 2) searchOverlay.classList.add('active'); });
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); searchInput.focus(); }
+  if (e.key === 'Escape') closeSearch();
+});
+
+// Copy buttons for code blocks
+document.querySelectorAll('pre').forEach(pre => {
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.textContent = 'Copy';
+  btn.onclick = () => {
+    navigator.clipboard.writeText(pre.querySelector('code').textContent);
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  };
+  pre.appendChild(btn);
+});
+</script>
+</body>
+</html>

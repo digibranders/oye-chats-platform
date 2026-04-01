@@ -1,6 +1,6 @@
 import React from 'react';
 
-const OyeChatLogo = ({ className }) => {
+const OyeChatsLogo = ({ className }) => {
     return (
         <div className={`${className} flex items-center justify-center bg-white overflow-hidden`}>
             <svg
@@ -21,7 +21,7 @@ const OyeChatLogo = ({ className }) => {
     );
 };
 
-const OyeChatLogoSVG = ({ className }) => (
+const OyeChatsLogoSVG = ({ className }) => (
     <svg
         viewBox="0 0 200 200"
         className={className}
@@ -32,4 +32,4 @@ const OyeChatLogoSVG = ({ className }) => (
     </svg>
 );
 
-export default OyeChatLogoSVG;
+export default OyeChatsLogoSVG;

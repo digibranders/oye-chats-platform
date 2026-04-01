@@ -13,7 +13,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="oyechat-bg")
+_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="oyechats-bg")
 
 
 def submit_background(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:

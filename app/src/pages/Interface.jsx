@@ -5,6 +5,7 @@ import Cropper from 'react-easy-crop';
 import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo } from '../services/api';
 import { useBotContext } from '../context/BotContext';
+import { useToast } from '../context/ToastContext';
 import EmptyState from '../components/ui/EmptyState';
 
 // Helper: create cropped image from canvas (supports rotation)
@@ -105,6 +106,7 @@ const ColorPickerControl = ({ label, color, onChange }) => {
 
 export default function Interface({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const { showToast } = useToast();
     const { isBotManager } = getAuthState();
     const [logo, setLogo] = useState(null); // base64 data URL
     const [isSaving, setIsSaving] = useState(false);
@@ -175,10 +177,11 @@ export default function Interface({ embedded = false }) {
                 }
             } catch (error) {
                 console.error("Error fetching settings:", error);
+                showToast('error', error.message || 'Failed to load widget settings');
             }
         };
         fetchSettings();
-    }, [selectedBot?.id]);
+    }, [selectedBot?.id, showToast]);
 
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;

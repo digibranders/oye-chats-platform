@@ -98,7 +98,7 @@ TRACKING_PARAMS: frozenset[str] = frozenset(
     }
 )
 
-_HTTP_USER_AGENT = "OyeChat-Bot/1.0 (+https://oyechats.com)"
+_HTTP_USER_AGENT = "OyeChats-Bot/1.0 (+https://oyechats.com)"
 
 
 # ---------------------------------------------------------------------------

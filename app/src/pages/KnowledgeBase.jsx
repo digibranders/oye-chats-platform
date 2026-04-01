@@ -38,6 +38,7 @@ export default function KnowledgeBase() {
             setDocuments(docs || []);
         } catch (error) {
             console.error('Failed to load documents:', error);
+            showToast('error', error.message || 'Failed to load documents');
         } finally {
             setIsLoadingDocs(false);
         }
@@ -45,6 +46,7 @@ export default function KnowledgeBase() {
 
     useEffect(() => {
         if (activeTab === 'list') fetchDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, selectedBot?.id]);
 
     if (!botsLoading && bots.length === 0) {

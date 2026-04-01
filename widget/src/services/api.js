@@ -5,12 +5,12 @@ const getHeaders = () => {
         'Content-Type': 'application/json',
     };
     // Priority: X-Bot-Key (new multi-bot) > X-API-Key (legacy backward compat)
-    if (window.OYECHAT_BOT_KEY) {
-        headers['X-Bot-Key'] = window.OYECHAT_BOT_KEY;
-    } else if (window.OYECHAT_API_KEY) {
-        headers['X-API-Key'] = window.OYECHAT_API_KEY;
+    if (window.OYECHATS_BOT_KEY) {
+        headers['X-Bot-Key'] = window.OYECHATS_BOT_KEY;
+    } else if (window.OYECHATS_API_KEY) {
+        headers['X-API-Key'] = window.OYECHATS_API_KEY;
     } else {
-        console.warn('[OyeChat] No Bot Key or API Key found! Chatbot requests may be blocked.');
+        console.warn('[OyeChats] No Bot Key or API Key found! Chatbot requests may be blocked.');
     }
     return headers;
 };
@@ -98,7 +98,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
             }
         }
     } catch (error) {
-        console.error("[OyeChat] Streaming error:", error);
+        console.error("[OyeChats] Streaming error:", error);
         onError?.(error);
         throw error;
     }
@@ -188,7 +188,7 @@ export const requestHandoff = async (sessionId, formData) => {
 
 export const getDepartments = async () => {
     try {
-        const botKey = window.OYECHAT_BOT_KEY || '';
+        const botKey = window.OYECHATS_BOT_KEY || '';
         const response = await fetch(`${API_URL}/operators/departments/public?bot_key=${botKey}`);
         if (!response.ok) return { departments: [] };
         return await response.json();
@@ -204,7 +204,7 @@ export const submitOfflineMessage = async (formData) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                bot_key: window.OYECHAT_BOT_KEY || window.OYECHAT_API_KEY || '',
+                bot_key: window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || '',
                 name: formData.name,
                 email: formData.email,
                 phone: formData.phone || null,

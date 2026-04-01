@@ -41,6 +41,7 @@ export default function SuperadminClients() {
             setClients(data);
         } catch (err) {
             console.error("Failed to fetch clients", err);
+            showToast('error', err.message || 'Failed to load clients');
         } finally {
             setIsLoading(false);
         }
@@ -48,6 +49,7 @@ export default function SuperadminClients() {
 
     useEffect(() => {
         fetchClients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleDelete = async (clientId, clientName) => {
@@ -63,7 +65,7 @@ export default function SuperadminClients() {
             // Refresh list
             await fetchClients();
         } catch (err) {
-            showToast('error', typeof err === 'string' ? err : 'Failed to delete client');
+            showToast('error', err.message || 'Failed to delete client');
             setConfirmDeleteId(null);
         } finally {
             setDeletingId(null);

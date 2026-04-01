@@ -280,7 +280,7 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
         raise
     except Exception as e:
         logger.error(f"Failed to update bot {bot_id}: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="Failed to save bot settings.") from e
 
 
 @router.delete("/{bot_id}")

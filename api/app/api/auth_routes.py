@@ -338,7 +338,7 @@ def login(request: LoginRequest):
         logger.error(f"LOGIN FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}",
+            detail="Login failed. Please try again.",
         ) from e
 
 
@@ -399,7 +399,7 @@ def register(request: RegisterRequest):
         logger.error(f"REGISTRATION FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration failed: {str(e)}",
+            detail="Registration failed. Please try again.",
         ) from e
 
 
@@ -570,7 +570,7 @@ def operator_login(request: OperatorLoginRequest):
         logger.error(f"OPERATOR LOGIN FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}",
+            detail="Login failed. Please try again.",
         ) from e
 
 

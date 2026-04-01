@@ -63,7 +63,7 @@ def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depend
             return docs
     except Exception as e:
         logger.error(f"Failed to fetch documents: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to fetch documents.") from e
 
 
 @router.delete("/documents/{document_name:path}")
@@ -119,7 +119,7 @@ def delete_document_endpoint(
         raise
     except Exception as e:
         logger.error(f"Failed to delete document '{document_name}': {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to delete document.") from e
 
 
 def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | None):
@@ -261,9 +261,9 @@ async def crawl_endpoint(
         raise
     except CrawlerError as e:
         logger.error(f"Crawling failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="Crawling failed. The target site may be unreachable.") from e
     except Exception as e:
         logger.error(f"Crawling failed unexpectedly: {e}")
-        raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="Crawling failed. Please try again.") from e
     finally:
         lock.release()

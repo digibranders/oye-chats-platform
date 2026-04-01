@@ -25,6 +25,7 @@ export default function OfflineMessages({ embedded = false }) {
         }
     };
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => { fetchMessages(); }, [page, statusFilter]);
 
     const handleMarkRead = async (id) => {

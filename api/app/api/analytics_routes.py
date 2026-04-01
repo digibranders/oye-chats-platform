@@ -29,7 +29,7 @@ def get_dashboard_analytics_endpoint(
             return stats
     except Exception as e:
         logger.error(f"Failed to fetch dashboard stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load dashboard statistics.") from e
 
 
 @router.get("/activity")
@@ -44,7 +44,7 @@ def get_activity_analytics_endpoint(
             return activity
     except Exception as e:
         logger.error(f"Failed to fetch activity stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load activity data.") from e
 
 
 @router.get("/top-questions")
@@ -59,7 +59,7 @@ def get_top_questions_endpoint(
             return top_questions
     except Exception as e:
         logger.error(f"Failed to fetch top questions: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load top questions.") from e
 
 
 @router.get("/visitors")
@@ -112,7 +112,7 @@ def get_visitors_endpoint(
 
     except Exception as e:
         logger.error(f"Failed to fetch visitors: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load visitor data.") from e
 
 
 @router.get("/feedback")
@@ -141,4 +141,4 @@ def get_feedback_endpoint(
 
     except Exception as e:
         logger.error(f"Failed to fetch feedback logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e

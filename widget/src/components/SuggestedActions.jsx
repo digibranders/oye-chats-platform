@@ -3,7 +3,7 @@ import React from 'react';
 const SuggestedActions = () => {
     const actions = [
         "Our Services",
-        "Work for OyeChat",
+        "Work for OyeChats",
         "About us"
     ];
 

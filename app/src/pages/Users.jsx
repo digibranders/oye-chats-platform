@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { MessageCircle, MapPin, Monitor, X, Loader2, Bot, User, Search } from 'lucide-react';
 import { getVisitorsData, getChatHistory } from '../services/api';
 import { useBotContext } from '../context/BotContext';
+import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 export default function Users({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const { showToast } = useToast();
     const [visitors, setVisitors] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedSessionId, setSelectedSessionId] = useState(null);
@@ -15,6 +17,7 @@ export default function Users({ embedded = false }) {
     const [isChatLoading, setIsChatLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => { fetchVisitors(); }, [selectedBot?.id]);
 
     if (!botsLoading && bots.length === 0) {
@@ -24,7 +27,7 @@ export default function Users({ embedded = false }) {
     const fetchVisitors = async () => {
         setIsLoading(true);
         try { setVisitors(await getVisitorsData(selectedBot?.id)); }
-        catch (error) { console.error('Failed to load visitors:', error); }
+        catch (error) { console.error('Failed to load visitors:', error); showToast('error', error.message || 'Failed to load visitors'); }
         finally { setIsLoading(false); }
     };
 
@@ -32,7 +35,7 @@ export default function Users({ embedded = false }) {
         setSelectedSessionId(sessionId);
         setIsChatLoading(true);
         try { setChatHistory(await getChatHistory(sessionId)); }
-        catch (error) { console.error('Failed to load chat history:', error); }
+        catch (error) { console.error('Failed to load chat history:', error); showToast('error', error.message || 'Failed to load chat history'); }
         finally { setIsChatLoading(false); }
     };
 

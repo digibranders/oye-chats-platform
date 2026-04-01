@@ -1,4 +1,4 @@
-# OyeChat — Deployment Guide
+# OyeChats — Deployment Guide
 
 ## Infrastructure Overview
 
@@ -123,7 +123,7 @@ uv run playwright install --with-deps chromium
 ```bash
 cat > /etc/systemd/system/oyechats-api.service <<'EOF'
 [Unit]
-Description=OyeChat API
+Description=OyeChats API
 After=network.target postgresql.service
 
 [Service]

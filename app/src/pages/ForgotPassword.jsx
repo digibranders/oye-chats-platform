@@ -31,7 +31,7 @@ export default function ForgotPassword() {
             setSuccess(data.message || 'If an account exists, a reset link has been sent.');
             setStep(2);
         } catch (err) {
-            setError(err.toString());
+            setError(err.message || 'Failed to send reset code.');
         } finally {
             setIsLoading(false);
         }
@@ -53,7 +53,7 @@ export default function ForgotPassword() {
             setSuccess(data.message || 'Password successfully reset.');
             setTimeout(() => navigate('/login'), 2000);
         } catch (err) {
-            setError(err.toString());
+            setError(err.message || 'Failed to reset password.');
         } finally {
             setIsLoading(false);
         }
@@ -72,7 +72,7 @@ export default function ForgotPassword() {
                     <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center border border-white/20 shadow-lg">
                         <Bot className="w-6 h-6 text-white" />
                     </div>
-                    <h1 className="text-3xl font-extrabold tracking-tight">OyeChat</h1>
+                    <h1 className="text-3xl font-extrabold tracking-tight">OyeChats</h1>
                 </div>
 
                 <div className="relative z-10 max-w-sm">
@@ -91,7 +91,7 @@ export default function ForgotPassword() {
                         <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center shadow-md">
                             <Bot className="w-5 h-5 text-white" />
                         </div>
-                        <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">OyeChat</h1>
+                        <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">OyeChats</h1>
                     </div>
 
                     <div className="bg-white p-8 sm:p-10 rounded-2xl shadow-xl border border-gray-100">
@@ -215,7 +215,7 @@ export default function ForgotPassword() {
                                 <button
                                     type="submit"
                                     disabled={isLoading}
-                                    tabIndex={4}
+                                    tabIndex={3}
                                     className="w-full flex justify-center items-center py-3.5 px-4 border border-transparent rounded-xl shadow-lg text-sm font-bold text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-70 disabled:cursor-not-allowed transition-all hover:scale-[1.02] active:scale-95 bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-700 hover:to-primary-600"
                                 >
                                     {isLoading ? (

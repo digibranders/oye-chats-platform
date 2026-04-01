@@ -103,7 +103,7 @@ def update_client_settings(
         raise
     except Exception as e:
         logger.error(f"Failed to update settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to update settings.") from e
 
 
 @router.post("/upload-logo")
@@ -124,4 +124,4 @@ async def upload_logo_endpoint(
         return {"url": public_url}
     except Exception as e:
         logger.error(f"Logo upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to upload logo.") from e
