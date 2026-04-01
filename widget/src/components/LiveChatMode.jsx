@@ -4,11 +4,11 @@ import { submitOfflineMessage } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName, onNewMessage, botMessages = [], onConnectionStatusChange }) => {
+const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorName, onNewMessage, botMessages = [], onConnectionStatusChange }) => {
     const [ws, setWs] = useState(null);
     const [inputText, setInputText] = useState('');
     const [messages, setMessages] = useState([]);
-    const [isAgentTyping, setIsAgentTyping] = useState(false);
+    const [isOperatorTyping, setIsOperatorTyping] = useState(false);
     const [queuePosition, setQueuePosition] = useState(null);
     const [offlineForm, setOfflineForm] = useState({ name: '', email: '', phone: '', message: '' });
     const [offlineSubmitted, setOfflineSubmitted] = useState(false);
@@ -51,13 +51,13 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                             setQueuePosition(data.queue_position || null);
                         } else if (data.status === 'connected') {
                             setChatMode('live');
-                            setAgentName(data.agent_name || 'Support');
+                            setOperatorName(data.operator_name || 'Support');
                         } else if (data.status === 'closed') {
                             intentionalClose.current = true;
                             socket.close();
                             setMessages([]);
                             setChatMode('bot');
-                            setAgentName(null);
+                            setOperatorName(null);
                             onNewMessage({
                                 id: Date.now(),
                                 text: `You're now chatting with ${data.bot_name || 'AI Assistant'} again. Feel free to continue asking questions!`,
@@ -72,21 +72,21 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                         break;
 
                     case 'message': {
-                        setIsAgentTyping(false);
+                        setIsOperatorTyping(false);
                         const msg = {
                             id: `live-${++msgIdCounter.current}`,
                             text: data.content,
-                            sender: data.role === 'agent' ? 'agent' : 'user',
-                            agentName: data.agent_name,
+                            sender: data.role === 'operator' ? 'operator' : 'user',
+                            operatorName: data.operator_name,
                             timestamp: data.timestamp || new Date().toISOString(),
                         };
                         setMessages(prev => [...prev, msg]);
                         break;
                     }
 
-                    case 'agent_typing':
-                        setIsAgentTyping(true);
-                        setTimeout(() => setIsAgentTyping(false), 3000);
+                    case 'operator_typing':
+                        setIsOperatorTyping(true);
+                        setTimeout(() => setIsOperatorTyping(false), 3000);
                         break;
 
                     case 'pong':
@@ -127,21 +127,70 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
         };
     }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Heartbeat — keeps the WebSocket alive through load-balancer idle timeouts.
-    // Fires every 30 s; silently ignored when the socket is not yet open.
+    // Visibility-aware heartbeat — keeps the WebSocket alive through load-balancer
+    // idle timeouts. Interval is shorter when the tab is visible (25 s) and longer
+    // when backgrounded (50 s) because browsers throttle timers in hidden tabs.
     useEffect(() => {
         if (!ws) return;
-        const interval = setInterval(() => {
+
+        let interval;
+        const startHeartbeat = () => {
+            clearInterval(interval);
+            const delay = document.visibilityState === 'visible' ? 25000 : 50000;
+            interval = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, delay);
+        };
+
+        startHeartbeat();
+        document.addEventListener('visibilitychange', startHeartbeat);
+        return () => {
+            clearInterval(interval);
+            document.removeEventListener('visibilitychange', startHeartbeat);
+        };
+    }, [ws]);
+
+    // Visibility + network change handlers — detect stale connections on tab return
+    // or network restoration and trigger an immediate reconnect if needed.
+    useEffect(() => {
+        if (!ws) return;
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState !== 'visible') return;
             if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'ping' }));
+                // Send an immediate ping to verify the connection is still alive.
+                try { ws.send(JSON.stringify({ type: 'ping' })); } catch { ws.close(); }
+            } else if (
+                (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) &&
+                !intentionalClose.current
+            ) {
+                // Connection died while the tab was backgrounded — reconnect immediately
+                // with a reset backoff so the user isn't penalised for sleeping.
+                reconnectAttempt.current = 0;
+                ws.close(); // triggers onclose → connect()
             }
-        }, 30000);
-        return () => clearInterval(interval);
+        };
+
+        const handleOnline = () => {
+            if (!intentionalClose.current && ws.readyState !== WebSocket.OPEN) {
+                reconnectAttempt.current = 0;
+                ws.close(); // triggers onclose → connect()
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('online', handleOnline);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('online', handleOnline);
+        };
     }, [ws]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages, isAgentTyping]);
+    }, [messages, isOperatorTyping]);
 
     const handleSend = (e) => {
         e?.preventDefault();
@@ -190,7 +239,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
 
     const handleReturnToBot = () => {
         setChatMode('bot');
-        setAgentName(null);
+        setOperatorName(null);
         onNewMessage({
             id: Date.now(),
             text: "Thanks for your message! We'll get back to you soon. In the meantime, feel free to ask me anything.",
@@ -245,10 +294,14 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                     )}
                     <button
                         onClick={() => {
+                            // Notify backend to remove from queue immediately.
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'visitor_end_chat' }));
+                            }
                             intentionalClose.current = true;
                             ws?.close();
                             setChatMode('bot');
-                            setAgentName(null);
+                            setOperatorName(null);
                         }}
                         className="mt-3 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
                     >
@@ -435,8 +488,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                                     : { backgroundColor: '#f8f9fa' }
                             }
                         >
-                            {msg.sender === 'agent' && msg.agentName && (
-                                <p className="text-[11px] font-semibold mb-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.agentName}</p>
+                            {msg.sender === 'operator' && msg.operatorName && (
+                                <p className="text-[11px] font-semibold mb-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.operatorName}</p>
                             )}
                             {msg.text}
                             <p className={`text-[10px] mt-1 ${msg.sender === 'user' ? 'text-white/60' : 'text-gray-400'}`}>
@@ -446,7 +499,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                     </div>
                 ))}
 
-                {isAgentTyping && (
+                {isOperatorTyping && (
                     <div className="flex justify-start">
                         <div className="px-4 py-3 rounded-2xl rounded-bl-md border border-gray-200" style={{ backgroundColor: '#f8f9fa' }}>
                             <div className="flex gap-1.5">
@@ -466,6 +519,12 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setAgentName
                 <div className="flex items-center justify-center mb-2">
                     <button
                         onClick={() => {
+                            // Notify the backend that the visitor intentionally ended the chat.
+                            // This immediately closes the session in DB (no 120s grace period),
+                            // so the operator sees it as "ended" not "visitor disconnected".
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'visitor_end_chat' }));
+                            }
                             intentionalClose.current = true;
                             ws?.close();
                             handleReturnToBot();

@@ -1,4 +1,4 @@
-"""Canned response CRUD endpoints — pre-saved quick replies for agents."""
+"""Canned response CRUD endpoints — pre-saved quick replies for operators."""
 
 import logging
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.auth import get_current_client_or_agent
+from app.api.auth import get_current_client_or_operator
 from app.db.models import CannedResponse
 from app.db.session import get_session
 
@@ -38,7 +38,7 @@ class UpdateCannedResponseRequest(BaseModel):
 @router.get("")
 def list_canned_responses(
     category: str | None = Query(None),
-    auth=Depends(get_current_client_or_agent),
+    auth=Depends(get_current_client_or_operator),
 ):
     """List canned responses for the client."""
     with get_session() as session:
@@ -76,7 +76,7 @@ def _require_canned_response_write_access(auth: dict) -> None:
 @router.post("")
 def create_canned_response(
     request: CreateCannedResponseRequest,
-    auth=Depends(get_current_client_or_agent),
+    auth=Depends(get_current_client_or_operator),
 ):
     """Create a new canned response."""
     _require_canned_response_write_access(auth)
@@ -87,7 +87,7 @@ def create_canned_response(
             content=request.content.strip(),
             shortcut=request.shortcut.strip() if request.shortcut else None,
             category=request.category.strip() if request.category else None,
-            created_by_agent_id=auth["agent_id"],
+            created_by_operator_id=auth["operator_id"],
         )
         session.add(response)
         session.commit()
@@ -106,7 +106,7 @@ def create_canned_response(
 def update_canned_response(
     response_id: int,
     request: UpdateCannedResponseRequest,
-    auth=Depends(get_current_client_or_agent),
+    auth=Depends(get_current_client_or_operator),
 ):
     """Update a canned response."""
     _require_canned_response_write_access(auth)
@@ -136,7 +136,7 @@ def update_canned_response(
 @router.delete("/{response_id}")
 def delete_canned_response(
     response_id: int,
-    auth=Depends(get_current_client_or_agent),
+    auth=Depends(get_current_client_or_operator),
 ):
     """Delete a canned response."""
     _require_canned_response_write_access(auth)

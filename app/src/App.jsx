@@ -44,12 +44,12 @@ const SuperadminRoute = ({ children }) => {
 
 /**
  * Renders children for workspace owners/admins.
- * Shows an in-place AccessDenied screen for regular agents — does NOT redirect,
+ * Shows an in-place AccessDenied screen for regular operators — does NOT redirect,
  * so bookmarks continue to work if the user's role is later elevated.
  */
 const ClientOnlyPage = ({ children, pageName }) => {
-    const { isAgent, isBotManager } = getAuthState();
-    if (isAgent && !isBotManager) return <AccessDenied pageName={pageName} />;
+    const { isOperator, isBotManager } = getAuthState();
+    if (isOperator && !isBotManager) return <AccessDenied pageName={pageName} />;
     return children;
 };
 

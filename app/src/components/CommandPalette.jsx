@@ -9,10 +9,10 @@ const pages = [
     { name: 'Overview', path: '/', icon: LayoutDashboard, keywords: 'dashboard home overview stats' },
     { name: 'Sources', path: '/knowledge', icon: BookOpen, keywords: 'knowledge base documents upload' },
     { name: 'Insights', path: '/insights', icon: BarChart3, keywords: 'analytics charts metrics activity conversations feedback ratings' },
-    { name: 'Support', path: '/support', icon: Headphones, keywords: 'live chat messages offline support agent' },
+    { name: 'Support', path: '/support', icon: Headphones, keywords: 'live chat messages offline support operator' },
     { name: 'Leads', path: '/leads', icon: Target, keywords: 'leads sales bant qualification prospects' },
     { name: 'My Bots', path: '/chatbot', icon: Bot, keywords: 'chatbot bots embed code create appearance customize' },
-    { name: 'Team', path: '/team', icon: UsersRound, keywords: 'team agents departments members quick replies canned responses' },
+    { name: 'Team', path: '/team', icon: UsersRound, keywords: 'team operators departments members quick replies canned responses' },
     { name: 'Settings', path: '/settings', icon: Settings, keywords: 'settings preferences account theme' },
     { name: 'Integrations', path: '/integrations/email', icon: Plug, keywords: 'integrations email channels' },
 ];

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
 
-from app.api.auth import get_current_bot, get_current_client_or_agent
+from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.langfuse_client import get_langfuse
 from app.db.models import Bot, ChatSession
 from app.db.repository import create_or_update_lead_info, ensure_chat_session, get_chat_history, update_message_feedback
@@ -288,7 +288,7 @@ def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot
 def get_history_endpoint(
     session_id: str,
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve chat history for a given session."""
     try:

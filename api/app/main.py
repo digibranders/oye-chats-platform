@@ -12,7 +12,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, select, text
 
-from app.api.agent_routes import router as agent_router
 from app.api.analytics_routes import router as analytics_router
 
 # Route imports
@@ -24,6 +23,7 @@ from app.api.client_routes import router as client_router
 from app.api.document_routes import router as document_router
 from app.api.lead_routes import router as lead_router
 from app.api.offline_message_routes import router as offline_message_router
+from app.api.operator_routes import router as operator_router
 from app.api.superadmin_routes import router as superadmin_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
@@ -64,7 +64,7 @@ app.include_router(chat_router)
 app.include_router(document_router)
 app.include_router(analytics_router)
 app.include_router(lead_router)
-app.include_router(agent_router)
+app.include_router(operator_router)
 app.include_router(offline_message_router)
 app.include_router(canned_response_router)
 app.include_router(ws_router)

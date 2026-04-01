@@ -10,8 +10,8 @@ import { getAuthState } from '../utils/auth';
  */
 export default function NoBotState({ title, subtitle }) {
     const navigate = useNavigate();
-    const { isAgent, isBotManager } = getAuthState();
-    const showCreateCta = !isAgent || isBotManager;
+    const { isOperator, isBotManager } = getAuthState();
+    const showCreateCta = !isOperator || isBotManager;
 
     return (
         <div className="flex flex-col items-center justify-center py-20 animate-slide-up">

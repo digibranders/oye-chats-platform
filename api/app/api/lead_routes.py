@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select
 
-from app.api.auth import get_current_client_or_agent
+from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, ChatMessage, ChatSession, LeadInfo
 from app.db.session import get_session
 from app.services.lead_service import build_lead_response, calculate_lead_score, get_lead_status
@@ -25,7 +25,7 @@ def list_leads(
     min_score: int | None = Query(None, ge=0, le=100),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """List leads with BANT data, scores, and optional filters."""
     with get_session() as session:
@@ -79,7 +79,7 @@ def list_leads(
 @router.get("/stats")
 def lead_stats(
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Aggregate lead stats: total, cold, warm, hot, qualified counts."""
     with get_session() as session:
@@ -110,7 +110,7 @@ def lead_stats(
 @router.get("/export")
 def export_leads_csv(
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Export leads as a CSV file download."""
     with get_session() as session:
@@ -188,7 +188,7 @@ def export_leads_csv(
 @router.get("/{session_id}")
 def get_lead_detail(
     session_id: str,
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Get full lead detail: BANT + contact info + chat history."""
     with get_session() as session:

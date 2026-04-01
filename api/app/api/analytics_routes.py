@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.auth import get_current_client_or_agent
+from app.api.auth import get_current_client_or_operator
 from app.db.repository import (
     get_dashboard_stats,
     get_feedback_data,
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 @router.get("/dashboard")
 def get_dashboard_analytics_endpoint(
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve live aggregate statistics for the admin dashboard."""
     try:
@@ -35,7 +35,7 @@ def get_dashboard_analytics_endpoint(
 @router.get("/activity")
 def get_activity_analytics_endpoint(
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve message activity over time for charts."""
     try:
@@ -50,7 +50,7 @@ def get_activity_analytics_endpoint(
 @router.get("/top-questions")
 def get_top_questions_endpoint(
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve the most common user queries."""
     try:
@@ -65,7 +65,7 @@ def get_top_questions_endpoint(
 @router.get("/visitors")
 def get_visitors_endpoint(
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve all visitor sessions for the admin dashboard."""
     try:
@@ -118,7 +118,7 @@ def get_visitors_endpoint(
 @router.get("/feedback")
 def get_feedback_endpoint(
     bot_id: int | None = Query(None),
-    auth: dict = Depends(get_current_client_or_agent),
+    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve all feedback for the admin dashboard."""
     try:

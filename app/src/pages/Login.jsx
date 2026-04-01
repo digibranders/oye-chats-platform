@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { Bot, Loader2, Mail, Lock, Zap, BookOpen, BarChart3, Eye, EyeOff } from 'lucide-react';
-import { loginAdmin, loginAgent } from '../services/api';
+import { loginAdmin, loginOperator } from '../services/api';
 
 export default function Login() {
     const [email, setEmail] = useState('');
@@ -23,22 +23,22 @@ export default function Login() {
         try {
             setIsLoading(true);
 
-            // Try agent login first, then fall back to admin login.
+            // Try operator login first, then fall back to admin login.
             // This auto-detects account type by email — no toggle needed.
             let loggedIn = false;
 
             try {
-                const data = await loginAgent(email, password);
+                const data = await loginOperator(email, password);
                 localStorage.setItem('admin_token', data.access_token);
                 localStorage.setItem('admin_name', data.name);
                 localStorage.setItem('admin_client_id', data.client_id.toString());
-                localStorage.setItem('auth_type', 'agent');
-                localStorage.setItem('agent_role', data.role);
-                localStorage.setItem('agent_id', data.agent_id.toString());
+                localStorage.setItem('auth_type', 'operator');
+                localStorage.setItem('operator_role', data.role);
+                localStorage.setItem('operator_id', data.operator_id.toString());
                 localStorage.setItem('is_superadmin', 'false');
                 localStorage.setItem('company_name', data.company_name || '');
                 localStorage.setItem('company_website', data.website || '');
-                // Agents join an existing workspace — the onboarding wizard is for workspace owners only.
+                // Operators join an existing workspace — the onboarding wizard is for workspace owners only.
                 localStorage.setItem('onboarding_complete', 'true');
                 if (data.default_bot_id) {
                     localStorage.setItem('selected_bot_id', data.default_bot_id.toString());
@@ -47,7 +47,7 @@ export default function Login() {
                 loggedIn = true;
                 navigate('/support');
             } catch {
-                // Agent login failed — try admin login
+                // Operator login failed — try admin login
             }
 
             if (!loggedIn) {
@@ -76,8 +76,8 @@ export default function Login() {
 
     if (localStorage.getItem('admin_token')) {
         const isSuper = localStorage.getItem('is_superadmin') === 'true';
-        const isAgent = localStorage.getItem('auth_type') === 'agent';
-        return <Navigate to={isSuper ? '/superadmin/overview' : isAgent ? '/support' : '/'} />;
+        const isOperator = localStorage.getItem('auth_type') === 'operator';
+        return <Navigate to={isSuper ? '/superadmin/overview' : isOperator ? '/support' : '/'} />;
     }
 
     return (
