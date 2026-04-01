@@ -1,9 +1,9 @@
 import contextlib
 import json
 import logging
-import threading
 
 from app.core.langfuse_client import get_langfuse
+from app.core.thread_pool import submit_background
 from app.db.models import Bot, ChatSession
 from app.db.repository import (
     add_chat_message,
@@ -15,7 +15,7 @@ from app.db.repository import (
     update_session_bant,
 )
 from app.db.session import get_session
-from app.ingestion.embedder import embed_chunks
+from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.services.email_service import send_qualified_lead_email
 from app.services.llm_service import (
     generate_response,
@@ -421,13 +421,19 @@ def rag_pipeline(
 
             session.commit()
 
-            # 9. Fire-and-forget BANT extraction in background thread (saves 1-3s)
+            # 9. Fire-and-forget BANT extraction in bounded thread pool (saves 1-3s)
             if is_bant_enabled:
-                threading.Thread(
-                    target=_background_bant_extraction,
-                    args=(session_id, cid, bid, history_context, question, answer, current_bant, bot),
-                    daemon=True,
-                ).start()
+                submit_background(
+                    _background_bant_extraction,
+                    session_id,
+                    cid,
+                    bid,
+                    history_context,
+                    question,
+                    answer,
+                    current_bant,
+                    bot,
+                )
 
             return {
                 "answer": answer,
@@ -512,8 +518,8 @@ async def rag_pipeline_stream(
         # 3. Contextual Query Re-writing
         search_query = rewrite_query(session_id, question, history)
 
-        # 4. Embed & Retrieve
-        query_embedding = embed_chunks([search_query])[0]
+        # 4. Embed & Retrieve (async to avoid blocking event loop)
+        query_embedding = (await embed_chunks_async([search_query]))[0]
         add_chat_message(
             session,
             session_id,
@@ -586,13 +592,19 @@ async def rag_pipeline_stream(
 
         session.commit()
 
-        # 9. Fire-and-forget BANT extraction in background thread (saves 1-3s)
+        # 9. Fire-and-forget BANT extraction in bounded thread pool (saves 1-3s)
         if is_bant_enabled:
-            threading.Thread(
-                target=_background_bant_extraction,
-                args=(session_id, cid, bid, history_context, question, full_answer, current_bant, bot),
-                daemon=True,
-            ).start()
+            submit_background(
+                _background_bant_extraction,
+                session_id,
+                cid,
+                bid,
+                history_context,
+                question,
+                full_answer,
+                current_bant,
+                bot,
+            )
 
         # 10. Yield final metadata including message_id
         yield f"\nFINAL_METADATA:{json.dumps({'message_id': bot_msg.id})}\n"

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, BookOpen, Code2, Check, ArrowRight, ArrowLeft, Loader2, Sparkles } from 'lucide-react';
+import { Bot, BookOpen, Code2, Check, ArrowRight, ArrowLeft, Loader2, Sparkles, X } from 'lucide-react';
 import { createBot, crawlWebsite } from '../services/api';
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from './PlatformSelector';
@@ -52,9 +52,18 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
 
     return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-secondary-950/80 backdrop-blur-md animate-fade-in">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-secondary-200 overflow-hidden animate-scale-in">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-secondary-200 overflow-hidden animate-scale-in relative">
+                {/* Close button */}
+                <button
+                    onClick={handleFinish}
+                    className="absolute top-4 right-4 z-10 p-1.5 rounded-lg text-secondary-400 hover:text-secondary-600 hover:bg-secondary-100 transition-colors"
+                    aria-label="Close wizard"
+                >
+                    <X size={18} />
+                </button>
+
                 {/* Progress */}
-                <div className="flex items-center gap-1 px-6 pt-5">
+                <div className="flex items-center gap-1 px-6 pt-5 pr-12">
                     {steps.map((s, i) => (
                         <div key={s.id} className={`flex-1 h-1 rounded-full transition-all ${i <= step ? 'bg-primary-500' : 'bg-secondary-200'}`} />
                     ))}

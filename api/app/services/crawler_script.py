@@ -7,6 +7,9 @@ import sys
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
+import aiohttp
+import html2text
+from bs4 import BeautifulSoup
 from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 
 # Force stdin, stdout, stderr to use UTF-8 safely
@@ -95,6 +98,8 @@ TRACKING_PARAMS: frozenset[str] = frozenset(
     }
 )
 
+_HTTP_USER_AGENT = "OyeChat-Bot/1.0 (+https://oyechats.com)"
+
 
 # ---------------------------------------------------------------------------
 # URL normalization & filtering
@@ -177,6 +182,34 @@ def is_html_content(html: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# HTML → Markdown & link extraction (lightweight, no browser)
+# ---------------------------------------------------------------------------
+
+
+def _make_html2text() -> html2text.HTML2Text:
+    """Create a configured HTML → Markdown converter."""
+    h = html2text.HTML2Text()
+    h.ignore_links = False
+    h.ignore_images = True
+    h.ignore_emphasis = False
+    h.body_width = 0  # No wrapping
+    h.skip_internal_links = False
+    return h
+
+
+def extract_links_from_html(html: str, base_url: str) -> list[str]:
+    """Extract all href links from HTML using BeautifulSoup."""
+    soup = BeautifulSoup(html, "html.parser")
+    links: list[str] = []
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag["href"]
+        if href:
+            full_url = urljoin(base_url, href)
+            links.append(full_url)
+    return links
+
+
+# ---------------------------------------------------------------------------
 # robots.txt & sitemap helpers
 # ---------------------------------------------------------------------------
 
@@ -184,8 +217,6 @@ def is_html_content(html: str) -> bool:
 async def fetch_robots_txt(base_url: str) -> RobotFileParser | None:
     """Fetch and parse robots.txt for *base_url*. Returns None on failure."""
     try:
-        import aiohttp
-
         parsed = urlparse(base_url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
 
@@ -212,8 +243,6 @@ async def fetch_sitemap_urls(
     Handles sitemap index files with a depth limit to prevent unbounded expansion.
     At most *max_sitemaps* sitemap files are fetched.
     """
-    import aiohttp
-
     sitemap_queue: list[str] = []
     seen_sitemaps: set[str] = set()
 
@@ -402,47 +431,216 @@ def extract_colors_from_html(html_content: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Single-page crawl with retry
+# Lightweight HTTP crawl (depths 1+)
 # ---------------------------------------------------------------------------
 
 
-async def crawl_single(
-    crawler: "AsyncWebCrawler",  # noqa: F821
+async def crawl_single_http(
+    http_session: aiohttp.ClientSession,
     url: str,
     depth: int,
-    js_code: str | None,
     semaphore: asyncio.Semaphore,
     page_timeout: int,
+    h2t: html2text.HTML2Text,
 ) -> dict:
-    """Crawl a single URL with semaphore-controlled concurrency and one retry.
+    """Crawl a single URL using plain HTTP (no browser).
 
-    The semaphore is released between retry attempts so that other concurrent
-    crawl tasks are not blocked during the backoff sleep.
+    Used for all pages except the seed URL (depth 0) which requires
+    Chromium for JS-based color extraction.  Memory cost: ~5 MB per
+    concurrent request vs ~200 MB per Chromium tab.
     """
     for attempt in range(2):
         async with semaphore:
             try:
-                timeout = page_timeout if attempt == 0 else int(page_timeout * 1.5)
-                result = await asyncio.wait_for(
-                    crawler.arun(url=url, js_code=js_code),
-                    timeout=timeout,
+                timeout = aiohttp.ClientTimeout(
+                    total=page_timeout if attempt == 0 else int(page_timeout * 1.5),
                 )
-                return {"url": url, "depth": depth, "result": result, "error": None}
+                async with http_session.get(url, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status != 200:
+                        return {
+                            "url": url,
+                            "depth": depth,
+                            "html": None,
+                            "markdown": None,
+                            "error": f"HTTP {resp.status}",
+                        }
+
+                    content_type = resp.headers.get("Content-Type", "")
+                    if "text/html" not in content_type and "application/xhtml" not in content_type:
+                        return {"url": url, "depth": depth, "html": None, "markdown": None, "error": "not HTML"}
+
+                    raw_html = await resp.text()
+
+                    if not is_html_content(raw_html):
+                        return {"url": url, "depth": depth, "html": None, "markdown": None, "error": "not HTML content"}
+
+                    markdown = h2t.handle(raw_html)
+                    return {"url": url, "depth": depth, "html": raw_html, "markdown": markdown, "error": None}
             except TimeoutError:
-                if attempt == 0:
-                    pass  # will retry after sleep below
-                else:
-                    return {"url": url, "depth": depth, "result": None, "error": "timeout"}
+                if attempt == 1:
+                    return {"url": url, "depth": depth, "html": None, "markdown": None, "error": "timeout"}
             except Exception as e:
-                if attempt == 0:
-                    pass  # will retry after sleep below
-                else:
-                    return {"url": url, "depth": depth, "result": None, "error": str(e)}
-        # Sleep outside the semaphore context so other tasks can proceed
+                if attempt == 1:
+                    return {"url": url, "depth": depth, "html": None, "markdown": None, "error": str(e)}
+        # Sleep outside the semaphore so other tasks can proceed
         if attempt == 0:
             await asyncio.sleep(1)
 
-    return {"url": url, "depth": depth, "result": None, "error": "max retries exceeded"}
+    return {"url": url, "depth": depth, "html": None, "markdown": None, "error": "max retries exceeded"}
+
+
+# ---------------------------------------------------------------------------
+# JS color extraction code (injected into Chromium on depth-0 only)
+# ---------------------------------------------------------------------------
+
+_JS_COLOR_EXTRACTION = """
+(() => {
+    function rgbToHex(rgb) {
+        if (!rgb) return null;
+        const m = rgb.match(/\\d+/g);
+        if (!m || m.length < 3) return null;
+        return "#" + m.slice(0, 3).map(x => {
+            const h = parseInt(x).toString(16);
+            return h.length === 1 ? "0" + h : h;
+        }).join("");
+    }
+
+    function hexToHSL(hex) {
+        let r = parseInt(hex.slice(1,3), 16) / 255;
+        let g = parseInt(hex.slice(3,5), 16) / 255;
+        let b = parseInt(hex.slice(5,7), 16) / 255;
+        const max = Math.max(r,g,b), min = Math.min(r,g,b);
+        let h, s, l = (max + min) / 2;
+        if (max === min) { h = s = 0; }
+        else {
+            const d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+            else if (max === g) h = ((b - r) / d + 2) / 6;
+            else h = ((r - g) / d + 4) / 6;
+        }
+        return { h: h * 360, s: s * 100, l: l * 100 };
+    }
+
+    function isBrandWorthy(hex) {
+        const { s, l } = hexToHSL(hex);
+        if (l > 95 || l < 5) return false;
+        if (s < 5 && l > 20 && l < 80) return false;
+        return true;
+    }
+
+    const scores = {};
+    function addColor(rgb, weight) {
+        const hex = rgbToHex(rgb);
+        if (!hex || !isBrandWorthy(hex)) return;
+        const key = hex.toLowerCase();
+        scores[key] = (scores[key] || 0) + weight;
+    }
+
+    try {
+        const rootStyles = getComputedStyle(document.documentElement);
+        const sheets = document.styleSheets;
+        const varNames = [];
+        for (const sheet of sheets) {
+            try {
+                for (const rule of sheet.cssRules || []) {
+                    const text = rule.cssText || "";
+                    const vars = text.match(/--[\\w-]*(primary|brand|accent|theme|main|color)[\\w-]*/gi);
+                    if (vars) varNames.push(...vars);
+                }
+            } catch(e) {}
+        }
+        for (const v of [...new Set(varNames)]) {
+            const val = rootStyles.getPropertyValue(v).trim();
+            if (val && val.match(/^(#|rgb)/)) addColor(val.startsWith("#") ? val : val, 10);
+        }
+    } catch(e) {}
+
+    const brandSelectors = [
+        { sel: "header, nav, [class*='header'], [class*='nav'], [class*='topbar']", w: 8 },
+        { sel: "a, button, [class*='btn'], [class*='button'], [class*='cta']", w: 7 },
+        { sel: "[class*='brand'], [class*='logo'], [class*='accent'], [class*='primary']", w: 9 },
+        { sel: "footer, [class*='footer']", w: 5 },
+        { sel: "h1, h2, h3", w: 4 },
+        { sel: "[class*='hero'], [class*='banner'], [class*='jumbotron']", w: 6 }
+    ];
+
+    for (const { sel, w } of brandSelectors) {
+        try {
+            const els = document.querySelectorAll(sel);
+            for (const el of els) {
+                const cs = getComputedStyle(el);
+                const bg = cs.backgroundColor;
+                const fg = cs.color;
+                const border = cs.borderColor;
+                if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") addColor(bg, w);
+                if (fg && fg !== "rgba(0, 0, 0, 0)" && fg !== "transparent") addColor(fg, w - 1);
+                if (border && border !== "rgba(0, 0, 0, 0)" && border !== "transparent") addColor(border, w - 2);
+            }
+        } catch(e) {}
+    }
+
+    const all = document.querySelectorAll("*");
+    for (let i = 0; i < all.length; i += 5) {
+        const cs = getComputedStyle(all[i]);
+        const bg = cs.backgroundColor;
+        if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") addColor(bg, 1);
+    }
+
+    const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    return sorted.slice(0, 6).map(e => e[0]);
+})();
+"""
+
+
+# ---------------------------------------------------------------------------
+# Seed page crawl via crawl4ai (Chromium, depth-0 only)
+# ---------------------------------------------------------------------------
+
+
+async def _crawl_seed_with_browser(
+    url: str,
+    page_timeout: int,
+) -> dict:
+    """Crawl the seed URL using Chromium for JS color extraction.
+
+    The browser is created, used for a single page, and then destroyed
+    when the ``async with`` block exits — freeing ~400-500 MB.
+    """
+    try:
+        from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+    except ImportError:
+        print(json.dumps({"log": "crawl4ai not available, falling back to HTTP for seed"}))
+        return {"result": None, "error": "crawl4ai not installed"}
+
+    browser_config = BrowserConfig(
+        verbose=False,
+        memory_saving_mode=True,
+        light_mode=True,
+        text_mode=False,  # Need CSS for color extraction
+    )
+    run_config = CrawlerRunConfig(
+        wait_until="domcontentloaded",
+        screenshot=False,
+        pdf=False,
+        exclude_all_images=True,
+        js_code=_JS_COLOR_EXTRACTION,
+    )
+
+    try:
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            result = await asyncio.wait_for(
+                crawler.arun(url=url, config=run_config),
+                timeout=page_timeout,
+            )
+            # crawl4ai may return a list; unwrap if needed
+            if isinstance(result, list):
+                result = result[0] if result else None
+            return {"result": result, "error": None}
+    except TimeoutError:
+        return {"result": None, "error": "timeout"}
+    except Exception as e:
+        return {"result": None, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -451,12 +649,6 @@ async def crawl_single(
 
 
 async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | None = None) -> None:
-    try:
-        from crawl4ai import AsyncWebCrawler
-    except ImportError:
-        print(json.dumps({"error": "crawl4ai not installed"}))
-        return
-
     # Read config from env
     if max_pages is None:
         max_pages = int(os.getenv("MAX_CRAWL_PAGES", "50"))
@@ -522,221 +714,183 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
     if sitemap_seeded:
         print(json.dumps({"log": f"Seeded {sitemap_seeded} URLs from sitemap"}))
 
-    # ---- JS color extraction code (only used on depth-0) ----
-    js_extraction_code = """
-    (() => {
-        function rgbToHex(rgb) {
-            if (!rgb) return null;
-            const m = rgb.match(/\\d+/g);
-            if (!m || m.length < 3) return null;
-            return "#" + m.slice(0, 3).map(x => {
-                const h = parseInt(x).toString(16);
-                return h.length === 1 ? "0" + h : h;
-            }).join("");
-        }
+    # ======================================================================
+    # Phase 1: Crawl seed URL with Chromium (for JS color extraction)
+    # The browser is destroyed after this phase, freeing ~400-500 MB.
+    # ======================================================================
 
-        function hexToHSL(hex) {
-            let r = parseInt(hex.slice(1,3), 16) / 255;
-            let g = parseInt(hex.slice(3,5), 16) / 255;
-            let b = parseInt(hex.slice(5,7), 16) / 255;
-            const max = Math.max(r,g,b), min = Math.min(r,g,b);
-            let h, s, l = (max + min) / 2;
-            if (max === min) { h = s = 0; }
-            else {
-                const d = max - min;
-                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
-                else if (max === g) h = ((b - r) / d + 2) / 6;
-                else h = ((r - g) / d + 4) / 6;
-            }
-            return { h: h * 360, s: s * 100, l: l * 100 };
-        }
+    if pq:
+        _priority, _counter, seed_url, seed_depth = heapq.heappop(pq)
+        norm_seed = normalize_url(seed_url)
 
-        function isBrandWorthy(hex) {
-            const { s, l } = hexToHSL(hex);
-            if (l > 95 || l < 5) return false;
-            if (s < 5 && l > 20 && l < 80) return false;
-            return true;
-        }
+        # Respect robots.txt
+        if robot_parser and not robot_parser.can_fetch("*", seed_url):
+            print(json.dumps({"log": f"Skipped (robots.txt): {seed_url}"}))
+            visited.add(norm_seed)
+        else:
+            visited.add(norm_seed)
+            print(json.dumps({"log": f"Phase 1: Crawling seed URL with browser: {seed_url}"}))
 
-        const scores = {};
-        function addColor(rgb, weight) {
-            const hex = rgbToHex(rgb);
-            if (!hex || !isBrandWorthy(hex)) return;
-            const key = hex.toLowerCase();
-            scores[key] = (scores[key] || 0) + weight;
-        }
+            seed_result = await _crawl_seed_with_browser(seed_url, page_timeout)
 
-        try {
-            const rootStyles = getComputedStyle(document.documentElement);
-            const sheets = document.styleSheets;
-            const varNames = [];
-            for (const sheet of sheets) {
-                try {
-                    for (const rule of sheet.cssRules || []) {
-                        const text = rule.cssText || "";
-                        const vars = text.match(/--[\\w-]*(primary|brand|accent|theme|main|color)[\\w-]*/gi);
-                        if (vars) varNames.push(...vars);
-                    }
-                } catch(e) {}
-            }
-            for (const v of [...new Set(varNames)]) {
-                const val = rootStyles.getPropertyValue(v).trim();
-                if (val && val.match(/^(#|rgb)/)) addColor(val.startsWith("#") ? val : val, 10);
-            }
-        } catch(e) {}
+            if seed_result["error"]:
+                print(json.dumps({"log": f"Browser crawl failed ({seed_result['error']}), trying HTTP fallback"}))
+                # Fallback: try seed page via plain HTTP (no colors, but content still usable)
+                h2t_fallback = _make_html2text()
+                semaphore_fb = asyncio.Semaphore(1)
+                async with aiohttp.ClientSession(headers={"User-Agent": _HTTP_USER_AGENT}) as fb_session:
+                    fb_result = await crawl_single_http(
+                        fb_session, seed_url, 0, semaphore_fb, page_timeout, h2t_fallback
+                    )
+                if not fb_result["error"] and fb_result["markdown"]:
+                    pages_crawled += 1
+                    results.append({"url": norm_seed, "content": fb_result["markdown"]})
+                    # Try Python-based color extraction from HTML
+                    if fb_result["html"]:
+                        fallback_colors = extract_colors_from_html(fb_result["html"])
+                        for c in fallback_colors:
+                            extracted_colors.add(c.lower())
+                        # Discover links
+                        if seed_depth < max_depth:
+                            for href in extract_links_from_html(fb_result["html"], seed_url):
+                                parsed_url = urlparse(href)
+                                if get_base_domain(parsed_url.netloc) == start_domain and parsed_url.scheme in (
+                                    "http",
+                                    "https",
+                                ):
+                                    push_url(href, seed_depth + 1)
+            else:
+                result = seed_result["result"]
+                if result and hasattr(result, "markdown") and result.markdown:
+                    pages_crawled += 1
+                    results.append({"url": norm_seed, "content": result.markdown})
 
-        const brandSelectors = [
-            { sel: "header, nav, [class*='header'], [class*='nav'], [class*='topbar']", w: 8 },
-            { sel: "a, button, [class*='btn'], [class*='button'], [class*='cta']", w: 7 },
-            { sel: "[class*='brand'], [class*='logo'], [class*='accent'], [class*='primary']", w: 9 },
-            { sel: "footer, [class*='footer']", w: 5 },
-            { sel: "h1, h2, h3", w: 4 },
-            { sel: "[class*='hero'], [class*='banner'], [class*='jumbotron']", w: 6 }
-        ];
+                    # Extract colors from JS execution
+                    if hasattr(result, "js_execution_result") and result.js_execution_result:
+                        js_result = result.js_execution_result
+                        if isinstance(js_result, list):
+                            for c in js_result:
+                                if isinstance(c, str):
+                                    extracted_colors.add(c.lower())
+                        elif isinstance(js_result, dict):
+                            for val in js_result.values():
+                                if isinstance(val, str) and val.startswith("#"):
+                                    extracted_colors.add(val.lower())
+                                elif isinstance(val, list):
+                                    for c in val:
+                                        if isinstance(c, str):
+                                            extracted_colors.add(c.lower())
 
-        for (const { sel, w } of brandSelectors) {
-            try {
-                const els = document.querySelectorAll(sel);
-                for (const el of els) {
-                    const cs = getComputedStyle(el);
-                    const bg = cs.backgroundColor;
-                    const fg = cs.color;
-                    const border = cs.borderColor;
-                    if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") addColor(bg, w);
-                    if (fg && fg !== "rgba(0, 0, 0, 0)" && fg !== "transparent") addColor(fg, w - 1);
-                    if (border && border !== "rgba(0, 0, 0, 0)" && border !== "transparent") addColor(border, w - 2);
-                }
-            } catch(e) {}
-        }
+                    # Python fallback for color extraction
+                    if not extracted_colors and hasattr(result, "html") and result.html:
+                        print(json.dumps({"log": "JS color extraction returned nothing, using Python HTML fallback"}))
+                        fallback_colors = extract_colors_from_html(result.html)
+                        for c in fallback_colors:
+                            extracted_colors.add(c.lower())
+                        if extracted_colors:
+                            print(json.dumps({"log": f"Python fallback extracted {len(extracted_colors)} colors"}))
 
-        const all = document.querySelectorAll("*");
-        for (let i = 0; i < all.length; i += 5) {
-            const cs = getComputedStyle(all[i]);
-            const bg = cs.backgroundColor;
-            if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") addColor(bg, 1);
-        }
+                    # Discover links from seed page
+                    if seed_depth < max_depth:
+                        links: list[str] = []
 
-        const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-        return sorted.slice(0, 6).map(e => e[0]);
-    })();
-    """
+                        # Method 1: crawl4ai built-in links
+                        if hasattr(result, "links") and isinstance(result.links, dict):
+                            links_internal = result.links.get("internal", [])
+                            for link in links_internal:
+                                if isinstance(link, dict):
+                                    href = link.get("href")
+                                    if href:
+                                        links.append(href)
+                                elif isinstance(link, str):
+                                    links.append(link)
 
-    semaphore = asyncio.Semaphore(concurrency)
+                        # Method 2: Fallback via BeautifulSoup
+                        if not links and hasattr(result, "html") and result.html:
+                            links = extract_links_from_html(result.html, seed_url)
+                            print(json.dumps({"log": f"Fallback: Found {len(links)} links via BeautifulSoup"}))
 
-    async with AsyncWebCrawler(verbose=False) as crawler:
-        while pq and pages_crawled < max_pages:
-            # Collect a batch of URLs to crawl
-            batch_tasks = []
-            batch_info: list[dict] = []
+                        for href in links:
+                            if not href:
+                                continue
+                            full_url = urljoin(seed_url, href)
+                            parsed_url = urlparse(full_url)
+                            link_domain = get_base_domain(parsed_url.netloc)
+                            if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
+                                push_url(full_url, seed_depth + 1)
 
-            while pq and len(batch_tasks) < concurrency and pages_crawled + len(batch_tasks) < max_pages:
-                _priority, _counter, current_url, depth = heapq.heappop(pq)
+    print(json.dumps({"log": f"Phase 1 complete. Browser destroyed. {pages_crawled} page(s), {len(pq)} URLs queued."}))
 
-                norm_url = normalize_url(current_url)
-                if norm_url in visited:
-                    continue
+    # ======================================================================
+    # Phase 2: Crawl remaining URLs with lightweight HTTP (no browser)
+    # Memory: ~5 MB per concurrent request vs ~200 MB per Chromium tab
+    # ======================================================================
 
-                # Respect robots.txt (does not consume page budget)
-                if robot_parser and not robot_parser.can_fetch("*", current_url):
-                    print(json.dumps({"log": f"Skipped (robots.txt): {current_url}"}))
+    if pq and pages_crawled < max_pages:
+        h2t = _make_html2text()
+        semaphore = asyncio.Semaphore(concurrency)
+        http_headers = {"User-Agent": _HTTP_USER_AGENT}
+
+        async with aiohttp.ClientSession(headers=http_headers) as http_session:
+            while pq and pages_crawled < max_pages:
+                # Collect a batch of URLs to crawl
+                batch_tasks: list = []
+                batch_info: list[dict] = []
+
+                while pq and len(batch_tasks) < concurrency and pages_crawled + len(batch_tasks) < max_pages:
+                    _priority, _counter, current_url, depth = heapq.heappop(pq)
+
+                    norm_url = normalize_url(current_url)
+                    if norm_url in visited:
+                        continue
+
+                    # Respect robots.txt (does not consume page budget)
+                    if robot_parser and not robot_parser.can_fetch("*", current_url):
+                        print(json.dumps({"log": f"Skipped (robots.txt): {current_url}"}))
+                        visited.add(norm_url)
+                        continue
+
                     visited.add(norm_url)
-                    continue
 
-                visited.add(norm_url)
+                    # Adaptive timeout: shorter for deep pages
+                    effective_timeout = page_timeout if depth <= 1 else max(page_timeout - 5, 10)
+                    batch_tasks.append(
+                        crawl_single_http(http_session, current_url, depth, semaphore, effective_timeout, h2t)
+                    )
+                    batch_info.append({"url": current_url, "norm_url": norm_url, "depth": depth})
 
-                # Adaptive timeout: shorter for deep pages
-                effective_timeout = page_timeout if depth <= 1 else max(page_timeout - 5, 10)
-                js_code = js_extraction_code if depth == 0 else None
-                batch_tasks.append(crawl_single(crawler, current_url, depth, js_code, semaphore, effective_timeout))
-                batch_info.append({"url": current_url, "norm_url": norm_url, "depth": depth})
+                if not batch_tasks:
+                    break
 
-            if not batch_tasks:
-                break
-
-            print(
-                json.dumps(
-                    {
-                        "log": f"Crawling batch of {len(batch_tasks)} pages ({pages_crawled}/{max_pages} crawled, {len(pq)} queued)"
-                    }
+                print(
+                    json.dumps(
+                        {
+                            "log": f"Phase 2: Crawling batch of {len(batch_tasks)} pages via HTTP ({pages_crawled}/{max_pages} crawled, {len(pq)} queued)"
+                        }
+                    )
                 )
-            )
-            batch_results = await asyncio.gather(*batch_tasks)
+                batch_results = await asyncio.gather(*batch_tasks)
 
-            # Process results
-            for info, crawl_result in zip(batch_info, batch_results, strict=False):
-                if crawl_result["error"]:
-                    print(json.dumps({"log": f"Error crawling {info['url']}: {crawl_result['error']}"}))
-                    continue
+                # Process results
+                for info, crawl_result in zip(batch_info, batch_results, strict=False):
+                    if crawl_result["error"]:
+                        print(json.dumps({"log": f"Error crawling {info['url']}: {crawl_result['error']}"}))
+                        continue
 
-                result = crawl_result["result"]
-                if not result or not result.markdown:
-                    continue
+                    if not crawl_result["markdown"]:
+                        continue
 
-                # Content-type validation: skip non-HTML
-                if hasattr(result, "html") and result.html and not is_html_content(result.html):
-                    print(json.dumps({"log": f"Skipped (not HTML): {info['url']}"}))
-                    continue
+                    pages_crawled += 1
+                    results.append({"url": info["norm_url"], "content": crawl_result["markdown"]})
 
-                pages_crawled += 1
-                results.append({"url": info["norm_url"], "content": result.markdown})
-
-                # Extract colors from JS (depth-0 only)
-                if hasattr(result, "js_execution_result") and result.js_execution_result:
-                    js_result = result.js_execution_result
-                    if isinstance(js_result, list):
-                        for c in js_result:
-                            if isinstance(c, str):
-                                extracted_colors.add(c.lower())
-                    elif isinstance(js_result, dict):
-                        for val in js_result.values():
-                            if isinstance(val, str) and val.startswith("#"):
-                                extracted_colors.add(val.lower())
-                            elif isinstance(val, list):
-                                for c in val:
-                                    if isinstance(c, str):
-                                        extracted_colors.add(c.lower())
-
-                # Python fallback for color extraction
-                if info["depth"] == 0 and not extracted_colors and hasattr(result, "html") and result.html:
-                    print(json.dumps({"log": "JS color extraction returned nothing, using Python HTML fallback"}))
-                    fallback_colors = extract_colors_from_html(result.html)
-                    for c in fallback_colors:
-                        extracted_colors.add(c.lower())
-                    if extracted_colors:
-                        print(json.dumps({"log": f"Python fallback extracted {len(extracted_colors)} colors"}))
-
-                # Discover new links if not at max depth
-                if info["depth"] < max_depth:
-                    links: list[str] = []
-
-                    # Method 1: crawl4ai built-in links
-                    if hasattr(result, "links") and isinstance(result.links, dict):
-                        links_internal = result.links.get("internal", [])
-                        for link in links_internal:
-                            if isinstance(link, dict):
-                                href = link.get("href")
-                                if href:
-                                    links.append(href)
-                            elif isinstance(link, str):
-                                links.append(link)
-
-                    # Method 2: Fallback regex
-                    if not links and hasattr(result, "html"):
-                        found_hrefs = re.findall(r'<a\s+(?:[^>]*?\s+)?href="([^"]*)"', result.html)
-                        links.extend(found_hrefs)
-                        print(json.dumps({"log": f"Fallback: Found {len(found_hrefs)} links via regex"}))
-
-                    for href in links:
-                        if not href:
-                            continue
-
-                        full_url = urljoin(info["url"], href)
-                        parsed_url = urlparse(full_url)
-                        link_domain = get_base_domain(parsed_url.netloc)
-
-                        if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
-                            push_url(full_url, info["depth"] + 1)
+                    # Discover new links if not at max depth
+                    if info["depth"] < max_depth and crawl_result["html"]:
+                        page_links = extract_links_from_html(crawl_result["html"], info["url"])
+                        for href in page_links:
+                            parsed_url = urlparse(href)
+                            link_domain = get_base_domain(parsed_url.netloc)
+                            if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
+                                push_url(href, info["depth"] + 1)
 
     print(json.dumps({"log": f"Crawl complete: {len(results)} pages collected"}))
 

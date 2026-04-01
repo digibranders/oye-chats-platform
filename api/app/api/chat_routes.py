@@ -1,6 +1,5 @@
 import json
 import logging
-import threading
 import urllib.request
 import uuid
 
@@ -10,6 +9,8 @@ from pydantic import BaseModel as PydanticBaseModel
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.langfuse_client import get_langfuse
+from app.core.rate_limit import key_from_bot_key, limiter
+from app.core.thread_pool import submit_background
 from app.db.models import Bot, ChatSession
 from app.db.repository import create_or_update_lead_info, ensure_chat_session, get_chat_history, update_message_feedback
 from app.db.session import get_session
@@ -127,6 +128,7 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
 
 
 @router.post("/chat")
+@limiter.limit("30/minute", key_func=key_from_bot_key)
 def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Depends(get_current_bot)):
     """
     RAG Endpoint: Analyzes the question, retrieves relevant documents for the bot,
@@ -139,11 +141,7 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
         session_id = request.session_id or str(uuid.uuid4())
 
         # Fire-and-forget geolocation (saves 2-8s per request)
-        threading.Thread(
-            target=_resolve_and_update_location,
-            args=(session_id, ip_address),
-            daemon=True,
-        ).start()
+        submit_background(_resolve_and_update_location, session_id, ip_address)
 
         logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
@@ -166,6 +164,7 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
 
 
 @router.post("/chat/stream")
+@limiter.limit("30/minute", key_func=key_from_bot_key)
 async def chat_stream_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Depends(get_current_bot)):
     """
     Streaming RAG Endpoint: Streams the response token-by-token via SSE.
@@ -177,11 +176,7 @@ async def chat_stream_endpoint(request: ChatRequest, fastapi_request: Request, b
     session_id = request.session_id or str(uuid.uuid4())
 
     # Fire-and-forget geolocation
-    threading.Thread(
-        target=_resolve_and_update_location,
-        args=(session_id, ip_address),
-        daemon=True,
-    ).start()
+    submit_background(_resolve_and_update_location, session_id, ip_address)
 
     logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
