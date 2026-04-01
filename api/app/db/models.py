@@ -115,7 +115,7 @@ class Document(Base):
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)
-    embedding = Column(Vector(384), nullable=False)
+    embedding = Column(Vector(1536), nullable=False)
     search_vector = Column(TSVECTOR)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
