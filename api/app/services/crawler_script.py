@@ -6,7 +6,8 @@ import re
 import sys
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
-from xml.etree import ElementTree
+
+from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 
 # Force stdin, stdout, stderr to use UTF-8 safely
 if hasattr(sys.stdout, "reconfigure"):
@@ -246,7 +247,7 @@ async def fetch_sitemap_urls(
                         continue
                     content = await resp.text()
 
-                root = ElementTree.fromstring(content)
+                root = safe_xml_fromstring(content)
                 ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
                 # Check if it's a sitemap index
@@ -497,6 +498,11 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
         )
     )
 
+    # Seed the start URL first (always priority 0, depth 0).
+    # Must be enqueued before sitemap URLs so it isn't silently dropped
+    # when the sitemap contains the root URL (which is common).
+    push_url(start_url, 0)
+
     # ---- Pre-crawl: robots.txt & sitemap ----
     robot_parser = await fetch_robots_txt(start_url)
     if robot_parser:
@@ -515,9 +521,6 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
             sitemap_seeded += 1
     if sitemap_seeded:
         print(json.dumps({"log": f"Seeded {sitemap_seeded} URLs from sitemap"}))
-
-    # Seed the start URL (always priority 0)
-    push_url(start_url, 0)
 
     # ---- JS color extraction code (only used on depth-0) ----
     js_extraction_code = """
