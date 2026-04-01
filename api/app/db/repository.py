@@ -212,7 +212,7 @@ def insert_documents(
             "file_hash": file_hash,
             "content": chunk,
             "metadata_info": meta,
-            "embedding": embedding.tolist(),
+            "embedding": embedding if isinstance(embedding, list) else embedding.tolist(),
         }
         if bot_id:
             row["bot_id"] = bot_id
