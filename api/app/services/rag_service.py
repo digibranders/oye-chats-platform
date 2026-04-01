@@ -24,22 +24,6 @@ from app.services.llm_service import (
 
 logger = logging.getLogger(__name__)
 
-# Cross-encoder reranker (lazy-loaded at module level for reuse)
-_reranker = None
-
-
-def _get_reranker():
-    global _reranker
-    if _reranker is None:
-        try:
-            from fastembed.rerank.cross_encoder import TextCrossEncoder
-
-            _reranker = TextCrossEncoder("Xenova/ms-marco-MiniLM-L-6-v2")
-            logger.info("Cross-encoder reranker loaded: Xenova/ms-marco-MiniLM-L-6-v2")
-        except Exception as e:
-            logger.warning(f"Cross-encoder reranker unavailable, skipping reranking: {e}")
-    return _reranker
-
 
 def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
     """Merge ranked lists using Reciprocal Rank Fusion (RRF).
@@ -64,25 +48,9 @@ def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
     return [docs[doc_id] for doc_id, _ in ranked]
 
 
-def _rerank_results(question: str, results: list) -> list:
-    """Rerank results using cross-encoder if available, keeping top 5."""
-    if len(results) <= 1:
-        return results
-    reranker = _get_reranker()
-    if reranker is None:
-        return results
-    try:
-        reranked = list(
-            reranker.rerank(
-                query=question,
-                documents=[doc.content for doc in results],
-                top_k=min(5, len(results)),
-            )
-        )
-        return [results[r["index"]] for r in reranked]
-    except Exception as e:
-        logger.warning(f"Reranking failed, using original order: {e}")
-        return results
+def _trim_results(results: list, top_k: int = 5) -> list:
+    """Keep top-k results from RRF-ranked list."""
+    return results[:top_k]
 
 
 def _background_bant_extraction(session_id, cid, bid, history_context, question, answer, current_bant, bot):
@@ -391,7 +359,7 @@ def rag_pipeline(
 
             # Merge with Reciprocal Rank Fusion and rerank
             final_results = reciprocal_rank_fusion(vector_results, keyword_results)
-            final_results = _rerank_results(question, final_results)
+            final_results = _trim_results(final_results)
 
             # 6. Format Context & History
             context_parts = []
@@ -538,7 +506,7 @@ async def rag_pipeline_stream(
 
         # Merge with Reciprocal Rank Fusion and rerank
         final_results = reciprocal_rank_fusion(vector_results, keyword_results)
-        final_results = _rerank_results(question, final_results)
+        final_results = _trim_results(final_results)
         sources = [doc.document_name for doc in final_results]
 
         # 4. Yield Metadata

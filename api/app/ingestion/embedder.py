@@ -1,34 +1,61 @@
-# Embedding of the chunking text
+"""Embedding via OpenAI text-embedding-3-small API.
+
+Zero local memory footprint — all inference happens server-side.
+"""
+
 import asyncio
+import logging
 
-from fastembed import TextEmbedding
+from openai import OpenAI
 
-from app.config import EMBED_MODEL
+from app.config import EMBED_DIMENSIONS, EMBED_MODEL, OPENAI_API_KEY
 
-_model: TextEmbedding | None = None
+logger = logging.getLogger(__name__)
+
+_client: OpenAI | None = None
+
+# OpenAI supports up to 2048 inputs per request, but we cap lower
+# to keep individual request payloads reasonable.
+_MAX_BATCH = 512
 
 
-def _get_model() -> TextEmbedding:
-    """Return the embedding model, loading it lazily on first call.
-
-    This avoids eagerly consuming ~300 MB at import time; the model is only
-    loaded when ``embed_chunks`` is actually invoked.
-    """
-    global _model  # noqa: PLW0603
-    if _model is None:
-        _model = TextEmbedding(model_name=EMBED_MODEL, batch_size=128)
-    return _model
+def _get_client() -> OpenAI:
+    """Return a reusable OpenAI client (lazy-initialised)."""
+    global _client  # noqa: PLW0603
+    if _client is None:
+        _client = OpenAI(api_key=OPENAI_API_KEY)
+    return _client
 
 
 def embed_chunks(chunk_content_list: list[str]) -> list[list[float]]:
-    return list(_get_model().embed(chunk_content_list))
+    """Embed text chunks via the OpenAI embeddings API.
+
+    Automatically batches large lists to stay within API limits.
+    """
+    if not chunk_content_list:
+        return []
+
+    client = _get_client()
+    all_embeddings: list[list[float]] = []
+
+    for i in range(0, len(chunk_content_list), _MAX_BATCH):
+        batch = chunk_content_list[i : i + _MAX_BATCH]
+        response = client.embeddings.create(
+            input=batch,
+            model=EMBED_MODEL,
+            dimensions=EMBED_DIMENSIONS,
+        )
+        # Response objects are sorted by index, but sort explicitly to be safe
+        sorted_data = sorted(response.data, key=lambda d: d.index)
+        all_embeddings.extend([d.embedding for d in sorted_data])
+
+    return all_embeddings
 
 
 async def embed_chunks_async(chunk_content_list: list[str]) -> list[list[float]]:
-    """Async wrapper that runs CPU-bound embedding in a thread.
+    """Async wrapper that runs the API call in a thread.
 
-    This prevents blocking the event loop during the 50-500ms inference,
-    keeping WebSocket heartbeats, SSE keepalives, and concurrent requests
-    responsive.
+    Keeps the event loop free for WebSocket heartbeats, SSE keepalives,
+    and concurrent requests while the HTTP round-trip completes.
     """
     return await asyncio.to_thread(embed_chunks, chunk_content_list)

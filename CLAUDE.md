@@ -114,7 +114,7 @@ Document Upload/Crawl
   → Extraction (PDF/DOCX/TXT via extraction.py)
   → Cleaning (cleaner.py)
   → Chunking (recursive splitting, 2000 chars, 300 overlap — chunking.py, env-configurable)
-  → Embedding (FastEmbed BAAI/bge-small-en-v1.5, 384-dim vectors — embedder.py)
+  → Embedding (OpenAI text-embedding-3-small, 1536-dim vectors — embedder.py)
   → Storage (PostgreSQL pgvector — repository.py)
 
 User Question
@@ -223,7 +223,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Layer | Technology |
 |-------|-----------|
 | LLM | Google Gemini 2.5 Flash |
-| Embeddings | FastEmbed (BAAI/bge-small-en-v1.5, 384-dim) |
+| Embeddings | OpenAI text-embedding-3-small (1536-dim, API-based) |
 | Vector DB | PostgreSQL 16 + pgvector |
 | Backend | FastAPI + SQLAlchemy + Alembic |
 | Frontend | React 19 + Vite + Tailwind CSS |

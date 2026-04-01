@@ -8,7 +8,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 DB_URL = os.getenv("DB_URL")
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBED_MODEL = "text-embedding-3-small"
+EMBED_DIMENSIONS = 1536
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "2000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "300"))
 
