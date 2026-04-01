@@ -16,7 +16,7 @@ function AdminLayoutInner() {
     const [showLoginToast, setShowLoginToast] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
     const [showOnboarding, setShowOnboarding] = useState(false);
-    const { bots, loading: botsLoading, refreshBots } = useBotContext();
+    const { bots, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
 
     // Responsive resize handler
     useEffect(() => {
@@ -49,12 +49,13 @@ function AdminLayoutInner() {
 
     // Show onboarding when bots finish loading and none exist.
     // Agents join an existing workspace and never need the onboarding wizard.
+    // Skip when there's an API error — empty bots due to network failure ≠ no bots.
     useEffect(() => {
         const isOperator = localStorage.getItem('auth_type') === 'operator';
-        if (!isOperator && !botsLoading && bots.length === 0 && !localStorage.getItem('onboarding_complete')) {
+        if (!isOperator && !botsLoading && !botsError && bots.length === 0 && !localStorage.getItem('onboarding_complete')) {
             setShowOnboarding(true); // eslint-disable-line react-hooks/set-state-in-effect -- one-time init from external state (localStorage)
         }
-    }, [botsLoading, bots.length]);
+    }, [botsLoading, botsError, bots.length]);
 
     // Cmd+K handler
     useEffect(() => {
