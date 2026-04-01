@@ -1,6 +1,6 @@
 # RAG Pipeline & Document Ingestion
 
-This document covers OyeChat's Retrieval-Augmented Generation pipeline — from document upload through to LLM response generation.
+This document covers OyeChats' Retrieval-Augmented Generation pipeline — from document upload through to LLM response generation.
 
 ## Pipeline Overview
 
@@ -102,7 +102,7 @@ When a visitor sends a message, the RAG pipeline in `api/app/services/rag_servic
 
 ### Step 1: Hybrid Search
 
-OyeChat uses Reciprocal Rank Fusion (RRF) to combine two search strategies:
+OyeChats uses Reciprocal Rank Fusion (RRF) to combine two search strategies:
 
 **Vector Search:**
 - Embeds the user's question using the same `text-embedding-3-small` model

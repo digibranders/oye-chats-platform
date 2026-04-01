@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OyeChat — Developer Documentation</title>
+  <title>OyeChats — Developer Documentation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -338,7 +338,7 @@
   <button class="hamburger" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle menu">
     <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
   </button>
-  <div class="header-logo">OyeChat <span>Developer Docs</span></div>
+  <div class="header-logo">OyeChats <span>Developer Docs</span></div>
   <div class="header-search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
     <input type="text" id="searchInput" placeholder="Search documentation..." autocomplete="off">
@@ -412,11 +412,11 @@
 
 <!-- ────── OVERVIEW ────── -->
 <div class="section active" id="section-overview">
-  <h1>OyeChat Platform Documentation</h1>
-  <p class="subtitle">Internal developer documentation for the OyeChat SaaS chatbot platform.</p>
+  <h1>OyeChats Platform Documentation</h1>
+  <p class="subtitle">Internal developer documentation for the OyeChats SaaS chatbot platform.</p>
 
-  <h2>What is OyeChat?</h2>
-  <p>OyeChat is a SaaS chatbot platform where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.</p>
+  <h2>What is OyeChats?</h2>
+  <p>OyeChats is a SaaS chatbot platform where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.</p>
 
   <h2>How It Works</h2>
   <div class="flow-diagram">Customer signs up → Creates a bot → Uploads docs / crawls URL
@@ -1079,7 +1079,7 @@ Store response + trace_id</div>
   <table>
     <tr><th>Step</th><th>Action</th></tr>
     <tr><td>1</td><td>Finds its <code>&lt;script&gt;</code> tag, reads <code>data-bot-key</code></td></tr>
-    <tr><td>2</td><td>Sets <code>window.OYECHAT_BOT_KEY</code> globally</td></tr>
+    <tr><td>2</td><td>Sets <code>window.OYECHATS_BOT_KEY</code> globally</td></tr>
     <tr><td>3</td><td>Auto-injects sibling CSS (<code>oyechats-widget.css</code>)</td></tr>
     <tr><td>4</td><td>Creates <code>&lt;div id="oyechats-widget-root"&gt;</code></td></tr>
     <tr><td>5</td><td>Renders its own React 19 app (isolated from host)</td></tr>
@@ -1110,8 +1110,8 @@ npx vite preview --port 4173</code></pre>
     <tr><th>Item</th><th>Value</th></tr>
     <tr><td>Bundle</td><td><code>oyechats-widget.js</code> / <code>oyechats-widget.css</code></td></tr>
     <tr><td>DOM container</td><td><code>oyechats-widget-root</code></td></tr>
-    <tr><td>Window globals</td><td><code>OYECHAT_BOT_KEY</code>, <code>OYECHAT_API_KEY</code></td></tr>
-    <tr><td>Console prefix</td><td><code>[OyeChat]</code></td></tr>
+    <tr><td>Window globals</td><td><code>OYECHATS_BOT_KEY</code>, <code>OYECHATS_API_KEY</code></td></tr>
+    <tr><td>Console prefix</td><td><code>[OyeChats]</code></td></tr>
     <tr><td>CDN</td><td><code>cdn.oyechats.com</code></td></tr>
   </table>
 </div>

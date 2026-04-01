@@ -71,14 +71,14 @@ def _base_template(title: str, content: str) -> str:
     return f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 32px 24px;">
         <div style="text-align: center; margin-bottom: 24px;">
-            <h1 style="font-size: 20px; font-weight: 700; color: #1a1a2e; margin: 0;">OyeChat</h1>
+            <h1 style="font-size: 20px; font-weight: 700; color: #1a1a2e; margin: 0;">OyeChats</h1>
         </div>
         <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px;">
             <h2 style="font-size: 18px; font-weight: 600; color: #1a1a2e; margin: 0 0 16px 0;">{title}</h2>
             {content}
         </div>
         <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 24px;">
-            Sent by OyeChat &middot; <a href="https://admin.oyechats.com" style="color: #6366f1;">View Dashboard</a>
+            Sent by OyeChats &middot; <a href="https://admin.oyechats.com" style="color: #6366f1;">View Dashboard</a>
         </p>
     </div>
     """
@@ -125,7 +125,7 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
     """
     send_email_async(
         notification_email,
-        f"[OyeChat] New Qualified Lead — {bot_name}",
+        f"[OyeChats] New Qualified Lead — {bot_name}",
         _base_template("New Qualified Lead 🎯", content),
     )
 
@@ -153,7 +153,7 @@ def send_handoff_request_email(notification_email: str, bot_name: str, reason: s
     </a>
     """
     send_email_async(
-        notification_email, f"[OyeChat] Live Chat Request — {bot_name}", _base_template("Live Chat Request 💬", content)
+        notification_email, f"[OyeChats] Live Chat Request — {bot_name}", _base_template("Live Chat Request 💬", content)
     )
 
 
@@ -176,7 +176,7 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
     """
     send_email_async(
         notification_email,
-        f"[OyeChat] Missed Chat — Callback Requested — {bot_name}",
+        f"[OyeChats] Missed Chat — Callback Requested — {bot_name}",
         _base_template("Missed Chat — Callback Requested 📞", content),
     )
 
@@ -203,7 +203,7 @@ def send_offline_message_email(
     """
     send_email_async(
         notification_email,
-        f"[OyeChat] New Offline Message — {bot_name}",
+        f"[OyeChats] New Offline Message — {bot_name}",
         _base_template("New Offline Message 📩", content),
     )
 
@@ -212,7 +212,7 @@ def send_password_reset_email(to_email: str, otp: str):
     """Send a password reset OTP email."""
     content = f"""
     <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        You recently requested to reset your password for your OyeChat account.
+        You recently requested to reset your password for your OyeChats account.
     </p>
     <div style="background: #f3f4f6; border: 1px dashed #d1d5db; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 24px; margin-top: 16px;">
         <p style="color: #6b7280; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px 0;">Your Reset Code</p>
@@ -226,6 +226,6 @@ def send_password_reset_email(to_email: str, otp: str):
     """
     send_email_async(
         to_email,
-        "Reset Your Password — OyeChat",
+        "Reset Your Password — OyeChats",
         _base_template("Password Reset Request 🔐", content),
     )

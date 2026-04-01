@@ -72,7 +72,7 @@ export default function ForgotPassword() {
                     <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center border border-white/20 shadow-lg">
                         <Bot className="w-6 h-6 text-white" />
                     </div>
-                    <h1 className="text-3xl font-extrabold tracking-tight">OyeChat</h1>
+                    <h1 className="text-3xl font-extrabold tracking-tight">OyeChats</h1>
                 </div>
 
                 <div className="relative z-10 max-w-sm">
@@ -91,7 +91,7 @@ export default function ForgotPassword() {
                         <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center shadow-md">
                             <Bot className="w-5 h-5 text-white" />
                         </div>
-                        <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">OyeChat</h1>
+                        <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">OyeChats</h1>
                     </div>
 
                     <div className="bg-white p-8 sm:p-10 rounded-2xl shadow-xl border border-gray-100">

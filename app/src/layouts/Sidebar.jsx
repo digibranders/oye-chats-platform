@@ -125,7 +125,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                     </div>
                     {isOpen && (
                         <span className="text-[15px] font-bold text-white tracking-tight">
-                            {localStorage.getItem('company_name') || 'OyeChat'}
+                            {localStorage.getItem('company_name') || 'OyeChats'}
                         </span>
                     )}
                 </div>

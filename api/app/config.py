@@ -60,7 +60,7 @@ APP_ENV = os.getenv("APP_ENV", "development")
 
 # Brevo Email Notifications (opt-in: no-op when key is absent)
 BREVO_API_KEY = os.getenv("BREVO_API_KEY")
-EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "OyeChat")
+EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "OyeChats")
 EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "notifications@oyechats.com")
 EMAIL_ENABLED = bool(BREVO_API_KEY)
 

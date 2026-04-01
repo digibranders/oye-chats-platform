@@ -17,11 +17,11 @@ def create_test_data():
     with get_session() as session:
         print("Inserting test clients with admin credentials...")
         client_a = Client(
-            name="OyeChat",
+            name="OyeChats",
             email="admin@oyechats.com",
             hashed_password=get_password_hash("password123"),  # In a real app never default weak passwords
             api_key="oyechats-secret-key",
-            system_prompt="You are 'Oye', an advanced AI consultant for OyeChat. Be highly professional.",
+            system_prompt="You are 'Oye', an advanced AI consultant for OyeChats. Be highly professional.",
         )
 
         client_b = Client(

@@ -1,2 +1,2 @@
-console.log('[OyeChat-Test] Simple test script loaded successfully!');
-alert('OyeChat Test Script Loaded!');
+console.log('[OyeChats-Test] Simple test script loaded successfully!');
+alert('OyeChats Test Script Loaded!');

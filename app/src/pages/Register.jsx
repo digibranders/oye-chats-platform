@@ -91,7 +91,7 @@ export default function Register() {
                     <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-lg">
                         <Bot size={22} />
                     </div>
-                    <span className="text-xl font-bold tracking-tight">OyeChat</span>
+                    <span className="text-xl font-bold tracking-tight">OyeChats</span>
                 </div>
 
                 {/* Hero text */}
@@ -141,13 +141,13 @@ export default function Register() {
                         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center shadow-lg shadow-primary-500/20">
                             <Bot size={20} />
                         </div>
-                        <span className="text-lg font-bold text-secondary-900">OyeChat</span>
+                        <span className="text-lg font-bold text-secondary-900">OyeChats</span>
                     </div>
 
                     <div className="mb-6">
                         <h1 className="text-2xl font-bold text-secondary-900">Get started free</h1>
                         <p className="text-secondary-500 mt-2 text-sm">
-                            Create your OyeChat account
+                            Create your OyeChats account
                         </p>
                     </div>
 

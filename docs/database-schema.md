@@ -1,6 +1,6 @@
 # Database Schema
 
-OyeChat uses PostgreSQL 16 with the pgvector extension for vector similarity search. The ORM is SQLAlchemy 2.0, and migrations are managed by Alembic.
+OyeChats uses PostgreSQL 16 with the pgvector extension for vector similarity search. The ORM is SQLAlchemy 2.0, and migrations are managed by Alembic.
 
 ## Entity Relationship Overview
 

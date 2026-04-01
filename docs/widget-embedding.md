@@ -1,13 +1,13 @@
 # Widget Embedding Guide
 
-The OyeChat widget is a self-contained JavaScript bundle that renders an AI chatbot on any website. It works on any platform — Next.js, React, WordPress, Webflow, Shopify, plain HTML — anything with a `<body>` tag.
+The OyeChats widget is a self-contained JavaScript bundle that renders an AI chatbot on any website. It works on any platform — Next.js, React, WordPress, Webflow, Shopify, plain HTML — anything with a `<body>` tag.
 
 ## How It Works
 
 The widget (`oyechats-widget.js`) is an IIFE (Immediately Invoked Function Expression) bundle (~416KB) that:
 
 1. Finds its own `<script>` tag and reads the `data-bot-key` attribute
-2. Sets `window.OYECHAT_BOT_KEY` globally
+2. Sets `window.OYECHATS_BOT_KEY` globally
 3. Auto-injects its sibling CSS file (`oyechats-widget.css`) in production
 4. Creates a `<div id="oyechats-widget-root">` in the DOM
 5. Renders a React app with its own bundled React instance (isolated from the host page)
@@ -149,8 +149,8 @@ The widget is designed to not interfere with the host page:
 - **Own React instance:** The bundle includes its own React 19 — it doesn't use or conflict with any React on the host page
 - **Scoped DOM:** All widget UI lives inside `<div id="oyechats-widget-root">`
 - **Scoped styles:** CSS is prefixed/scoped to avoid leaking into the host page
-- **No global pollution:** Only `window.OYECHAT_BOT_KEY` and `window.OYECHAT_API_KEY` are set globally
-- **Console prefix:** All logs are prefixed with `[OyeChat]`
+- **No global pollution:** Only `window.OYECHATS_BOT_KEY` and `window.OYECHATS_API_KEY` are set globally
+- **Console prefix:** All logs are prefixed with `[OyeChats]`
 
 ## Naming Conventions
 
@@ -158,6 +158,6 @@ The widget is designed to not interfere with the host page:
 |------|-------|
 | Widget bundle | `oyechats-widget.js` / `oyechats-widget.css` |
 | DOM container | `oyechats-widget-root` |
-| Window globals | `window.OYECHAT_BOT_KEY`, `window.OYECHAT_API_KEY` |
-| Console prefix | `[OyeChat]` |
+| Window globals | `window.OYECHATS_BOT_KEY`, `window.OYECHATS_API_KEY` |
+| Console prefix | `[OyeChats]` |
 | Production CDN | `cdn.oyechats.com/oyechats-widget.js` |

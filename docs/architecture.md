@@ -2,7 +2,7 @@
 
 ## System Map
 
-OyeChat is a monorepo containing four applications that together deliver an embeddable AI chatbot platform.
+OyeChats is a monorepo containing four applications that together deliver an embeddable AI chatbot platform.
 
 ```
 oye-chats/
@@ -91,7 +91,7 @@ Marketing site at oyechats.com.
 
 ## Authentication Model
 
-OyeChat uses two separate auth mechanisms for its two client types:
+OyeChats uses two separate auth mechanisms for its two client types:
 
 | Client Type | Header | Value | Used By |
 |-------------|--------|-------|---------|

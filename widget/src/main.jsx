@@ -16,7 +16,7 @@ if (SENTRY_DSN) {
   });
 }
 
-console.log('[OyeChat] Widget script initializing...');
+console.log('[OyeChats] Widget script initializing...');
 
 // ── CSS Auto-Injection ──────────────────────────────────────────────
 // In production the build outputs oyechats-widget.js + oyechats-widget.css as
@@ -43,13 +43,13 @@ if (import.meta.env.PROD) {
         link.rel = 'stylesheet';
         link.href = cssUrl;
         document.head.appendChild(link);
-        console.log('[OyeChat] CSS auto-injected:', cssUrl);
+        console.log('[OyeChats] CSS auto-injected:', cssUrl);
       }
     } else {
-      console.warn('[OyeChat] Could not determine script URL for CSS injection');
+      console.warn('[OyeChats] Could not determine script URL for CSS injection');
     }
   } catch (e) {
-    console.warn('[OyeChat] CSS auto-injection failed:', e);
+    console.warn('[OyeChats] CSS auto-injection failed:', e);
   }
 }
 
@@ -61,7 +61,7 @@ if (!scriptTag) {
   for (let i = 0; i < scripts.length; i++) {
     if (scripts[i].getAttribute('data-bot-key') || scripts[i].getAttribute('data-api-key')) {
       scriptTag = scripts[i];
-      console.log('[OyeChat] Found script tag via key attribute search');
+      console.log('[OyeChats] Found script tag via key attribute search');
       break;
     }
   }
@@ -73,49 +73,49 @@ if (scriptTag) {
   const apiKey = scriptTag.getAttribute('data-api-key');
 
   if (botKey) {
-    window.OYECHAT_BOT_KEY = botKey;
-    console.log('[OyeChat] Bot Key initialized:', botKey);
+    window.OYECHATS_BOT_KEY = botKey;
+    console.log('[OyeChats] Bot Key initialized:', botKey);
   } else if (apiKey) {
     // Backward compatibility — old embed codes still work
-    window.OYECHAT_API_KEY = apiKey;
-    console.log('[OyeChat] API Key initialized (legacy):', apiKey);
+    window.OYECHATS_API_KEY = apiKey;
+    console.log('[OyeChats] API Key initialized (legacy):', apiKey);
   } else {
-    console.error('[OyeChat] Script tag found but no data-bot-key or data-api-key attribute');
+    console.error('[OyeChats] Script tag found but no data-bot-key or data-api-key attribute');
   }
 } else {
-  console.error('[OyeChat] OyeChat script tag not detected. Integration may fail.');
+  console.error('[OyeChats] OyeChats script tag not detected. Integration may fail.');
 }
 
 // Find or create the root container for the widget
 const CONTAINER_ID = 'oyechats-widget-root';
 
 const initWidget = () => {
-  console.log('[OyeChat] Attempting to initialize widget container...');
+  console.log('[OyeChats] Attempting to initialize widget container...');
   let container = document.getElementById(CONTAINER_ID);
 
   if (!container) {
     if (!document.body) {
-      console.error('[OyeChat] document.body is not available. Retrying in 100ms...');
+      console.error('[OyeChats] document.body is not available. Retrying in 100ms...');
       setTimeout(initWidget, 100);
       return;
     }
     container = document.createElement('div');
     container.id = CONTAINER_ID;
     document.body.appendChild(container);
-    console.log('[OyeChat] Root container created and appended to body');
+    console.log('[OyeChats] Root container created and appended to body');
   } else {
-    console.log('[OyeChat] Root container already exists');
+    console.log('[OyeChats] Root container already exists');
   }
 
   if (container) {
-    console.log('[OyeChat] Starting React render on container:', container);
+    console.log('[OyeChats] Starting React render on container:', container);
     createRoot(container).render(
       <StrictMode>
         <App />
       </StrictMode>,
     );
   } else {
-    console.error('[OyeChat] Failed to create or find container element.');
+    console.error('[OyeChats] Failed to create or find container element.');
   }
 };
 

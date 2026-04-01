@@ -28,14 +28,14 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     useEffect(() => {
         if (!sessionId) return;
 
-        const botKey = window.OYECHAT_BOT_KEY || window.OYECHAT_API_KEY || '';
+        const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || '';
         const wsUrl = API_URL.replace(/^http/, 'ws');
 
         const connect = () => {
             const socket = new WebSocket(`${wsUrl}/ws/chat/${sessionId}?bot_key=${botKey}`);
 
             socket.onopen = () => {
-                console.log('[OyeChat] Live chat WebSocket connected');
+                console.log('[OyeChats] Live chat WebSocket connected');
                 reconnectAttempt.current = 0;
                 setIsReconnecting(false);
                 onConnectionStatusChange?.('connected');
@@ -96,14 +96,14 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             };
 
             socket.onclose = () => {
-                console.log('[OyeChat] Live chat WebSocket closed');
+                console.log('[OyeChats] Live chat WebSocket closed');
                 if (!intentionalClose.current) {
                     // Auto-reconnect with exponential backoff
                     const delay = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30000);
                     reconnectAttempt.current += 1;
                     setIsReconnecting(true);
                     onConnectionStatusChange?.('reconnecting');
-                    console.log(`[OyeChat] Reconnecting in ${delay}ms (attempt ${reconnectAttempt.current})`);
+                    console.log(`[OyeChats] Reconnecting in ${delay}ms (attempt ${reconnectAttempt.current})`);
                     reconnectTimer.current = setTimeout(() => {
                         connect();
                     }, delay);

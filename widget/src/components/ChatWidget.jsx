@@ -11,7 +11,7 @@ const ChatWidget = () => {
   const [isAnimating, setIsAnimating] = useState(null); // null=hidden(no anim), true=open, false=close
   const closeTimer = useRef(null);
   const [settings, setSettings] = useState({
-    bot_name: 'OyeChat AI',
+    bot_name: 'OyeChats AI',
     bot_logo: null,
     launcher_name: 'Have Questions?',
     launcher_logo: null,

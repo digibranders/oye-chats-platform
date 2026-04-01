@@ -16,7 +16,7 @@ def setup_database():
 
 
 def create_client():
-    print("--- OyeChat: Create New SaaS Client ---")
+    print("--- OyeChats: Create New SaaS Client ---")
 
     name = input("Company Name: ").strip()
     if not name:

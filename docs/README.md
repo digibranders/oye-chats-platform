@@ -1,10 +1,10 @@
-# OyeChat Platform Documentation
+# OyeChats Platform Documentation
 
-> Internal developer documentation for the OyeChat SaaS chatbot platform.
+> Internal developer documentation for the OyeChats SaaS chatbot platform.
 
 ## Overview
 
-OyeChat is a SaaS chatbot platform where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.
+OyeChats is a SaaS chatbot platform where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.
 
 ## Documentation Index
 

@@ -1,6 +1,6 @@
-# Project: OyeChat
+# Project: OyeChats
 
-OyeChat is a **SaaS chatbot platform** where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.
+OyeChats is a **SaaS chatbot platform** where customers sign up, create chatbot instances, upload their knowledge base, and embed an AI chatbot on their website with a single script tag. The chatbot uses RAG (Retrieval-Augmented Generation) to answer visitor questions from the customer's documents.
 
 ## Code Quality Gate
 > **Codex Agent reviews every edit.** Write clean, production-ready code on every change — no placeholders, no shortcuts, no "fix later" comments. Each edit is evaluated for correctness, type safety, error handling, and adherence to project conventions. Treat every diff as if it's going straight to a code review.
@@ -80,7 +80,7 @@ oye-chats/
 The widget (`oyechats-widget.js`) is a **self-contained IIFE bundle** (~416KB) that:
 
 1. Finds its own `<script>` tag and reads `data-bot-key`
-2. Sets `window.OYECHAT_BOT_KEY` globally
+2. Sets `window.OYECHATS_BOT_KEY` globally
 3. Auto-injects its sibling CSS file (`oyechats-widget.css`) in production
 4. Creates a `<div id="oyechats-widget-root">` in the DOM
 5. Renders a React app (its own bundled React, isolated from the host page)
@@ -147,8 +147,8 @@ Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessa
 |------|------|
 | Widget bundle | `oyechats-widget.js` / `oyechats-widget.css` |
 | DOM container | `oyechats-widget-root` |
-| Window globals | `window.OYECHAT_BOT_KEY`, `window.OYECHAT_API_KEY` |
-| Console prefix | `[OyeChat]` |
+| Window globals | `window.OYECHATS_BOT_KEY`, `window.OYECHATS_API_KEY` |
+| Console prefix | `[OyeChats]` |
 | Production CDN | `cdn.oyechats.com/oyechats-widget.js` |
 | Contact email | `developer@oyechats.com` |
 

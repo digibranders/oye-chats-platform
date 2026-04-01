@@ -78,7 +78,7 @@ These are hardcoded defaults in `crawler_service.py` (not currently env-configur
 
 ## Minimal Local Setup
 
-The minimum environment to run OyeChat locally:
+The minimum environment to run OyeChats locally:
 
 **`api/.env`:**
 ```
