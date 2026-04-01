@@ -127,16 +127,65 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         };
     }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Heartbeat — keeps the WebSocket alive through load-balancer idle timeouts.
-    // Fires every 30 s; silently ignored when the socket is not yet open.
+    // Visibility-aware heartbeat — keeps the WebSocket alive through load-balancer
+    // idle timeouts. Interval is shorter when the tab is visible (25 s) and longer
+    // when backgrounded (50 s) because browsers throttle timers in hidden tabs.
     useEffect(() => {
         if (!ws) return;
-        const interval = setInterval(() => {
+
+        let interval;
+        const startHeartbeat = () => {
+            clearInterval(interval);
+            const delay = document.visibilityState === 'visible' ? 25000 : 50000;
+            interval = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, delay);
+        };
+
+        startHeartbeat();
+        document.addEventListener('visibilitychange', startHeartbeat);
+        return () => {
+            clearInterval(interval);
+            document.removeEventListener('visibilitychange', startHeartbeat);
+        };
+    }, [ws]);
+
+    // Visibility + network change handlers — detect stale connections on tab return
+    // or network restoration and trigger an immediate reconnect if needed.
+    useEffect(() => {
+        if (!ws) return;
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState !== 'visible') return;
             if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'ping' }));
+                // Send an immediate ping to verify the connection is still alive.
+                try { ws.send(JSON.stringify({ type: 'ping' })); } catch { ws.close(); }
+            } else if (
+                (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) &&
+                !intentionalClose.current
+            ) {
+                // Connection died while the tab was backgrounded — reconnect immediately
+                // with a reset backoff so the user isn't penalised for sleeping.
+                reconnectAttempt.current = 0;
+                ws.close(); // triggers onclose → connect()
             }
-        }, 30000);
-        return () => clearInterval(interval);
+        };
+
+        const handleOnline = () => {
+            if (!intentionalClose.current && ws.readyState !== WebSocket.OPEN) {
+                reconnectAttempt.current = 0;
+                ws.close(); // triggers onclose → connect()
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('online', handleOnline);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('online', handleOnline);
+        };
     }, [ws]);
 
     useEffect(() => {
@@ -245,6 +294,10 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                     )}
                     <button
                         onClick={() => {
+                            // Notify backend to remove from queue immediately.
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'visitor_end_chat' }));
+                            }
                             intentionalClose.current = true;
                             ws?.close();
                             setChatMode('bot');
@@ -466,6 +519,12 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 <div className="flex items-center justify-center mb-2">
                     <button
                         onClick={() => {
+                            // Notify the backend that the visitor intentionally ended the chat.
+                            // This immediately closes the session in DB (no 120s grace period),
+                            // so the operator sees it as "ended" not "visitor disconnected".
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({ type: 'visitor_end_chat' }));
+                            }
                             intentionalClose.current = true;
                             ws?.close();
                             handleReturnToBot();

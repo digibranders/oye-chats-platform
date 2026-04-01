@@ -618,9 +618,12 @@ export const getOperatorQueue = async () => {
     }
 };
 
-export const acceptChat = async (sessionId) => {
+export const acceptChat = async (sessionId, operatorId = null) => {
     try {
-        const response = await api.post(`/operators/accept/${sessionId}`);
+        // Pass operatorId in the body so the backend uses the exact operator record
+        // rather than the fragile `.limit(1)` fallback (critical for owner accounts).
+        const body = operatorId ? { operator_id: operatorId } : {};
+        const response = await api.post(`/operators/accept/${sessionId}`, body);
         return response.data;
     } catch (error) {
         console.error('API Error accepting chat:', error);

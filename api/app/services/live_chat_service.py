@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from fastapi import WebSocket
 from sqlalchemy import select
 
-from app.db.models import ChatSession
+from app.db.models import ChatSession, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 
@@ -20,6 +20,10 @@ class ConnectionManager:
 
     # How long to wait for a visitor to reconnect before auto-closing the session.
     VISITOR_DISCONNECT_TIMEOUT = 120  # seconds
+
+    # How long to wait for an operator to reconnect before marking them truly offline.
+    # Covers tab switches, short network blips, and browser background throttling.
+    OPERATOR_DISCONNECT_TIMEOUT = 60  # seconds
 
     def __init__(self):
         # session_id → WebSocket
@@ -34,6 +38,8 @@ class ConnectionManager:
         self._timeout_tasks: dict[str, asyncio.Task] = {}
         # session_id → disconnect cleanup task (visitor left mid-chat)
         self._disconnect_tasks: dict[str, asyncio.Task] = {}
+        # operator_id → grace-period task (operator WS dropped, waiting for reconnect)
+        self._operator_disconnect_tasks: dict[int, asyncio.Task] = {}
         # session_id → department_id (for department-aware routing)
         self._session_departments: dict[str, int | None] = {}
         # operator_id → department_id (cached on connect)
@@ -141,6 +147,10 @@ class ConnectionManager:
         operator_name: str = "",
         is_online: bool = True,
     ):
+        # Cancel any pending grace-period timeout — operator is back before it expired.
+        # This is the key reconnection-recovery path: tab switch, network blip, etc.
+        self._cancel_operator_disconnect_task(operator_id)
+
         # If operator already connected (multi-tab), close old connection gracefully
         old_ws = self.operator_connections.get(operator_id)
         if old_ws and old_ws is not ws:
@@ -174,15 +184,60 @@ class ConnectionManager:
         await self.broadcast_operators_update()
 
     def disconnect_operator(self, operator_id: int):
+        """Remove the WebSocket reference but preserve in-memory state.
+
+        Department, name, and session assignments are kept alive for the duration
+        of the grace period so the operator can reconnect seamlessly. Full cleanup
+        only happens in _operator_disconnect_timeout if they don't return in time.
+        """
         self.operator_connections.pop(operator_id, None)
-        self._operator_departments.pop(operator_id, None)
-        self._operator_names.pop(operator_id, None)
-        logger.info(f"Operator disconnected: {operator_id}")
+        logger.info(f"Operator WebSocket dropped: {operator_id} (grace period started)")
 
     async def disconnect_operator_and_broadcast(self, operator_id: int):
-        """Disconnect operator and broadcast the updated roster."""
+        """Start the operator disconnect grace period.
+
+        Does NOT immediately mark the operator offline or broadcast an offline
+        roster. Instead it starts a OPERATOR_DISCONNECT_TIMEOUT countdown.
+        If the operator reconnects (cancel task) nothing changes for anyone.
+        If they don't, _operator_disconnect_timeout does the full cleanup.
+        """
         self.disconnect_operator(operator_id)
-        await self.broadcast_operators_update()
+        self._cancel_operator_disconnect_task(operator_id)
+        task = asyncio.create_task(self._operator_disconnect_timeout(operator_id))
+        self._operator_disconnect_tasks[operator_id] = task
+
+    def _cancel_operator_disconnect_task(self, operator_id: int):
+        task = self._operator_disconnect_tasks.pop(operator_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _operator_disconnect_timeout(self, operator_id: int):
+        """Full cleanup when an operator doesn't reconnect within the grace period."""
+        try:
+            await asyncio.sleep(self.OPERATOR_DISCONNECT_TIMEOUT)
+            # Still not reconnected — do the full cleanup now.
+            if operator_id not in self.operator_connections:
+                logger.info(
+                    f"Operator {operator_id} did not reconnect within "
+                    f"{self.OPERATOR_DISCONNECT_TIMEOUT}s — marking offline"
+                )
+                self._operator_departments.pop(operator_id, None)
+                self._operator_names.pop(operator_id, None)
+                # Persist offline status to DB
+                try:
+                    with get_session() as db:
+                        op_obj = db.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
+                        if op_obj:
+                            op_obj.is_online = False
+                            db.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to persist offline status for operator {operator_id}: {e}")
+                # Broadcast updated roster to all remaining operators
+                await self.broadcast_operators_update()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._operator_disconnect_tasks.pop(operator_id, None)
 
     # ── Handoff flow ──
 
@@ -354,8 +409,15 @@ class ConnectionManager:
     # ── Roster broadcast ──
 
     async def broadcast_operators_update(self):
-        """Push current operator roster (connected operators + their active chat counts) to all operators."""
+        """Push current operator roster to all connected operators.
+
+        Includes operators that are within their grace period (WS dropped but not
+        yet timed out) so their active_chats count stays visible to the team.
+        """
         operators_payload = []
+        seen_ids: set[int] = set()
+
+        # Currently connected operators — fully online
         for oid in list(self.operator_connections.keys()):
             active_count = len([sid for sid, o_id in self.assignments.items() if o_id == oid])
             operators_payload.append(
@@ -363,8 +425,24 @@ class ConnectionManager:
                     "operator_id": oid,
                     "name": self._operator_names.get(oid, ""),
                     "active_chats": active_count,
+                    "is_online": True,
                 }
             )
+            seen_ids.add(oid)
+
+        # Operators in grace period — WS dropped but assignments still live
+        for oid in list(self._operator_disconnect_tasks.keys()):
+            if oid not in seen_ids:
+                active_count = len([sid for sid, o_id in self.assignments.items() if o_id == oid])
+                if active_count > 0:
+                    operators_payload.append(
+                        {
+                            "operator_id": oid,
+                            "name": self._operator_names.get(oid, ""),
+                            "active_chats": active_count,
+                            "is_online": False,  # temporarily away
+                        }
+                    )
 
         msg = {
             "type": "operators_update",

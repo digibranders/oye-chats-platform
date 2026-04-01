@@ -95,6 +95,22 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             elif msg_type == "typing":
                 await manager.send_typing_to_operator(session_id)
 
+            elif msg_type == "visitor_end_chat":
+                # Visitor deliberately ended the chat (clicked "End chat and return to AI").
+                # Close the session immediately in DB and notify the operator — do NOT
+                # start the 120s grace period, as this is an intentional user action.
+                with get_session() as session:
+                    chat_session = session.execute(
+                        select(ChatSession).where(ChatSession.id == session_id)
+                    ).scalar_one_or_none()
+                    if chat_session and chat_session.status == "live":
+                        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+                        bot_name = bot.name if bot else "AI Assistant"
+                        chat_session.status = "bot"
+                        chat_session.assigned_operator_id = None
+                        session.commit()
+                        await manager.close_chat(session_id, bot_name)
+
     except WebSocketDisconnect:
         manager.disconnect_visitor(session_id)
     except Exception as e:
@@ -116,13 +132,14 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
             session.commit()
             return operator.id, operator.name, operator.client_id, operator.department_id, True
 
-        # Client api_key auth — find or create operator from client profile
+        # Client api_key auth — find or create the owner's operator record.
+        # Use role='owner' to avoid matching sub-operators created for the same client.
         client = session.execute(select(Client).where(Client.api_key == key)).scalar_one_or_none()
         if not client:
             return None
 
         operator = session.execute(
-            select(Operator).where(Operator.client_id == client.id).limit(1)
+            select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
         ).scalar_one_or_none()
 
         if not operator:
@@ -218,26 +235,28 @@ async def operator_websocket(
                         ).scalar_one_or_none()
                         if chat_session:
                             bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+                            # Ownership check: only allow the operator's own client to close
+                            if not bot or bot.client_id != client_id:
+                                logger.warning(
+                                    f"Operator {operator_id} attempted to close session {target_session} "
+                                    f"belonging to a different client — rejected"
+                                )
+                                continue
+                            # Capture bot_name before session closes (avoid DetachedInstanceError)
+                            bot_name = bot.name
                             chat_session.status = "bot"
                             chat_session.assigned_operator_id = None
                             session.commit()
-                            await manager.close_chat(target_session, bot.name if bot else "AI Assistant")
+                            await manager.close_chat(target_session, bot_name)
 
     except WebSocketDisconnect:
+        # Start the grace period — do NOT immediately mark offline in DB.
+        # The ConnectionManager will handle full cleanup + DB update if the operator
+        # does not reconnect within OPERATOR_DISCONNECT_TIMEOUT seconds.
         await manager.disconnect_operator_and_broadcast(operator_id)
-        with get_session() as session:
-            op_obj = session.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
-            if op_obj:
-                op_obj.is_online = False
-                session.commit()
     except Exception as e:
         logger.error(f"Operator WS error for operator {operator_id}: {e}")
         await manager.disconnect_operator_and_broadcast(operator_id)
-        with get_session() as session:
-            op_obj = session.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
-            if op_obj:
-                op_obj.is_online = False
-                session.commit()
 
 
 # ── Backward compat: keep /ws/agent as alias during transition ──

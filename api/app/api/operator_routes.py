@@ -491,13 +491,25 @@ async def accept_chat(
                 select(Operator).where(Operator.id == request.operator_id, Operator.client_id == auth["client_id"])
             ).scalar_one_or_none()
         else:
-            # Fallback: first online operator for this client
+            # Fallback for client/owner auth: find the owner operator record.
+            # Prefer the role='owner' record to avoid ambiguity with sub-operators.
             operator = session.execute(
-                select(Operator).where(Operator.client_id == auth["client_id"], Operator.is_online.is_(True)).limit(1)
+                select(Operator)
+                .where(
+                    Operator.client_id == auth["client_id"],
+                    Operator.role == "owner",
+                )
+                .limit(1)
             ).scalar_one_or_none()
             if not operator:
+                # Last resort: any operator for this client that is online
                 operator = session.execute(
-                    select(Operator).where(Operator.client_id == auth["client_id"]).limit(1)
+                    select(Operator)
+                    .where(
+                        Operator.client_id == auth["client_id"],
+                        Operator.is_online.is_(True),
+                    )
+                    .limit(1)
                 ).scalar_one_or_none()
 
         if not operator:
@@ -539,11 +551,15 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_operato
         bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
         if not bot or bot.client_id != auth["client_id"]:
             raise HTTPException(status_code=403, detail="Access denied.")
+
+        # Capture bot_name inside the session block — accessing bot.name after session.close()
+        # raises DetachedInstanceError because SQLAlchemy expires objects on commit.
+        bot_name = bot.name
         chat_session.status = "bot"
         chat_session.assigned_operator_id = None
         session.commit()
 
-    asyncio.create_task(manager.close_chat(session_id, bot.name if bot else "AI Assistant"))
+    asyncio.create_task(manager.close_chat(session_id, bot_name))
 
     return {"success": True, "status": "bot"}
 
@@ -637,14 +653,24 @@ def toggle_operator_status(auth=Depends(get_current_client_or_operator)):
             session.commit()
             return {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
 
-        # Client: backward compat — find or create operator from client profile
+        # Client: find or create the owner's operator record.
+        # Filter by role='owner' to avoid matching sub-operators for the same client.
+        import uuid as _uuid
+
         client = auth["entity"]
         operator = session.execute(
-            select(Operator).where(Operator.client_id == client.id).limit(1)
+            select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
         ).scalar_one_or_none()
 
         if not operator:
-            operator = Operator(client_id=client.id, name=client.name, email=client.email, is_online=True, role="owner")
+            operator = Operator(
+                client_id=client.id,
+                name=client.name,
+                email=client.email,
+                is_online=True,
+                role="owner",
+                operator_api_key=_uuid.uuid4().hex,
+            )
             session.add(operator)
             session.commit()
             session.refresh(operator)

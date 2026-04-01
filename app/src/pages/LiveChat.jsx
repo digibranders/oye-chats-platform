@@ -13,7 +13,6 @@ import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
-const MAX_RECONNECT_ATTEMPTS = 8;
 
 export default function LiveChat({ embedded = false }) {
     const { bots, loading: botsLoading } = useBotContext();
@@ -21,6 +20,11 @@ export default function LiveChat({ embedded = false }) {
     // Core operator state
     const [isOnline, setIsOnline] = useState(false);
     const [operatorName, setOperatorName] = useState('');
+    // operatorId is needed for owner accounts (auth_type='client') to pin REST calls
+    // to the exact operator record rather than using the fragile .limit(1) DB fallback.
+    const operatorIdRef = useRef(
+        localStorage.getItem('operator_id') ? Number(localStorage.getItem('operator_id')) : null
+    );
 
     // Chat state
     const [queue, setQueue] = useState([]);             // [{ session_id, name, reason }]
@@ -58,6 +62,10 @@ export default function LiveChat({ embedded = false }) {
     // Connection state
     const [reconnectCount, setReconnectCount] = useState(0);
     const [connectionLost, setConnectionLost] = useState(false);
+
+    // End Chat error banner (auto-dismisses after 4s)
+    const [closeChatError, setCloseChatError] = useState(null);
+    const closeChatErrorTimerRef = useRef(null);
 
     // Refs — avoids stale closures in WebSocket handlers
     const messagesEndRef = useRef(null);
@@ -182,13 +190,25 @@ export default function LiveChat({ embedded = false }) {
             console.log('[LiveChat] WebSocket connected');
             reconnectAttemptsRef.current = 0;
             setConnectionLost(false);
-            clearInterval(pingIntervalRef.current);
-            // Heartbeat: keeps connection alive through proxies/NAT idle timeouts
-            pingIntervalRef.current = setInterval(() => {
-                if (socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({ type: 'ping' }));
-                }
-            }, 25000);
+
+            // Visibility-aware heartbeat: shorter interval when tab is active,
+            // longer when backgrounded (browsers throttle timers in hidden tabs).
+            const startPing = () => {
+                clearInterval(pingIntervalRef.current);
+                const delay = document.visibilityState === 'visible' ? 20000 : 45000;
+                pingIntervalRef.current = setInterval(() => {
+                    if (socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({ type: 'ping' }));
+                    }
+                }, delay);
+            };
+            startPing();
+
+            // Adjust heartbeat frequency on tab focus change.
+            const visHandler = () => startPing();
+            document.addEventListener('visibilitychange', visHandler);
+            // Store cleanup ref on the socket object for the return() cleanup below.
+            socket._visHandler = visHandler;
         };
 
         socket.onmessage = (event) => {
@@ -351,11 +371,13 @@ export default function LiveChat({ embedded = false }) {
             console.log('[LiveChat] WebSocket closed');
             clearInterval(pingIntervalRef.current);
             if (!manualCloseRef.current) {
-                if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+                // Show reconnecting banner after 2 failed attempts so brief blips
+                // don't flash the UI, but still surface persistent failures.
+                if (reconnectAttemptsRef.current >= 2) {
                     setConnectionLost(true);
-                    return;
                 }
-                // Exponential backoff: 3s → 6s → 12s → ... capped at 30s
+                // Never give up — operators must stay connected.
+                // Exponential backoff: 3s → 6s → 12s → 24s → 30s (capped).
                 const delay = Math.min(3000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
                 reconnectAttemptsRef.current += 1;
                 reconnectTimerRef.current = setTimeout(() => setReconnectCount(c => c + 1), delay);
@@ -366,11 +388,49 @@ export default function LiveChat({ embedded = false }) {
             manualCloseRef.current = true;
             clearInterval(pingIntervalRef.current);
             clearTimeout(reconnectTimerRef.current);
+            clearTimeout(closeChatErrorTimerRef.current);
+            if (socket._visHandler) {
+                document.removeEventListener('visibilitychange', socket._visHandler);
+            }
             socket.close();
             wsRef.current = null;
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOnline, reconnectCount, removeSessionFromQueue, syncQueueState]);
+
+    // Visibility + network change handlers — reconnect immediately when the operator
+    // returns to the tab or network is restored, with a reset backoff counter so
+    // they aren't stuck waiting 30 s after a routine tab switch.
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState !== 'visible' || !isOnline) return;
+            const ws = wsRef.current;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Verify the connection is still alive with an immediate ping.
+                try { ws.send(JSON.stringify({ type: 'ping' })); } catch { ws.close(); }
+            } else if (!manualCloseRef.current) {
+                // Connection died while backgrounded — reconnect immediately.
+                reconnectAttemptsRef.current = 0;
+                setReconnectCount(c => c + 1);
+            }
+        };
+
+        const handleOnline = () => {
+            if (!isOnline || manualCloseRef.current) return;
+            const ws = wsRef.current;
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                reconnectAttemptsRef.current = 0;
+                setReconnectCount(c => c + 1);
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('online', handleOnline);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('online', handleOnline);
+        };
+    }, [isOnline]);
 
     // Queue fallback polling: keeps queue accurate even if WS events are missed.
     useEffect(() => {
@@ -410,6 +470,13 @@ export default function LiveChat({ embedded = false }) {
             const result = await toggleOperatorStatus();
             setIsOnline(result.is_online);
             setOperatorName(result.operator_name);
+            // Persist the resolved operator_id so acceptChat can use it directly.
+            // Critical for owner accounts where auth_type='client' — the backend
+            // returns the correct operator_id regardless of how it was resolved.
+            if (result.operator_id) {
+                operatorIdRef.current = result.operator_id;
+                localStorage.setItem('operator_id', String(result.operator_id));
+            }
             if (!result.is_online) {
                 // Going offline — close WS without triggering reconnect
                 manualCloseRef.current = true;
@@ -433,7 +500,7 @@ export default function LiveChat({ embedded = false }) {
     const handleAcceptChat = async (sessionId, visitorName, reason) => {
         setAcceptingSessionId(sessionId);
         try {
-            await acceptChat(sessionId);
+            await acceptChat(sessionId, operatorIdRef.current);
             setActiveChats(prev => [...new Set([...prev, sessionId])]);
             setChatNames(prev => ({
                 ...prev,
@@ -482,6 +549,9 @@ export default function LiveChat({ embedded = false }) {
             }
         } catch (e) {
             console.error('Failed to close chat:', e);
+            clearTimeout(closeChatErrorTimerRef.current);
+            setCloseChatError('Failed to end chat. Please try again.');
+            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
         }
     };
 
@@ -591,8 +661,15 @@ export default function LiveChat({ embedded = false }) {
                 <div className={`flex items-center gap-3 ${embedded ? 'w-full justify-between' : ''}`}>
                     {operatorName && <span className="text-sm text-secondary-500">{operatorName}</span>}
                     {connectionLost && (
-                        <span className="text-xs text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-lg">
-                            Connection lost — refresh to reconnect
+                        <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Reconnecting...
+                            <button
+                                onClick={() => { reconnectAttemptsRef.current = 0; setReconnectCount(c => c + 1); }}
+                                className="ml-1 underline hover:text-amber-900"
+                            >
+                                Retry now
+                            </button>
                         </span>
                     )}
                     <button
@@ -759,6 +836,14 @@ export default function LiveChat({ embedded = false }) {
                                         </button>
                                     </div>
                                 </div>
+
+                                {/* End Chat error banner */}
+                                {closeChatError && (
+                                    <div className="mx-4 mt-2 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                                        <X className="w-3.5 h-3.5 flex-shrink-0" />
+                                        {closeChatError}
+                                    </div>
+                                )}
 
                                 {/* Messages area */}
                                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
