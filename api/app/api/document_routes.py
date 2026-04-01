@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import os
-import shutil
 
 import psutil
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.api.auth import get_current_client_or_operator
 from app.config import DOCUMENTS_DIR
+from app.core.rate_limit import key_from_api_key, limiter
 from app.db.models import Bot, Client, Document
 from app.db.repository import get_ingested_documents
 from app.db.session import get_session
@@ -19,7 +19,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["documents"])
 
-_crawl_lock = asyncio.Lock()
+# Upload limits (bytes)
+_MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB per file
+_MAX_TOTAL_UPLOAD = 60 * 1024 * 1024  # 60 MB per request
+
+# Per-client crawl locks: each customer can run 1 crawl at a time without
+# blocking other customers.  Memory: ~200 bytes per lock × N clients.
+_crawl_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_crawl_lock(client_id: int) -> asyncio.Lock:
+    """Return a per-client asyncio.Lock, creating one if needed."""
+    if client_id not in _crawl_locks:
+        _crawl_locks[client_id] = asyncio.Lock()
+    return _crawl_locks[client_id]
 
 
 def _check_memory():
@@ -119,7 +132,9 @@ def _run_ingestion_background(client_id: int, documents_dir: str, bot_id: int | 
 
 
 @router.post("/ingest")
+@limiter.limit("10/minute", key_func=key_from_api_key)
 def ingest_documents(
+    request: Request,
     files: list[UploadFile] = File(...),
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
@@ -132,22 +147,44 @@ def ingest_documents(
         raise HTTPException(status_code=400, detail="No files uploaded")
 
     supported_extensions = [".pdf", ".docx", ".txt", ".md"]
-    saved_files = []
+    saved_paths: list[str] = []  # Track written paths for cleanup on failure
+    saved_files: list[str] = []
+    total_bytes = 0
 
+    # ── Phase 1: Validate ALL file sizes before writing anything to disk ──
+    file_buffers: list[tuple[str, bytes]] = []
     for file in files:
         if not any(file.filename.lower().endswith(ext) for ext in supported_extensions):
             logger.warning(f"Skipping unsupported file: {file.filename}")
             continue
 
-        file_path = os.path.join(DOCUMENTS_DIR, file.filename)
+        content = file.file.read()
+        file_size = len(content)
 
+        if file_size > _MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{file.filename}' exceeds 20 MB limit ({file_size / (1024 * 1024):.1f} MB).",
+            )
+        total_bytes += file_size
+        if total_bytes > _MAX_TOTAL_UPLOAD:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Total upload exceeds 60 MB limit ({total_bytes / (1024 * 1024):.1f} MB).",
+            )
+        file_buffers.append((file.filename, content))
+
+    # ── Phase 2: All files validated — write to disk ──
+    for filename, content in file_buffers:
+        file_path = os.path.join(DOCUMENTS_DIR, filename)
         try:
             with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            saved_files.append(file.filename)
-            logger.info(f"Saved file: {file.filename}")
+                buffer.write(content)
+            saved_paths.append(file_path)
+            saved_files.append(filename)
+            logger.info(f"Saved file: {filename} ({len(content) / 1024:.0f} KB)")
         except Exception as e:
-            logger.error(f"Failed to save {file.filename}: {e}")
+            logger.error(f"Failed to save {filename}: {e}")
 
     if not saved_files:
         raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) saved.")
@@ -164,8 +201,10 @@ def ingest_documents(
 
 
 @router.post("/crawl")
+@limiter.limit("3/hour", key_func=key_from_api_key)
 async def crawl_endpoint(
-    request: CrawlRequest,
+    crawl_request: CrawlRequest,
+    request: Request,
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
@@ -174,16 +213,16 @@ async def crawl_endpoint(
     client_id = auth["client_id"]
     _check_memory()
 
-    # In a single-threaded asyncio event loop, locked() + acquire() without an
-    # intervening await is safe from race conditions. We reject immediately
-    # (429) instead of making the second caller wait.
-    if _crawl_lock.locked():
-        raise HTTPException(status_code=429, detail="A crawl job is already running. Please wait.")
+    # Per-client lock: each customer can run one crawl at a time.
+    # Other customers are not blocked.
+    lock = _get_crawl_lock(client_id)
+    if lock.locked():
+        raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
 
-    await _crawl_lock.acquire()
+    await lock.acquire()
     try:
-        logger.info(f"Crawling URL recursively: {request.url} for client {client_id}, bot_id={bot_id}")
-        crawl_data = await crawl_website(request.url, max_pages=request.max_pages)
+        logger.info(f"Crawling URL recursively: {crawl_request.url} for client {client_id}, bot_id={bot_id}")
+        crawl_data = await crawl_website(crawl_request.url, max_pages=crawl_request.max_pages)
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])
@@ -213,7 +252,7 @@ async def crawl_endpoint(
 
         return {
             "message": "Crawling and ingestion completed successfully",
-            "root_url": request.url,
+            "root_url": crawl_request.url,
             "pages_processed": pages_processed,
             "chunks_processed": total_chunks,
             "recommended_colors": recommended_colors,
@@ -227,4 +266,4 @@ async def crawl_endpoint(
         logger.error(f"Crawling failed unexpectedly: {e}")
         raise HTTPException(status_code=500, detail=f"Crawling failed: {str(e)}") from e
     finally:
-        _crawl_lock.release()
+        lock.release()

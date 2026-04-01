@@ -10,6 +10,8 @@ if sys.platform.startswith("win"):
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import inspect, select, text
 
 from app.api.analytics_routes import router as analytics_router
@@ -27,7 +29,13 @@ from app.api.operator_routes import router as operator_router
 from app.api.superadmin_routes import router as superadmin_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
-from app.core.middleware import generic_exception_handler, get_cors_origins, validation_exception_handler
+from app.core.middleware import (
+    TimeoutMiddleware,
+    generic_exception_handler,
+    get_cors_origins,
+    validation_exception_handler,
+)
+from app.core.rate_limit import limiter
 from app.db.models import Base, Bot
 from app.db.models import ChatSession as CS
 from app.db.session import engine, get_session
@@ -55,6 +63,10 @@ else:
 
 # Initialize FastAPI
 app = FastAPI(title="RAG Backend API", version="1.0.0")
+
+# --- Rate Limiting ---
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Routers ---
 app.include_router(auth_router)
@@ -101,6 +113,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Request Timeout (60s for non-streaming endpoints) ---
+app.add_middleware(TimeoutMiddleware)
+
 # Ensure directories exist
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
@@ -109,11 +124,13 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 
 @app.on_event("shutdown")
-def shutdown_langfuse():
-    """Flush any buffered Langfuse events on shutdown."""
+def shutdown_services():
+    """Flush Langfuse events and drain background thread pool on shutdown."""
     from app.core.langfuse_client import flush_langfuse
+    from app.core.thread_pool import shutdown_pool
 
     flush_langfuse()
+    shutdown_pool()
 
 
 @app.on_event("startup")

@@ -1,11 +1,43 @@
+import asyncio
 import logging
 import os
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
+
+# Paths exempt from the global request timeout (streaming / long-running).
+_TIMEOUT_EXEMPT_PREFIXES = ("/crawl", "/chat/stream", "/ws")
+
+# Default timeout for non-exempt endpoints (seconds).
+_REQUEST_TIMEOUT_SECONDS = 60
+
+
+class TimeoutMiddleware(BaseHTTPMiddleware):
+    """Enforce a hard timeout on non-streaming endpoints.
+
+    With only 2 uvicorn workers, a single stuck request can halve capacity.
+    This middleware returns 504 instead of hanging indefinitely.  Streaming,
+    WebSocket, and crawl endpoints are exempt.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        path = request.url.path
+        if any(path.startswith(prefix) for prefix in _TIMEOUT_EXEMPT_PREFIXES):
+            return await call_next(request)
+
+        try:
+            return await asyncio.wait_for(call_next(request), timeout=_REQUEST_TIMEOUT_SECONDS)
+        except TimeoutError:
+            logger.warning(f"Request timed out after {_REQUEST_TIMEOUT_SECONDS}s: {request.method} {path}")
+            return JSONResponse(
+                status_code=504,
+                content={"detail": "Request timed out. Please try again."},
+            )
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
