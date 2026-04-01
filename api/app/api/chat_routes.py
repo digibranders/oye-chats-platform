@@ -160,7 +160,7 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
         raise
     except Exception as e:
         logger.error(f"Chat failed for bot {getattr(bot, 'id', '?')}: {type(e).__name__}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Chat request failed. Please try again.") from e
 
 
 @router.post("/chat/stream")
@@ -213,7 +213,7 @@ def lead_capture_endpoint(request: LeadCaptureRequest, bot: Bot = Depends(get_cu
             return {"success": True, "session_id": request.session_id}
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to capture lead information.") from e
 
 
 @router.post("/chat/sdr")
@@ -239,7 +239,7 @@ def chat_sdr_endpoint(request: ChatRequest, bot: Bot = Depends(get_current_bot))
         raise
     except Exception as e:
         logger.error(f"SDR Chat failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Chat request failed. Please try again.") from e
 
 
 @router.post("/chat/feedback/{message_id}")
@@ -276,7 +276,7 @@ def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot
         raise
     except Exception as e:
         logger.error(f"Feedback submission failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to save feedback.") from e
 
 
 @router.get("/chat/history/{session_id}")
@@ -337,4 +337,4 @@ def get_history_endpoint(
             return [{"role": m.role, "content": m.content, "timestamp": m.created_at.isoformat()} for m in all_history]
     except Exception as e:
         logger.error(f"Failed to fetch history: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to fetch chat history.") from e

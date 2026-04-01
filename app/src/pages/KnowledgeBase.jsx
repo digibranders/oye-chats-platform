@@ -38,6 +38,7 @@ export default function KnowledgeBase() {
             setDocuments(docs || []);
         } catch (error) {
             console.error('Failed to load documents:', error);
+            showToast('error', error.message || 'Failed to load documents');
         } finally {
             setIsLoadingDocs(false);
         }

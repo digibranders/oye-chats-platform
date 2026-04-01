@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Bot, Users as UsersIcon, MessageSquare, Loader2, Link } from 'lucide-react';
 import { getGlobalStats } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
 
 export default function SuperadminOverview() {
+    const { showToast } = useToast();
     const [stats, setStats] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -13,6 +15,7 @@ export default function SuperadminOverview() {
                 setStats(data);
             } catch (err) {
                 console.error("Failed to load global stats", err);
+                showToast('error', err.message || 'Failed to load global stats');
             } finally {
                 setIsLoading(false);
             }

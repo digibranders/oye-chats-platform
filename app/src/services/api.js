@@ -12,11 +12,20 @@ const api = axios.create({
 });
 
 const buildApiError = (error, fallbackMessage = 'Request failed') => {
-    const detail = error.response?.data?.detail;
-    const message = detail || error.message || fallbackMessage;
-    const apiError = new Error(typeof message === 'string' ? message : fallbackMessage);
-    apiError.status = error.response?.status;
-    apiError.data = error.response?.data;
+    const status = error.response?.status;
+    const data = error.response?.data;
+    let detail = data?.detail;
+
+    // Handle Pydantic 422 validation errors (detail is an array of error objects)
+    if (status === 422 && Array.isArray(detail) && detail.length > 0) {
+        const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
+        detail = msg.replace('Value error, ', '');
+    }
+
+    const message = (typeof detail === 'string' ? detail : null) || error.message || fallbackMessage;
+    const apiError = new Error(message);
+    apiError.status = status;
+    apiError.data = data;
     return apiError;
 };
 
@@ -71,7 +80,7 @@ export const loginAdmin = async (email, password) => {
         return response.data;
     } catch (error) {
         console.error('API Error during login:', error);
-        throw error.response?.data?.detail || error.message || 'Login failed';
+        throw buildApiError(error, 'Login failed');
     }
 };
 
@@ -89,16 +98,7 @@ export const registerClient = async (name, email, password, companyName = null, 
         return response.data;
     } catch (error) {
         console.error('API Error during registration:', error);
-        // Handle Pydantic validation errors (422) which come as array
-        if (error.response?.status === 422) {
-            const detail = error.response?.data?.detail;
-            if (Array.isArray(detail) && detail.length > 0) {
-                // Extract the readable message from Pydantic's error format
-                const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
-                throw msg.replace('Value error, ', '');
-            }
-        }
-        throw error.response?.data?.detail || error.message || 'Registration failed';
+        throw buildApiError(error, 'Registration failed');
     }
 };
 
@@ -113,7 +113,7 @@ export const requestPasswordReset = async (email) => {
         return response.data;
     } catch (error) {
         console.error('API Error requesting password reset:', error);
-        throw error.response?.data?.detail || error.message || 'Failed to request reset';
+        throw buildApiError(error, 'Failed to request reset');
     }
 };
 
@@ -130,14 +130,7 @@ export const resetPassword = async (email, otp, new_password) => {
         return response.data;
     } catch (error) {
         console.error('API Error resetting password:', error);
-        if (error.response?.status === 422) {
-            const detail = error.response?.data?.detail;
-            if (Array.isArray(detail) && detail.length > 0) {
-                const msg = detail[0]?.msg || detail[0]?.message || 'Validation error';
-                throw msg.replace('Value error, ', '');
-            }
-        }
-        throw error.response?.data?.detail || error.message || 'Failed to reset password';
+        throw buildApiError(error, 'Failed to reset password');
     }
 };
 
@@ -163,7 +156,7 @@ export const uploadDocuments = async (files, botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error during document upload:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Document upload failed');
     }
 };
 
@@ -179,7 +172,7 @@ export const crawlWebsite = async (url, botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error during website crawl:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Website crawl failed');
     }
 };
 
@@ -194,7 +187,7 @@ export const getDocuments = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching documents:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load documents');
     }
 };
 
@@ -212,7 +205,7 @@ export const deleteDocument = async (documentName, botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error deleting document:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to delete document');
     }
 };
 
@@ -228,7 +221,7 @@ export const getDashboardStats = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching dashboard stats:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load dashboard stats');
     }
 };
 
@@ -244,7 +237,7 @@ export const getActivityStats = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching activity stats:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load activity data');
     }
 };
 
@@ -259,7 +252,7 @@ export const getVisitorsData = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching visitors data:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load visitor data');
     }
 };
 
@@ -274,7 +267,7 @@ export const getChatHistory = async (sessionId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching chat history:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load chat history');
     }
 };
 
@@ -289,7 +282,7 @@ export const getFeedbackData = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching feedback data:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load feedback');
     }
 };
 
@@ -304,7 +297,7 @@ export const getTopQuestions = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching top questions:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load top questions');
     }
 };
 
@@ -344,7 +337,7 @@ export const getClientSettings = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching settings:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load settings');
     }
 };
 
@@ -371,7 +364,7 @@ export const updateClientSettings = async (settings, botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error updating settings:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to update settings');
     }
 };
 
@@ -392,7 +385,7 @@ export const uploadLogo = async (file) => {
         return response.data;
     } catch (error) {
         console.error('API Error uploading logo:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to upload logo');
     }
 };
 
@@ -408,7 +401,7 @@ export const getGlobalStats = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching global stats:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load stats');
     }
 };
 
@@ -422,7 +415,7 @@ export const getClients = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching clients:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load clients');
     }
 };
 
@@ -439,7 +432,7 @@ export const createClient = async (name, email, password, website = '') => {
         return response.data;
     } catch (error) {
         console.error('API Error creating client:', error);
-        throw error.response?.data?.detail || error.message || 'Failed to create client';
+        throw buildApiError(error, 'Failed to create client');
     }
 };
 
@@ -454,7 +447,7 @@ export const deleteClient = async (clientId) => {
         return response.data;
     } catch (error) {
         console.error('API Error deleting client:', error);
-        throw error.response?.data?.detail || error.message || 'Failed to delete client';
+        throw buildApiError(error, 'Failed to delete client');
     }
 };
 
@@ -468,7 +461,7 @@ export const getGlobalFeedbackData = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching global feedback:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load feedback');
     }
 };
 
@@ -499,7 +492,7 @@ export const createBot = async (data) => {
         return response.data;
     } catch (error) {
         console.error('API Error creating bot:', error);
-        throw error.response?.data?.detail || error.message || 'Failed to create bot';
+        throw buildApiError(error, 'Failed to create bot');
     }
 };
 
@@ -514,7 +507,7 @@ export const getBot = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching bot:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load bot');
     }
 };
 
@@ -530,7 +523,7 @@ export const updateBot = async (botId, data) => {
         return response.data;
     } catch (error) {
         console.error('API Error updating bot:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to update bot');
     }
 };
 
@@ -545,7 +538,7 @@ export const deleteBot = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error deleting bot:', error);
-        throw error.response?.data?.detail || error.message || 'Failed to delete bot';
+        throw buildApiError(error, 'Failed to delete bot');
     }
 };
 
@@ -563,7 +556,7 @@ export const getLeads = async (botId, params = {}) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching leads:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load leads');
     }
 };
 
@@ -573,7 +566,7 @@ export const getLeadDetail = async (sessionId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching lead detail:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load lead detail');
     }
 };
 
@@ -584,7 +577,7 @@ export const getLeadStats = async (botId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching lead stats:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load lead stats');
     }
 };
 
@@ -602,7 +595,7 @@ export const exportLeadsCsv = async (botId) => {
         window.URL.revokeObjectURL(url);
     } catch (error) {
         console.error('API Error exporting leads:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to export leads');
     }
 };
 
@@ -614,7 +607,7 @@ export const getOperatorQueue = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching queue:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load queue');
     }
 };
 
@@ -637,7 +630,7 @@ export const closeOperatorChat = async (sessionId) => {
         return response.data;
     } catch (error) {
         console.error('API Error closing chat:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to close chat');
     }
 };
 
@@ -647,7 +640,7 @@ export const transferChat = async (sessionId, data) => {
         return response.data;
     } catch (error) {
         console.error('API Error transferring chat:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to transfer chat');
     }
 };
 
@@ -657,7 +650,7 @@ export const toggleOperatorStatus = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error toggling status:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to toggle status');
     }
 };
 
@@ -667,7 +660,7 @@ export const getSessionDetails = async (sessionId) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching session details:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load session details');
     }
 };
 
@@ -679,7 +672,7 @@ export const loginOperator = async (email, password) => {
         return response.data;
     } catch (error) {
         console.error('API Error operator login:', error);
-        throw error.response?.data?.detail || error.message;
+        throw buildApiError(error, 'Login failed');
     }
 };
 
@@ -691,7 +684,7 @@ export const getOperators = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching operators:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load operators');
     }
 };
 
@@ -701,7 +694,7 @@ export const createOperator = async (data) => {
         return response.data;
     } catch (error) {
         console.error('API Error creating operator:', error);
-        throw error.response?.data?.detail || error.message;
+        throw buildApiError(error, 'Failed to create operator');
     }
 };
 
@@ -711,7 +704,7 @@ export const updateOperator = async (operatorId, data) => {
         return response.data;
     } catch (error) {
         console.error('API Error updating operator:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to update operator');
     }
 };
 
@@ -721,7 +714,7 @@ export const deleteOperator = async (operatorId) => {
         return response.data;
     } catch (error) {
         console.error('API Error deleting operator:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to delete operator');
     }
 };
 
@@ -733,7 +726,7 @@ export const getDepartments = async () => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching departments:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load departments');
     }
 };
 
@@ -743,7 +736,7 @@ export const createDepartment = async (data) => {
         return response.data;
     } catch (error) {
         console.error('API Error creating department:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to create department');
     }
 };
 
@@ -753,7 +746,7 @@ export const updateDepartment = async (departmentId, data) => {
         return response.data;
     } catch (error) {
         console.error('API Error updating department:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to update department');
     }
 };
 
@@ -763,7 +756,7 @@ export const deleteDepartment = async (departmentId) => {
         return response.data;
     } catch (error) {
         console.error('API Error deleting department:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to delete department');
     }
 };
 
@@ -775,7 +768,7 @@ export const getOfflineMessages = async (params = {}) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching offline messages:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load messages');
     }
 };
 
@@ -785,7 +778,7 @@ export const updateOfflineMessage = async (messageId, data) => {
         return response.data;
     } catch (error) {
         console.error('API Error updating offline message:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to update message');
     }
 };
 
@@ -795,7 +788,7 @@ export const deleteOfflineMessage = async (messageId) => {
         return response.data;
     } catch (error) {
         console.error('API Error deleting offline message:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to delete message');
     }
 };
 
@@ -808,7 +801,7 @@ export const getCannedResponses = async (category = null) => {
         return response.data;
     } catch (error) {
         console.error('API Error fetching canned responses:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to load responses');
     }
 };
 
@@ -818,7 +811,7 @@ export const createCannedResponse = async (data) => {
         return response.data;
     } catch (error) {
         console.error('API Error creating canned response:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to create response');
     }
 };
 
@@ -828,7 +821,7 @@ export const updateCannedResponse = async (responseId, data) => {
         return response.data;
     } catch (error) {
         console.error('API Error updating canned response:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to update response');
     }
 };
 
@@ -838,6 +831,6 @@ export const deleteCannedResponse = async (responseId) => {
         return response.data;
     } catch (error) {
         console.error('API Error deleting canned response:', error);
-        throw error.response?.data || error.message;
+        throw buildApiError(error, 'Failed to delete response');
     }
 };

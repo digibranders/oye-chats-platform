@@ -61,14 +61,17 @@ export default function Chatbot() {
         try {
             const result = await createBot({ name: newBotName.trim(), website: newBotWebsite.trim() || undefined });
             if (newBotWebsite.trim()) {
-                crawlWebsite(newBotWebsite.trim(), result.bot_id).catch(() => {});
+                crawlWebsite(newBotWebsite.trim(), result.bot_id).catch((err) => {
+                    console.error('Background website crawl failed:', err);
+                    showToast('error', err.message || 'Failed to crawl website');
+                });
             }
             await refreshBots();
             setNewBotName(''); setNewBotWebsite(''); setIsCreateOpen(false);
             showToast('success', `Bot "${result.name}" created!`);
             setExpandedBot(result.bot_id);
         } catch (err) {
-            setError(typeof err === 'string' ? err : err?.detail || 'Failed to create bot');
+            setError(err.message || 'Failed to create bot');
         } finally { setIsSubmitting(false); }
     };
 
@@ -81,7 +84,7 @@ export default function Chatbot() {
             setConfirmDelete(null);
             if (expandedBot === botId) setExpandedBot(null);
         } catch (err) {
-            showToast('error', typeof err === 'string' ? err : err?.detail || 'Failed to delete bot');
+            showToast('error', err.message || 'Failed to delete bot');
         } finally { setDeletingBot(null); setConfirmDelete(null); }
     };
 

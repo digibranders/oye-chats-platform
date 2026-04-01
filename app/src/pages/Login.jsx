@@ -68,7 +68,7 @@ export default function Login() {
                 }
             }
         } catch (err) {
-            setError(err.toString());
+            setError(err.message || 'Login failed. Please try again.');
         } finally {
             setIsLoading(false);
         }

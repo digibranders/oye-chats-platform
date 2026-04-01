@@ -59,7 +59,7 @@ export default function Register() {
 
             navigate('/chatbot');
         } catch (err) {
-            setError(err.toString());
+            setError(err.message || 'Registration failed. Please try again.');
         } finally {
             setIsLoading(false);
         }

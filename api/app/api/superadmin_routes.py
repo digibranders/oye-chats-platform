@@ -164,4 +164,4 @@ def get_global_feedback(superadmin: Client = Depends(get_superadmin)):
 
     except Exception as e:
         logger.error(f"Failed to fetch global feedback logs: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e

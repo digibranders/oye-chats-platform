@@ -3,12 +3,14 @@ import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, A
 import { useNavigate } from 'react-router-dom';
 import { getDashboardStats, getTopQuestions } from '../services/api';
 import { useBotContext } from '../context/BotContext';
+import { useToast } from '../context/ToastContext';
 import StatCard from '../components/ui/StatCard';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 
 export default function Dashboard() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const { showToast } = useToast();
     const [stats, setStats] = useState(null);
     const [topQuestions, setTopQuestions] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -32,6 +34,7 @@ export default function Dashboard() {
                 setTopQuestions(questionsData);
             } catch (error) {
                 console.error('Failed to fetch dashboard data', error);
+                showToast('error', error.message || 'Failed to load dashboard data');
             } finally {
                 setIsLoading(false);
             }

@@ -31,7 +31,7 @@ export default function ForgotPassword() {
             setSuccess(data.message || 'If an account exists, a reset link has been sent.');
             setStep(2);
         } catch (err) {
-            setError(err.toString());
+            setError(err.message || 'Failed to send reset code.');
         } finally {
             setIsLoading(false);
         }
@@ -53,7 +53,7 @@ export default function ForgotPassword() {
             setSuccess(data.message || 'Password successfully reset.');
             setTimeout(() => navigate('/login'), 2000);
         } catch (err) {
-            setError(err.toString());
+            setError(err.message || 'Failed to reset password.');
         } finally {
             setIsLoading(false);
         }

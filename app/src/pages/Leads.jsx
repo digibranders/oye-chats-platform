@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Target, Download, X, Loader2, User, Mail, Phone, Building2, MapPin, Monitor, MessageCircle, Search, ChevronRight } from 'lucide-react';
 import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv } from '../services/api';
 import { useBotContext } from '../context/BotContext';
+import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
@@ -18,6 +19,7 @@ const BANT_WEIGHTS = { need: 30, budget: 25, authority: 25, timeline: 20 };
 
 export default function Leads() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const { showToast } = useToast();
     const [leads, setLeads] = useState([]);
     const [stats, setStats] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -45,6 +47,7 @@ export default function Leads() {
             setStats(statsData);
         } catch (error) {
             console.error('Failed to load leads:', error);
+            showToast('error', error.message || 'Failed to load leads');
         } finally {
             setIsLoading(false);
         }
@@ -57,6 +60,7 @@ export default function Leads() {
             setLeadDetail(await getLeadDetail(sessionId));
         } catch (error) {
             console.error('Failed to load lead detail:', error);
+            showToast('error', error.message || 'Failed to load lead details');
         } finally {
             setIsDetailLoading(false);
         }
@@ -68,6 +72,7 @@ export default function Leads() {
             await exportLeadsCsv(selectedBot?.id);
         } catch (error) {
             console.error('Export failed:', error);
+            showToast('error', error.message || 'Failed to export leads CSV');
         } finally {
             setIsExporting(false);
         }

@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import { getActivityStats, getTopQuestions } from '../services/api';
 import { useBotContext } from '../context/BotContext';
+import { useToast } from '../context/ToastContext';
 import StatCard from '../components/ui/StatCard';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
@@ -18,6 +19,7 @@ import { SkeletonChart } from '../components/ui/SkeletonLoader';
 
 export default function Analytics({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const { showToast } = useToast();
     const [activityData, setActivityData] = useState([]);
     const [topQuestions, setTopQuestions] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -74,6 +76,7 @@ export default function Analytics({ embedded = false }) {
                 setTopQuestions(questions);
             } catch (error) {
                 console.error('Failed to load analytics data', error);
+                showToast('error', error.message || 'Failed to load analytics data');
             } finally {
                 setIsLoading(false);
             }

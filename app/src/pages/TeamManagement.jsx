@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones, MessageSquareText, Eye, EyeOff } from 'lucide-react';
 import { getOperators, createOperator, deleteOperator, getDepartments, createDepartment, deleteDepartment } from '../services/api';
+import { useToast } from '../context/ToastContext';
 import CannedResponses from './CannedResponses';
 import { getAuthState } from '../utils/auth';
 
 export default function TeamManagement() {
     const { isOperator, isBotManager } = getAuthState();
+    const { showToast } = useToast();
 
     const [operators, setOperators] = useState([]);
     const [departments, setDepartments] = useState([]);
@@ -49,14 +51,20 @@ export default function TeamManagement() {
             setOperatorForm({ name: '', email: '', password: '', role: 'operator', department_id: '' });
             fetchData();
         } catch (err) {
-            setError(typeof err === 'string' ? err : 'Failed to create operator');
+            setError(err.message || 'Failed to create operator');
         }
     };
 
     const handleDeleteOperator = async (id, name) => {
         if (!confirm(`Delete operator "${name}"? Their active chats will be unassigned.`)) return;
-        await deleteOperator(id);
-        fetchData();
+        try {
+            await deleteOperator(id);
+            showToast('success', `Operator "${name}" deleted`);
+            fetchData();
+        } catch (err) {
+            console.error('Failed to delete operator:', err);
+            showToast('error', err.message || 'Failed to delete operator');
+        }
     };
 
     const handleCreateDept = async (e) => {
@@ -66,15 +74,22 @@ export default function TeamManagement() {
             setShowCreateDept(false);
             setDeptForm({ name: '', description: '' });
             fetchData();
-        } catch {
-            // silent
+        } catch (err) {
+            console.error('Failed to create department:', err);
+            showToast('error', err.message || 'Failed to create department');
         }
     };
 
     const handleDeleteDept = async (id, name) => {
         if (!confirm(`Delete department "${name}"? Agents will be unassigned.`)) return;
-        await deleteDepartment(id);
-        fetchData();
+        try {
+            await deleteDepartment(id);
+            showToast('success', `Department "${name}" deleted`);
+            fetchData();
+        } catch (err) {
+            console.error('Failed to delete department:', err);
+            showToast('error', err.message || 'Failed to delete department');
+        }
     };
 
     const roleIcon = (role) => {
