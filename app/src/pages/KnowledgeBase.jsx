@@ -46,6 +46,7 @@ export default function KnowledgeBase() {
 
     useEffect(() => {
         if (activeTab === 'list') fetchDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, selectedBot?.id]);
 
     if (!botsLoading && bots.length === 0) {

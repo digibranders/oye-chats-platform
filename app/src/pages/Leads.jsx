@@ -30,6 +30,7 @@ export default function Leads() {
     const [isDetailLoading, setIsDetailLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => { fetchData(); }, [selectedBot?.id]);
 
     if (!botsLoading && bots.length === 0) {

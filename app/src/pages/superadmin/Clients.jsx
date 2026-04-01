@@ -49,6 +49,7 @@ export default function SuperadminClients() {
 
     useEffect(() => {
         fetchClients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleDelete = async (clientId, clientName) => {

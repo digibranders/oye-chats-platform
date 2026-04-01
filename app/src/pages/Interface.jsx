@@ -181,7 +181,7 @@ export default function Interface({ embedded = false }) {
             }
         };
         fetchSettings();
-    }, [selectedBot?.id]);
+    }, [selectedBot?.id, showToast]);
 
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;

@@ -82,7 +82,7 @@ export default function Analytics({ embedded = false }) {
             }
         };
         fetchData();
-    }, [selectedBot?.id]);
+    }, [selectedBot?.id, showToast]);
 
     const filteredData = useMemo(() => {
         if (timeRange === 'all') return activityData;

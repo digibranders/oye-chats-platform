@@ -232,7 +232,8 @@ def chat_sdr_endpoint(request: ChatRequest, bot: Bot = Depends(get_current_bot))
         result = run_sdr_qualification(bot, request.question, session_id, bot_id=bot.id)
 
         if "error" in result:
-            raise HTTPException(status_code=500, detail=result["error"])
+            logger.error(f"SDR qualification error: {result['error']}")
+            raise HTTPException(status_code=500, detail="Chat request failed. Please try again.")
 
         return result
     except HTTPException:

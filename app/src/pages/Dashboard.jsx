@@ -40,7 +40,7 @@ export default function Dashboard() {
             }
         };
         fetchData();
-    }, [selectedBot?.id]);
+    }, [selectedBot?.id, showToast]);
 
     // Greeting based on time of day
     const hour = new Date().getHours();

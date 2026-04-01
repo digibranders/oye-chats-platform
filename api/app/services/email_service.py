@@ -153,7 +153,9 @@ def send_handoff_request_email(notification_email: str, bot_name: str, reason: s
     </a>
     """
     send_email_async(
-        notification_email, f"[OyeChats] Live Chat Request — {bot_name}", _base_template("Live Chat Request 💬", content)
+        notification_email,
+        f"[OyeChats] Live Chat Request — {bot_name}",
+        _base_template("Live Chat Request 💬", content),
     )
 
 

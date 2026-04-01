@@ -17,6 +17,7 @@ export default function Users({ embedded = false }) {
     const [isChatLoading, setIsChatLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => { fetchVisitors(); }, [selectedBot?.id]);
 
     if (!botsLoading && bots.length === 0) {

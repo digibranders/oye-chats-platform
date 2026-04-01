@@ -21,7 +21,7 @@ export default function SuperadminOverview() {
             }
         };
         fetchStats();
-    }, []);
+    }, [showToast]);
 
     return (
         <div className="space-y-8 animate-slide-up">
