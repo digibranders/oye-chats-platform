@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, MessageSquare, ArrowRight, Headphones, Building2, ArrowLeft } from 'lucide-react';
+import { User, Mail, MessageSquare, ArrowRight, Headphones, Building2, ArrowLeft, ChevronDown } from 'lucide-react';
 import { getDepartments } from '../services/api';
 
 const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo }) => {
@@ -11,6 +11,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo }) => {
     });
     const [submitting, setSubmitting] = useState(false);
     const [departments, setDepartments] = useState([]);
+    const [emailError, setEmailError] = useState('');
 
     useEffect(() => {
         getDepartments().then((data) => {
@@ -20,9 +21,16 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo }) => {
         });
     }, []);
 
+    const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.name.trim() || !formData.email.trim()) return;
+        if (!formData.name.trim()) return;
+        if (!validateEmail(formData.email)) {
+            setEmailError('Please enter a valid email address.');
+            return;
+        }
+        setEmailError('');
         setSubmitting(true);
         try {
             await onSubmit(formData);
@@ -60,16 +68,22 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo }) => {
                         />
                     </div>
 
-                    <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50/50 px-3.5 py-2.5 focus-within:border-blue-300 focus-within:bg-white transition-colors">
-                        <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                        <input
-                            type="email"
-                            placeholder="Email address *"
-                            value={formData.email}
-                            onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                            className="flex-1 bg-transparent outline-none text-sm text-[#16202C] placeholder:text-gray-400"
-                            required
-                        />
+                    <div>
+                        <div className={`flex items-center gap-2.5 rounded-xl border bg-gray-50/50 px-3.5 py-2.5 focus-within:bg-white transition-colors ${emailError ? 'border-red-300 focus-within:border-red-400' : 'border-gray-200 focus-within:border-blue-300'}`}>
+                            <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            <input
+                                type="email"
+                                placeholder="Email address *"
+                                value={formData.email}
+                                onChange={(e) => { setFormData(prev => ({ ...prev, email: e.target.value })); if (emailError) setEmailError(''); }}
+                                className="flex-1 bg-transparent outline-none text-sm text-[#16202C] placeholder:text-gray-400"
+                                aria-describedby={emailError ? 'email-error' : undefined}
+                                required
+                            />
+                        </div>
+                        {emailError && (
+                            <p id="email-error" className="mt-1 ml-1 text-[11px] text-red-500">{emailError}</p>
+                        )}
                     </div>
 
                     {departments.length > 0 && (
@@ -85,6 +99,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo }) => {
                                     <option key={dept.id} value={dept.id}>{dept.name}</option>
                                 ))}
                             </select>
+                            <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0 pointer-events-none" />
                         </div>
                     )}
 

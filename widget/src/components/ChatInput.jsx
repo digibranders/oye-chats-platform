@@ -1,5 +1,4 @@
 import React from 'react';
-import { Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 
 const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, inputRef, placeholder }) => {
@@ -28,6 +27,7 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                         onChange={handleChange}
                         onKeyDown={handleKeyDown}
                         placeholder={placeholder || 'Ask anything?'}
+                        aria-label="Chat message input"
                         className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[100px]"
                         style={{ border: 'none' }}
                         disabled={isTyping}
@@ -35,16 +35,13 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                         rows={1}
                     />
 
-                    {/* Bottom row — paperclip left, send right */}
-                    <div className="flex items-center justify-between mt-2">
-                        <Paperclip
-                            size={20}
-                            className="text-[#16202C] cursor-pointer hover:text-gray-500 transition-colors"
-                        />
+                    {/* Bottom row — send button right */}
+                    <div className="flex items-center justify-end mt-2">
                         <button
                             type="submit"
                             disabled={!hasText || isTyping}
-                            className="transition-all disabled:cursor-not-allowed"
+                            aria-label="Send message"
+                            className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                         >
                             <SendIcon
                                 size={20}

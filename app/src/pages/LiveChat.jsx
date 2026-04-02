@@ -49,6 +49,8 @@ export default function LiveChat({ embedded = false }) {
     const [showTransferModal, setShowTransferModal] = useState(false);
     const [transferOperators, setTransferOperators] = useState([]);
     const [transferDepartments, setTransferDepartments] = useState([]);
+    // Two-step transfer: null → { id, dept, label } → confirmed
+    const [transferTarget, setTransferTarget] = useState(null);
 
     // Right panel (session info + team roster)
     const [showRightPanel, setShowRightPanel] = useState(true);
@@ -493,6 +495,25 @@ export default function LiveChat({ embedded = false }) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isTyping]);
 
+    // P2-24: Keyboard shortcuts — Ctrl+1…9 to switch active chats, Escape to close modal
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                if (showTransferModal) { setShowTransferModal(false); setTransferTarget(null); }
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+                const idx = parseInt(e.key, 10) - 1;
+                if (idx < activeChats.length) {
+                    e.preventDefault();
+                    handleSelectChat(activeChats[idx]);
+                }
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [showTransferModal, activeChats]);
+
     // Load canned responses once
     useEffect(() => {
         getCannedResponses().then(data => setCannedResponses(data.responses || [])).catch(() => {});
@@ -537,6 +558,8 @@ export default function LiveChat({ embedded = false }) {
 
     const handleAcceptChat = async (sessionId, visitorName, reason) => {
         setAcceptingSessionId(sessionId);
+        // Safety timeout: reset loading state if the request hangs for more than 8s
+        const acceptTimeoutId = setTimeout(() => setAcceptingSessionId(null), 8000);
         try {
             await acceptChat(sessionId, operatorIdRef.current);
             setActiveChats(prev => [...new Set([...prev, sessionId])]);
@@ -560,6 +583,7 @@ export default function LiveChat({ embedded = false }) {
                 console.error('Failed to accept chat:', e);
             }
         } finally {
+            clearTimeout(acceptTimeoutId);
             setAcceptingSessionId(null);
         }
     };
@@ -606,7 +630,8 @@ export default function LiveChat({ embedded = false }) {
     };
 
     const selectCannedResponse = (response) => {
-        setInputText(response.content);
+        // Append to existing input unless the user triggered it with "/" — then replace
+        setInputText(prev => prev.startsWith('/') ? response.content : prev + (prev ? ' ' : '') + response.content);
         setShowCannedDropdown(false);
         inputRef.current?.focus();
     };
@@ -621,6 +646,7 @@ export default function LiveChat({ embedded = false }) {
     });
 
     const openTransferModal = async () => {
+        setTransferTarget(null);
         try {
             const [operatorsData, deptsData] = await Promise.all([getOperators(), getDepartments()]);
             setTransferOperators((operatorsData.operators || []).filter(a => a.is_online));
@@ -637,7 +663,10 @@ export default function LiveChat({ embedded = false }) {
                 : { target_department_id: targetDeptId };
             await transferChat(selectedChat, payload);
             setShowTransferModal(false);
-            setActiveChats(prev => prev.filter(c => c !== selectedChat));
+            setTransferTarget(null);
+            const transferredSession = selectedChat;
+            setActiveChats(prev => prev.filter(c => c !== transferredSession));
+            setUnreadCounts(prev => { const next = { ...prev }; delete next[transferredSession]; return next; });
             setSelectedChat(null);
             setMessages([]);
         } catch (e) {
@@ -826,7 +855,10 @@ export default function LiveChat({ embedded = false }) {
                                                 </div>
                                                 <div className="flex items-center gap-1.5 flex-shrink-0">
                                                     {unread > 0 && (
-                                                        <span className="min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                                                        <span
+                                                            className="min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center"
+                                                            aria-label={`${unread} unread message${unread !== 1 ? 's' : ''}`}
+                                                        >
                                                             {unread > 9 ? '9+' : unread}
                                                         </span>
                                                     )}
@@ -873,8 +905,8 @@ export default function LiveChat({ embedded = false }) {
                                         </button>
                                         <button
                                             onClick={() => setShowRightPanel(p => !p)}
-                                            className="p-1.5 text-secondary-400 hover:text-secondary-600 hover:bg-secondary-100 rounded-lg transition-colors"
-                                            title={showRightPanel ? 'Hide panel' : 'Show panel'}
+                                            aria-label={showRightPanel ? 'Hide info panel' : 'Show info panel'}
+                                            className="p-1.5 text-secondary-400 hover:text-secondary-600 hover:bg-secondary-100 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary-300"
                                         >
                                             {showRightPanel
                                                 ? <ChevronRight className="w-4 h-4" />
@@ -892,7 +924,7 @@ export default function LiveChat({ embedded = false }) {
                                 )}
 
                                 {/* Messages area */}
-                                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+                                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" aria-live="polite" aria-label="Conversation messages" role="log">
                                     {messages.map((msg) => (
                                         <div key={msg.id} className={`flex ${msg.role === 'operator' ? 'justify-end' : 'justify-start'}`}>
                                             <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
@@ -956,7 +988,8 @@ export default function LiveChat({ embedded = false }) {
                                         <button
                                             type="submit"
                                             disabled={!inputText.trim()}
-                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-30"
+                                            aria-label="Send message"
+                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-30 focus-visible:ring-2 focus-visible:ring-primary-300"
                                         >
                                             <Send className="w-4 h-4" />
                                         </button>
@@ -1131,18 +1164,45 @@ export default function LiveChat({ embedded = false }) {
 
             {/* Transfer Modal */}
             {showTransferModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Transfer chat">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
                         <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100">
                             <h2 className="font-semibold text-secondary-900 flex items-center gap-2">
                                 <ArrowRightLeft className="w-4 h-4" />
-                                Transfer Chat
+                                {transferTarget ? 'Confirm Transfer' : 'Transfer Chat'}
                             </h2>
-                            <button onClick={() => setShowTransferModal(false)} className="text-secondary-400 hover:text-secondary-600">
+                            <button
+                                onClick={() => { setShowTransferModal(false); setTransferTarget(null); }}
+                                aria-label="Close transfer modal"
+                                className="text-secondary-400 hover:text-secondary-600 focus-visible:ring-2 focus-visible:ring-primary-300 rounded"
+                            >
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
                         <div className="p-5 space-y-4">
+                            {/* Step 2: confirmation */}
+                            {transferTarget ? (
+                                <div className="text-center space-y-4">
+                                    <p className="text-sm text-secondary-700">
+                                        Transfer this chat to <strong>{transferTarget.label}</strong>?
+                                    </p>
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={() => setTransferTarget(null)}
+                                            className="flex-1 py-2 rounded-lg border border-secondary-200 text-sm text-secondary-600 hover:bg-secondary-50 transition-colors"
+                                        >
+                                            Back
+                                        </button>
+                                        <button
+                                            onClick={() => handleTransfer(transferTarget.operatorId, transferTarget.deptId)}
+                                            className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
+                                        >
+                                            Confirm Transfer
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                            <>
                             {transferOperators.length > 0 && (
                                 <div>
                                     <h3 className="text-sm font-medium text-secondary-700 mb-2">Online Operators</h3>
@@ -1150,7 +1210,7 @@ export default function LiveChat({ embedded = false }) {
                                         {transferOperators.map(operator => (
                                             <button
                                                 key={operator.id}
-                                                onClick={() => handleTransfer(operator.id, null)}
+                                                onClick={() => setTransferTarget({ operatorId: operator.id, deptId: null, label: operator.name })}
                                                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 transition-colors text-left"
                                             >
                                                 <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
@@ -1174,7 +1234,7 @@ export default function LiveChat({ embedded = false }) {
                                         {transferDepartments.map(dept => (
                                             <button
                                                 key={dept.id}
-                                                onClick={() => handleTransfer(null, dept.id)}
+                                                onClick={() => setTransferTarget({ operatorId: null, deptId: dept.id, label: dept.name })}
                                                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 transition-colors text-left"
                                             >
                                                 <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-sm">
@@ -1188,6 +1248,8 @@ export default function LiveChat({ embedded = false }) {
                             )}
                             {transferOperators.length === 0 && transferDepartments.length === 0 && (
                                 <p className="text-sm text-secondary-500 text-center py-4">No operators online or departments available.</p>
+                            )}
+                            </>
                             )}
                         </div>
                     </div>

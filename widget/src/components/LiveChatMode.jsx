@@ -537,7 +537,13 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                     <span className="text-xs text-amber-700 font-medium">Reconnecting...</span>
                 </div>
             )}
-            <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5" style={{ backgroundColor: settings.background_color || '#fff' }}>
+            <div
+                className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5"
+                style={{ backgroundColor: settings.background_color || '#fff' }}
+                aria-live="polite"
+                aria-label="Chat messages"
+                role="log"
+            >
                 {/* Previous bot conversation context */}
                 {botMessages.length > 0 && messages.length === 0 && (
                     <>
@@ -587,12 +593,25 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                         </p>
                                     </div>
                                 </div>
-                                {/* WhatsApp-style read status */}
+                                {/* WhatsApp-style read status — tap to retry if failed */}
                                 <div className="flex items-center gap-1 mt-0.5 mr-1">
                                     {msg.failed ? (
-                                        <span className="text-[10px] text-red-500 flex items-center gap-0.5">
-                                            <AlertCircle className="w-3 h-3" /> Not sent
-                                        </span>
+                                        <button
+                                            type="button"
+                                            aria-label="Message not sent — tap to retry"
+                                            onClick={() => {
+                                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                                    try {
+                                                        ws.send(JSON.stringify({ type: 'message', content: msg.text }));
+                                                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, failed: false, status: 'sent' } : m));
+                                                        setPendingMessages(prev => prev.filter(p => p.id !== msg.id));
+                                                    } catch { /* stay failed */ }
+                                                }
+                                            }}
+                                            className="text-[10px] text-red-500 flex items-center gap-0.5 hover:text-red-700 underline cursor-pointer"
+                                        >
+                                            <AlertCircle className="w-3 h-3" /> Not sent · Retry
+                                        </button>
                                     ) : (
                                         <span className="text-[10px] text-gray-400">
                                             {msg.status === 'read' ? (
@@ -667,7 +686,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 <div className="flex items-center justify-center mb-2">
                     <button
                         onClick={() => setShowEndConfirm(true)}
-                        className="text-[11px] text-gray-400 hover:text-red-500 transition-colors"
+                        aria-label="End live chat and return to AI assistant"
+                        className="text-[11px] text-gray-400 hover:text-red-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 rounded"
                     >
                         End chat and return to AI
                     </button>
@@ -687,7 +707,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                             <button
                                 type="submit"
                                 disabled={!inputText.trim()}
-                                className="transition-all disabled:cursor-not-allowed"
+                                aria-label="Send message"
+                                className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             >
                                 <Send
                                     size={20}
