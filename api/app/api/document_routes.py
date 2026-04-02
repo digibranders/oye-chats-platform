@@ -107,7 +107,9 @@ def delete_document_endpoint(
             if deleted_count == 0:
                 raise HTTPException(status_code=404, detail=f"Source '{document_name}' not found.")
 
-            file_path = os.path.join(DOCUMENTS_DIR, document_name)
+            file_path = os.path.normpath(os.path.join(DOCUMENTS_DIR, document_name))
+            if not file_path.startswith(os.path.normpath(DOCUMENTS_DIR) + os.sep):
+                raise HTTPException(status_code=403, detail="Invalid document path.")
             if os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info(f"Deleted file from disk: {file_path}")
@@ -176,7 +178,10 @@ def ingest_documents(
 
     # ── Phase 2: All files validated — write to disk ──
     for filename, content in file_buffers:
-        file_path = os.path.join(DOCUMENTS_DIR, filename)
+        file_path = os.path.normpath(os.path.join(DOCUMENTS_DIR, filename))
+        if not file_path.startswith(os.path.normpath(DOCUMENTS_DIR) + os.sep):
+            logger.warning(f"Blocked path traversal attempt in upload: {filename}")
+            continue
         try:
             with open(file_path, "wb") as buffer:
                 buffer.write(content)
