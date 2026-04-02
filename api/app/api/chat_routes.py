@@ -6,6 +6,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
+from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.langfuse_client import get_langfuse
@@ -282,22 +283,44 @@ def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot
 
 @router.get("/chat/history/{session_id}")
 def get_history_endpoint(
+    request: Request,
     session_id: str,
     bot_id: int | None = Query(None),
     before: int | None = Query(
         None, description="BUG-5: Cursor — return messages with id < this value (for pagination)"
     ),
     limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
-    auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve chat history for a given session.
 
+    Accepts both admin auth (X-API-Key / X-Operator-Key) and widget auth (X-Bot-Key).
     BUG-5: Supports cursor-based pagination via `before` param.
-    Pass `before=<smallest_message_id>` from a previous response to load older messages.
     """
+    # Dual auth: try client/operator first, fall back to bot key (widget)
+    auth = None
+    resolved_bot_id = bot_id
     try:
-        from sqlalchemy import select
+        auth = get_current_client_or_operator(
+            api_key=request.headers.get("X-API-Key"),
+            operator_key=request.headers.get("X-Operator-Key"),
+            legacy_agent_key=request.headers.get("X-Agent-Key"),
+            bot_key=request.headers.get("X-Bot-Key"),
+        )
+    except HTTPException:
+        # Fall back to bot key auth for widget access
+        raw_bot_key = request.headers.get("X-Bot-Key")
+        if not raw_bot_key:
+            raise HTTPException(status_code=401, detail="Authentication required") from None
+        with get_session() as db:
+            bot_obj = db.execute(
+                select(Bot).where(Bot.bot_key == raw_bot_key, Bot.is_active.is_(True))
+            ).scalar_one_or_none()
+            if not bot_obj:
+                raise HTTPException(status_code=401, detail="Invalid bot key") from None
+            resolved_bot_id = bot_obj.id
+            auth = {"client_id": bot_obj.client_id, "type": "bot"}
 
+    try:
         from app.db.models import Bot as BotModel
         from app.db.models import ChatMessage, ChatSession
 
@@ -306,7 +329,7 @@ def get_history_endpoint(
             sids = session_id.split(",")
 
             resolve_bot_ids = []
-            if not bot_id:
+            if not resolved_bot_id:
                 bots = (
                     session.execute(select(BotModel.id).where(BotModel.client_id == auth["client_id"])).scalars().all()
                 )
@@ -323,8 +346,8 @@ def get_history_endpoint(
                         BotModel.client_id == auth["client_id"],
                     )
                 )
-                if bot_id:
-                    stmt = stmt.where(BotModel.id == bot_id)
+                if resolved_bot_id:
+                    stmt = stmt.where(BotModel.id == resolved_bot_id)
                 elif resolve_bot_ids:
                     stmt = stmt.where(BotModel.id.in_(resolve_bot_ids))
 
