@@ -694,13 +694,24 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 </div>
                 <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
                     <form onSubmit={handleSend}>
-                        <input
+                        <textarea
                             ref={inputRef}
-                            type="text"
                             value={inputText}
-                            onChange={(e) => { setInputText(e.target.value); handleTyping(); }}
+                            onChange={(e) => {
+                                setInputText(e.target.value);
+                                handleTyping();
+                                e.target.style.height = 'auto';
+                                e.target.style.height = e.target.scrollHeight + 'px';
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSend(e);
+                                }
+                            }}
                             placeholder="Type a message..."
-                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400"
+                            rows={1}
+                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[100px]"
                             style={{ border: 'none' }}
                         />
                         <div className="flex items-center justify-between mt-2">
