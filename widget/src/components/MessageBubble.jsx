@@ -2,6 +2,15 @@ import React from 'react';
 import { ThumbsUp, ThumbsDown, Copy, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
+const SafeLink = ({ href, ...props }) => {
+    // Block javascript:, data:, vbscript: and other dangerous URI schemes
+    const isSafe = typeof href === 'string' && /^https?:\/\//i.test(href);
+    if (!isSafe) {
+        return <span {...props} />;
+    }
+    return <a href={href} {...props} className="text-blue-600 font-medium hover:underline" target="_blank" rel="noopener noreferrer" />;
+};
+
 const MessageBubble = ({
     msg,
     currentTheme,
@@ -20,9 +29,7 @@ const MessageBubble = ({
                         <div className="prose prose-sm max-w-none break-words">
                             <ReactMarkdown
                                 components={{
-                                    a: ({ ...props }) => (
-                                        <a {...props} className="text-blue-600 font-medium hover:underline" target="_blank" rel="noopener noreferrer" />
-                                    )
+                                    a: SafeLink,
                                 }}
                             >
                                 {msg.text}
@@ -73,9 +80,7 @@ const MessageBubble = ({
                     <div className="prose prose-sm max-w-none break-words">
                         <ReactMarkdown
                             components={{
-                                a: ({ ...props }) => (
-                                    <a {...props} className="text-blue-700 font-medium hover:underline" target="_blank" rel="noopener noreferrer" />
-                                )
+                                a: SafeLink,
                             }}
                         >
                             {msg.text}
