@@ -1,5 +1,6 @@
 """WebSocket endpoints for live chat between visitors and operators."""
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -13,6 +14,15 @@ from app.services.live_chat_service import manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
+
+_HEARTBEAT_INTERVAL = 30  # seconds
+
+
+async def _heartbeat(ws: WebSocket) -> None:
+    """Send periodic pings to keep the WebSocket connection alive."""
+    while True:
+        await asyncio.sleep(_HEARTBEAT_INTERVAL)
+        await ws.send_json({"type": "ping"})
 
 
 async def _send_initial_waiting_queue(
@@ -78,6 +88,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             return
 
     await manager.connect_visitor(session_id, ws)
+    heartbeat_task = asyncio.create_task(_heartbeat(ws))
 
     try:
         while True:
@@ -149,8 +160,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 logger.warning(f"Unknown visitor WS message type: {msg_type} from {session_id}")
 
     except WebSocketDisconnect:
+        heartbeat_task.cancel()
         manager.disconnect_visitor(session_id)
     except Exception as e:
+        heartbeat_task.cancel()
         logger.error(f"Visitor WS error for {session_id}: {type(e).__name__}: {e}")
         manager.disconnect_visitor(session_id)
 
@@ -236,6 +249,8 @@ async def operator_websocket(
         operator_name=operator_name,
         is_online=is_online,
     )
+
+    heartbeat_task = asyncio.create_task(_heartbeat(ws))
 
     try:
         await _send_initial_waiting_queue(ws, client_id, department_id)
@@ -342,8 +357,10 @@ async def operator_websocket(
                             await manager.close_chat(target_session, bot_name)
 
     except WebSocketDisconnect:
+        heartbeat_task.cancel()
         await manager.disconnect_operator_and_broadcast(operator_id)
     except Exception as e:
+        heartbeat_task.cancel()
         logger.error(f"Operator WS error for operator {operator_id}: {type(e).__name__}: {e}")
         await manager.disconnect_operator_and_broadcast(operator_id)
 

@@ -32,6 +32,8 @@ export default function LiveChat({ embedded = false }) {
     const [chatNames, setChatNames] = useState({});     // session_id → { name, reason }
     const [selectedChat, setSelectedChat] = useState(null);
     const [messages, setMessages] = useState([]);
+    const [hasMoreMessages, setHasMoreMessages] = useState(false);
+    const [loadingEarlier, setLoadingEarlier] = useState(false);
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [unreadCounts, setUnreadCounts] = useState({}); // session_id → number
@@ -350,9 +352,12 @@ export default function LiveChat({ embedded = false }) {
                         const currentSel = selectedChatRef.current;
                         if (currentSel) {
                             getChatHistory(currentSel)
-                                .then(history => setMessages(history.map((m, i) => ({
-                                    id: `restored-${i}`, role: m.role, content: m.content, timestamp: m.timestamp,
-                                }))))
+                                .then(history => {
+                                    setMessages(history.map((m, i) => ({
+                                        id: m.id ?? `restored-${i}`, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
+                                    })));
+                                    setHasMoreMessages(history.length === 50);
+                                })
                                 .catch(() => {});
                         }
                     }
@@ -573,9 +578,10 @@ export default function LiveChat({ embedded = false }) {
             try {
                 const history = await getChatHistory(sessionId);
                 setMessages(history.map((m, i) => ({
-                    id: i, role: m.role, content: m.content, timestamp: m.timestamp,
+                    id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
                 })));
-            } catch { setMessages([]); }
+                setHasMoreMessages(history.length === 50);
+            } catch { setMessages([]); setHasMoreMessages(false); }
         } catch (e) {
             if (e?.status === 409) {
                 removeSessionFromQueue(sessionId);
@@ -590,15 +596,35 @@ export default function LiveChat({ embedded = false }) {
 
     const handleSelectChat = async (sessionId) => {
         setSelectedChat(sessionId);
+        setHasMoreMessages(false);
         try {
             const history = await getChatHistory(sessionId);
             setMessages(history.map((m, i) => ({
-                id: i, role: m.role, content: m.content, timestamp: m.timestamp,
+                id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
             })));
+            setHasMoreMessages(history.length === 50);
             if (history.length > 0) {
                 setLastMessages(prev => ({ ...prev, [sessionId]: history[history.length - 1].content?.slice(0, 60) || '' }));
             }
-        } catch { setMessages([]); }
+        } catch { setMessages([]); setHasMoreMessages(false); }
+    };
+
+    const handleLoadEarlier = async () => {
+        const firstDbId = messages.find(m => m.dbId != null)?.dbId;
+        if (!firstDbId || !selectedChat || loadingEarlier) return;
+        setLoadingEarlier(true);
+        try {
+            const earlier = await getChatHistory(selectedChat, { beforeId: firstDbId });
+            setMessages(prev => [
+                ...earlier.map((m, i) => ({
+                    id: m.id ?? `earlier-${i}`, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
+                })),
+                ...prev,
+            ]);
+            setHasMoreMessages(earlier.length === 50);
+        } catch { /* silent */ } finally {
+            setLoadingEarlier(false);
+        }
     };
 
     const handleCloseChat = async (sessionId) => {
@@ -925,6 +951,28 @@ export default function LiveChat({ embedded = false }) {
 
                                 {/* Messages area */}
                                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" aria-live="polite" aria-label="Conversation messages" role="log">
+                                    {/* Load earlier messages */}
+                                    {hasMoreMessages && (
+                                        <div className="flex justify-center pt-1 pb-2">
+                                            <button
+                                                onClick={handleLoadEarlier}
+                                                disabled={loadingEarlier}
+                                                className="text-xs text-secondary-500 hover:text-primary-600 flex items-center gap-1.5 disabled:opacity-50"
+                                            >
+                                                {loadingEarlier ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                                                {loadingEarlier ? 'Loading...' : 'Load earlier messages'}
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Empty state */}
+                                    {messages.length === 0 && !isTyping && (
+                                        <div className="flex flex-col items-center justify-center h-full py-16 text-secondary-400">
+                                            <MessageCircle className="w-8 h-8 mb-2 opacity-40" />
+                                            <p className="text-sm">No messages yet</p>
+                                        </div>
+                                    )}
+
                                     {messages.map((msg) => (
                                         <div key={msg.id} className={`flex ${msg.role === 'operator' ? 'justify-end' : 'justify-start'}`}>
                                             <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
@@ -939,7 +987,7 @@ export default function LiveChat({ embedded = false }) {
                                         </div>
                                     ))}
                                     {isTyping && (
-                                        <div className="flex justify-start">
+                                        <div className="flex justify-start items-end gap-2">
                                             <div className="bg-secondary-100 px-4 py-3 rounded-2xl rounded-bl-md">
                                                 <div className="flex gap-1.5">
                                                     <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -947,6 +995,9 @@ export default function LiveChat({ embedded = false }) {
                                                     <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                                                 </div>
                                             </div>
+                                            <span className="text-[11px] text-secondary-400 pb-1">
+                                                {chatNamesRef.current[selectedChat]?.name || 'Visitor'} is typing...
+                                            </span>
                                         </div>
                                     )}
                                     <div ref={messagesEndRef} />

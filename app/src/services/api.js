@@ -259,11 +259,14 @@ export const getVisitorsData = async (botId) => {
 /**
  * Fetches the raw chat history for a specific session ID.
  * @param {string} sessionId
+ * @param {{ beforeId?: number, limit?: number }} options - Pagination options
  * @returns {Promise<Array>} Array of chat message objects
  */
-export const getChatHistory = async (sessionId) => {
+export const getChatHistory = async (sessionId, { beforeId, limit = 50 } = {}) => {
     try {
-        const response = await api.get(`/chat/history/${sessionId}`);
+        const params = { limit };
+        if (beforeId != null) params.before = beforeId;
+        const response = await api.get(`/chat/history/${sessionId}`, { params });
         return response.data;
     } catch (error) {
         console.error('API Error fetching chat history:', error);
