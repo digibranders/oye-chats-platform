@@ -51,6 +51,8 @@ class ConnectionManager:
         self._cleanup_task: asyncio.Task | None = None
         # Startup recovery flag
         self._recovered = False
+        # Per-session locks for accept_chat to prevent TOCTOU races
+        self._accept_locks: dict[str, asyncio.Lock] = {}
 
     def _ensure_background_tasks(self):
         """Start periodic background tasks (idempotent — safe to call on every connection)."""
@@ -172,15 +174,17 @@ class ConnectionManager:
         self._cancel_timeout(session_id)
 
         if was_waiting:
-            self.waiting_queue.remove(session_id)
+            with contextlib.suppress(ValueError):
+                self.waiting_queue.remove(session_id)
             self._session_departments.pop(session_id, None)
             self._session_metadata.pop(session_id, None)
             self._mark_session_waiting_exit(session_id)
         elif was_in_live_chat:
             # Visitor left mid-chat — notify operator but keep the assignment alive
             # so the visitor can reconnect.  Start a cleanup timer.
-            operator_id = self.assignments[session_id]
-            asyncio.ensure_future(self._handle_visitor_disconnect(session_id, operator_id))
+            operator_id = self.assignments.get(session_id)
+            if operator_id is not None:
+                asyncio.ensure_future(self._handle_visitor_disconnect(session_id, operator_id))
         else:
             self._session_departments.pop(session_id, None)
             self._session_metadata.pop(session_id, None)
@@ -219,7 +223,9 @@ class ConnectionManager:
     async def _visitor_disconnect_timeout(self, session_id: str, timeout: int | None = None):
         """Auto-close a chat if the visitor doesn't reconnect within the timeout."""
         try:
-            await asyncio.sleep(timeout or self.DEFAULT_VISITOR_DISCONNECT_TIMEOUT)
+            await asyncio.sleep(
+                timeout if timeout is not None and timeout > 0 else self.DEFAULT_VISITOR_DISCONNECT_TIMEOUT
+            )
             if session_id in self.assignments and session_id not in self.visitor_connections:
                 logger.info(f"Visitor {session_id} did not reconnect — auto-closing chat")
                 # Persist to DB
@@ -394,7 +400,7 @@ class ConnectionManager:
                             "type": "status",
                             "status": "waiting",
                             "message": "Your operator disconnected. Finding another one...",
-                            "queue_position": self.waiting_queue.index(sid) + 1,
+                            "queue_position": (self.waiting_queue.index(sid) + 1 if sid in self.waiting_queue else 0),
                         },
                     )
 
@@ -445,7 +451,7 @@ class ConnectionManager:
             {
                 "type": "status",
                 "status": "waiting",
-                "queue_position": self.waiting_queue.index(session_id) + 1,
+                "queue_position": (self.waiting_queue.index(session_id) + 1 if session_id in self.waiting_queue else 0),
             },
         )
 
@@ -469,11 +475,16 @@ class ConnectionManager:
     async def accept_chat(self, session_id: str, operator_id: int, operator_name: str) -> bool:
         """Operator accepts a waiting chat. Returns False if already accepted by a *different* operator.
 
-        BUG-4: This method is now idempotent — if the session is already assigned to this
-        same operator (e.g., DB commit succeeded but a prior coroutine call already ran),
-        it returns True without re-notifying. The real concurrency guard is the atomic
-        DB UPDATE in operator_routes.py.
+        Uses a per-session asyncio.Lock to prevent TOCTOU races between the
+        existence check and the assignment.
         """
+        if session_id not in self._accept_locks:
+            self._accept_locks[session_id] = asyncio.Lock()
+
+        async with self._accept_locks[session_id]:
+            return await self._accept_chat_inner(session_id, operator_id, operator_name)
+
+    async def _accept_chat_inner(self, session_id: str, operator_id: int, operator_name: str) -> bool:
         existing_assignee = self.assignments.get(session_id)
         if existing_assignee is not None:
             if existing_assignee == operator_id:
@@ -870,7 +881,9 @@ class ConnectionManager:
                         {
                             "type": "status",
                             "status": "waiting",
-                            "queue_position": self.waiting_queue.index(session_id) + 1,
+                            "queue_position": (
+                                self.waiting_queue.index(session_id) + 1 if session_id in self.waiting_queue else 0
+                            ),
                         },
                     )
 

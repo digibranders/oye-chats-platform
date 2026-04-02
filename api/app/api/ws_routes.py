@@ -71,6 +71,12 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             return
         bot_id = bot.id
 
+        # P0-6: Validate session belongs to this bot (prevent cross-session messaging)
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if chat_session and chat_session.bot_id != bot_id:
+            await ws.close(code=4003, reason="Session does not belong to this bot")
+            return
+
     await manager.connect_visitor(session_id, ws)
 
     try:
@@ -83,7 +89,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
             elif msg_type == "message":
                 content = data.get("content", "").strip()
-                if not content:
+                if not content or len(content) > 10000:
                     continue
 
                 with get_session() as session:
@@ -93,11 +99,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 await manager.route_visitor_message(session_id, content)
 
             elif msg_type == "file":
-                # BUG-14: File/image sharing — visitor sends a file URL
                 file_url = data.get("file_url", "").strip()
-                filename = data.get("filename", "file")
+                filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]
                 content_type = data.get("content_type", "")
-                if not file_url:
+                if not file_url or not file_url.startswith(("https://", "http://")):
                     continue
 
                 # Save as a message with file metadata

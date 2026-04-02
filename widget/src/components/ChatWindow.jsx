@@ -34,7 +34,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [isTyping, setIsTyping] = useState(false);
     const [isInitializing, setIsInitializing] = useState(true);
     const [copiedId, setCopiedId] = useState(null);
-    const [sessionId, setSessionId] = useState(() => localStorage.getItem('chat_session_id'));
+    const [sessionId, setSessionId] = useState(() => {
+        try { return localStorage.getItem('chat_session_id'); } catch { return null; }
+    });
     const [showWelcome, setShowWelcome] = useState(true);
     const [showLeadForm, setShowLeadForm] = useState(false);
     const [chatMode, setChatMode] = useState('bot'); // bot|handoff_form|waiting|live|unavailable
@@ -385,7 +387,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm"
                             style={{ backgroundColor: primaryColor }}
                         >
-                            {operatorName.charAt(0).toUpperCase()}
+                            {operatorName?.charAt(0)?.toUpperCase() || '?'}
                         </div>
                         <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${isReconnecting ? 'bg-amber-400' : 'bg-green-500'}`} />
                     </div>

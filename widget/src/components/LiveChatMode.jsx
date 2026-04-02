@@ -28,6 +28,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const msgIdCounter = useRef(0);
     const typingTimeoutRef = useRef(null);
     const historyLoadedRef = useRef(false); // BUG-2: track if history was loaded for this session
+    const sessionStartTime = useRef(new Date());
 
     useEffect(() => {
         if (!sessionId) return;
@@ -47,7 +48,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             };
 
             socket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
+                let data;
+                try { data = JSON.parse(event.data); } catch { return; }
 
                 switch (data.type) {
                     case 'status':
@@ -129,16 +131,16 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
 
             socket.onclose = () => {
                 console.log('[OyeChats] Live chat WebSocket closed');
-                if (!intentionalClose.current) {
-                    // Auto-reconnect with exponential backoff
-                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30000);
+                if (!intentionalClose.current && reconnectAttempt.current < 15) {
+                    const base = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30000);
+                    const delay = Math.round(base * (0.9 + Math.random() * 0.2));
                     reconnectAttempt.current += 1;
                     setIsReconnecting(true);
                     onConnectionStatusChange?.('reconnecting');
-                    console.log(`[OyeChats] Reconnecting in ${delay}ms (attempt ${reconnectAttempt.current})`);
-                    reconnectTimer.current = setTimeout(() => {
-                        connect();
-                    }, delay);
+                    reconnectTimer.current = setTimeout(connect, delay);
+                } else if (reconnectAttempt.current >= 15) {
+                    setIsReconnecting(false);
+                    onConnectionStatusChange?.('disconnected');
                 }
             };
 
@@ -233,8 +235,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         const msgId = `live-${++msgIdCounter.current}`;
         const timestamp = new Date().toISOString();
 
-        // BUG-3: Always add to UI (optimistic), mark as failed if send fails
-        const newMsg = { id: msgId, text, sender: 'user', timestamp, failed: false };
+        const newMsg = { id: msgId, text, sender: 'user', timestamp, failed: false, status: 'sent' };
 
         if (ws && ws.readyState === WebSocket.OPEN) {
             try {
@@ -509,6 +510,10 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         );
     }
 
+    // Derive user bubble color to match bot mode (MessageBubble.jsx)
+    const userBubbleBg = settings.user_bubble_color || '#DBE9FF';
+    const userBubbleText = '#16202C';
+
     // Live chat messages
     return (
         <>
@@ -518,73 +523,95 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                     <span className="text-xs text-amber-700 font-medium">Reconnecting...</span>
                 </div>
             )}
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" style={{ backgroundColor: settings.background_color || '#fff' }}>
+            <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5" style={{ backgroundColor: settings.background_color || '#fff' }}>
                 {/* Previous bot conversation context */}
                 {botMessages.length > 0 && messages.length === 0 && (
                     <>
                         {botMessages.map((msg) => (
-                            <div key={`bot-ctx-${msg.id}`} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div
-                                    className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed opacity-50 ${
-                                        msg.sender === 'user' ? 'text-white rounded-br-md' : 'text-gray-900 rounded-bl-md border border-gray-200'
-                                    }`}
-                                    style={msg.sender === 'user' ? { backgroundColor: settings.primary_color || '#3A0CA3' } : { backgroundColor: '#f8f9fa' }}
-                                >
-                                    {msg.text}
+                            <div key={`bot-ctx-${msg.id}`} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                                <div className={`flex ${msg.sender === 'user' ? 'justify-end' : ''} w-full`}>
+                                    <div
+                                        className={`max-w-[85%] px-4 py-3 rounded-2xl text-[14px] leading-relaxed opacity-50 ${
+                                            msg.sender === 'user' ? '' : ''
+                                        }`}
+                                        style={msg.sender === 'user'
+                                            ? { backgroundColor: userBubbleBg, color: userBubbleText }
+                                            : {}}
+                                    >
+                                        {msg.text}
+                                    </div>
                                 </div>
                             </div>
                         ))}
-                        <div className="flex items-center gap-2 py-1">
-                            <div className="flex-1 h-px bg-gray-200" />
-                            <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">Transferred to live support</span>
-                            <div className="flex-1 h-px bg-gray-200" />
-                        </div>
                     </>
                 )}
+
+                {/* Session start timestamp divider */}
+                <div className="flex items-center gap-2 py-1">
+                    <div className="flex-1 h-px bg-gray-200" />
+                    <span className="text-[10px] text-gray-400 font-medium whitespace-nowrap">
+                        {sessionStartTime.current.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <div className="flex-1 h-px bg-gray-200" />
+                </div>
 
                 {messages.map((msg) => (
                     <div
                         key={msg.id}
-                        className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                        className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start w-full'}`}
                     >
-                        <div
-                            className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                                msg.sender === 'user'
-                                    ? 'text-white rounded-br-md shadow-sm'
-                                    : 'text-gray-900 rounded-bl-md border border-gray-200'
-                            }`}
-                            style={
-                                msg.sender === 'user'
-                                    ? { backgroundColor: settings.primary_color || '#3A0CA3' }
-                                    : { backgroundColor: '#f8f9fa' }
-                            }
-                        >
-                            {msg.sender === 'operator' && msg.operatorName && (
-                                <p className="text-[11px] font-semibold mb-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.operatorName}</p>
-                            )}
-                            {msg.text}
-                            <div className={`flex items-center gap-1 mt-1 ${msg.sender === 'user' ? 'justify-end' : ''}`}>
-                                {msg.failed && (
-                                    <span className="text-[10px] text-red-300 flex items-center gap-0.5">
-                                        <AlertCircle className="w-3 h-3" /> Not sent
-                                    </span>
+                        {msg.sender === 'user' ? (
+                            /* User message — matches bot mode MessageBubble styling */
+                            <>
+                                <div className="flex justify-end w-full">
+                                    <div
+                                        className="max-w-[85%] px-4 py-3 rounded-2xl text-[14px] break-words"
+                                        style={{ backgroundColor: userBubbleBg, color: userBubbleText }}
+                                    >
+                                        <p className="prose prose-sm max-w-none break-words" style={{ color: userBubbleText }}>
+                                            {msg.text}
+                                        </p>
+                                    </div>
+                                </div>
+                                {/* WhatsApp-style read status */}
+                                <div className="flex items-center gap-1 mt-0.5 mr-1">
+                                    {msg.failed ? (
+                                        <span className="text-[10px] text-red-500 flex items-center gap-0.5">
+                                            <AlertCircle className="w-3 h-3" /> Not sent
+                                        </span>
+                                    ) : (
+                                        <span className="text-[10px] text-gray-400">
+                                            {msg.status === 'read' ? (
+                                                <span style={{ color: '#53bdeb' }}>Read</span>
+                                            ) : msg.status === 'delivered' ? (
+                                                'Delivered'
+                                            ) : (
+                                                'Sent'
+                                            )}
+                                        </span>
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            /* Operator message — matches bot mode plain text styling */
+                            <div className="w-full">
+                                {msg.operatorName && (
+                                    <p className="text-[11px] font-semibold mb-0.5 ml-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.operatorName}</p>
                                 )}
-                                <p className={`text-[10px] ${msg.sender === 'user' ? 'text-white/60' : 'text-gray-400'}`}>
-                                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                <p className="text-[14px] text-[#16202C] leading-relaxed break-words">
+                                    {msg.text}
                                 </p>
                             </div>
-                        </div>
+                        )}
                     </div>
                 ))}
 
                 {isOperatorTyping && (
                     <div className="flex justify-start">
-                        <div className="px-4 py-3 rounded-2xl rounded-bl-md border border-gray-200" style={{ backgroundColor: '#f8f9fa' }}>
-                            <div className="flex gap-1.5">
-                                <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
-                                <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
-                                <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
-                            </div>
+                        <div className="flex gap-1.5 px-1 py-2">
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
                         </div>
                     </div>
                 )}
@@ -592,7 +619,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* BUG-10: End chat confirmation dialog */}
+            {/* End chat confirmation dialog */}
             {showEndConfirm && (
                 <div className="px-4 py-3 bg-red-50 border-t border-red-200">
                     <p className="text-xs text-red-700 font-medium mb-2">End this conversation and return to AI?</p>
@@ -621,8 +648,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 </div>
             )}
 
-            {/* Input */}
-            <div className="border-t border-gray-200 px-3 py-2.5 bg-white">
+            {/* Input — matches bot mode ChatInput styling */}
+            <div className="px-4 pb-4 pt-2 bg-white shrink-0">
                 <div className="flex items-center justify-center mb-2">
                     <button
                         onClick={() => setShowEndConfirm(true)}
@@ -631,24 +658,31 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         End chat and return to AI
                     </button>
                 </div>
-                <form onSubmit={handleSend} className="flex items-center gap-2">
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        value={inputText}
-                        onChange={(e) => { setInputText(e.target.value); handleTyping(); }}
-                        placeholder="Type a message..."
-                        className="flex-1 px-3 py-2 text-sm text-gray-900 bg-gray-50 rounded-xl outline-none focus:bg-white border border-gray-200 focus:border-gray-300 transition-colors placeholder:text-gray-400"
-                    />
-                    <button
-                        type="submit"
-                        disabled={!inputText.trim()}
-                        className="w-9 h-9 flex items-center justify-center rounded-xl transition-all"
-                        style={{ backgroundColor: inputText.trim() ? (settings.primary_color || '#3A0CA3') : '#d1d5db' }}
-                    >
-                        <Send className="w-4 h-4 text-white" />
-                    </button>
-                </form>
+                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
+                    <form onSubmit={handleSend}>
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={inputText}
+                            onChange={(e) => { setInputText(e.target.value); handleTyping(); }}
+                            placeholder="Type a message..."
+                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400"
+                            style={{ border: 'none' }}
+                        />
+                        <div className="flex items-center justify-end mt-2">
+                            <button
+                                type="submit"
+                                disabled={!inputText.trim()}
+                                className="transition-all disabled:cursor-not-allowed"
+                            >
+                                <Send
+                                    size={20}
+                                    className={`transition-colors ${inputText.trim() ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
+                                />
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </>
     );

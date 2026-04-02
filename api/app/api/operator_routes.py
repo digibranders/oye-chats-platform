@@ -419,7 +419,9 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
 
         # Update session status
         chat_session.status = "waiting"
-        chat_session.handoff_reason = request.reason
+        chat_session.handoff_reason = (
+            request.reason.replace("<", "&lt;").replace(">", "&gt;") if request.reason else None
+        )
         if request.department_id:
             chat_session.department_id = request.department_id
 
