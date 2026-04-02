@@ -28,8 +28,10 @@ if not OPENAI_API_KEY:
 else:
     logger.info(f"OpenAI API key loaded (ends with ...{OPENAI_API_KEY[-4:]}), Model: {LLM_MODEL}")
 
+LLM_FALLBACKS: list[dict[str, list[str]]] | None = [{LLM_MODEL: [FALLBACK_MODEL]}] if GOOGLE_API_KEY else None
+
 if GOOGLE_API_KEY:
-    logger.info(f"Gemini fallback enabled | model={FALLBACK_MODEL}")
+    logger.info(f"LLM fallback configured: {LLM_MODEL} → {FALLBACK_MODEL}")
 else:
     logger.warning("GOOGLE_API_KEY is not set — no LLM fallback available.")
 
