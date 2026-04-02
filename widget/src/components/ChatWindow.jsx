@@ -274,10 +274,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setShowWelcome(true);
     };
 
-    // Handle handoff form submission
+    // Handle handoff form submission (debounced to prevent duplicate requests)
+    const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
     const handleHandoffSubmit = async (formData) => {
-        await requestHandoff(sessionId, formData);
-        setChatMode('waiting');
+        if (isSubmittingHandoff) return;
+        setIsSubmittingHandoff(true);
+        try {
+            await requestHandoff(sessionId, formData);
+            setChatMode('waiting');
+        } finally {
+            setIsSubmittingHandoff(false);
+        }
     };
 
     // Trigger handoff (called from a button or auto-detected)

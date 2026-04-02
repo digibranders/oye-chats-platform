@@ -2,7 +2,7 @@ import logging
 
 import litellm
 
-from app.config import LLM_MODEL, OPENAI_API_KEY
+from app.config import LLM_FALLBACKS, LLM_MODEL, OPENAI_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ def generate_response(prompt: str, *, metadata: dict | None = None) -> str:
             model=LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             metadata=metadata,
+            fallbacks=LLM_FALLBACKS,
         )
         content = response.choices[0].message.content
         if content:
@@ -47,6 +48,7 @@ def generate_response_stream(prompt: str, *, metadata: dict | None = None):
             messages=[{"role": "user", "content": prompt}],
             stream=True,
             metadata=metadata,
+            fallbacks=LLM_FALLBACKS,
         )
         for chunk in response:
             content = chunk.choices[0].delta.content

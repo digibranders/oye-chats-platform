@@ -215,7 +215,22 @@ async def operator_websocket(
                 if not target_session or not content:
                     continue
 
+                # Validate session ownership — operator can only message sessions
+                # belonging to their client's bots and in "live" status
                 with get_session() as session:
+                    chat_session = session.execute(
+                        select(ChatSession).where(ChatSession.id == target_session)
+                    ).scalar_one_or_none()
+                    if not chat_session or chat_session.status != "live":
+                        continue
+                    bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+                    if not bot or bot.client_id != client_id:
+                        logger.warning(
+                            f"Operator {operator_id} attempted to message session {target_session} "
+                            f"belonging to a different client — rejected"
+                        )
+                        continue
+
                     add_chat_message(session, target_session, role="operator", content=content, bot_id=None)
                     session.commit()
 

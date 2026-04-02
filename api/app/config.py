@@ -17,14 +17,23 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "300"))
 DOCUMENTS_DIR = "documents"
 ARCHIVE_DIR = "archive"
 
-# LLM Config (OpenAI via LiteLLM)
+# LLM Config (OpenAI via LiteLLM, with Gemini fallback)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-5-mini")
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "google/gemini-2.5-flash")
 
 if not OPENAI_API_KEY:
     logger.error("OPENAI_API_KEY is not set! LLM calls will fail. Set it in your .env file.")
 else:
     logger.info(f"OpenAI API key loaded (ends with ...{OPENAI_API_KEY[-4:]}), Model: {LLM_MODEL}")
+
+LLM_FALLBACKS: list[dict[str, list[str]]] | None = [{LLM_MODEL: [FALLBACK_MODEL]}] if GOOGLE_API_KEY else None
+
+if GOOGLE_API_KEY:
+    logger.info(f"LLM fallback configured: {LLM_MODEL} → {FALLBACK_MODEL}")
+else:
+    logger.warning("GOOGLE_API_KEY is not set — no LLM fallback available.")
 
 # Configure LiteLLM callbacks for Langfuse auto-instrumentation
 import litellm  # noqa: E402
