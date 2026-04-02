@@ -75,14 +75,18 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 
 def get_cors_origins() -> list[str]:
-    """
-    Return CORS origins based on environment.
+    """Return CORS origins based on environment.
+
     In production, reads from CORS_ORIGINS env var (comma-separated).
+    If set to "*", returns ["*"] for wildcard (credentials will be disabled
+    in main.py since browsers reject wildcard + credentials).
     In development, allows common localhost ports.
     """
     env = os.getenv("APP_ENV", "development")
     if env == "production":
         origins_str = os.getenv("CORS_ORIGINS", "")
+        if origins_str.strip() == "*":
+            return ["*"]
         if origins_str:
             return [o.strip() for o in origins_str.split(",") if o.strip()]
         return []
