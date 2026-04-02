@@ -304,9 +304,9 @@ def search_similar_documents(
     results = session.execute(
         text(
             f"""SELECT id, client_id, bot_id, document_name, content, metadata_info,
-                       embedding <-> :emb::vector AS distance
+                       embedding <-> CAST(:emb AS vector) AS distance
                 FROM documents
-                {where_clause} AND embedding <-> :emb::vector < :max_dist
+                {where_clause} AND embedding <-> CAST(:emb AS vector) < :max_dist
                 ORDER BY distance
                 LIMIT :k"""
         ),
