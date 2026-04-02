@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import case, desc, func, insert, select, text
+from sqlalchemy.orm import defer
 
 from app.db.models import ChatMessage, ChatSession, Client, Document, LeadInfo
 
@@ -283,9 +284,17 @@ def search_similar_documents(
     if hasattr(query_embedding, "tolist"):
         query_embedding = query_embedding.tolist()
 
-    distance = Document.embedding.op("<->")(query_embedding).label("distance")
+    # Convert to string format for pgvector operator binding — avoids ndim
+    # validation issues across different pgvector Python package versions.
+    if isinstance(query_embedding, list):
+        emb_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+    else:
+        emb_str = query_embedding
+
+    distance = Document.embedding.op("<->")(emb_str).label("distance")
     stmt = (
         select(Document, distance)
+        .options(defer(Document.embedding))  # Skip deserializing the large vector column
         .where(_owner_filter(Document, bot_id, client_id))
         .where(distance < max_distance)
         .order_by(distance)
