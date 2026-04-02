@@ -33,6 +33,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const historyLoadedRef = useRef(false);
     const sessionStartTime = useRef(new Date());
     const stoppedTypingTimerRef = useRef(null);
+    const fileInputRef = useRef(null);
+    const [uploadProgress, setUploadProgress] = useState(null); // null | 0–100
 
     useEffect(() => {
         if (!sessionId) return;
@@ -354,6 +356,61 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         }
     };
 
+    const handleFileSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (!fileInputRef.current) return;
+        fileInputRef.current.value = '';
+        if (!file) return;
+
+        const ALLOWED = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
+        if (!ALLOWED.includes(file.type)) return;
+        if (file.size > 10 * 1024 * 1024) return;
+
+        setUploadProgress(0);
+        try {
+            // 1. Get presigned PUT URL from backend
+            const res = await fetch(`${API_URL}/chat/upload-url`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Bot-Key': settings.bot_key || '' },
+                body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size }),
+            });
+            if (!res.ok) throw new Error('Failed to get upload URL');
+            const { upload_url, file_url } = await res.json();
+
+            // 2. PUT directly to B2
+            await fetch(upload_url, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type },
+                body: file,
+            });
+            setUploadProgress(100);
+
+            // 3. Send file message over WS
+            const wsInstance = ws;
+            if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+                wsInstance.send(JSON.stringify({
+                    type: 'file',
+                    file_url,
+                    filename: file.name,
+                    content_type: file.type,
+                }));
+                setMessages(prev => [...prev, {
+                    id: `live-file-${++msgIdCounter.current}`,
+                    sender: 'user',
+                    file_url,
+                    filename: file.name,
+                    content_type: file.type,
+                    status: 'sent',
+                    timestamp: new Date().toISOString(),
+                }]);
+            }
+        } catch {
+            /* silent — user can retry by re-selecting */
+        } finally {
+            setUploadProgress(null);
+        }
+    };
+
     // Progressive delay messages for waiting screen
     useEffect(() => {
         if (chatMode === 'waiting') {
@@ -646,9 +703,19 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                         className="max-w-[85%] px-4 py-3 rounded-2xl text-[14px] break-words"
                                         style={{ backgroundColor: userBubbleBg, color: userBubbleText }}
                                     >
-                                        <p className="prose prose-sm max-w-none break-words" style={{ color: userBubbleText }}>
-                                            {msg.text}
-                                        </p>
+                                        {msg.file_url ? (
+                                            msg.content_type?.startsWith('image/') ? (
+                                                <img src={msg.file_url} alt={msg.filename || 'image'} className="max-w-[200px] rounded-lg block" />
+                                            ) : (
+                                                <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
+                                                    📎 {msg.filename || 'file'}
+                                                </a>
+                                            )
+                                        ) : (
+                                            <p className="prose prose-sm max-w-none break-words" style={{ color: userBubbleText }}>
+                                                {msg.text}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                                 {/* WhatsApp-style read status — tap to retry if failed */}
@@ -751,6 +818,15 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                     </button>
                 </div>
                 <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
+                    {/* Upload progress bar */}
+                    {uploadProgress !== null && (
+                        <div className="w-full h-1 bg-gray-100 rounded-full mb-2 overflow-hidden">
+                            <div
+                                className="h-full rounded-full transition-all duration-300"
+                                style={{ width: `${uploadProgress}%`, backgroundColor: settings.primary_color || '#3A0CA3' }}
+                            />
+                        </div>
+                    )}
                     <form onSubmit={handleSend}>
                         <textarea
                             ref={inputRef}
@@ -775,13 +851,21 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         <div className="flex items-center justify-between mt-2">
                             <button
                                 type="button"
-                                disabled
-                                title="File sharing coming soon"
-                                aria-label="Attach file (coming soon)"
-                                className="opacity-30 cursor-not-allowed"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={uploadProgress !== null}
+                                title="Attach file"
+                                aria-label="Attach file"
+                                className={`transition-opacity ${uploadProgress !== null ? 'opacity-30 cursor-not-allowed' : 'opacity-60 hover:opacity-100'}`}
                             >
                                 <Paperclip size={20} className="text-[#16202C]" />
                             </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*,.pdf,.txt"
+                                className="hidden"
+                                onChange={handleFileSelect}
+                            />
                             <button
                                 type="submit"
                                 disabled={!inputText.trim()}

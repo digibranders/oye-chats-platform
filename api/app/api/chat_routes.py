@@ -374,3 +374,50 @@ def get_history_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch history: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch chat history.") from e
+
+
+# ── P3-7: Visitor file upload — presigned B2 PUT URL ──
+
+_ALLOWED_CONTENT_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+    "application/pdf",
+    "text/plain",
+}
+_MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class UploadUrlRequest(PydanticBaseModel):
+    filename: str
+    content_type: str
+    size: int  # bytes — validated before issuing the URL
+
+
+@router.post("/chat/upload-url")
+async def get_visitor_upload_url(
+    body: UploadUrlRequest,
+    bot: Bot = Depends(get_current_bot),
+):
+    """Return a presigned B2 PUT URL so the widget can upload a file directly.
+
+    Auth: X-Bot-Key header. The widget uploads via PUT (no auth needed) then
+    sends the file_url over the live-chat WebSocket.
+    """
+    if body.content_type not in _ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"File type '{body.content_type}' is not allowed.")
+    if body.size > _MAX_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="File exceeds 10 MB limit.")
+
+    safe_name = body.filename.replace("/", "").replace("\\", "")[:100]
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else "bin"
+    key = f"chat-files/{uuid.uuid4()}.{ext}"
+
+    from app.services.b2_service import _build_public_url, generate_presigned_put
+
+    upload_url = generate_presigned_put(key, body.content_type)
+    file_url = _build_public_url(key)
+    return {"upload_url": upload_url, "file_url": file_url, "key": key}

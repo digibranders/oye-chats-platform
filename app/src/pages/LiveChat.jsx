@@ -282,6 +282,27 @@ export default function LiveChat({ embedded = false }) {
                     break;
                 }
 
+                case 'file': {
+                    const currentSelected = selectedChatRef.current;
+                    if (data.session_id === currentSelected) {
+                        setMessages(prev => [...prev, {
+                            id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                            role: data.role || 'user',
+                            content: data.file_url,
+                            file_url: data.file_url,
+                            filename: data.filename,
+                            content_type: data.content_type,
+                            timestamp: data.timestamp,
+                        }]);
+                    } else {
+                        setUnreadCounts(prev => ({
+                            ...prev,
+                            [data.session_id]: (prev[data.session_id] || 0) + 1,
+                        }));
+                    }
+                    break;
+                }
+
                 case 'visitor_typing':
                     if (data.session_id === selectedChatRef.current) {
                         setIsTyping(true);
@@ -982,7 +1003,15 @@ export default function LiveChat({ embedded = false }) {
                                                     ? 'bg-secondary-100 text-secondary-800 rounded-bl-md'
                                                     : 'bg-secondary-50 text-secondary-600 italic text-xs rounded-bl-md'
                                             }`}>
-                                                {msg.content}
+                                                {msg.file_url ? (
+                                                    msg.content_type?.startsWith('image/') ? (
+                                                        <img src={msg.file_url} alt={msg.filename || 'image'} className="max-w-[200px] rounded-lg block" />
+                                                    ) : (
+                                                        <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="underline break-all">
+                                                            📎 {msg.filename || 'file'}
+                                                        </a>
+                                                    )
+                                                ) : msg.content}
                                             </div>
                                         </div>
                                     ))}
