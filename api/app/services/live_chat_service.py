@@ -51,6 +51,8 @@ class ConnectionManager:
         self._cleanup_task: asyncio.Task | None = None
         # Startup recovery flag
         self._recovered = False
+        # Per-session locks for accept_chat to prevent TOCTOU races
+        self._accept_locks: dict[str, asyncio.Lock] = {}
 
     def _ensure_background_tasks(self):
         """Start periodic background tasks (idempotent — safe to call on every connection)."""
@@ -473,11 +475,16 @@ class ConnectionManager:
     async def accept_chat(self, session_id: str, operator_id: int, operator_name: str) -> bool:
         """Operator accepts a waiting chat. Returns False if already accepted by a *different* operator.
 
-        BUG-4: This method is now idempotent — if the session is already assigned to this
-        same operator (e.g., DB commit succeeded but a prior coroutine call already ran),
-        it returns True without re-notifying. The real concurrency guard is the atomic
-        DB UPDATE in operator_routes.py.
+        Uses a per-session asyncio.Lock to prevent TOCTOU races between the
+        existence check and the assignment.
         """
+        if session_id not in self._accept_locks:
+            self._accept_locks[session_id] = asyncio.Lock()
+
+        async with self._accept_locks[session_id]:
+            return await self._accept_chat_inner(session_id, operator_id, operator_name)
+
+    async def _accept_chat_inner(self, session_id: str, operator_id: int, operator_name: str) -> bool:
         existing_assignee = self.assignments.get(session_id)
         if existing_assignee is not None:
             if existing_assignee == operator_id:
