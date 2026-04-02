@@ -21,7 +21,7 @@ ARCHIVE_DIR = "archive"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-5-mini")
-FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "google/gemini-2.5-flash")
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "gemini/gemini-2.5-flash")
 
 if not OPENAI_API_KEY:
     logger.error("OPENAI_API_KEY is not set! LLM calls will fail. Set it in your .env file.")
