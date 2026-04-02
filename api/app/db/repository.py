@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import case, desc, func, insert, select, text
-from sqlalchemy.orm import defer
 
 from app.db.models import ChatMessage, ChatSession, Client, Document, LeadInfo
 
@@ -280,28 +279,57 @@ def search_keyword_documents(session, client_id: int = None, query: str = "", k=
 def search_similar_documents(
     session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 0.8
 ):
-    """Find top-k most similar documents using vector similarity with distance threshold."""
+    """Find top-k most similar documents using vector similarity with distance threshold.
+
+    Uses raw SQL for the vector distance calculation to bypass pgvector Python
+    package version incompatibilities with the Vector type processor.
+    """
     if hasattr(query_embedding, "tolist"):
         query_embedding = query_embedding.tolist()
 
-    # Convert to string format for pgvector operator binding — avoids ndim
-    # validation issues across different pgvector Python package versions.
+    # Format as pgvector string literal: '[0.1,0.2,...]'
     if isinstance(query_embedding, list):
         emb_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
     else:
-        emb_str = query_embedding
+        emb_str = str(query_embedding)
 
-    distance = Document.embedding.op("<->")(emb_str).label("distance")
-    stmt = (
-        select(Document, distance)
-        .options(defer(Document.embedding))  # Skip deserializing the large vector column
-        .where(_owner_filter(Document, bot_id, client_id))
-        .where(distance < max_distance)
-        .order_by(distance)
-        .limit(k)
-    )
+    # Execute raw SQL — bypasses pgvector Python type processor entirely
+    if bot_id:
+        where_clause = "WHERE bot_id = :owner_id"
+        owner_id = bot_id
+    else:
+        where_clause = "WHERE client_id = :owner_id"
+        owner_id = client_id
 
-    return session.execute(stmt).all()
+    results = session.execute(
+        text(
+            f"""SELECT id, client_id, bot_id, document_name, content, metadata_info,
+                       embedding <-> :emb::vector AS distance
+                FROM documents
+                {where_clause} AND embedding <-> :emb::vector < :max_dist
+                ORDER BY distance
+                LIMIT :k"""
+        ),
+        {"emb": emb_str, "owner_id": owner_id, "max_dist": max_distance, "k": k},
+    ).fetchall()
+
+    # Wrap in SimpleNamespace so callers can access .id, .content, .document_name
+    from types import SimpleNamespace
+
+    return [
+        (
+            SimpleNamespace(
+                id=r.id,
+                client_id=r.client_id,
+                bot_id=r.bot_id,
+                document_name=r.document_name,
+                content=r.content,
+                metadata_info=r.metadata_info,
+            ),
+            r.distance,
+        )
+        for r in results
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
