@@ -4,7 +4,7 @@ import logging
 import litellm
 from pydantic import BaseModel, Field
 
-from app.config import LLM_MODEL
+from app.config import LLM_FALLBACKS, LLM_MODEL
 from app.db.models import ChatSession
 from app.db.repository import add_chat_message, ensure_chat_session, get_chat_history, update_session_bant
 from app.db.session import get_session
@@ -224,6 +224,7 @@ def run_sdr_qualification(client_obj, question: str, session_id: str, bot_id: in
                     },
                 },
                 metadata={"generation_name": "sdr-qualification"},
+                fallbacks=LLM_FALLBACKS,
             )
 
             response_text = response.choices[0].message.content
