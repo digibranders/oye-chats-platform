@@ -27,8 +27,9 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const lastTypingSentRef = useRef(0);
     const msgIdCounter = useRef(0);
     const typingTimeoutRef = useRef(null);
-    const historyLoadedRef = useRef(false); // BUG-2: track if history was loaded for this session
+    const historyLoadedRef = useRef(false);
     const sessionStartTime = useRef(new Date());
+    const stoppedTypingTimerRef = useRef(null);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -77,9 +78,11 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                                     timestamp: m.timestamp || m.created_at,
                                                 }));
                                             setMessages(prev => {
-                                                // Only restore if current messages are empty (page refresh)
-                                                if (prev.length === 0 && restored.length > 0) return restored;
-                                                return prev;
+                                                if (prev.length === 0) return restored;
+                                                // Deduplicate: merge restored with existing
+                                                const existingTexts = new Set(prev.map(m => `${m.sender}:${m.text}`));
+                                                const newMsgs = restored.filter(m => !existingTexts.has(`${m.sender}:${m.text}`));
+                                                return newMsgs.length > 0 ? [...newMsgs, ...prev] : prev;
                                             });
                                         }
                                     })
@@ -124,7 +127,10 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         break;
 
                     case 'pong':
-                        // Heartbeat acknowledged — connection is healthy
+                        clearTimeout(pongTimeoutRef.current);
+                        break;
+
+                    default:
                         break;
                 }
             };
@@ -158,6 +164,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             intentionalClose.current = true;
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
             clearTimeout(typingTimeoutRef.current);
+            clearTimeout(stoppedTypingTimerRef.current);
             setWs(prev => { prev?.close(); return null; });
         };
     }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -166,23 +173,32 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     // idle timeouts. Interval is shorter when the tab is visible (25 s) and longer
     // when backgrounded (50 s) because browsers throttle timers in hidden tabs.
     const heartbeatRef = useRef(null);
+    const pongTimeoutRef = useRef(null);
     useEffect(() => {
         if (!ws) return;
+
+        const sendPing = () => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ping' }));
+                clearTimeout(pongTimeoutRef.current);
+                pongTimeoutRef.current = setTimeout(() => {
+                    // No pong received — connection is dead
+                    ws.close();
+                }, 10000);
+            }
+        };
 
         const startHeartbeat = () => {
             clearInterval(heartbeatRef.current);
             const delay = document.visibilityState === 'visible' ? 25000 : 50000;
-            heartbeatRef.current = setInterval(() => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'ping' }));
-                }
-            }, delay);
+            heartbeatRef.current = setInterval(sendPing, delay);
         };
 
         startHeartbeat();
         document.addEventListener('visibilitychange', startHeartbeat);
         return () => {
             clearInterval(heartbeatRef.current);
+            clearTimeout(pongTimeoutRef.current);
             document.removeEventListener('visibilitychange', startHeartbeat);
         };
     }, [ws]);
@@ -254,26 +270,24 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         inputRef.current?.focus();
     };
 
-    // BUG-3: Retry pending messages when WebSocket reconnects
+    // Retry pending messages when WebSocket reconnects
     useEffect(() => {
         if (!ws || ws.readyState !== WebSocket.OPEN || pendingMessages.length === 0) return;
 
         const toRetry = [...pendingMessages];
-        setPendingMessages([]);
+        const stillFailed = [];
 
         for (const msg of toRetry) {
             try {
                 ws.send(JSON.stringify({ type: 'message', content: msg.text }));
-                // Clear the failed flag on the message
                 setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, failed: false } : m));
             } catch {
-                // Re-queue if still failing
-                setPendingMessages(prev => [...prev, msg]);
+                stillFailed.push(msg);
             }
         }
+        setPendingMessages(stillFailed);
     }, [ws, pendingMessages]);
 
-    const stoppedTypingTimerRef = useRef(null);
     const handleTyping = () => {
         const now = Date.now();
         if (now - lastTypingSentRef.current < 3000) return;

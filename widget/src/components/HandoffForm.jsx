@@ -26,7 +26,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo }) => {
         setSubmitting(true);
         try {
             await onSubmit(formData);
-        } catch {
+        } finally {
             setSubmitting(false);
         }
     };
