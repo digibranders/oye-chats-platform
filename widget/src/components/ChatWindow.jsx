@@ -210,6 +210,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 }
             });
 
+            // Stream complete — stop showing cursor
+            setStreamingId(null);
+
             // Smart handoff: detect fallback/low-confidence bot response
             setMessages(prev => {
                 const lastBot = prev.find(msg => msg.id === placeholderId || msg.sender === 'bot');
