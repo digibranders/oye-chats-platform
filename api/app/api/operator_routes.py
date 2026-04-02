@@ -4,13 +4,13 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.security import get_password_hash
-from app.db.models import Bot, ChatMessage, ChatSession, Department, Operator
+from app.db.models import Bot, ChatAuditLog, ChatMessage, ChatSession, Department, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services.email_service import send_handoff_request_email
@@ -207,9 +207,11 @@ def delete_department(department_id: int, auth=Depends(get_current_client_or_ope
         for op in operators:
             op.department_id = None
 
+        # BUG-21: Capture name before commit to avoid DetachedInstanceError
+        dept_name = dept.name
         session.delete(dept)
         session.commit()
-        return {"success": True, "message": f"Department '{dept.name}' deleted."}
+        return {"success": True, "message": f"Department '{dept_name}' deleted."}
 
 
 # ── Operator CRUD Endpoints ──
@@ -312,9 +314,14 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
 
 
 @router.patch("/{operator_id}")
-def update_operator(operator_id: int, request: UpdateOperatorRequest, auth=Depends(get_current_client_or_operator)):
+async def update_operator(
+    operator_id: int, request: UpdateOperatorRequest, auth=Depends(get_current_client_or_operator)
+):
     """Update an operator's profile (owner/admin only)."""
     _require_team_management_access(auth)
+    department_changed = False
+    new_department_id = None
+
     with get_session() as session:
         operator = session.execute(
             select(Operator).where(Operator.id == operator_id, Operator.client_id == auth["client_id"])
@@ -339,6 +346,10 @@ def update_operator(operator_id: int, request: UpdateOperatorRequest, auth=Depen
         if request.role is not None:
             operator.role = request.role
         if request.department_id is not None:
+            # BUG-8: Track department change for dynamic WS update
+            if operator.department_id != request.department_id:
+                department_changed = True
+                new_department_id = request.department_id
             operator.department_id = request.department_id
         if request.avatar_url is not None:
             operator.avatar_url = request.avatar_url
@@ -348,7 +359,12 @@ def update_operator(operator_id: int, request: UpdateOperatorRequest, auth=Depen
             operator.notification_preferences = request.notification_preferences
 
         session.commit()
-        return {"success": True, "message": f"Operator '{operator.name}' updated."}
+
+    # BUG-8: Dynamically update operator's department in WS manager without reconnect
+    if department_changed:
+        await manager.update_operator_department(operator_id, new_department_id)
+
+    return {"success": True, "message": f"Operator '{operator.name}' updated."}
 
 
 @router.delete("/{operator_id}")
@@ -373,9 +389,11 @@ def delete_operator(operator_id: int, auth=Depends(get_current_client_or_operato
             cs.assigned_operator_id = None
             cs.status = "bot"
 
+        # BUG-21: Capture name before commit to avoid DetachedInstanceError
+        op_name = operator.name
         session.delete(operator)
         session.commit()
-        return {"success": True, "message": f"Operator '{operator.name}' deleted."}
+        return {"success": True, "message": f"Operator '{op_name}' deleted."}
 
 
 # ── Live Chat Flow Endpoints ──
@@ -409,6 +427,14 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         db_bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
         timeout = db_bot.operator_timeout_seconds if db_bot else 120
 
+        # BUG-12: Audit log — handoff requested
+        session.add(
+            ChatAuditLog(
+                session_id=request.session_id,
+                action="handoff_requested",
+                metadata={"reason": request.reason, "department_id": request.department_id},
+            )
+        )
         session.commit()
 
         # Get visitor name for queue display
@@ -544,6 +570,14 @@ async def accept_chat(
                 raise HTTPException(status_code=404, detail="Session not found")
             raise HTTPException(status_code=409, detail="Chat was already accepted by another operator")
 
+        # BUG-12: Audit log — chat accepted
+        session.add(
+            ChatAuditLog(
+                session_id=session_id,
+                operator_id=operator.id,
+                action="accepted",
+            )
+        )
         session.commit()
         operator_name = operator.name
         operator_id = operator.id
@@ -570,6 +604,15 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_operato
         # Capture bot_name inside the session block — accessing bot.name after session.close()
         # raises DetachedInstanceError because SQLAlchemy expires objects on commit.
         bot_name = bot.name
+        # BUG-12: Audit log — chat closed by operator
+        operator_id = auth.get("operator_id") or chat_session.assigned_operator_id
+        session.add(
+            ChatAuditLog(
+                session_id=session_id,
+                operator_id=operator_id,
+                action="closed",
+            )
+        )
         chat_session.status = "bot"
         chat_session.assigned_operator_id = None
         session.commit()
@@ -616,6 +659,15 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
             chat_session.assigned_operator_id = target_operator.id
             if target_operator.department_id:
                 chat_session.department_id = target_operator.department_id
+            # BUG-12: Audit log — transferred to operator
+            session.add(
+                ChatAuditLog(
+                    session_id=session_id,
+                    operator_id=old_operator_id,
+                    action="transferred",
+                    metadata={"transferred_to_operator_id": target_operator.id},
+                )
+            )
             session.commit()
 
             target_name = target_operator.name
@@ -639,6 +691,15 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
         chat_session.status = "waiting"
         chat_session.assigned_operator_id = None
         chat_session.department_id = request.target_department_id
+        # BUG-12: Audit log — transferred to department
+        session.add(
+            ChatAuditLog(
+                session_id=session_id,
+                operator_id=old_operator_id,
+                action="transferred",
+                metadata={"transferred_to_department_id": request.target_department_id},
+            )
+        )
         session.commit()
         dept_name = dept.name
 
@@ -780,3 +841,40 @@ def list_departments_public(bot_key: str = Query(...)):
             .all()
         )
         return {"departments": [{"id": d.id, "name": d.name} for d in departments]}
+
+
+# ── BUG-14: Chat File Upload ──
+
+
+@router.post("/upload-chat-file")
+async def upload_chat_file_route(
+    session_id: str = Query(...),
+    file: UploadFile = File(...),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """BUG-14: Upload a file during live chat. Returns a URL to embed in messages."""
+    ALLOWED_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf", "text/plain"}
+    MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail=f"File type '{file.content_type}' is not allowed.")
+
+    file_data = await file.read()
+    if len(file_data) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="File exceeds 10 MB limit.")
+
+    # Verify session ownership
+    with get_session() as session:
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        bot_obj = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if not bot_obj or bot_obj.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+    from app.services.b2_service import _build_public_url, upload_chat_file
+
+    key = upload_chat_file(file_data, file.filename or "file", file.content_type)
+    url = _build_public_url(key)
+
+    return {"url": url, "filename": file.filename, "content_type": file.content_type, "size": len(file_data)}

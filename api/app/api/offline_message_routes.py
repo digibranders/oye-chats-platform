@@ -50,7 +50,7 @@ class UpdateOfflineMessageRequest(BaseModel):
 
 
 @router.post("")
-def submit_offline_message(request: SubmitOfflineMessageRequest):
+async def submit_offline_message(request: SubmitOfflineMessageRequest):
     """Submit an offline message (called by widget when no agent is available)."""
     with get_session() as session:
         bot = session.execute(
@@ -93,6 +93,17 @@ def submit_offline_message(request: SubmitOfflineMessageRequest):
                 )
 
         logger.info(f"Offline message saved: {msg.id} from {request.email} for bot {bot.id}")
+
+    # BUG-15: Notify connected operators about new offline message
+    from app.services.live_chat_service import manager
+
+    notification = {
+        "type": "offline_message_received",
+        "visitor_name": request.name.strip(),
+        "message_preview": request.message.strip()[:100],
+    }
+    for operator_id in list(manager.operator_connections.keys()):
+        await manager._send_to_operator(operator_id, notification)
 
     return {"success": True, "message": "Your message has been sent. We'll get back to you soon!"}
 

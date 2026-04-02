@@ -12,7 +12,7 @@ from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
 from app.db.models import Bot, ChatSession
-from app.db.repository import create_or_update_lead_info, ensure_chat_session, get_chat_history, update_message_feedback
+from app.db.repository import create_or_update_lead_info, ensure_chat_session, update_message_feedback
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
@@ -284,9 +284,17 @@ def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot
 def get_history_endpoint(
     session_id: str,
     bot_id: int | None = Query(None),
+    before: int | None = Query(
+        None, description="BUG-5: Cursor — return messages with id < this value (for pagination)"
+    ),
+    limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Retrieve chat history for a given session."""
+    """Retrieve chat history for a given session.
+
+    BUG-5: Supports cursor-based pagination via `before` param.
+    Pass `before=<smallest_message_id>` from a previous response to load older messages.
+    """
     try:
         from sqlalchemy import select
 
@@ -305,37 +313,40 @@ def get_history_endpoint(
                 resolve_bot_ids = list(bots)
 
             for sid in sids:
-                if bot_id:
-                    history = get_chat_history(session, sid, client_id=auth["client_id"], limit=50, bot_id=bot_id)
-                elif resolve_bot_ids:
-                    history = []
-                    for bid in resolve_bot_ids:
-                        history = get_chat_history(session, sid, client_id=auth["client_id"], limit=50, bot_id=bid)
-                        if history:
-                            break
-                else:
-                    history = get_chat_history(session, sid, client_id=auth["client_id"], limit=50)
-
-                if not history:
-                    # Ownership-validated fallback: join through session → bot to enforce client scope
-                    stmt = (
-                        select(ChatMessage)
-                        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
-                        .join(BotModel, ChatSession.bot_id == BotModel.id)
-                        .where(
-                            ChatMessage.session_id == sid,
-                            BotModel.client_id == auth["client_id"],
-                        )
-                        .order_by(ChatMessage.created_at)
-                        .limit(50)
+                # BUG-5: Build paginated query with cursor support
+                stmt = (
+                    select(ChatMessage)
+                    .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                    .join(BotModel, ChatSession.bot_id == BotModel.id)
+                    .where(
+                        ChatMessage.session_id == sid,
+                        BotModel.client_id == auth["client_id"],
                     )
-                    history = session.execute(stmt).scalars().all()
+                )
+                if bot_id:
+                    stmt = stmt.where(BotModel.id == bot_id)
+                elif resolve_bot_ids:
+                    stmt = stmt.where(BotModel.id.in_(resolve_bot_ids))
 
+                if before is not None:
+                    stmt = stmt.where(ChatMessage.id < before)
+
+                stmt = stmt.order_by(ChatMessage.id.desc()).limit(limit)
+                history = session.execute(stmt).scalars().all()
                 all_history.extend(history)
 
-            all_history.sort(key=lambda m: m.created_at)
+            # Reverse to chronological order (we queried desc for cursor)
+            all_history.sort(key=lambda m: (m.created_at, m.id))
 
-            return [{"role": m.role, "content": m.content, "timestamp": m.created_at.isoformat()} for m in all_history]
+            return [
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "content": m.content,
+                    "timestamp": m.created_at.isoformat(),
+                }
+                for m in all_history
+            ]
     except Exception as e:
         logger.error(f"Failed to fetch history: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch chat history.") from e

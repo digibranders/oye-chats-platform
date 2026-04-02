@@ -124,8 +124,17 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 
 @app.on_event("shutdown")
-def shutdown_services():
-    """Flush Langfuse events and drain background thread pool on shutdown."""
+async def shutdown_services():
+    """BUG-18: Broadcast server restart to all WS clients, then flush services."""
+    from app.services.live_chat_service import manager
+
+    # Notify all connected visitors and operators that the server is restarting
+    restart_msg = {"type": "server_restart"}
+    for session_id in list(manager.visitor_connections.keys()):
+        await manager._send_to_visitor(session_id, restart_msg)
+    for operator_id in list(manager.operator_connections.keys()):
+        await manager._send_to_operator(operator_id, restart_msg)
+
     from app.core.langfuse_client import flush_langfuse
     from app.core.thread_pool import shutdown_pool
 

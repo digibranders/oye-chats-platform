@@ -92,8 +92,34 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
                 await manager.route_visitor_message(session_id, content)
 
+            elif msg_type == "file":
+                # BUG-14: File/image sharing — visitor sends a file URL
+                file_url = data.get("file_url", "").strip()
+                filename = data.get("filename", "file")
+                content_type = data.get("content_type", "")
+                if not file_url:
+                    continue
+
+                # Save as a message with file metadata
+                file_content = f"[File: {filename}]({file_url})"
+                with get_session() as session:
+                    add_chat_message(session, session_id, role="user", content=file_content, bot_id=bot_id)
+                    session.commit()
+
+                await manager.route_visitor_file(session_id, file_url, filename, content_type)
+
             elif msg_type == "typing":
                 await manager.send_typing_to_operator(session_id)
+
+            elif msg_type == "stopped_typing":
+                # BUG-17: Explicit stopped typing event
+                await manager.send_stopped_typing_to_operator(session_id)
+
+            elif msg_type == "read_receipt":
+                # BUG-16: Visitor confirms they've read messages up to this ID
+                last_read_id = data.get("last_read_id")
+                if last_read_id is not None:
+                    await manager.send_read_receipt_to_operator(session_id, last_read_id)
 
             elif msg_type == "visitor_end_chat":
                 # Visitor deliberately ended the chat (clicked "End chat and return to AI").
@@ -106,6 +132,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                     if chat_session and chat_session.status == "live":
                         bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
                         bot_name = bot.name if bot else "AI Assistant"
+                        # BUG-22: Persist system message for chat closure
+                        add_chat_message(
+                            session, session_id, role="system", content="Visitor ended the live chat.", bot_id=bot_id
+                        )
                         chat_session.status = "bot"
                         chat_session.assigned_operator_id = None
                         session.commit()
@@ -236,10 +266,42 @@ async def operator_websocket(
 
                 await manager.route_operator_message(target_session, content, operator_name)
 
+            elif msg_type == "file":
+                # BUG-14: File sharing — operator sends a file URL
+                target_session = data.get("session_id")
+                file_url = data.get("file_url", "").strip()
+                filename = data.get("filename", "file")
+                content_type_val = data.get("content_type", "")
+                if not target_session or not file_url:
+                    continue
+
+                with get_session() as session:
+                    chat_session = session.execute(
+                        select(ChatSession).where(ChatSession.id == target_session)
+                    ).scalar_one_or_none()
+                    if not chat_session or chat_session.status != "live":
+                        continue
+                    bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+                    if not bot or bot.client_id != client_id:
+                        continue
+
+                    file_content = f"[File: {filename}]({file_url})"
+                    add_chat_message(session, target_session, role="operator", content=file_content, bot_id=None)
+                    session.commit()
+
+                await manager.route_operator_file(target_session, file_url, filename, content_type_val, operator_name)
+
             elif msg_type == "typing":
                 target_session = data.get("session_id")
                 if target_session:
                     await manager.send_typing_to_visitor(target_session)
+
+            elif msg_type == "read_receipt":
+                # BUG-16: Operator confirms they've read messages up to this ID
+                target_session = data.get("session_id")
+                last_read_id = data.get("last_read_id")
+                if target_session and last_read_id is not None:
+                    await manager.send_read_receipt_to_visitor(target_session, last_read_id)
 
             elif msg_type == "close_chat":
                 target_session = data.get("session_id")
@@ -259,6 +321,14 @@ async def operator_websocket(
                                 continue
                             # Capture bot_name before session closes (avoid DetachedInstanceError)
                             bot_name = bot.name
+                            # BUG-22: Persist system message for operator-initiated closure
+                            add_chat_message(
+                                session,
+                                target_session,
+                                role="system",
+                                content=f"Operator {operator_name} ended the live chat.",
+                                bot_id=None,
+                            )
                             chat_session.status = "bot"
                             chat_session.assigned_operator_id = None
                             session.commit()
