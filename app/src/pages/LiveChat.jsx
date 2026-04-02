@@ -101,10 +101,10 @@ export default function LiveChat({ embedded = false }) {
     // Keep chatNamesRef in sync to avoid stale closures in WS handler
     useEffect(() => { chatNamesRef.current = chatNames; }, [chatNames]);
 
-    // Request browser notification permission on mount
+    // Request browser notification permission on mount (async to avoid race)
     useEffect(() => {
         if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
+            Notification.requestPermission().catch(() => {});
         }
     }, []);
 
@@ -309,6 +309,7 @@ export default function LiveChat({ embedded = false }) {
                     if (selectedChatRef.current === data.session_id) {
                         setSelectedChat(null);
                         setMessages([]);
+                        setIsTyping(false);
                     }
                     break;
 

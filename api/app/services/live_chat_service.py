@@ -48,11 +48,95 @@ class ConnectionManager:
         self._operator_names: dict[int, str] = {}
         # session_id → { name, reason } (visitor metadata for queue display)
         self._session_metadata: dict[str, dict] = {}
+        # Periodic cleanup task handle
+        self._cleanup_task: asyncio.Task | None = None
+        # Startup recovery flag
+        self._recovered = False
+
+    def _ensure_background_tasks(self):
+        """Start periodic background tasks (idempotent — safe to call on every connection)."""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._periodic_cleanup_loop())
+
+        if not self._recovered:
+            self._recovered = True
+            self._recover_orphaned_sessions()
+
+    def _recover_orphaned_sessions(self):
+        """On startup, reset sessions stuck in stale states due to previous server crash."""
+        try:
+            with get_session() as db:
+                # 1. Stale "waiting" sessions with no active timeout → revert to bot
+                stale_waiting = db.execute(select(ChatSession).where(ChatSession.status == "waiting")).scalars().all()
+                for cs in stale_waiting:
+                    if cs.id not in self.waiting_queue:
+                        cs.status = "bot"
+                        cs.assigned_operator_id = None
+
+                # 2. "Live" sessions assigned to offline operators → revert to bot
+                live_sessions = (
+                    db.execute(
+                        select(ChatSession).where(
+                            ChatSession.status == "live",
+                            ChatSession.assigned_operator_id.isnot(None),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for cs in live_sessions:
+                    if cs.assigned_operator_id not in self.operator_connections:
+                        # Operator not connected — check DB online status
+                        op = db.execute(
+                            select(Operator).where(Operator.id == cs.assigned_operator_id)
+                        ).scalar_one_or_none()
+                        if not op or not op.is_online:
+                            cs.status = "bot"
+                            cs.assigned_operator_id = None
+
+                db.commit()
+                logger.info("Startup recovery: cleaned orphaned sessions")
+        except Exception as e:
+            logger.warning(f"Startup recovery failed (non-fatal): {e}")
+
+    async def _periodic_cleanup_loop(self):
+        """Every 5 minutes, remove in-memory entries for sessions that are closed/bot in DB."""
+        while True:
+            try:
+                await asyncio.sleep(300)
+                self._cleanup_stale_entries()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Periodic cleanup error: {e}")
+
+    def _cleanup_stale_entries(self):
+        """Diff in-memory assignments against DB and remove stale entries."""
+        session_ids = list(self.assignments.keys())
+        if not session_ids:
+            return
+        try:
+            with get_session() as db:
+                live_sessions = db.execute(
+                    select(ChatSession.id, ChatSession.status).where(ChatSession.id.in_(session_ids))
+                ).all()
+                active_ids = {row.id for row in live_sessions if row.status in ("live", "waiting")}
+                stale_ids = set(session_ids) - active_ids
+                for sid in stale_ids:
+                    self.assignments.pop(sid, None)
+                    self._session_departments.pop(sid, None)
+                    self._session_metadata.pop(sid, None)
+                    self._disconnect_tasks.pop(sid, None)
+                if stale_ids:
+                    logger.info(f"Cleaned {len(stale_ids)} stale in-memory session entries")
+        except Exception as e:
+            logger.warning(f"Stale entry cleanup failed: {e}")
 
     # ── Visitor connections ──
 
     async def connect_visitor(self, session_id: str, ws: WebSocket):
         await ws.accept()
+        self._ensure_background_tasks()
         self.visitor_connections[session_id] = ws
         logger.info(f"Visitor connected: {session_id}")
         # Sync state to visitor: handles both the REST→WS race condition (visitor WS
@@ -147,6 +231,7 @@ class ConnectionManager:
         operator_name: str = "",
         is_online: bool = True,
     ):
+        self._ensure_background_tasks()
         # Cancel any pending grace-period timeout — operator is back before it expired.
         # This is the key reconnection-recovery path: tab switch, network blip, etc.
         self._cancel_operator_disconnect_task(operator_id)
@@ -223,15 +308,57 @@ class ConnectionManager:
                 )
                 self._operator_departments.pop(operator_id, None)
                 self._operator_names.pop(operator_id, None)
-                # Persist offline status to DB
+
+                # Persist offline status and reassign this operator's live sessions
+                orphaned_sessions: list[str] = []
                 try:
                     with get_session() as db:
                         op_obj = db.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
                         if op_obj:
                             op_obj.is_online = False
-                            db.commit()
+
+                        # Find all live sessions assigned to this operator and re-queue them
+                        live_sessions = (
+                            db.execute(
+                                select(ChatSession).where(
+                                    ChatSession.assigned_operator_id == operator_id,
+                                    ChatSession.status == "live",
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+                        for cs in live_sessions:
+                            cs.status = "waiting"
+                            cs.assigned_operator_id = None
+                            orphaned_sessions.append(cs.id)
+
+                        db.commit()
                 except Exception as e:
                     logger.warning(f"Failed to persist offline status for operator {operator_id}: {e}")
+
+                # Clean up in-memory assignments and re-queue
+                for sid in orphaned_sessions:
+                    self.assignments.pop(sid, None)
+                    if sid not in self.waiting_queue:
+                        self.waiting_queue.append(sid)
+                    # Notify visitor they're back in queue
+                    await self._send_to_visitor(
+                        sid,
+                        {
+                            "type": "status",
+                            "status": "waiting",
+                            "message": "Your operator disconnected. Finding another one...",
+                            "queue_position": self.waiting_queue.index(sid) + 1,
+                        },
+                    )
+
+                if orphaned_sessions:
+                    logger.info(f"Re-queued {len(orphaned_sessions)} sessions from offline operator {operator_id}")
+                    # Notify all connected operators about updated queue
+                    for oid in list(self.operator_connections.keys()):
+                        await self._notify_operator_queue(oid)
+
                 # Broadcast updated roster to all remaining operators
                 await self.broadcast_operators_update()
         except asyncio.CancelledError:
@@ -547,43 +674,21 @@ class ConnectionManager:
     async def _restore_visitor_state(self, session_id: str) -> None:
         """Push current state to a freshly connected visitor WebSocket.
 
-        Covers two failure scenarios:
-        - Race condition: visitor WS opens after REST /handoff returns but before
-          manager.request_handoff fires — the queued status send lands on a missing
-          connection, so the visitor never receives their queue position.
-        - Server restart: in-memory assignments/queue are cleared but the DB still
-          records live or waiting sessions.
+        Always queries DB as source of truth, then syncs in-memory state to match.
+        Handles REST→WS race conditions and server restart scenarios.
         """
-        # Happy path: state is already tracked in memory
-        if session_id in self.assignments:
-            operator_id = self.assignments[session_id]
-            operator_name = self._operator_names.get(operator_id, "Support")
-            await self._send_to_visitor(
-                session_id,
-                {"type": "status", "status": "connected", "operator_name": operator_name},
-            )
-            # Cancel any pending disconnect cleanup — visitor is back
-            if session_id in self._disconnect_tasks:
-                self._cancel_disconnect_task(session_id)
+        # Cancel any pending disconnect cleanup — visitor is back
+        if session_id in self._disconnect_tasks:
+            self._cancel_disconnect_task(session_id)
+            operator_id = self.assignments.get(session_id)
+            if operator_id:
                 await self._send_to_operator(
                     operator_id,
                     {"type": "visitor_reconnected", "session_id": session_id},
                 )
                 logger.info(f"Visitor reconnected: {session_id}")
-            return
 
-        if session_id in self.waiting_queue:
-            await self._send_to_visitor(
-                session_id,
-                {
-                    "type": "status",
-                    "status": "waiting",
-                    "queue_position": self.waiting_queue.index(session_id) + 1,
-                },
-            )
-            return
-
-        # Fall through to DB for restart recovery
+        # DB is the source of truth — query first, then sync memory
         try:
             with get_session() as db:
                 chat_session = db.get(ChatSession, session_id)
@@ -591,21 +696,21 @@ class ConnectionManager:
                     return
 
                 if chat_session.status == "live" and chat_session.assigned_operator_id:
-                    # Restore the assignment so message routing works again
+                    # Sync in-memory assignment from DB
                     self.assignments[session_id] = chat_session.assigned_operator_id
                     operator_name = self._operator_names.get(chat_session.assigned_operator_id, "Support")
                     await self._send_to_visitor(
                         session_id,
                         {"type": "status", "status": "connected", "operator_name": operator_name},
                     )
-                    logger.info(
-                        f"Restored live assignment for {session_id} → operator {chat_session.assigned_operator_id}"
-                    )
 
                 elif chat_session.status == "waiting":
+                    # Sync in-memory queue from DB
                     if session_id not in self.waiting_queue:
                         self.waiting_queue.append(session_id)
                         self._session_departments[session_id] = chat_session.department_id
+                    # Remove stale assignment if session was transferred back to queue
+                    self.assignments.pop(session_id, None)
                     await self._send_to_visitor(
                         session_id,
                         {
@@ -614,7 +719,15 @@ class ConnectionManager:
                             "queue_position": self.waiting_queue.index(session_id) + 1,
                         },
                     )
-                    logger.info(f"Restored waiting state for {session_id}")
+
+                else:
+                    # Session is "bot" or "closed" — clean up any stale in-memory state
+                    self.assignments.pop(session_id, None)
+                    self._session_departments.pop(session_id, None)
+                    self._session_metadata.pop(session_id, None)
+                    if session_id in self.waiting_queue:
+                        self.waiting_queue.remove(session_id)
+
         except Exception as e:
             # Non-fatal: visitor is connected; state sync is best-effort.
             logger.warning(f"Failed to restore visitor state for {session_id}: {e}")

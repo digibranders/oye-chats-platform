@@ -24,6 +24,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const waitingTimerRef = useRef(null);
     const lastTypingSentRef = useRef(0);
     const msgIdCounter = useRef(0);
+    const typingTimeoutRef = useRef(null);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -38,7 +39,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 console.log('[OyeChats] Live chat WebSocket connected');
                 reconnectAttempt.current = 0;
                 setIsReconnecting(false);
-                onConnectionStatusChange?.('connected');
+                // Don't signal 'connected' here — wait for the backend's
+                // status: 'connected' message which confirms operator assignment.
             };
 
             socket.onmessage = (event) => {
@@ -52,6 +54,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         } else if (data.status === 'connected') {
                             setChatMode('live');
                             setOperatorName(data.operator_name || 'Support');
+                            onConnectionStatusChange?.('connected');
                         } else if (data.status === 'closed') {
                             intentionalClose.current = true;
                             socket.close();
@@ -86,7 +89,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
 
                     case 'operator_typing':
                         setIsOperatorTyping(true);
-                        setTimeout(() => setIsOperatorTyping(false), 3000);
+                        clearTimeout(typingTimeoutRef.current);
+                        typingTimeoutRef.current = setTimeout(() => setIsOperatorTyping(false), 3000);
                         break;
 
                     case 'pong':
@@ -123,6 +127,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         return () => {
             intentionalClose.current = true;
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            clearTimeout(typingTimeoutRef.current);
             setWs(prev => { prev?.close(); return null; });
         };
     }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -130,14 +135,14 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     // Visibility-aware heartbeat — keeps the WebSocket alive through load-balancer
     // idle timeouts. Interval is shorter when the tab is visible (25 s) and longer
     // when backgrounded (50 s) because browsers throttle timers in hidden tabs.
+    const heartbeatRef = useRef(null);
     useEffect(() => {
         if (!ws) return;
 
-        let interval;
         const startHeartbeat = () => {
-            clearInterval(interval);
+            clearInterval(heartbeatRef.current);
             const delay = document.visibilityState === 'visible' ? 25000 : 50000;
-            interval = setInterval(() => {
+            heartbeatRef.current = setInterval(() => {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ type: 'ping' }));
                 }
@@ -147,7 +152,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         startHeartbeat();
         document.addEventListener('visibilitychange', startHeartbeat);
         return () => {
-            clearInterval(interval);
+            clearInterval(heartbeatRef.current);
             document.removeEventListener('visibilitychange', startHeartbeat);
         };
     }, [ws]);
@@ -196,11 +201,17 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         e?.preventDefault();
         if (!inputText.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-        ws.send(JSON.stringify({ type: 'message', content: inputText }));
+        const text = inputText;
+        try {
+            ws.send(JSON.stringify({ type: 'message', content: text }));
+        } catch {
+            // Send failed — don't add to UI, connection will trigger reconnect
+            return;
+        }
 
         setMessages(prev => [...prev, {
             id: `live-${++msgIdCounter.current}`,
-            text: inputText,
+            text,
             sender: 'user',
             timestamp: new Date().toISOString(),
         }]);

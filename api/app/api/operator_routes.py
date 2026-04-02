@@ -515,6 +515,19 @@ async def accept_chat(
         if not operator:
             raise HTTPException(status_code=400, detail="No operator profile found.")
 
+        # Enforce max concurrent chats
+        if operator.max_concurrent_chats:
+            active_count = session.execute(
+                select(func.count())
+                .select_from(ChatSession)
+                .where(ChatSession.assigned_operator_id == operator.id, ChatSession.status == "live")
+            ).scalar()
+            if active_count >= operator.max_concurrent_chats:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Operator already at max capacity ({operator.max_concurrent_chats} chats).",
+                )
+
         # DB-level race condition guard: atomically claim the session only if still waiting.
         # Using UPDATE ... WHERE status='waiting' ensures only one operator wins the race.
         result = session.execute(
@@ -535,7 +548,9 @@ async def accept_chat(
         operator_name = operator.name
         operator_id = operator.id
 
-    asyncio.create_task(manager.accept_chat(session_id, operator_id, operator_name))
+    accepted = await manager.accept_chat(session_id, operator_id, operator_name)
+    if not accepted:
+        raise HTTPException(status_code=409, detail="Chat was already accepted by another operator")
 
     return {"success": True, "status": "live", "operator_name": operator_name}
 
