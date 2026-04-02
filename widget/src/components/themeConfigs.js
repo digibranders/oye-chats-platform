@@ -1,7 +1,7 @@
 export const themeConfigs = {
     classic: {
         container: "w-full h-full md:w-[400px] md:h-[600px] md:max-h-[calc(100vh-100px)] fixed md:right-6 md:bottom-24 right-0 bottom-0 bg-white md:rounded-2xl shadow-xl flex flex-col overflow-hidden border border-[#BBE7FF]/30 z-[9999]",
-        header: "bg-white px-5 py-3.5 flex items-center justify-between shrink-0 border-b border-[#BBE7FF]/60",
+        header: "bg-white px-5 py-3.5 flex items-center justify-between shrink-0",
         messagesArea: "flex-1 overflow-y-auto px-5 py-4 bg-white flex flex-col gap-5",
         userBubble: "text-[#16202C] rounded-2xl",
         userBubbleDefaultBg: "#DBE9FF",

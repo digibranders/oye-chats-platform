@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, Send, Paperclip, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, Paperclip, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
+import SendIcon from './SendIcon';
 import { submitOfflineMessage, getChatHistory } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -730,7 +731,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                 aria-label="Send message"
                                 className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             >
-                                <Send
+                                <SendIcon
                                     size={20}
                                     className={`transition-colors ${inputText.trim() ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
                                 />

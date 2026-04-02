@@ -370,8 +370,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (chatMode === 'waiting') {
             return (
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
-                        <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                    <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                        <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
                     </div>
                     <h3 className="font-semibold text-sm text-[#16202C]">Connecting to support...</h3>
                 </div>
@@ -382,20 +382,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             const isReconnecting = liveConnectionStatus === 'reconnecting';
             return (
                 <div className="flex items-center gap-3">
-                    <div className="relative">
-                        <div
-                            className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm"
-                            style={{ backgroundColor: primaryColor }}
-                        >
-                            {operatorName?.charAt(0)?.toUpperCase() || '?'}
-                        </div>
-                        <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${isReconnecting ? 'bg-amber-400' : 'bg-green-500'}`} />
+                    <div
+                        className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-base flex-shrink-0"
+                        style={{ backgroundColor: isReconnecting ? '#F59E0B' : primaryColor }}
+                    >
+                        {operatorName?.charAt(0)?.toUpperCase() || '?'}
                     </div>
                     <div>
-                        <h3 className="font-semibold text-sm text-gray-900">{operatorName}</h3>
-                        <p className={`text-[10px] font-medium ${isReconnecting ? 'text-amber-600' : 'text-green-600'}`}>
-                            {isReconnecting ? 'Reconnecting...' : 'Online'}
-                        </p>
+                        <h3 className="font-semibold text-sm text-[#16202C]">{operatorName}</h3>
+                        {isReconnecting && (
+                            <p className="text-[10px] font-medium text-amber-600">Reconnecting...</p>
+                        )}
                     </div>
                 </div>
             );
@@ -403,8 +400,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (chatMode === 'unavailable') {
             return (
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
-                        <Clock className="w-4 h-4" />
+                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0">
+                        <Clock className="w-5 h-5" />
                     </div>
                     <h3 className="font-semibold text-sm text-gray-500">Support Unavailable</h3>
                 </div>
@@ -443,6 +440,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </button>
                 </div>
             </div>
+
+            {/* Gradient fade — header blends into messages area */}
+            <div
+                className="shrink-0 h-7 -mb-7 relative z-10 pointer-events-none"
+                style={{ background: 'linear-gradient(to bottom, #ffffff 0%, transparent 100%)' }}
+            />
 
             {/* Handoff form */}
             {chatMode === 'handoff_form' ? (
