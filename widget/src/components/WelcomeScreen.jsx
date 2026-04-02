@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Paperclip } from 'lucide-react';
+import { X } from 'lucide-react';
 import SendIcon from './SendIcon';
 import BotAvatar from './BotAvatar';
 
@@ -106,12 +106,12 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                             ref={inputRef}
                             rows={1}
                         />
-                        <div className="flex items-center justify-between mt-2">
-                            <Paperclip size={20} className="text-[#16202C] cursor-pointer hover:text-gray-500 transition-colors" />
+                        <div className="flex items-center justify-end mt-2">
                             <button
                                 type="submit"
                                 disabled={!hasText}
-                                className="transition-all disabled:cursor-not-allowed"
+                                aria-label="Send message"
+                                className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             >
                                 <SendIcon size={20} className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`} />
                             </button>
