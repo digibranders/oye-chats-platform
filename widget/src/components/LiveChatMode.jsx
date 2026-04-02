@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, Send, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, Send, Paperclip, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
 import { submitOfflineMessage, getChatHistory } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -703,7 +703,16 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                             className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400"
                             style={{ border: 'none' }}
                         />
-                        <div className="flex items-center justify-end mt-2">
+                        <div className="flex items-center justify-between mt-2">
+                            <button
+                                type="button"
+                                disabled
+                                title="File sharing coming soon"
+                                aria-label="Attach file (coming soon)"
+                                className="opacity-30 cursor-not-allowed"
+                            >
+                                <Paperclip size={20} className="text-[#16202C]" />
+                            </button>
                             <button
                                 type="submit"
                                 disabled={!inputText.trim()}

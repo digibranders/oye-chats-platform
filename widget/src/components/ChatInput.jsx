@@ -1,4 +1,5 @@
 import React from 'react';
+import { Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 
 const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, inputRef, placeholder }) => {
@@ -35,8 +36,17 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                         rows={1}
                     />
 
-                    {/* Bottom row — send button right */}
-                    <div className="flex items-center justify-end mt-2">
+                    {/* Bottom row — paperclip left (placeholder), send right */}
+                    <div className="flex items-center justify-between mt-2">
+                        <button
+                            type="button"
+                            disabled
+                            title="File sharing coming soon"
+                            aria-label="Attach file (coming soon)"
+                            className="opacity-30 cursor-not-allowed"
+                        >
+                            <Paperclip size={20} className="text-[#16202C]" />
+                        </button>
                         <button
                             type="submit"
                             disabled={!hasText || isTyping}

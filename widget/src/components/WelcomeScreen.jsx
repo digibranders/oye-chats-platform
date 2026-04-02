@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 import BotAvatar from './BotAvatar';
 
@@ -106,7 +106,16 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                             ref={inputRef}
                             rows={1}
                         />
-                        <div className="flex items-center justify-end mt-2">
+                        <div className="flex items-center justify-between mt-2">
+                            <button
+                                type="button"
+                                disabled
+                                title="File sharing coming soon"
+                                aria-label="Attach file (coming soon)"
+                                className="opacity-30 cursor-not-allowed"
+                            >
+                                <Paperclip size={20} className="text-[#16202C]" />
+                            </button>
                             <button
                                 type="submit"
                                 disabled={!hasText}
