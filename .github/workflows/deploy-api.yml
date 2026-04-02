@@ -7,7 +7,12 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Require CI to pass before deploying to production
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +37,12 @@ jobs:
           key: ${{ secrets.DO_SSH_KEY }}
           envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY
           script: |
+            set -e  # Abort on any command failure — don't deploy broken code
+
             cd /opt/oyechats/platform
+
+            # Pull latest code FIRST (so .env write applies to new code)
+            git pull origin main
 
             # Generate .env from secrets
             printf '%s\n' \
@@ -51,13 +61,14 @@ jobs:
               "LANGFUSE_HOST=https://cloud.langfuse.com" \
               > api/.env
 
-            # Pull latest code
-            git pull origin main
-
-            # Sync dependencies and install Playwright
+            # Sync dependencies
             cd api
             /root/.local/bin/uv sync
-            /root/.local/bin/uv run playwright install --with-deps chromium
+
+            # Install Playwright only if not already present
+            if ! /root/.local/bin/uv run python -c "from playwright.sync_api import sync_playwright" 2>/dev/null; then
+              /root/.local/bin/uv run playwright install --with-deps chromium
+            fi
 
             # Run migrations
             /root/.local/bin/uv run alembic upgrade head
@@ -65,6 +76,14 @@ jobs:
             # Restart service
             systemctl restart oyechats-api
 
-            # Health check
-            sleep 3
-            curl -sf http://localhost:8000/docs > /dev/null && echo "Deploy successful" || echo "Deploy failed"
+            # Health check — retry up to 5 times (2s apart)
+            for i in 1 2 3 4 5; do
+              sleep 2
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✅ Deploy successful (attempt $i)"
+                exit 0
+              fi
+              echo "⏳ Health check attempt $i failed, retrying..."
+            done
+            echo "❌ Deploy failed — server not responding after 10s"
+            exit 1
