@@ -85,8 +85,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                             setMessages(prev => {
                                                 if (prev.length === 0) return restored;
                                                 // Deduplicate: merge restored with existing
-                                                const existingTexts = new Set(prev.map(m => `${m.sender}:${m.text}`));
-                                                const newMsgs = restored.filter(m => !existingTexts.has(`${m.sender}:${m.text}`));
+                                                const existingIds = new Set(prev.map(m => m.id));
+                                                const newMsgs = restored.filter(m => !existingIds.has(m.id));
                                                 return newMsgs.length > 0 ? [...newMsgs, ...prev] : prev;
                                             });
                                         }
@@ -122,6 +122,10 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         setIsOperatorTyping(true);
                         clearTimeout(typingTimeoutRef.current);
                         typingTimeoutRef.current = setTimeout(() => setIsOperatorTyping(false), 3000);
+                        break;
+
+                    case 'ping':
+                        socket.send(JSON.stringify({ type: 'pong' }));
                         break;
 
                     case 'pong':
@@ -378,11 +382,12 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             const { upload_url, file_url } = await res.json();
 
             // 2. PUT directly to B2
-            await fetch(upload_url, {
+            const putRes = await fetch(upload_url, {
                 method: 'PUT',
                 headers: { 'Content-Type': file.type },
                 body: file,
             });
+            if (!putRes.ok) throw new Error(`B2 upload failed: ${putRes.status}`);
             setUploadProgress(100);
 
             // 3. Send file message over WS

@@ -398,8 +398,10 @@ class UploadUrlRequest(PydanticBaseModel):
 
 
 @router.post("/chat/upload-url")
+@limiter.limit("20/minute", key_func=key_from_bot_key)
 async def get_visitor_upload_url(
     body: UploadUrlRequest,
+    request: Request,
     bot: Bot = Depends(get_current_bot),
 ):
     """Return a presigned B2 PUT URL so the widget can upload a file directly.
