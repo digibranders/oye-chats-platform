@@ -43,12 +43,14 @@ def generate_response_stream(prompt: str, *, metadata: dict | None = None):
         return
     try:
         logger.info(f"Starting LLM stream | model={LLM_MODEL} | prompt_length={len(prompt)}")
+        # Note: fallbacks intentionally omitted for streaming — LiteLLM's fallback
+        # wrapper returns an AsyncStream which can't be iterated synchronously.
+        # If the primary model fails, the error is caught and yielded to the client.
         response = litellm.completion(
             model=LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
             metadata=metadata,
-            fallbacks=LLM_FALLBACKS,
         )
         for chunk in response:
             content = chunk.choices[0].delta.content
