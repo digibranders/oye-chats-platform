@@ -306,9 +306,8 @@ def get_history_endpoint(
             api_key=request.headers.get("X-API-Key"),
             operator_key=request.headers.get("X-Operator-Key"),
             legacy_agent_key=request.headers.get("X-Agent-Key"),
-            bot_key=request.headers.get("X-Bot-Key"),
         )
-    except HTTPException:
+    except (HTTPException, Exception):
         # Fall back to bot key auth for widget access
         raw_bot_key = request.headers.get("X-Bot-Key")
         if not raw_bot_key:
