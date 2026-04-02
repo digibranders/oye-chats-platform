@@ -18,12 +18,9 @@ logger = logging.getLogger(__name__)
 class ConnectionManager:
     """Manages WebSocket connections for live chat between visitors and operators."""
 
-    # How long to wait for a visitor to reconnect before auto-closing the session.
-    VISITOR_DISCONNECT_TIMEOUT = 120  # seconds
-
-    # How long to wait for an operator to reconnect before marking them truly offline.
-    # Covers tab switches, short network blips, and browser background throttling.
-    OPERATOR_DISCONNECT_TIMEOUT = 60  # seconds
+    # Default timeouts — used when no bot-specific value is available (BUG-11).
+    DEFAULT_VISITOR_DISCONNECT_TIMEOUT = 120  # seconds
+    DEFAULT_OPERATOR_DISCONNECT_TIMEOUT = 60  # seconds
 
     def __init__(self):
         # session_id → WebSocket
@@ -48,6 +45,8 @@ class ConnectionManager:
         self._operator_names: dict[int, str] = {}
         # session_id → { name, reason } (visitor metadata for queue display)
         self._session_metadata: dict[str, dict] = {}
+        # BUG-1: operator_id → list of queued messages while WS is in grace period
+        self._operator_message_queue: dict[int, list[dict]] = {}
         # Periodic cleanup task handle
         self._cleanup_task: asyncio.Task | None = None
         # Startup recovery flag
@@ -100,11 +99,14 @@ class ConnectionManager:
             logger.warning(f"Startup recovery failed (non-fatal): {e}")
 
     async def _periodic_cleanup_loop(self):
-        """Every 5 minutes, remove in-memory entries for sessions that are closed/bot in DB."""
+        """Every 5 minutes, remove in-memory entries for sessions that are closed/bot in DB
+        and fix stale is_online flags (BUG-7).
+        """
         while True:
             try:
                 await asyncio.sleep(300)
                 self._cleanup_stale_entries()
+                self._fix_stale_online_flags()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -131,6 +133,25 @@ class ConnectionManager:
                     logger.info(f"Cleaned {len(stale_ids)} stale in-memory session entries")
         except Exception as e:
             logger.warning(f"Stale entry cleanup failed: {e}")
+
+    def _fix_stale_online_flags(self):
+        """BUG-7: Mark operators as offline in DB if they have is_online=True but
+        are not connected and not in a grace period. Handles server crash scenarios
+        where the grace period timeout never fired.
+        """
+        try:
+            with get_session() as db:
+                online_operators = db.execute(select(Operator).where(Operator.is_online.is_(True))).scalars().all()
+                fixed = 0
+                for op in online_operators:
+                    if op.id not in self.operator_connections and op.id not in self._operator_disconnect_tasks:
+                        op.is_online = False
+                        fixed += 1
+                if fixed:
+                    db.commit()
+                    logger.info(f"Fixed {fixed} stale is_online flags")
+        except Exception as e:
+            logger.warning(f"Stale online flag cleanup failed: {e}")
 
     # ── Visitor connections ──
 
@@ -175,16 +196,30 @@ class ConnectionManager:
                 "session_id": session_id,
             },
         )
+        # BUG-11: Look up bot-specific timeout, fall back to default
+        timeout = self.DEFAULT_VISITOR_DISCONNECT_TIMEOUT
+        try:
+            with get_session() as db:
+                from app.db.models import Bot
+
+                cs = db.get(ChatSession, session_id)
+                if cs and cs.bot_id:
+                    bot = db.get(Bot, cs.bot_id)
+                    if bot and bot.visitor_disconnect_timeout:
+                        timeout = bot.visitor_disconnect_timeout
+        except Exception:
+            pass  # Use default on any error
+
         # Start auto-close timer — if visitor doesn't reconnect within the window,
         # close the chat automatically.
         self._cancel_disconnect_task(session_id)
-        task = asyncio.create_task(self._visitor_disconnect_timeout(session_id))
+        task = asyncio.create_task(self._visitor_disconnect_timeout(session_id, timeout))
         self._disconnect_tasks[session_id] = task
 
-    async def _visitor_disconnect_timeout(self, session_id: str):
+    async def _visitor_disconnect_timeout(self, session_id: str, timeout: int | None = None):
         """Auto-close a chat if the visitor doesn't reconnect within the timeout."""
         try:
-            await asyncio.sleep(self.VISITOR_DISCONNECT_TIMEOUT)
+            await asyncio.sleep(timeout or self.DEFAULT_VISITOR_DISCONNECT_TIMEOUT)
             if session_id in self.assignments and session_id not in self.visitor_connections:
                 logger.info(f"Visitor {session_id} did not reconnect — auto-closing chat")
                 # Persist to DB
@@ -236,11 +271,13 @@ class ConnectionManager:
         # This is the key reconnection-recovery path: tab switch, network blip, etc.
         self._cancel_operator_disconnect_task(operator_id)
 
-        # If operator already connected (multi-tab), close old connection gracefully
+        # BUG-9: If operator already connected (multi-tab), close old connection
+        # with a custom close code so the old tab can show a helpful message
+        # instead of starting a reconnect loop.
         old_ws = self.operator_connections.get(operator_id)
         if old_ws and old_ws is not ws:
             with contextlib.suppress(Exception):
-                await old_ws.close(code=1000, reason="Replaced by new connection")
+                await old_ws.close(code=4001, reason="Session opened in another tab")
 
         await ws.accept()
         self.operator_connections[operator_id] = ws
@@ -264,6 +301,13 @@ class ConnectionManager:
 
         # Send active chats so operator can restore state after page refresh
         await self._send_active_chats(operator_id)
+
+        # BUG-1: Flush any messages that arrived while operator was in grace period
+        queued = self._operator_message_queue.pop(operator_id, [])
+        for msg in queued:
+            await self._send_to_operator(operator_id, msg)
+        if queued:
+            logger.info(f"Flushed {len(queued)} queued messages to operator {operator_id}")
 
         # Broadcast updated roster to all operators
         await self.broadcast_operators_update()
@@ -299,15 +343,16 @@ class ConnectionManager:
     async def _operator_disconnect_timeout(self, operator_id: int):
         """Full cleanup when an operator doesn't reconnect within the grace period."""
         try:
-            await asyncio.sleep(self.OPERATOR_DISCONNECT_TIMEOUT)
+            await asyncio.sleep(self.DEFAULT_OPERATOR_DISCONNECT_TIMEOUT)
             # Still not reconnected — do the full cleanup now.
             if operator_id not in self.operator_connections:
                 logger.info(
                     f"Operator {operator_id} did not reconnect within "
-                    f"{self.OPERATOR_DISCONNECT_TIMEOUT}s — marking offline"
+                    f"{self.DEFAULT_OPERATOR_DISCONNECT_TIMEOUT}s — marking offline"
                 )
                 self._operator_departments.pop(operator_id, None)
                 self._operator_names.pop(operator_id, None)
+                self._operator_message_queue.pop(operator_id, None)  # BUG-1: discard stale queue
 
                 # Persist offline status and reassign this operator's live sessions
                 orphaned_sessions: list[str] = []
@@ -368,6 +413,9 @@ class ConnectionManager:
 
     # ── Handoff flow ──
 
+    # BUG-13: Maximum queue size to prevent unbounded growth
+    MAX_QUEUE_SIZE = 50
+
     async def request_handoff(
         self,
         session_id: str,
@@ -378,6 +426,12 @@ class ConnectionManager:
     ):
         """Add visitor to the waiting queue and notify operators."""
         if session_id not in self.waiting_queue:
+            # BUG-13: Reject if queue is full
+            if len(self.waiting_queue) >= self.MAX_QUEUE_SIZE:
+                logger.warning(f"Queue full ({self.MAX_QUEUE_SIZE}) — rejecting handoff for {session_id}")
+                self._mark_session_waiting_exit(session_id)
+                await self._send_to_visitor(session_id, {"type": "status", "status": "unavailable"})
+                return
             self.waiting_queue.append(session_id)
         self._session_departments[session_id] = department_id
         self._session_metadata[session_id] = {
@@ -413,11 +467,20 @@ class ConnectionManager:
         return operator_dept == department_id
 
     async def accept_chat(self, session_id: str, operator_id: int, operator_name: str) -> bool:
-        """Operator accepts a waiting chat. Returns False if already accepted."""
-        # Concurrency guard: bail if already assigned
-        if session_id in self.assignments:
+        """Operator accepts a waiting chat. Returns False if already accepted by a *different* operator.
+
+        BUG-4: This method is now idempotent — if the session is already assigned to this
+        same operator (e.g., DB commit succeeded but a prior coroutine call already ran),
+        it returns True without re-notifying. The real concurrency guard is the atomic
+        DB UPDATE in operator_routes.py.
+        """
+        existing_assignee = self.assignments.get(session_id)
+        if existing_assignee is not None:
+            if existing_assignee == operator_id:
+                # Already assigned to this operator — idempotent success
+                return True
             logger.warning(
-                f"Chat {session_id} already assigned to operator {self.assignments[session_id]}, ignoring accept from {operator_id}"
+                f"Chat {session_id} already assigned to operator {existing_assignee}, ignoring accept from {operator_id}"
             )
             return False
 
@@ -533,6 +596,33 @@ class ConnectionManager:
             f"Chat {session_id} transferred from operator {old_operator_id} to {new_operator_id} ({new_operator_name})"
         )
 
+    # ── BUG-16: Read receipts ──
+
+    async def send_read_receipt_to_operator(self, session_id: str, last_read_id: int):
+        """Notify operator that visitor has read messages up to last_read_id."""
+        operator_id = self.assignments.get(session_id)
+        if operator_id:
+            await self._send_to_operator(
+                operator_id,
+                {"type": "read_receipt", "session_id": session_id, "last_read_id": last_read_id, "reader": "visitor"},
+            )
+
+    async def send_read_receipt_to_visitor(self, session_id: str, last_read_id: int):
+        """Notify visitor that operator has read messages up to last_read_id."""
+        await self._send_to_visitor(
+            session_id,
+            {"type": "read_receipt", "last_read_id": last_read_id, "reader": "operator"},
+        )
+
+    # ── Department update ──
+
+    async def update_operator_department(self, operator_id: int, department_id: int | None):
+        """BUG-8: Dynamically update an operator's department without requiring WS reconnect."""
+        self._operator_departments[operator_id] = department_id
+        if operator_id in self.operator_connections:
+            await self._notify_operator_queue(operator_id)
+            logger.info(f"Updated operator {operator_id} department to {department_id}")
+
     # ── Roster broadcast ──
 
     async def broadcast_operators_update(self):
@@ -581,19 +671,31 @@ class ConnectionManager:
     # ── Message routing ──
 
     async def route_visitor_message(self, session_id: str, content: str):
-        """Route a message from visitor to their assigned operator."""
+        """Route a message from visitor to their assigned operator.
+
+        If the operator is in the grace period (WS dropped, waiting for reconnect),
+        the message is queued and will be flushed when the operator reconnects.
+        Messages are always persisted to DB by the caller (ws_routes), so nothing
+        is lost — this only affects real-time delivery.
+        """
         operator_id = self.assignments.get(session_id)
-        if operator_id and operator_id in self.operator_connections:
-            await self._send_to_operator(
-                operator_id,
-                {
-                    "type": "message",
-                    "session_id": session_id,
-                    "role": "user",
-                    "content": content,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
-            )
+        if not operator_id:
+            return
+
+        msg = {
+            "type": "message",
+            "session_id": session_id,
+            "role": "user",
+            "content": content,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        if operator_id in self.operator_connections:
+            await self._send_to_operator(operator_id, msg)
+        elif operator_id in self._operator_disconnect_tasks:
+            # BUG-1: Operator is in grace period — queue for delivery on reconnect
+            self._operator_message_queue.setdefault(operator_id, []).append(msg)
+            logger.debug(f"Queued message for operator {operator_id} (in grace period)")
 
     async def route_operator_message(self, session_id: str, content: str, operator_name: str):
         """Route a message from operator to visitor."""
@@ -603,6 +705,46 @@ class ConnectionManager:
                 "type": "message",
                 "role": "operator",
                 "content": content,
+                "operator_name": operator_name,
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+
+    # ── BUG-14: File routing ──
+
+    async def route_visitor_file(self, session_id: str, file_url: str, filename: str, content_type: str):
+        """Route a file message from visitor to their assigned operator."""
+        operator_id = self.assignments.get(session_id)
+        if not operator_id:
+            return
+
+        msg = {
+            "type": "file",
+            "session_id": session_id,
+            "role": "user",
+            "file_url": file_url,
+            "filename": filename,
+            "content_type": content_type,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+        if operator_id in self.operator_connections:
+            await self._send_to_operator(operator_id, msg)
+        elif operator_id in self._operator_disconnect_tasks:
+            self._operator_message_queue.setdefault(operator_id, []).append(msg)
+
+    async def route_operator_file(
+        self, session_id: str, file_url: str, filename: str, content_type: str, operator_name: str
+    ):
+        """Route a file message from operator to visitor."""
+        await self._send_to_visitor(
+            session_id,
+            {
+                "type": "file",
+                "role": "operator",
+                "file_url": file_url,
+                "filename": filename,
+                "content_type": content_type,
                 "operator_name": operator_name,
                 "timestamp": datetime.now(UTC).isoformat(),
             },
@@ -620,6 +762,18 @@ class ConnectionManager:
                 operator_id,
                 {
                     "type": "visitor_typing",
+                    "session_id": session_id,
+                },
+            )
+
+    async def send_stopped_typing_to_operator(self, session_id: str):
+        """BUG-17: Notify operator that visitor stopped typing."""
+        operator_id = self.assignments.get(session_id)
+        if operator_id:
+            await self._send_to_operator(
+                operator_id,
+                {
+                    "type": "visitor_stopped_typing",
                     "session_id": session_id,
                 },
             )

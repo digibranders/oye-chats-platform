@@ -90,6 +90,9 @@ class Bot(Base):
     # Live chat settings
     live_chat_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
     operator_timeout_seconds = Column(Integer, default=120, server_default="120", nullable=False)
+    # BUG-11: Configurable timeouts for visitor/operator disconnect grace periods
+    visitor_disconnect_timeout = Column(Integer, default=120, server_default="120", nullable=False)
+    operator_disconnect_timeout = Column(Integer, default=60, server_default="60", nullable=False)
     business_hours = Column(sqlalchemy.JSON, nullable=True)  # e.g. {"mon":{"start":"09:00","end":"17:00"}, ...}
 
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
@@ -256,6 +259,22 @@ class OfflineMessage(Base):
     replied_at = Column(DateTime(timezone=True), nullable=True)
 
     bot = relationship("Bot")
+
+
+class ChatAuditLog(Base):
+    """BUG-12: Audit trail for live chat state transitions (accept, close, transfer, etc.)."""
+
+    __tablename__ = "chat_audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    operator_id = Column(Integer, ForeignKey("operators.id", ondelete="SET NULL"), nullable=True)
+    action = Column(String, nullable=False)  # handoff_requested|accepted|closed|transferred|timeout|visitor_ended
+    details = Column(JSONB, nullable=True)  # e.g. {"transferred_to": 5, "reason": "billing question"}
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("ChatSession")
+    operator = relationship("Operator")
 
 
 class CannedResponse(Base):

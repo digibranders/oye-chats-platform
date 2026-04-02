@@ -195,7 +195,8 @@ export default function LiveChat({ embedded = false }) {
             // longer when backgrounded (browsers throttle timers in hidden tabs).
             const startPing = () => {
                 clearInterval(pingIntervalRef.current);
-                const delay = document.visibilityState === 'visible' ? 20000 : 45000;
+                // BUG-19: Standardized heartbeat timing (25s visible, 50s hidden) across widget and admin
+                const delay = document.visibilityState === 'visible' ? 25000 : 50000;
                 pingIntervalRef.current = setInterval(() => {
                     if (socket.readyState === WebSocket.OPEN) {
                         socket.send(JSON.stringify({ type: 'ping' }));
@@ -277,7 +278,15 @@ export default function LiveChat({ embedded = false }) {
                 case 'visitor_typing':
                     if (data.session_id === selectedChatRef.current) {
                         setIsTyping(true);
+                        // Auto-clear after 3s as fallback (BUG-17: explicit stop event preferred)
                         setTimeout(() => setIsTyping(false), 3000);
+                    }
+                    break;
+
+                case 'visitor_stopped_typing':
+                    // BUG-17: Explicit stopped typing — clear indicator immediately
+                    if (data.session_id === selectedChatRef.current) {
+                        setIsTyping(false);
                     }
                     break;
 
@@ -368,9 +377,17 @@ export default function LiveChat({ embedded = false }) {
             }
         };
 
-        socket.onclose = () => {
-            console.log('[LiveChat] WebSocket closed');
+        socket.onclose = (event) => {
+            console.log('[LiveChat] WebSocket closed', event.code, event.reason);
             clearInterval(pingIntervalRef.current);
+
+            // BUG-9: If closed because another tab opened, show message and don't reconnect
+            if (event.code === 4001) {
+                setConnectionLost(true);
+                manualCloseRef.current = true;
+                return;
+            }
+
             if (!manualCloseRef.current) {
                 // Show reconnecting banner after 2 failed attempts so brief blips
                 // don't flash the UI, but still surface persistent failures.
@@ -433,7 +450,9 @@ export default function LiveChat({ embedded = false }) {
         };
     }, [isOnline]);
 
-    // Queue fallback polling: keeps queue accurate even if WS events are missed.
+    // BUG-6: Queue fallback polling — only runs when WS is disconnected.
+    // When WS is connected, real-time queue_update events are sufficient.
+    // This prevents stale REST data from flickering over fresh WS state.
     useEffect(() => {
         clearInterval(queuePollIntervalRef.current);
 
@@ -442,14 +461,17 @@ export default function LiveChat({ embedded = false }) {
             return undefined;
         }
 
-        fetchQueueSnapshot();
-        queuePollIntervalRef.current = setInterval(fetchQueueSnapshot, 8000);
+        // Only poll via REST when WebSocket is not connected
+        if (connectionLost) {
+            fetchQueueSnapshot();
+            queuePollIntervalRef.current = setInterval(fetchQueueSnapshot, 8000);
+        }
 
         return () => {
             clearInterval(queuePollIntervalRef.current);
             queuePollIntervalRef.current = null;
         };
-    }, [isOnline, fetchQueueSnapshot]);
+    }, [isOnline, connectionLost, fetchQueueSnapshot]);
 
     // Load operators roster when going online
     useEffect(() => {

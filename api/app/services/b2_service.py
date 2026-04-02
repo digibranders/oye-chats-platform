@@ -112,6 +112,31 @@ def get_object(key: str):
     return body, content_type
 
 
+def upload_chat_file(file_data: bytes, original_filename: str, content_type: str) -> str:
+    """BUG-14: Upload a chat attachment (image, PDF, etc.) to B2.
+
+    Unlike upload_to_b2 (which crops/resizes logos), this preserves files as-is.
+    Returns the B2 object key (e.g. 'chat-files/uuid.pdf').
+    """
+    ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
+    unique_key = f"chat-files/{uuid.uuid4()}.{ext}"
+
+    try:
+        s3_client.put_object(
+            Bucket=B2_BUCKET_NAME,
+            Key=unique_key,
+            Body=file_data,
+            ContentType=content_type,
+        )
+        return unique_key
+    except ClientError as e:
+        logger.error(f"B2 chat file upload failed: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error uploading chat file: {e}")
+        raise
+
+
 def upload_to_b2(file_data, filename, content_type):
     """
     Upload a file to Backblaze B2 using the S3-compatible API.

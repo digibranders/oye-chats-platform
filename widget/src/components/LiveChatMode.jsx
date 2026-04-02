@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Loader2, Send, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
-import { submitOfflineMessage } from '../services/api';
+import { submitOfflineMessage, getChatHistory } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -16,6 +16,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const [isReconnecting, setIsReconnecting] = useState(false);
     const [waitingSeconds, setWaitingSeconds] = useState(0);
     const [offlineError, setOfflineError] = useState(false);
+    const [pendingMessages, setPendingMessages] = useState([]); // BUG-3: queued failed messages
+    const [showEndConfirm, setShowEndConfirm] = useState(false); // BUG-10: end chat confirmation
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
     const reconnectAttempt = useRef(0);
@@ -25,6 +27,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const lastTypingSentRef = useRef(0);
     const msgIdCounter = useRef(0);
     const typingTimeoutRef = useRef(null);
+    const historyLoadedRef = useRef(false); // BUG-2: track if history was loaded for this session
 
     useEffect(() => {
         if (!sessionId) return;
@@ -55,6 +58,31 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                             setChatMode('live');
                             setOperatorName(data.operator_name || 'Support');
                             onConnectionStatusChange?.('connected');
+                            // BUG-2: On reconnect/refresh, restore chat history from backend
+                            // so the visitor doesn't see an empty chat.
+                            if (!historyLoadedRef.current) {
+                                historyLoadedRef.current = true;
+                                getChatHistory(sessionId)
+                                    .then(history => {
+                                        if (history && history.length > 0) {
+                                            const restored = history
+                                                .filter(m => m.role === 'user' || m.role === 'operator')
+                                                .map((m, i) => ({
+                                                    id: `restored-${i}`,
+                                                    text: m.content,
+                                                    sender: m.role === 'operator' ? 'operator' : 'user',
+                                                    operatorName: m.role === 'operator' ? (data.operator_name || 'Support') : undefined,
+                                                    timestamp: m.timestamp || m.created_at,
+                                                }));
+                                            setMessages(prev => {
+                                                // Only restore if current messages are empty (page refresh)
+                                                if (prev.length === 0 && restored.length > 0) return restored;
+                                                return prev;
+                                            });
+                                        }
+                                    })
+                                    .catch(() => { /* non-fatal — chat continues without history */ });
+                            }
                         } else if (data.status === 'closed') {
                             intentionalClose.current = true;
                             socket.close();
@@ -199,27 +227,52 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
 
     const handleSend = (e) => {
         e?.preventDefault();
-        if (!inputText.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
+        if (!inputText.trim()) return;
 
         const text = inputText;
-        try {
-            ws.send(JSON.stringify({ type: 'message', content: text }));
-        } catch {
-            // Send failed — don't add to UI, connection will trigger reconnect
-            return;
+        const msgId = `live-${++msgIdCounter.current}`;
+        const timestamp = new Date().toISOString();
+
+        // BUG-3: Always add to UI (optimistic), mark as failed if send fails
+        const newMsg = { id: msgId, text, sender: 'user', timestamp, failed: false };
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try {
+                ws.send(JSON.stringify({ type: 'message', content: text }));
+            } catch {
+                newMsg.failed = true;
+                setPendingMessages(prev => [...prev, { id: msgId, text }]);
+            }
+        } else {
+            newMsg.failed = true;
+            setPendingMessages(prev => [...prev, { id: msgId, text }]);
         }
 
-        setMessages(prev => [...prev, {
-            id: `live-${++msgIdCounter.current}`,
-            text,
-            sender: 'user',
-            timestamp: new Date().toISOString(),
-        }]);
-
+        setMessages(prev => [...prev, newMsg]);
         setInputText('');
         inputRef.current?.focus();
     };
 
+    // BUG-3: Retry pending messages when WebSocket reconnects
+    useEffect(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN || pendingMessages.length === 0) return;
+
+        const toRetry = [...pendingMessages];
+        setPendingMessages([]);
+
+        for (const msg of toRetry) {
+            try {
+                ws.send(JSON.stringify({ type: 'message', content: msg.text }));
+                // Clear the failed flag on the message
+                setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, failed: false } : m));
+            } catch {
+                // Re-queue if still failing
+                setPendingMessages(prev => [...prev, msg]);
+            }
+        }
+    }, [ws, pendingMessages]);
+
+    const stoppedTypingTimerRef = useRef(null);
     const handleTyping = () => {
         const now = Date.now();
         if (now - lastTypingSentRef.current < 3000) return;
@@ -227,6 +280,13 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'typing' }));
         }
+        // BUG-17: Send stopped_typing after 2s of inactivity
+        clearTimeout(stoppedTypingTimerRef.current);
+        stoppedTypingTimerRef.current = setTimeout(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'stopped_typing' }));
+            }
+        }, 2000);
     };
 
     const handleOfflineSubmit = async (e) => {
@@ -503,9 +563,16 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                 <p className="text-[11px] font-semibold mb-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.operatorName}</p>
                             )}
                             {msg.text}
-                            <p className={`text-[10px] mt-1 ${msg.sender === 'user' ? 'text-white/60' : 'text-gray-400'}`}>
-                                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </p>
+                            <div className={`flex items-center gap-1 mt-1 ${msg.sender === 'user' ? 'justify-end' : ''}`}>
+                                {msg.failed && (
+                                    <span className="text-[10px] text-red-300 flex items-center gap-0.5">
+                                        <AlertCircle className="w-3 h-3" /> Not sent
+                                    </span>
+                                )}
+                                <p className={`text-[10px] ${msg.sender === 'user' ? 'text-white/60' : 'text-gray-400'}`}>
+                                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                            </div>
                         </div>
                     </div>
                 ))}
@@ -525,21 +592,40 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 <div ref={messagesEndRef} />
             </div>
 
+            {/* BUG-10: End chat confirmation dialog */}
+            {showEndConfirm && (
+                <div className="px-4 py-3 bg-red-50 border-t border-red-200">
+                    <p className="text-xs text-red-700 font-medium mb-2">End this conversation and return to AI?</p>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => {
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'visitor_end_chat' }));
+                                }
+                                intentionalClose.current = true;
+                                ws?.close();
+                                setShowEndConfirm(false);
+                                handleReturnToBot();
+                            }}
+                            className="flex-1 py-1.5 rounded-lg bg-red-500 text-white text-xs font-medium"
+                        >
+                            Yes, end chat
+                        </button>
+                        <button
+                            onClick={() => setShowEndConfirm(false)}
+                            className="flex-1 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 text-xs font-medium"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Input */}
             <div className="border-t border-gray-200 px-3 py-2.5 bg-white">
                 <div className="flex items-center justify-center mb-2">
                     <button
-                        onClick={() => {
-                            // Notify the backend that the visitor intentionally ended the chat.
-                            // This immediately closes the session in DB (no 120s grace period),
-                            // so the operator sees it as "ended" not "visitor disconnected".
-                            if (ws && ws.readyState === WebSocket.OPEN) {
-                                ws.send(JSON.stringify({ type: 'visitor_end_chat' }));
-                            }
-                            intentionalClose.current = true;
-                            ws?.close();
-                            handleReturnToBot();
-                        }}
+                        onClick={() => setShowEndConfirm(true)}
                         className="text-[11px] text-gray-400 hover:text-red-500 transition-colors"
                     >
                         End chat and return to AI
