@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import json
 import logging
@@ -17,6 +18,7 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.services.email_service import send_qualified_lead_email
+from app.services.intent_service import detect_handoff_intent
 from app.services.llm_service import (
     generate_response,
     generate_response_stream,
@@ -144,6 +146,15 @@ CURRENT QUALIFICATION STATE:
 - Budget: {bant_budget}
 """
 
+    handoff_section = """
+6. HUMAN HANDOFF REQUESTS:
+If the user explicitly asks to speak with a human, agent, support team, or representative:
+- Respond warmly and briefly — 1-2 sentences only.
+- Example: "Of course! Let me connect you with our team right away — they'll be happy to help."
+- Do NOT continue trying to answer their original question or ask a follow-up question.
+- Do NOT say you cannot help. Just acknowledge warmly and confirm they are being connected.
+"""
+
     hybrid_system_prompt = f"""
 SYSTEM ROLE:
 You are a helpful, professional, and conversational customer support assistant for **{client.name}**. Your primary goal is to provide users with accurate, easy-to-read information about our services without ever sounding overly aggressive, jargon-heavy, or "salesy."
@@ -171,6 +182,7 @@ Please adhere strictly to the following rules:
 - Conclude your responses with a single, simple, and low-pressure follow-up question to keep the conversation natural (e.g., "Would you like to hear more about [Specific Service]?" or "Does that answer your question?").
 - Do not ask the user to do heavy mental lifting (e.g., do not ask them to choose between 5 different complex options at once).
 {qualification_section}
+{handoff_section}
 ═══════════════════════════════════════════════════════
 KNOWLEDGE BASE CONTEXT
 ═══════════════════════════════════════════════════════
@@ -486,8 +498,16 @@ async def rag_pipeline_stream(
         # 3. Contextual Query Re-writing
         search_query = rewrite_query(session_id, question, history)
 
+        # Detect handoff intent concurrently in a thread (runs alongside embedding — zero added latency)
+        handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+
         # 4. Embed & Retrieve (async to avoid blocking event loop)
         query_embedding = (await embed_chunks_async([search_query]))[0]
+        try:
+            suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
+        except TimeoutError:
+            suggest_handoff = False
+            logger.warning(f"Handoff intent detection timed out for session {session_id}")
         add_chat_message(
             session,
             session_id,
@@ -574,7 +594,10 @@ async def rag_pipeline_stream(
                 bot,
             )
 
-        # 10. Yield final metadata including message_id
-        yield f"\nFINAL_METADATA:{json.dumps({'message_id': bot_msg.id})}\n"
+        # 10. Yield final metadata including message_id and optional handoff signal
+        final_meta: dict = {"message_id": bot_msg.id}
+        if suggest_handoff:
+            final_meta["suggest_handoff"] = True
+        yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
 
         logger.info(f"Hybrid RAG stream finished for session: {session_id}")

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Plus, MessageCircle, Headphones, Clock } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff } from '../services/api';
+import { sendMessageStream, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff, getLeadInfo } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -46,10 +46,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [isReturningUser, setIsReturningUser] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
+    const [existingLeadInfo, setExistingLeadInfo] = useState(null);
 
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
     const recentMessageTimestamps = useRef([]);
+    const consecutiveFallbacks = useRef(0);
+    const handoffTriggeredRef = useRef(false); // prevents double-trigger race between fallback and suggest_handoff
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
 
@@ -120,6 +123,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 } catch (error) {
                     console.error("Failed to load history:", error);
                 }
+
+                // Fetch existing lead info to pre-fill the handoff form (non-blocking)
+                try {
+                    const leadData = await getLeadInfo(sessionId);
+                    if (leadData) setExistingLeadInfo(leadData);
+                } catch {
+                    // Non-critical — never fails widget load
+                }
             }
             setIsInitializing(false);
         };
@@ -139,6 +150,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setSessionId(newSession);
         localStorage.setItem('chat_session_id', newSession);
         setShowWelcome(true);
+        // Reset auto-handoff state for the new session
+        handoffTriggeredRef.current = false;
+        consecutiveFallbacks.current = 0;
+        setExistingLeadInfo(null);
         setTimeout(() => {
             setMessages([{
                 id: 'welcome',
@@ -173,8 +188,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         setIsTyping(true);
 
-        // Smart handoff: detect frustration or keywords in user message
-        if (detectFrustration() || checkHandoffKeywords(text)) {
+        // Smart handoff: frustration signal → show proactive offer button
+        // Keyword-based handoff intent is now detected server-side via suggest_handoff flag
+        if (detectFrustration()) {
             setShowProminentHandoff(true);
         }
 
@@ -216,6 +232,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         ));
                         setStreamingId(finalMeta.message_id);
                     }
+                    // Auto-trigger handoff when backend LLM detected human request intent
+                    if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
+                        handoffTriggeredRef.current = true;
+                        // Short delay so user reads the AI's warm response before the form appears
+                        setTimeout(() => {
+                            triggerHandoff();
+                            handoffTriggeredRef.current = false;
+                        }, 600);
+                    }
                 },
                 onError: () => {
                     setMessages(prev => prev.map(msg =>
@@ -229,11 +254,25 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             // Stream complete — stop showing cursor
             setStreamingId(null);
 
-            // Smart handoff: detect fallback/low-confidence bot response
+            // Smart handoff: track consecutive fallback responses
+            // 1st fallback → show prominent button; 2nd+ consecutive → auto-trigger form
             setMessages(prev => {
-                const lastBot = prev.find(msg => msg.id === placeholderId || msg.sender === 'bot');
+                // Reverse scan to correctly find the last bot message (fixes prev.find() which returns the first)
+                const lastBot = [...prev].reverse().find(msg => msg.sender === 'bot');
                 if (lastBot && checkBotFallback(lastBot.text)) {
-                    setShowProminentHandoff(true);
+                    consecutiveFallbacks.current += 1;
+                    if (consecutiveFallbacks.current >= 2 && !handoffTriggeredRef.current) {
+                        handoffTriggeredRef.current = true;
+                        consecutiveFallbacks.current = 0;
+                        setTimeout(() => {
+                            triggerHandoff();
+                            handoffTriggeredRef.current = false;
+                        }, 600);
+                    } else if (consecutiveFallbacks.current === 1) {
+                        setShowProminentHandoff(true);
+                    }
+                } else {
+                    consecutiveFallbacks.current = 0; // good answer — reset counter
                 }
                 return prev;
             });
@@ -319,7 +358,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // --- Smart handoff emphasis logic ---
-    const HANDOFF_KEYWORDS = /\b(human|agent|operator|speak to someone|real person|support|talk to a person|representative|help me)\b/i;
+    // Note: keyword-based handoff intent detection is handled server-side via suggest_handoff flag
     const FALLBACK_PATTERNS = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
 
     // Detect frustration: 3+ user messages within 30 seconds
@@ -333,11 +372,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // Check if latest bot response is a fallback / low-confidence answer
     const checkBotFallback = useCallback((botText) => {
         return FALLBACK_PATTERNS.test(botText);
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Check user input for handoff keywords
-    const checkHandoffKeywords = useCallback((text) => {
-        return HANDOFF_KEYWORDS.test(text);
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Add message from live chat back to main messages (for transition messages)
@@ -470,7 +504,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     settings={settings}
                     onSubmit={handleHandoffSubmit}
                     onCancel={() => setChatMode('bot')}
-                    existingLeadInfo={null}
+                    existingLeadInfo={existingLeadInfo}
                 />
             ) : isLiveMode ? (
                 /* Live chat / waiting / unavailable modes */

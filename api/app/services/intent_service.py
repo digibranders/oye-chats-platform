@@ -40,3 +40,47 @@ def detect_sales_intent(question: str) -> bool:
     except Exception as e:
         logger.error(f"Intent detection failed: {e}")
         return False
+
+
+def _detect_handoff_intent_raw(question: str) -> bool:
+    """Detect human handoff intent via LLM. Same pattern as sales intent detection."""
+    prompt = f"""
+    Analyze the following user message and determine if the user wants to be connected
+    to a human agent, support representative, or real person — rather than continuing
+    with an AI chatbot.
+
+    Human handoff indicators:
+    - Asking to speak with a human, agent, person, or representative.
+    - Expressing desire to escalate beyond the AI chatbot.
+    - Phrases like: "talk to someone", "real person", "connect me with support",
+      "speak to your team", "I want a human", "get me an agent", "talk to a person",
+      "connect me with a human", "I want to speak with someone", "let me talk to support".
+
+    Do NOT classify as handoff intent:
+    - General product/service questions.
+    - Help requests that don't express preference for human over AI.
+    - Small talk or greetings.
+    - Questions about pricing, features, or how things work.
+
+    User message: "{question}"
+
+    Respond with ONLY 'YES' or 'NO'.
+    """
+    response = generate_response(prompt, metadata={"generation_name": "handoff-intent-detection"})
+    result = response.strip().upper()
+    has_intent = "YES" in result
+    logger.info(f"Handoff Intent Detection for '{question}': {result}")
+    return has_intent
+
+
+def detect_handoff_intent(question: str) -> bool:
+    """
+    Analyzes the user's message to determine if they want to be connected to a human agent.
+    Returns True if the user is requesting human support rather than AI assistance.
+    LiteLLM auto-instruments with Langfuse via callbacks.
+    """
+    try:
+        return _detect_handoff_intent_raw(question)
+    except Exception as e:
+        logger.error(f"Handoff intent detection failed: {e}")
+        return False

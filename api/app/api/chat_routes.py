@@ -13,7 +13,12 @@ from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
 from app.db.models import Bot, ChatSession
-from app.db.repository import create_or_update_lead_info, ensure_chat_session, update_message_feedback
+from app.db.repository import (
+    create_or_update_lead_info,
+    ensure_chat_session,
+    get_lead_info_by_session,
+    update_message_feedback,
+)
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
@@ -215,6 +220,39 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to capture lead information.") from e
+
+
+@router.get("/chat/lead-info/{session_id}")
+def get_lead_info_endpoint(session_id: str, bot: Bot = Depends(get_current_bot)):
+    """
+    Fetch existing lead info for a widget session. Auth: X-Bot-Key.
+    Always returns HTTP 200 — non-critical endpoint that must never block widget load.
+    Used by the widget to pre-fill HandoffForm fields and skip re-asking known info.
+    """
+    try:
+        with get_session() as session:
+            chat_session = session.execute(
+                select(ChatSession).where(
+                    ChatSession.id == session_id,
+                    ChatSession.bot_id == bot.id,
+                )
+            ).scalar_one_or_none()
+            if not chat_session:
+                return {"lead_info": None}
+            lead_info = get_lead_info_by_session(session, session_id)
+            if not lead_info:
+                return {"lead_info": None}
+            return {
+                "lead_info": {
+                    "name": lead_info.name,
+                    "email": lead_info.email,
+                    "phone": lead_info.phone,
+                    "company": lead_info.company,
+                }
+            }
+    except Exception as e:
+        logger.error(f"Failed to fetch lead info for session {session_id}: {e}")
+        return {"lead_info": None}  # Always non-breaking for the widget
 
 
 @router.post("/chat/sdr")
