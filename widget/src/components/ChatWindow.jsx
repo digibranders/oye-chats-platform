@@ -12,6 +12,7 @@ import HandoffForm from './HandoffForm';
 import LiveChatMode from './LiveChatMode';
 
 const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true }) => {
+    const containerRef = useRef(null);
     const [messages, setMessages] = useState([
         {
             id: 'welcome',
@@ -51,6 +52,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const recentMessageTimestamps = useRef([]);
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
+
+    // P3-8: Mobile keyboard push-up — update container height when virtual keyboard opens
+    useEffect(() => {
+        const viewport = window.visualViewport;
+        if (!viewport || window.innerWidth >= 768) return;
+        const handleResize = () => {
+            if (containerRef.current) {
+                containerRef.current.style.height = `${viewport.height}px`;
+            }
+        };
+        viewport.addEventListener('resize', handleResize);
+        return () => viewport.removeEventListener('resize', handleResize);
+    }, []);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -417,7 +431,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     return (
-        <div className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
+        <div ref={containerRef} className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
             {/* Header — dynamic based on chat mode */}
             <div className={currentTheme.header}>
                 {renderHeader()}
@@ -446,6 +460,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 className="shrink-0 h-7 -mb-7 relative z-10 pointer-events-none"
                 style={{ background: 'linear-gradient(to bottom, #ffffff 0%, transparent 100%)' }}
             />
+
+            {/* Content — keyed by chatMode so each mode switch triggers enter animation */}
+            <div key={chatMode} className="mode-enter flex flex-col flex-1 overflow-hidden">
 
             {/* Handoff form */}
             {chatMode === 'handoff_form' ? (
@@ -537,6 +554,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 </>
             )}
+
+            </div>{/* end mode-enter content wrapper */}
         </div>
     );
 };
