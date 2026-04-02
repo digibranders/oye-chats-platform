@@ -80,6 +80,7 @@ export default function LiveChat({ embedded = false }) {
     const queuePollIntervalRef = useRef(null);
     const queueSnapshotRef = useRef(new Set());
     const chatNamesRef = useRef({});
+    const typingTimeoutRef = useRef(null);
 
     // Keep selectedChatRef in sync and react to chat selection
     useEffect(() => {
@@ -92,7 +93,7 @@ export default function LiveChat({ embedded = false }) {
             setSessionInfo(null);
             getSessionDetails(selectedChat)
                 .then(data => setSessionInfo(data))
-                .catch(() => setSessionInfo(null));
+                .catch(() => setSessionInfo({ error: true }));
         } else {
             setSessionInfo(null);
         }
@@ -213,7 +214,9 @@ export default function LiveChat({ embedded = false }) {
         };
 
         socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            let data;
+            try { data = JSON.parse(event.data); } catch { return; }
+
 
             switch (data.type) {
                 case 'pong':
@@ -253,7 +256,7 @@ export default function LiveChat({ embedded = false }) {
                     }));
                     if (data.session_id === currentSelected) {
                         setMessages(prev => [...prev, {
-                            id: Date.now(),
+                            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
                             role: data.role,
                             content: data.content,
                             timestamp: data.timestamp,
@@ -278,30 +281,27 @@ export default function LiveChat({ embedded = false }) {
                 case 'visitor_typing':
                     if (data.session_id === selectedChatRef.current) {
                         setIsTyping(true);
-                        // Auto-clear after 3s as fallback (BUG-17: explicit stop event preferred)
-                        setTimeout(() => setIsTyping(false), 3000);
+                        clearTimeout(typingTimeoutRef.current);
+                        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000);
                     }
                     break;
 
                 case 'visitor_stopped_typing':
-                    // BUG-17: Explicit stopped typing — clear indicator immediately
                     if (data.session_id === selectedChatRef.current) {
+                        clearTimeout(typingTimeoutRef.current);
                         setIsTyping(false);
                     }
                     break;
 
-                case 'chat_accepted':
+                case 'chat_accepted': {
                     setActiveChats(prev => [...new Set([...prev, data.session_id])]);
-                    setChatNames(prev => ({
-                        ...prev,
-                        [data.session_id]: {
-                            name: data.visitor_name || 'Anonymous',
-                            reason: data.reason || null,
-                        },
-                    }));
+                    const chatNameEntry = { name: data.visitor_name || 'Anonymous', reason: data.reason || null };
+                    chatNamesRef.current = { ...chatNamesRef.current, [data.session_id]: chatNameEntry };
+                    setChatNames(prev => ({ ...prev, [data.session_id]: chatNameEntry }));
                     setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
                     removeSessionFromQueue(data.session_id);
                     break;
+                }
 
                 case 'chat_transferred':
                     // Chat transferred away from this agent
@@ -344,6 +344,15 @@ export default function LiveChat({ embedded = false }) {
                             });
                             return next;
                         });
+                        // Reload history for currently selected chat after reconnect
+                        const currentSel = selectedChatRef.current;
+                        if (currentSel) {
+                            getChatHistory(currentSel)
+                                .then(history => setMessages(history.map((m, i) => ({
+                                    id: `restored-${i}`, role: m.role, content: m.content, timestamp: m.timestamp,
+                                }))))
+                                .catch(() => {});
+                        }
                     }
                     break;
 
@@ -395,8 +404,9 @@ export default function LiveChat({ embedded = false }) {
                     setConnectionLost(true);
                 }
                 // Never give up — operators must stay connected.
-                // Exponential backoff: 3s → 6s → 12s → 24s → 30s (capped).
-                const delay = Math.min(3000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+                // Exponential backoff with jitter: 3s → 6s → 12s → 24s → 30s (capped).
+                const base = Math.min(3000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+                const delay = Math.round(base * (0.9 + Math.random() * 0.2));
                 reconnectAttemptsRef.current += 1;
                 reconnectTimerRef.current = setTimeout(() => setReconnectCount(c => c + 1), delay);
             }
@@ -489,6 +499,11 @@ export default function LiveChat({ embedded = false }) {
     }, []);
 
     const handleToggleStatus = async () => {
+        if (isOnline && activeChats.length > 0) {
+            if (!window.confirm(`You have ${activeChats.length} active chat(s). Going offline will disconnect them. Continue?`)) {
+                return;
+            }
+        }
         try {
             const result = await toggleOperatorStatus();
             setIsOnline(result.is_online);
@@ -636,9 +651,17 @@ export default function LiveChat({ embedded = false }) {
         const socket = wsRef.current;
         if (!inputText.trim() || !socket || socket.readyState !== WebSocket.OPEN || !selectedChat) return;
 
-        socket.send(JSON.stringify({ type: 'message', session_id: selectedChat, content: inputText }));
+        try {
+            socket.send(JSON.stringify({ type: 'message', session_id: selectedChat, content: inputText }));
+        } catch {
+            setCloseChatError('Failed to send message. Check your connection.');
+            clearTimeout(closeChatErrorTimerRef.current);
+            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            return;
+        }
         setMessages(prev => [...prev, {
-            id: Date.now(), role: 'operator', content: inputText, timestamp: new Date().toISOString(),
+            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            role: 'operator', content: inputText, timestamp: new Date().toISOString(),
         }]);
         setLastMessages(prev => ({ ...prev, [selectedChat]: inputText.slice(0, 60) }));
         setInputText('');
