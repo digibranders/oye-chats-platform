@@ -11,6 +11,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const [messages, setMessages] = useState([]);
     const [isOperatorTyping, setIsOperatorTyping] = useState(false);
     const [queuePosition, setQueuePosition] = useState(null);
+    const [showRating, setShowRating] = useState(false);
+    const [ratingSubmitting, setRatingSubmitting] = useState(false);
     const [offlineForm, setOfflineForm] = useState({ name: '', email: '', phone: '', message: '' });
     const [offlineSubmitted, setOfflineSubmitted] = useState(false);
     const [offlineSubmitting, setOfflineSubmitting] = useState(false);
@@ -93,15 +95,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                             intentionalClose.current = true;
                             socket.close();
                             setMessages([]);
-                            setChatMode('bot');
                             setOperatorName(null);
-                            onNewMessage({
-                                id: Date.now(),
-                                text: `You're now chatting with ${data.bot_name || 'AI Assistant'} again. Feel free to continue asking questions!`,
-                                sender: 'bot',
-                                timestamp: new Date().toISOString(),
-                                feedback: null,
-                            });
+                            handleChatEnded();
                         } else if (data.status === 'unavailable') {
                             intentionalClose.current = true;
                             setChatMode('unavailable');
@@ -325,6 +320,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     };
 
     const handleReturnToBot = () => {
+        setShowRating(false);
         setChatMode('bot');
         setOperatorName(null);
         onNewMessage({
@@ -334,6 +330,28 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             timestamp: new Date().toISOString(),
             feedback: null,
         });
+    };
+
+    // Show rating survey before returning to bot (called when live chat ends)
+    const handleChatEnded = () => {
+        setShowRating(true);
+    };
+
+    const handleSubmitRating = async (stars) => {
+        setRatingSubmitting(true);
+        try {
+            await fetch(`${API_URL}/operators/sessions/${sessionId}/rating`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Bot-Key': settings.bot_key || '',
+                },
+                body: JSON.stringify({ rating: stars }),
+            });
+        } catch { /* non-fatal — still proceed */ } finally {
+            setRatingSubmitting(false);
+            handleReturnToBot();
+        }
     };
 
     // Progressive delay messages for waiting screen
@@ -359,6 +377,45 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         if (waitingSeconds >= 15) return 'Still connecting — our team will be right with you';
         return queuePosition ? `You're #${queuePosition} in the queue` : 'Please wait a moment';
     };
+
+    // P3-24: Post-chat satisfaction survey screen
+    if (showRating) {
+        const primaryColor = settings.primary_color || '#3A0CA3';
+        return (
+            <div className="flex-1 flex flex-col items-center justify-center px-6 py-8" style={{ backgroundColor: settings.background_color || '#fff' }}>
+                <div className="w-full max-w-sm text-center" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                    <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: `${primaryColor}15` }}>
+                        <CheckCircle2 className="w-7 h-7" style={{ color: primaryColor }} />
+                    </div>
+                    <h3 className="text-[#16202C] font-bold text-base mb-1">Chat ended</h3>
+                    <p className="text-gray-500 text-sm mb-6">How was your experience?</p>
+
+                    <div className="flex justify-center gap-3 mb-6">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                                key={star}
+                                onClick={() => !ratingSubmitting && handleSubmitRating(star)}
+                                disabled={ratingSubmitting}
+                                aria-label={`Rate ${star} star${star !== 1 ? 's' : ''}`}
+                                className="text-3xl transition-transform hover:scale-125 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
+                            >
+                                ⭐
+                            </button>
+                        ))}
+                    </div>
+
+                    <button
+                        onClick={() => !ratingSubmitting && handleReturnToBot()}
+                        disabled={ratingSubmitting}
+                        className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                    >
+                        Skip
+                    </button>
+                </div>
+                <style>{`@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+            </div>
+        );
+    }
 
     // Waiting screen
     if (chatMode === 'waiting') {
@@ -666,7 +723,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                 intentionalClose.current = true;
                                 ws?.close();
                                 setShowEndConfirm(false);
-                                handleReturnToBot();
+                                handleChatEnded();
                             }}
                             className="flex-1 py-1.5 rounded-lg bg-red-500 text-white text-xs font-medium"
                         >

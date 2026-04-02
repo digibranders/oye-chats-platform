@@ -880,3 +880,39 @@ async def upload_chat_file_route(
     url = _build_public_url(key)
 
     return {"url": url, "filename": file.filename, "content_type": file.content_type, "size": len(file_data)}
+
+
+# ── P3-24: Post-chat visitor satisfaction rating ──
+
+
+class VisitorRatingRequest(BaseModel):
+    rating: int
+
+    @field_validator("rating")
+    @classmethod
+    def validate_rating(cls, v: int) -> int:
+        if v < 1 or v > 5:
+            raise ValueError("Rating must be between 1 and 5")
+        return v
+
+
+@router.post("/sessions/{session_id}/rating")
+async def submit_visitor_rating(
+    session_id: str,
+    body: VisitorRatingRequest,
+    bot: Bot = Depends(get_current_bot),
+):
+    """Record a visitor's post-chat satisfaction rating (1–5 stars).
+
+    Auth: X-Bot-Key header (widget). One submission per session — subsequent
+    calls silently overwrite the previous rating.
+    """
+    with get_session() as session:
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if chat_session.bot_id != bot.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        chat_session.visitor_rating = body.rating
+        session.commit()
+    return {"ok": True}

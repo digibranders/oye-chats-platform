@@ -170,6 +170,7 @@ class ChatSession(Base):
     handoff_reason = Column(Text, nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
+    visitor_rating = Column(Integer, nullable=True)  # Post-chat satisfaction: 1–5, null = not rated
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_active_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
