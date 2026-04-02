@@ -548,7 +548,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                         <div
-                            className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                            className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
                                 msg.sender === 'user'
                                     ? 'text-white rounded-br-md shadow-sm'
                                     : 'text-gray-900 rounded-bl-md border border-gray-200'

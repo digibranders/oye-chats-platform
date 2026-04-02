@@ -872,7 +872,7 @@ export default function LiveChat({ embedded = false }) {
                                 <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
                                     {messages.map((msg) => (
                                         <div key={msg.id} className={`flex ${msg.role === 'operator' ? 'justify-end' : 'justify-start'}`}>
-                                            <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                                            <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
                                                 msg.role === 'operator'
                                                     ? 'bg-primary-600 text-white rounded-br-md'
                                                     : msg.role === 'user'
