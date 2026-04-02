@@ -120,6 +120,33 @@ app.add_middleware(TimeoutMiddleware)
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 
+# --- Health Check ---
+
+
+@app.get("/health", tags=["system"])
+def health_check():
+    """Server health check with DB connectivity status. Used by deploy scripts and monitoring."""
+    db_ok = False
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            db_ok = True
+    except Exception:
+        pass
+
+    status_code = 200 if db_ok else 503
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if db_ok else "degraded",
+            "database": "connected" if db_ok else "unreachable",
+            "version": "1.0.0",
+        },
+    )
+
+
 # --- Lifecycle Events ---
 
 

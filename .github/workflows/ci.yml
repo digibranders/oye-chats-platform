@@ -5,6 +5,7 @@ on:
     branches: [development]
   pull_request:
     branches: [main]
+  workflow_call:  # Allow deploy workflows to run CI as a prerequisite
 
 jobs:
   # ── Backend (Python) ──
@@ -29,7 +30,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'  # Match production server
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
