@@ -17,11 +17,12 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "300"))
 DOCUMENTS_DIR = "documents"
 ARCHIVE_DIR = "archive"
 
-# LLM Config (OpenAI via LiteLLM, with Gemini fallback)
+# LLM Config — model names are hardcoded here, NOT in .env
+# Change models here, not via env vars, to avoid silent misconfigurations.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4.1-mini")
-FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "gemini/gemini-2.5-flash")
+LLM_MODEL = "openai/gpt-4.1-mini"
+FALLBACK_MODEL = "gemini/gemini-2.5-flash"
 
 if not OPENAI_API_KEY:
     logger.error("OPENAI_API_KEY is not set! LLM calls will fail. Set it in your .env file.")
@@ -35,11 +36,7 @@ if GOOGLE_API_KEY:
 else:
     logger.warning("GOOGLE_API_KEY is not set — no LLM fallback available.")
 
-# Configure LiteLLM callbacks for Langfuse auto-instrumentation
 import litellm  # noqa: E402
-
-litellm.success_callback = ["langfuse"]
-litellm.failure_callback = ["langfuse"]
 
 if not DB_URL:
     logger.error("DB_URL is not set! Database connections will fail.")
@@ -57,6 +54,9 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 LANGFUSE_ENABLED = bool(LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY)
 
 if LANGFUSE_ENABLED:
+    # Langfuse v3+ requires the OTEL-based integration ("langfuse_otel").
+    # The legacy "langfuse" callback only works with langfuse SDK v2.
+    litellm.callbacks = ["langfuse_otel"]
     logger.info(f"Langfuse observability enabled | host={LANGFUSE_HOST}")
 else:
     logger.info("Langfuse observability disabled (no keys configured)")
