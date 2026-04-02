@@ -153,11 +153,10 @@ export default function Analytics({ embedded = false }) {
                             <button
                                 key={r.id}
                                 onClick={() => setTimeRange(r.id)}
-                                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                                    timeRange === r.id
+                                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${timeRange === r.id
                                         ? 'bg-white text-secondary-900 shadow-sm'
                                         : 'text-secondary-500 hover:text-secondary-700:text-secondary-300'
-                                }`}
+                                    }`}
                             >
                                 {r.label}
                             </button>
