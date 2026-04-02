@@ -198,6 +198,20 @@ export const getDepartments = async () => {
     }
 };
 
+export const getLeadInfo = async (sessionId) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/lead-info/${sessionId}`, {
+            headers: getHeaders(),
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        return data.lead_info || null;
+    } catch (error) {
+        console.error('[OyeChats] Error fetching lead info:', error);
+        return null;
+    }
+};
+
 export const submitOfflineMessage = async (formData) => {
     try {
         const response = await fetch(`${API_URL}/offline-messages`, {
