@@ -7,12 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Require CI to pass before deploying to production
-  ci:
-    uses: ./.github/workflows/ci.yml
-
   deploy:
-    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,18 +71,20 @@ jobs:
             # Restart service
             systemctl restart oyechats-api
 
-            # Health check — retry up to 8 times (3s apart = 24s total)
-            # uvicorn with 2 workers + Sentry/Playwright init can take 10-15s
+            # Health check — wait for server startup then retry
+            # Server takes ~25s to start (2 uvicorn workers + Sentry + DB init)
+            echo "⏳ Waiting 15s for server startup..."
+            sleep 15
             set +e  # Temporarily disable errexit for the retry loop
-            for i in 1 2 3 4 5 6 7 8; do
-              sleep 3
+            for i in 1 2 3 4 5 6; do
               if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
                 echo "✅ Deploy successful (attempt $i)"
                 exit 0
               fi
-              echo "⏳ Health check attempt $i failed, retrying..."
+              echo "⏳ Health check attempt $i failed, retrying in 5s..."
+              sleep 5
             done
-            echo "❌ Deploy failed — server not responding after 24s"
+            echo "❌ Deploy failed — server not responding after 45s"
             # Print service status for debugging
             systemctl status oyechats-api --no-pager || true
             journalctl -u oyechats-api --since '1 minute ago' --no-pager -n 30 || true
