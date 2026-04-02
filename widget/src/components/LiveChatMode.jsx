@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, Send, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, Paperclip, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
+import SendIcon from './SendIcon';
 import { submitOfflineMessage, getChatHistory } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -10,6 +11,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const [messages, setMessages] = useState([]);
     const [isOperatorTyping, setIsOperatorTyping] = useState(false);
     const [queuePosition, setQueuePosition] = useState(null);
+    const [showRating, setShowRating] = useState(false);
+    const [ratingSubmitting, setRatingSubmitting] = useState(false);
     const [offlineForm, setOfflineForm] = useState({ name: '', email: '', phone: '', message: '' });
     const [offlineSubmitted, setOfflineSubmitted] = useState(false);
     const [offlineSubmitting, setOfflineSubmitting] = useState(false);
@@ -27,8 +30,11 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const lastTypingSentRef = useRef(0);
     const msgIdCounter = useRef(0);
     const typingTimeoutRef = useRef(null);
-    const historyLoadedRef = useRef(false); // BUG-2: track if history was loaded for this session
+    const historyLoadedRef = useRef(false);
     const sessionStartTime = useRef(new Date());
+    const stoppedTypingTimerRef = useRef(null);
+    const fileInputRef = useRef(null);
+    const [uploadProgress, setUploadProgress] = useState(null); // null | 0–100
 
     useEffect(() => {
         if (!sessionId) return;
@@ -77,9 +83,11 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                                     timestamp: m.timestamp || m.created_at,
                                                 }));
                                             setMessages(prev => {
-                                                // Only restore if current messages are empty (page refresh)
-                                                if (prev.length === 0 && restored.length > 0) return restored;
-                                                return prev;
+                                                if (prev.length === 0) return restored;
+                                                // Deduplicate: merge restored with existing
+                                                const existingIds = new Set(prev.map(m => m.id));
+                                                const newMsgs = restored.filter(m => !existingIds.has(m.id));
+                                                return newMsgs.length > 0 ? [...newMsgs, ...prev] : prev;
                                             });
                                         }
                                     })
@@ -89,15 +97,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                             intentionalClose.current = true;
                             socket.close();
                             setMessages([]);
-                            setChatMode('bot');
                             setOperatorName(null);
-                            onNewMessage({
-                                id: Date.now(),
-                                text: `You're now chatting with ${data.bot_name || 'AI Assistant'} again. Feel free to continue asking questions!`,
-                                sender: 'bot',
-                                timestamp: new Date().toISOString(),
-                                feedback: null,
-                            });
+                            handleChatEnded();
                         } else if (data.status === 'unavailable') {
                             intentionalClose.current = true;
                             setChatMode('unavailable');
@@ -123,8 +124,15 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         typingTimeoutRef.current = setTimeout(() => setIsOperatorTyping(false), 3000);
                         break;
 
+                    case 'ping':
+                        socket.send(JSON.stringify({ type: 'pong' }));
+                        break;
+
                     case 'pong':
-                        // Heartbeat acknowledged — connection is healthy
+                        clearTimeout(pongTimeoutRef.current);
+                        break;
+
+                    default:
                         break;
                 }
             };
@@ -158,6 +166,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             intentionalClose.current = true;
             if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
             clearTimeout(typingTimeoutRef.current);
+            clearTimeout(stoppedTypingTimerRef.current);
             setWs(prev => { prev?.close(); return null; });
         };
     }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -166,23 +175,32 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     // idle timeouts. Interval is shorter when the tab is visible (25 s) and longer
     // when backgrounded (50 s) because browsers throttle timers in hidden tabs.
     const heartbeatRef = useRef(null);
+    const pongTimeoutRef = useRef(null);
     useEffect(() => {
         if (!ws) return;
+
+        const sendPing = () => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ping' }));
+                clearTimeout(pongTimeoutRef.current);
+                pongTimeoutRef.current = setTimeout(() => {
+                    // No pong received — connection is dead
+                    ws.close();
+                }, 10000);
+            }
+        };
 
         const startHeartbeat = () => {
             clearInterval(heartbeatRef.current);
             const delay = document.visibilityState === 'visible' ? 25000 : 50000;
-            heartbeatRef.current = setInterval(() => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'ping' }));
-                }
-            }, delay);
+            heartbeatRef.current = setInterval(sendPing, delay);
         };
 
         startHeartbeat();
         document.addEventListener('visibilitychange', startHeartbeat);
         return () => {
             clearInterval(heartbeatRef.current);
+            clearTimeout(pongTimeoutRef.current);
             document.removeEventListener('visibilitychange', startHeartbeat);
         };
     }, [ws]);
@@ -254,26 +272,24 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         inputRef.current?.focus();
     };
 
-    // BUG-3: Retry pending messages when WebSocket reconnects
+    // Retry pending messages when WebSocket reconnects
     useEffect(() => {
         if (!ws || ws.readyState !== WebSocket.OPEN || pendingMessages.length === 0) return;
 
         const toRetry = [...pendingMessages];
-        setPendingMessages([]);
+        const stillFailed = [];
 
         for (const msg of toRetry) {
             try {
                 ws.send(JSON.stringify({ type: 'message', content: msg.text }));
-                // Clear the failed flag on the message
                 setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, failed: false } : m));
             } catch {
-                // Re-queue if still failing
-                setPendingMessages(prev => [...prev, msg]);
+                stillFailed.push(msg);
             }
         }
+        setPendingMessages(stillFailed);
     }, [ws, pendingMessages]);
 
-    const stoppedTypingTimerRef = useRef(null);
     const handleTyping = () => {
         const now = Date.now();
         if (now - lastTypingSentRef.current < 3000) return;
@@ -310,6 +326,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     };
 
     const handleReturnToBot = () => {
+        setShowRating(false);
         setChatMode('bot');
         setOperatorName(null);
         onNewMessage({
@@ -319,6 +336,84 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             timestamp: new Date().toISOString(),
             feedback: null,
         });
+    };
+
+    // Show rating survey before returning to bot (called when live chat ends)
+    const handleChatEnded = () => {
+        setShowRating(true);
+    };
+
+    const handleSubmitRating = async (stars) => {
+        setRatingSubmitting(true);
+        try {
+            await fetch(`${API_URL}/operators/sessions/${sessionId}/rating`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Bot-Key': settings.bot_key || '',
+                },
+                body: JSON.stringify({ rating: stars }),
+            });
+        } catch { /* non-fatal — still proceed */ } finally {
+            setRatingSubmitting(false);
+            handleReturnToBot();
+        }
+    };
+
+    const handleFileSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (!fileInputRef.current) return;
+        fileInputRef.current.value = '';
+        if (!file) return;
+
+        const ALLOWED = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
+        if (!ALLOWED.includes(file.type)) return;
+        if (file.size > 10 * 1024 * 1024) return;
+
+        setUploadProgress(0);
+        try {
+            // 1. Get presigned PUT URL from backend
+            const res = await fetch(`${API_URL}/chat/upload-url`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Bot-Key': settings.bot_key || '' },
+                body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size }),
+            });
+            if (!res.ok) throw new Error('Failed to get upload URL');
+            const { upload_url, file_url } = await res.json();
+
+            // 2. PUT directly to B2
+            const putRes = await fetch(upload_url, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type },
+                body: file,
+            });
+            if (!putRes.ok) throw new Error(`B2 upload failed: ${putRes.status}`);
+            setUploadProgress(100);
+
+            // 3. Send file message over WS
+            const wsInstance = ws;
+            if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+                wsInstance.send(JSON.stringify({
+                    type: 'file',
+                    file_url,
+                    filename: file.name,
+                    content_type: file.type,
+                }));
+                setMessages(prev => [...prev, {
+                    id: `live-file-${++msgIdCounter.current}`,
+                    sender: 'user',
+                    file_url,
+                    filename: file.name,
+                    content_type: file.type,
+                    status: 'sent',
+                    timestamp: new Date().toISOString(),
+                }]);
+            }
+        } catch {
+            /* silent — user can retry by re-selecting */
+        } finally {
+            setUploadProgress(null);
+        }
     };
 
     // Progressive delay messages for waiting screen
@@ -344,6 +439,45 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         if (waitingSeconds >= 15) return 'Still connecting — our team will be right with you';
         return queuePosition ? `You're #${queuePosition} in the queue` : 'Please wait a moment';
     };
+
+    // P3-24: Post-chat satisfaction survey screen
+    if (showRating) {
+        const primaryColor = settings.primary_color || '#3A0CA3';
+        return (
+            <div className="flex-1 flex flex-col items-center justify-center px-6 py-8" style={{ backgroundColor: settings.background_color || '#fff' }}>
+                <div className="w-full max-w-sm text-center" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                    <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: `${primaryColor}15` }}>
+                        <CheckCircle2 className="w-7 h-7" style={{ color: primaryColor }} />
+                    </div>
+                    <h3 className="text-[#16202C] font-bold text-base mb-1">Chat ended</h3>
+                    <p className="text-gray-500 text-sm mb-6">How was your experience?</p>
+
+                    <div className="flex justify-center gap-3 mb-6">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                                key={star}
+                                onClick={() => !ratingSubmitting && handleSubmitRating(star)}
+                                disabled={ratingSubmitting}
+                                aria-label={`Rate ${star} star${star !== 1 ? 's' : ''}`}
+                                className="text-3xl transition-transform hover:scale-125 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 rounded"
+                            >
+                                ⭐
+                            </button>
+                        ))}
+                    </div>
+
+                    <button
+                        onClick={() => !ratingSubmitting && handleReturnToBot()}
+                        disabled={ratingSubmitting}
+                        className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                    >
+                        Skip
+                    </button>
+                </div>
+                <style>{`@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+            </div>
+        );
+    }
 
     // Waiting screen
     if (chatMode === 'waiting') {
@@ -523,7 +657,13 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                     <span className="text-xs text-amber-700 font-medium">Reconnecting...</span>
                 </div>
             )}
-            <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5" style={{ backgroundColor: settings.background_color || '#fff' }}>
+            <div
+                className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5"
+                style={{ backgroundColor: settings.background_color || '#fff' }}
+                aria-live="polite"
+                aria-label="Chat messages"
+                role="log"
+            >
                 {/* Previous bot conversation context */}
                 {botMessages.length > 0 && messages.length === 0 && (
                     <>
@@ -568,17 +708,40 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                         className="max-w-[85%] px-4 py-3 rounded-2xl text-[14px] break-words"
                                         style={{ backgroundColor: userBubbleBg, color: userBubbleText }}
                                     >
-                                        <p className="prose prose-sm max-w-none break-words" style={{ color: userBubbleText }}>
-                                            {msg.text}
-                                        </p>
+                                        {msg.file_url ? (
+                                            msg.content_type?.startsWith('image/') ? (
+                                                <img src={msg.file_url} alt={msg.filename || 'image'} className="max-w-[200px] rounded-lg block" />
+                                            ) : (
+                                                <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
+                                                    📎 {msg.filename || 'file'}
+                                                </a>
+                                            )
+                                        ) : (
+                                            <p className="prose prose-sm max-w-none break-words" style={{ color: userBubbleText }}>
+                                                {msg.text}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
-                                {/* WhatsApp-style read status */}
+                                {/* WhatsApp-style read status — tap to retry if failed */}
                                 <div className="flex items-center gap-1 mt-0.5 mr-1">
                                     {msg.failed ? (
-                                        <span className="text-[10px] text-red-500 flex items-center gap-0.5">
-                                            <AlertCircle className="w-3 h-3" /> Not sent
-                                        </span>
+                                        <button
+                                            type="button"
+                                            aria-label="Message not sent — tap to retry"
+                                            onClick={() => {
+                                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                                    try {
+                                                        ws.send(JSON.stringify({ type: 'message', content: msg.text }));
+                                                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, failed: false, status: 'sent' } : m));
+                                                        setPendingMessages(prev => prev.filter(p => p.id !== msg.id));
+                                                    } catch { /* stay failed */ }
+                                                }
+                                            }}
+                                            className="text-[10px] text-red-500 flex items-center gap-0.5 hover:text-red-700 underline cursor-pointer"
+                                        >
+                                            <AlertCircle className="w-3 h-3" /> Not sent · Retry
+                                        </button>
                                     ) : (
                                         <span className="text-[10px] text-gray-400">
                                             {msg.status === 'read' ? (
@@ -632,7 +795,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                 intentionalClose.current = true;
                                 ws?.close();
                                 setShowEndConfirm(false);
-                                handleReturnToBot();
+                                handleChatEnded();
                             }}
                             className="flex-1 py-1.5 rounded-lg bg-red-500 text-white text-xs font-medium"
                         >
@@ -653,29 +816,68 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                 <div className="flex items-center justify-center mb-2">
                     <button
                         onClick={() => setShowEndConfirm(true)}
-                        className="text-[11px] text-gray-400 hover:text-red-500 transition-colors"
+                        aria-label="End live chat and return to AI assistant"
+                        className="text-[11px] text-gray-400 hover:text-red-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 rounded"
                     >
                         End chat and return to AI
                     </button>
                 </div>
                 <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
+                    {/* Upload progress bar */}
+                    {uploadProgress !== null && (
+                        <div className="w-full h-1 bg-gray-100 rounded-full mb-2 overflow-hidden">
+                            <div
+                                className="h-full rounded-full transition-all duration-300"
+                                style={{ width: `${uploadProgress}%`, backgroundColor: settings.primary_color || '#3A0CA3' }}
+                            />
+                        </div>
+                    )}
                     <form onSubmit={handleSend}>
-                        <input
+                        <textarea
                             ref={inputRef}
-                            type="text"
                             value={inputText}
-                            onChange={(e) => { setInputText(e.target.value); handleTyping(); }}
+                            onChange={(e) => {
+                                setInputText(e.target.value);
+                                handleTyping();
+                                e.target.style.height = 'auto';
+                                e.target.style.height = e.target.scrollHeight + 'px';
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSend(e);
+                                }
+                            }}
                             placeholder="Type a message..."
-                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400"
+                            rows={1}
+                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[100px]"
                             style={{ border: 'none' }}
                         />
-                        <div className="flex items-center justify-end mt-2">
+                        <div className="flex items-center justify-between mt-2">
+                            <button
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={uploadProgress !== null}
+                                title="Attach file"
+                                aria-label="Attach file"
+                                className={`transition-opacity ${uploadProgress !== null ? 'opacity-30 cursor-not-allowed' : 'opacity-60 hover:opacity-100'}`}
+                            >
+                                <Paperclip size={20} className="text-[#16202C]" />
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*,.pdf,.txt"
+                                className="hidden"
+                                onChange={handleFileSelect}
+                            />
                             <button
                                 type="submit"
                                 disabled={!inputText.trim()}
-                                className="transition-all disabled:cursor-not-allowed"
+                                aria-label="Send message"
+                                className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             >
-                                <Send
+                                <SendIcon
                                     size={20}
                                     className={`transition-colors ${inputText.trim() ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
                                 />

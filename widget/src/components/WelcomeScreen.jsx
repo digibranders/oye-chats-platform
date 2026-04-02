@@ -107,11 +107,20 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                             rows={1}
                         />
                         <div className="flex items-center justify-between mt-2">
-                            <Paperclip size={20} className="text-[#16202C] cursor-pointer hover:text-gray-500 transition-colors" />
+                            <button
+                                type="button"
+                                disabled
+                                title="File sharing coming soon"
+                                aria-label="Attach file (coming soon)"
+                                className="opacity-30 cursor-not-allowed"
+                            >
+                                <Paperclip size={20} className="text-[#16202C]" />
+                            </button>
                             <button
                                 type="submit"
                                 disabled={!hasText}
-                                className="transition-all disabled:cursor-not-allowed"
+                                aria-label="Send message"
+                                className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             >
                                 <SendIcon size={20} className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`} />
                             </button>

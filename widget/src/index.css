@@ -178,3 +178,24 @@
   padding: 0;
   color: #1e293b;
 }
+
+/* Chat mode transitions — fade + slide up on mode switch */
+@keyframes modeEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.mode-enter {
+  animation: modeEnter 200ms ease-out forwards;
+}
+
+/* Accessibility — honour reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

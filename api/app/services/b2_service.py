@@ -112,6 +112,23 @@ def get_object(key: str):
     return body, content_type
 
 
+def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> str:
+    """Generate a presigned PUT URL so the browser can upload directly to B2.
+
+    The caller uploads via PUT to the returned URL (no auth headers needed).
+    expires: seconds until the URL expires (default 5 minutes).
+    """
+    try:
+        return s3_client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": B2_BUCKET_NAME, "Key": key, "ContentType": content_type},
+            ExpiresIn=expires,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate presigned PUT URL for {key}: {e}")
+        raise
+
+
 def upload_chat_file(file_data: bytes, original_filename: str, content_type: str) -> str:
     """BUG-14: Upload a chat attachment (image, PDF, etc.) to B2.
 

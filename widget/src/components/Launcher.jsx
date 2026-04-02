@@ -80,7 +80,10 @@ const Launcher = ({ isOpen, toggleChat, settings }) => {
             {/* Main Button — bot icon always visible */}
             <button
                 onClick={toggleChat}
-                className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden"
+                aria-label={isOpen ? 'Close chat' : launcherName}
+                aria-expanded={isOpen}
+                className="relative w-14 h-14 rounded-full bg-white text-white flex items-center justify-center shadow-lg overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                style={{ '--tw-ring-color': primaryColor }}
             >
                 {renderBotIcon()}
 

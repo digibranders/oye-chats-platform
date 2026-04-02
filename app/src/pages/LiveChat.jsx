@@ -32,6 +32,8 @@ export default function LiveChat({ embedded = false }) {
     const [chatNames, setChatNames] = useState({});     // session_id → { name, reason }
     const [selectedChat, setSelectedChat] = useState(null);
     const [messages, setMessages] = useState([]);
+    const [hasMoreMessages, setHasMoreMessages] = useState(false);
+    const [loadingEarlier, setLoadingEarlier] = useState(false);
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [unreadCounts, setUnreadCounts] = useState({}); // session_id → number
@@ -49,6 +51,8 @@ export default function LiveChat({ embedded = false }) {
     const [showTransferModal, setShowTransferModal] = useState(false);
     const [transferOperators, setTransferOperators] = useState([]);
     const [transferDepartments, setTransferDepartments] = useState([]);
+    // Two-step transfer: null → { id, dept, label } → confirmed
+    const [transferTarget, setTransferTarget] = useState(null);
 
     // Right panel (session info + team roster)
     const [showRightPanel, setShowRightPanel] = useState(true);
@@ -80,6 +84,7 @@ export default function LiveChat({ embedded = false }) {
     const queuePollIntervalRef = useRef(null);
     const queueSnapshotRef = useRef(new Set());
     const chatNamesRef = useRef({});
+    const typingTimeoutRef = useRef(null);
 
     // Keep selectedChatRef in sync and react to chat selection
     useEffect(() => {
@@ -92,7 +97,7 @@ export default function LiveChat({ embedded = false }) {
             setSessionInfo(null);
             getSessionDetails(selectedChat)
                 .then(data => setSessionInfo(data))
-                .catch(() => setSessionInfo(null));
+                .catch(() => setSessionInfo({ error: true }));
         } else {
             setSessionInfo(null);
         }
@@ -213,7 +218,9 @@ export default function LiveChat({ embedded = false }) {
         };
 
         socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            let data;
+            try { data = JSON.parse(event.data); } catch { return; }
+
 
             switch (data.type) {
                 case 'pong':
@@ -253,7 +260,7 @@ export default function LiveChat({ embedded = false }) {
                     }));
                     if (data.session_id === currentSelected) {
                         setMessages(prev => [...prev, {
-                            id: Date.now(),
+                            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
                             role: data.role,
                             content: data.content,
                             timestamp: data.timestamp,
@@ -275,33 +282,51 @@ export default function LiveChat({ embedded = false }) {
                     break;
                 }
 
+                case 'file': {
+                    const currentSelected = selectedChatRef.current;
+                    if (data.session_id === currentSelected) {
+                        setMessages(prev => [...prev, {
+                            id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                            role: data.role || 'user',
+                            content: data.file_url,
+                            file_url: data.file_url,
+                            filename: data.filename,
+                            content_type: data.content_type,
+                            timestamp: data.timestamp,
+                        }]);
+                    } else {
+                        setUnreadCounts(prev => ({
+                            ...prev,
+                            [data.session_id]: (prev[data.session_id] || 0) + 1,
+                        }));
+                    }
+                    break;
+                }
+
                 case 'visitor_typing':
                     if (data.session_id === selectedChatRef.current) {
                         setIsTyping(true);
-                        // Auto-clear after 3s as fallback (BUG-17: explicit stop event preferred)
-                        setTimeout(() => setIsTyping(false), 3000);
+                        clearTimeout(typingTimeoutRef.current);
+                        typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000);
                     }
                     break;
 
                 case 'visitor_stopped_typing':
-                    // BUG-17: Explicit stopped typing — clear indicator immediately
                     if (data.session_id === selectedChatRef.current) {
+                        clearTimeout(typingTimeoutRef.current);
                         setIsTyping(false);
                     }
                     break;
 
-                case 'chat_accepted':
+                case 'chat_accepted': {
                     setActiveChats(prev => [...new Set([...prev, data.session_id])]);
-                    setChatNames(prev => ({
-                        ...prev,
-                        [data.session_id]: {
-                            name: data.visitor_name || 'Anonymous',
-                            reason: data.reason || null,
-                        },
-                    }));
+                    const chatNameEntry = { name: data.visitor_name || 'Anonymous', reason: data.reason || null };
+                    chatNamesRef.current = { ...chatNamesRef.current, [data.session_id]: chatNameEntry };
+                    setChatNames(prev => ({ ...prev, [data.session_id]: chatNameEntry }));
                     setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
                     removeSessionFromQueue(data.session_id);
                     break;
+                }
 
                 case 'chat_transferred':
                     // Chat transferred away from this agent
@@ -344,6 +369,18 @@ export default function LiveChat({ embedded = false }) {
                             });
                             return next;
                         });
+                        // Reload history for currently selected chat after reconnect
+                        const currentSel = selectedChatRef.current;
+                        if (currentSel) {
+                            getChatHistory(currentSel)
+                                .then(history => {
+                                    setMessages(history.map((m, i) => ({
+                                        id: m.id ?? `restored-${i}`, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
+                                    })));
+                                    setHasMoreMessages(history.length === 50);
+                                })
+                                .catch(() => {});
+                        }
                     }
                     break;
 
@@ -395,8 +432,9 @@ export default function LiveChat({ embedded = false }) {
                     setConnectionLost(true);
                 }
                 // Never give up — operators must stay connected.
-                // Exponential backoff: 3s → 6s → 12s → 24s → 30s (capped).
-                const delay = Math.min(3000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+                // Exponential backoff with jitter: 3s → 6s → 12s → 24s → 30s (capped).
+                const base = Math.min(3000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+                const delay = Math.round(base * (0.9 + Math.random() * 0.2));
                 reconnectAttemptsRef.current += 1;
                 reconnectTimerRef.current = setTimeout(() => setReconnectCount(c => c + 1), delay);
             }
@@ -483,12 +521,36 @@ export default function LiveChat({ embedded = false }) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isTyping]);
 
+    // P2-24: Keyboard shortcuts — Ctrl+1…9 to switch active chats, Escape to close modal
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                if (showTransferModal) { setShowTransferModal(false); setTransferTarget(null); }
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+                const idx = parseInt(e.key, 10) - 1;
+                if (idx < activeChats.length) {
+                    e.preventDefault();
+                    handleSelectChat(activeChats[idx]);
+                }
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [showTransferModal, activeChats]);
+
     // Load canned responses once
     useEffect(() => {
         getCannedResponses().then(data => setCannedResponses(data.responses || [])).catch(() => {});
     }, []);
 
     const handleToggleStatus = async () => {
+        if (isOnline && activeChats.length > 0) {
+            if (!window.confirm(`You have ${activeChats.length} active chat(s). Going offline will disconnect them. Continue?`)) {
+                return;
+            }
+        }
         try {
             const result = await toggleOperatorStatus();
             setIsOnline(result.is_online);
@@ -522,6 +584,8 @@ export default function LiveChat({ embedded = false }) {
 
     const handleAcceptChat = async (sessionId, visitorName, reason) => {
         setAcceptingSessionId(sessionId);
+        // Safety timeout: reset loading state if the request hangs for more than 8s
+        const acceptTimeoutId = setTimeout(() => setAcceptingSessionId(null), 8000);
         try {
             await acceptChat(sessionId, operatorIdRef.current);
             setActiveChats(prev => [...new Set([...prev, sessionId])]);
@@ -535,9 +599,10 @@ export default function LiveChat({ embedded = false }) {
             try {
                 const history = await getChatHistory(sessionId);
                 setMessages(history.map((m, i) => ({
-                    id: i, role: m.role, content: m.content, timestamp: m.timestamp,
+                    id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
                 })));
-            } catch { setMessages([]); }
+                setHasMoreMessages(history.length === 50);
+            } catch { setMessages([]); setHasMoreMessages(false); }
         } catch (e) {
             if (e?.status === 409) {
                 removeSessionFromQueue(sessionId);
@@ -545,21 +610,42 @@ export default function LiveChat({ embedded = false }) {
                 console.error('Failed to accept chat:', e);
             }
         } finally {
+            clearTimeout(acceptTimeoutId);
             setAcceptingSessionId(null);
         }
     };
 
     const handleSelectChat = async (sessionId) => {
         setSelectedChat(sessionId);
+        setHasMoreMessages(false);
         try {
             const history = await getChatHistory(sessionId);
             setMessages(history.map((m, i) => ({
-                id: i, role: m.role, content: m.content, timestamp: m.timestamp,
+                id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
             })));
+            setHasMoreMessages(history.length === 50);
             if (history.length > 0) {
                 setLastMessages(prev => ({ ...prev, [sessionId]: history[history.length - 1].content?.slice(0, 60) || '' }));
             }
-        } catch { setMessages([]); }
+        } catch { setMessages([]); setHasMoreMessages(false); }
+    };
+
+    const handleLoadEarlier = async () => {
+        const firstDbId = messages.find(m => m.dbId != null)?.dbId;
+        if (!firstDbId || !selectedChat || loadingEarlier) return;
+        setLoadingEarlier(true);
+        try {
+            const earlier = await getChatHistory(selectedChat, { beforeId: firstDbId });
+            setMessages(prev => [
+                ...earlier.map((m, i) => ({
+                    id: m.id ?? `earlier-${i}`, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
+                })),
+                ...prev,
+            ]);
+            setHasMoreMessages(earlier.length === 50);
+        } catch { /* silent */ } finally {
+            setLoadingEarlier(false);
+        }
     };
 
     const handleCloseChat = async (sessionId) => {
@@ -591,7 +677,8 @@ export default function LiveChat({ embedded = false }) {
     };
 
     const selectCannedResponse = (response) => {
-        setInputText(response.content);
+        // Append to existing input unless the user triggered it with "/" — then replace
+        setInputText(prev => prev.startsWith('/') ? response.content : prev + (prev ? ' ' : '') + response.content);
         setShowCannedDropdown(false);
         inputRef.current?.focus();
     };
@@ -606,6 +693,7 @@ export default function LiveChat({ embedded = false }) {
     });
 
     const openTransferModal = async () => {
+        setTransferTarget(null);
         try {
             const [operatorsData, deptsData] = await Promise.all([getOperators(), getDepartments()]);
             setTransferOperators((operatorsData.operators || []).filter(a => a.is_online));
@@ -622,7 +710,10 @@ export default function LiveChat({ embedded = false }) {
                 : { target_department_id: targetDeptId };
             await transferChat(selectedChat, payload);
             setShowTransferModal(false);
-            setActiveChats(prev => prev.filter(c => c !== selectedChat));
+            setTransferTarget(null);
+            const transferredSession = selectedChat;
+            setActiveChats(prev => prev.filter(c => c !== transferredSession));
+            setUnreadCounts(prev => { const next = { ...prev }; delete next[transferredSession]; return next; });
             setSelectedChat(null);
             setMessages([]);
         } catch (e) {
@@ -636,9 +727,17 @@ export default function LiveChat({ embedded = false }) {
         const socket = wsRef.current;
         if (!inputText.trim() || !socket || socket.readyState !== WebSocket.OPEN || !selectedChat) return;
 
-        socket.send(JSON.stringify({ type: 'message', session_id: selectedChat, content: inputText }));
+        try {
+            socket.send(JSON.stringify({ type: 'message', session_id: selectedChat, content: inputText }));
+        } catch {
+            setCloseChatError('Failed to send message. Check your connection.');
+            clearTimeout(closeChatErrorTimerRef.current);
+            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            return;
+        }
         setMessages(prev => [...prev, {
-            id: Date.now(), role: 'operator', content: inputText, timestamp: new Date().toISOString(),
+            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            role: 'operator', content: inputText, timestamp: new Date().toISOString(),
         }]);
         setLastMessages(prev => ({ ...prev, [selectedChat]: inputText.slice(0, 60) }));
         setInputText('');
@@ -803,7 +902,10 @@ export default function LiveChat({ embedded = false }) {
                                                 </div>
                                                 <div className="flex items-center gap-1.5 flex-shrink-0">
                                                     {unread > 0 && (
-                                                        <span className="min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                                                        <span
+                                                            className="min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center"
+                                                            aria-label={`${unread} unread message${unread !== 1 ? 's' : ''}`}
+                                                        >
                                                             {unread > 9 ? '9+' : unread}
                                                         </span>
                                                     )}
@@ -850,8 +952,8 @@ export default function LiveChat({ embedded = false }) {
                                         </button>
                                         <button
                                             onClick={() => setShowRightPanel(p => !p)}
-                                            className="p-1.5 text-secondary-400 hover:text-secondary-600 hover:bg-secondary-100 rounded-lg transition-colors"
-                                            title={showRightPanel ? 'Hide panel' : 'Show panel'}
+                                            aria-label={showRightPanel ? 'Hide info panel' : 'Show info panel'}
+                                            className="p-1.5 text-secondary-400 hover:text-secondary-600 hover:bg-secondary-100 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary-300"
                                         >
                                             {showRightPanel
                                                 ? <ChevronRight className="w-4 h-4" />
@@ -869,7 +971,29 @@ export default function LiveChat({ embedded = false }) {
                                 )}
 
                                 {/* Messages area */}
-                                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+                                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" aria-live="polite" aria-label="Conversation messages" role="log">
+                                    {/* Load earlier messages */}
+                                    {hasMoreMessages && (
+                                        <div className="flex justify-center pt-1 pb-2">
+                                            <button
+                                                onClick={handleLoadEarlier}
+                                                disabled={loadingEarlier}
+                                                className="text-xs text-secondary-500 hover:text-primary-600 flex items-center gap-1.5 disabled:opacity-50"
+                                            >
+                                                {loadingEarlier ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                                                {loadingEarlier ? 'Loading...' : 'Load earlier messages'}
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Empty state */}
+                                    {messages.length === 0 && !isTyping && (
+                                        <div className="flex flex-col items-center justify-center h-full py-16 text-secondary-400">
+                                            <MessageCircle className="w-8 h-8 mb-2 opacity-40" />
+                                            <p className="text-sm">No messages yet</p>
+                                        </div>
+                                    )}
+
                                     {messages.map((msg) => (
                                         <div key={msg.id} className={`flex ${msg.role === 'operator' ? 'justify-end' : 'justify-start'}`}>
                                             <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
@@ -879,12 +1003,20 @@ export default function LiveChat({ embedded = false }) {
                                                     ? 'bg-secondary-100 text-secondary-800 rounded-bl-md'
                                                     : 'bg-secondary-50 text-secondary-600 italic text-xs rounded-bl-md'
                                             }`}>
-                                                {msg.content}
+                                                {msg.file_url ? (
+                                                    msg.content_type?.startsWith('image/') ? (
+                                                        <img src={msg.file_url} alt={msg.filename || 'image'} className="max-w-[200px] rounded-lg block" />
+                                                    ) : (
+                                                        <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="underline break-all">
+                                                            📎 {msg.filename || 'file'}
+                                                        </a>
+                                                    )
+                                                ) : msg.content}
                                             </div>
                                         </div>
                                     ))}
                                     {isTyping && (
-                                        <div className="flex justify-start">
+                                        <div className="flex justify-start items-end gap-2">
                                             <div className="bg-secondary-100 px-4 py-3 rounded-2xl rounded-bl-md">
                                                 <div className="flex gap-1.5">
                                                     <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -892,6 +1024,9 @@ export default function LiveChat({ embedded = false }) {
                                                     <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                                                 </div>
                                             </div>
+                                            <span className="text-[11px] text-secondary-400 pb-1">
+                                                {chatNamesRef.current[selectedChat]?.name || 'Visitor'} is typing...
+                                            </span>
                                         </div>
                                     )}
                                     <div ref={messagesEndRef} />
@@ -933,7 +1068,8 @@ export default function LiveChat({ embedded = false }) {
                                         <button
                                             type="submit"
                                             disabled={!inputText.trim()}
-                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-30"
+                                            aria-label="Send message"
+                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-30 focus-visible:ring-2 focus-visible:ring-primary-300"
                                         >
                                             <Send className="w-4 h-4" />
                                         </button>
@@ -1108,18 +1244,45 @@ export default function LiveChat({ embedded = false }) {
 
             {/* Transfer Modal */}
             {showTransferModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Transfer chat">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
                         <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100">
                             <h2 className="font-semibold text-secondary-900 flex items-center gap-2">
                                 <ArrowRightLeft className="w-4 h-4" />
-                                Transfer Chat
+                                {transferTarget ? 'Confirm Transfer' : 'Transfer Chat'}
                             </h2>
-                            <button onClick={() => setShowTransferModal(false)} className="text-secondary-400 hover:text-secondary-600">
+                            <button
+                                onClick={() => { setShowTransferModal(false); setTransferTarget(null); }}
+                                aria-label="Close transfer modal"
+                                className="text-secondary-400 hover:text-secondary-600 focus-visible:ring-2 focus-visible:ring-primary-300 rounded"
+                            >
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
                         <div className="p-5 space-y-4">
+                            {/* Step 2: confirmation */}
+                            {transferTarget ? (
+                                <div className="text-center space-y-4">
+                                    <p className="text-sm text-secondary-700">
+                                        Transfer this chat to <strong>{transferTarget.label}</strong>?
+                                    </p>
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={() => setTransferTarget(null)}
+                                            className="flex-1 py-2 rounded-lg border border-secondary-200 text-sm text-secondary-600 hover:bg-secondary-50 transition-colors"
+                                        >
+                                            Back
+                                        </button>
+                                        <button
+                                            onClick={() => handleTransfer(transferTarget.operatorId, transferTarget.deptId)}
+                                            className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
+                                        >
+                                            Confirm Transfer
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                            <>
                             {transferOperators.length > 0 && (
                                 <div>
                                     <h3 className="text-sm font-medium text-secondary-700 mb-2">Online Operators</h3>
@@ -1127,7 +1290,7 @@ export default function LiveChat({ embedded = false }) {
                                         {transferOperators.map(operator => (
                                             <button
                                                 key={operator.id}
-                                                onClick={() => handleTransfer(operator.id, null)}
+                                                onClick={() => setTransferTarget({ operatorId: operator.id, deptId: null, label: operator.name })}
                                                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 transition-colors text-left"
                                             >
                                                 <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
@@ -1151,7 +1314,7 @@ export default function LiveChat({ embedded = false }) {
                                         {transferDepartments.map(dept => (
                                             <button
                                                 key={dept.id}
-                                                onClick={() => handleTransfer(null, dept.id)}
+                                                onClick={() => setTransferTarget({ operatorId: null, deptId: dept.id, label: dept.name })}
                                                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 transition-colors text-left"
                                             >
                                                 <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-sm">
@@ -1165,6 +1328,8 @@ export default function LiveChat({ embedded = false }) {
                             )}
                             {transferOperators.length === 0 && transferDepartments.length === 0 && (
                                 <p className="text-sm text-secondary-500 text-center py-4">No operators online or departments available.</p>
+                            )}
+                            </>
                             )}
                         </div>
                     </div>
