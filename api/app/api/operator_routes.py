@@ -432,7 +432,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             ChatAuditLog(
                 session_id=request.session_id,
                 action="handoff_requested",
-                metadata={"reason": request.reason, "department_id": request.department_id},
+                details={"reason": request.reason, "department_id": request.department_id},
             )
         )
         session.commit()
@@ -665,7 +665,7 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
                     session_id=session_id,
                     operator_id=old_operator_id,
                     action="transferred",
-                    metadata={"transferred_to_operator_id": target_operator.id},
+                    details={"transferred_to_operator_id": target_operator.id},
                 )
             )
             session.commit()
@@ -697,7 +697,7 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
                 session_id=session_id,
                 operator_id=old_operator_id,
                 action="transferred",
-                metadata={"transferred_to_department_id": request.target_department_id},
+                details={"transferred_to_department_id": request.target_department_id},
             )
         )
         session.commit()

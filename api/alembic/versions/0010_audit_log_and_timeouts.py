@@ -40,7 +40,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("action", sa.String(), nullable=False),
-        sa.Column("metadata", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("details", sa.dialects.postgresql.JSONB(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
 

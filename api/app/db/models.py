@@ -270,7 +270,7 @@ class ChatAuditLog(Base):
     session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
     operator_id = Column(Integer, ForeignKey("operators.id", ondelete="SET NULL"), nullable=True)
     action = Column(String, nullable=False)  # handoff_requested|accepted|closed|transferred|timeout|visitor_ended
-    metadata = Column(JSONB, nullable=True)  # e.g. {"transferred_to": 5, "reason": "billing question"}
+    details = Column(JSONB, nullable=True)  # e.g. {"transferred_to": 5, "reason": "billing question"}
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession")
