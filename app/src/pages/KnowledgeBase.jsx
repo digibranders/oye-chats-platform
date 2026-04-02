@@ -104,26 +104,19 @@ export default function KnowledgeBase() {
     };
 
     const startScanSimulation = (rootUrl) => {
-        const domain = new URL(rootUrl).hostname;
-        const paths = ['/', '/about', '/contact', '/pricing', '/blog', '/features', '/docs', '/faq', '/terms', '/privacy', '/team', '/careers', '/support', '/api', '/products', '/services'];
-        let idx = 0;
+        // Show only the root URL being scanned — no fake hardcoded paths
         setScanningUrls([{ url: rootUrl, status: 'scanning' }]);
-        scanTimerRef.current = setInterval(() => {
-            idx++;
-            if (idx >= paths.length) { clearInterval(scanTimerRef.current); return; }
-            setScanningUrls(prev => {
-                const updated = prev.map(u => u.status === 'scanning' ? { ...u, status: 'done' } : u);
-                return [...updated, { url: `https://${domain}${paths[idx]}`, status: 'scanning' }];
-            });
-        }, 1500 + Math.random() * 2000);
     };
 
-    const stopScanSimulation = (pagesFound) => {
+    const stopScanSimulation = (result) => {
         if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-        setScanningUrls(prev => prev.map(u => ({ ...u, status: 'done' })));
-        if (pagesFound) {
-            setTimeout(() => setScanningUrls([]), 3000);
+        // Show the actual pages that were crawled from the backend response
+        if (result && result.pages_crawled && result.pages_crawled.length > 0) {
+            setScanningUrls(result.pages_crawled.map(url => ({ url, status: 'done' })));
+        } else {
+            setScanningUrls(prev => prev.map(u => ({ ...u, status: 'done' })));
         }
+        setTimeout(() => setScanningUrls([]), 5000);
     };
 
     const handleCrawlSubmit = async (e) => {
@@ -133,13 +126,13 @@ export default function KnowledgeBase() {
         startScanSimulation(url);
         try {
             const result = await crawlWebsite(url, selectedBot?.id);
-            stopScanSimulation(result.pages_processed);
+            stopScanSimulation(result);
             setCrawlStatus({ type: 'success', message: `Crawled ${result.pages_processed || 0} pages and ingested ${result.chunks_processed || 0} chunks.` });
             showToast('success', `Crawling done! ${result.pages_processed || 0} pages.`);
             setUrl('');
             if (activeTab === 'list') fetchDocuments();
         } catch (error) {
-            stopScanSimulation(0);
+            stopScanSimulation(null);
             setCrawlStatus({ type: 'error', message: error.detail || error.message || 'Failed to crawl website.' });
         } finally { setIsCrawling(false); }
     };

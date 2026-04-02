@@ -255,6 +255,7 @@ async def crawl_endpoint(
             "root_url": crawl_request.url,
             "pages_processed": pages_processed,
             "chunks_processed": total_chunks,
+            "pages_crawled": [p["url"] for p in valid_pages],
             "recommended_colors": recommended_colors,
         }
     except HTTPException:
