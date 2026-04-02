@@ -2,12 +2,18 @@ import logging
 
 import litellm
 
-from app.config import LLM_MODEL, OPENAI_API_KEY
+from app.config import FALLBACK_MODEL, GOOGLE_API_KEY, LLM_MODEL, OPENAI_API_KEY
 
 logger = logging.getLogger(__name__)
 
 if not OPENAI_API_KEY:
     logger.error("CRITICAL: OPENAI_API_KEY is not set! Chat responses will fail. Check your .env file.")
+
+# LiteLLM fallback chain: if the primary model fails, retry with the fallback
+_FALLBACKS: list[dict[str, list[str]]] | None = None
+if GOOGLE_API_KEY and FALLBACK_MODEL:
+    _FALLBACKS = [{LLM_MODEL: [FALLBACK_MODEL]}]
+    logger.info(f"LLM fallback configured: {LLM_MODEL} → {FALLBACK_MODEL}")
 
 
 def generate_response(prompt: str, *, metadata: dict | None = None) -> str:
@@ -21,6 +27,7 @@ def generate_response(prompt: str, *, metadata: dict | None = None) -> str:
             model=LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
             metadata=metadata,
+            fallbacks=_FALLBACKS,
         )
         content = response.choices[0].message.content
         if content:
@@ -47,6 +54,7 @@ def generate_response_stream(prompt: str, *, metadata: dict | None = None):
             messages=[{"role": "user", "content": prompt}],
             stream=True,
             metadata=metadata,
+            fallbacks=_FALLBACKS,
         )
         for chunk in response:
             content = chunk.choices[0].delta.content
