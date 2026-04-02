@@ -20,7 +20,7 @@ ARCHIVE_DIR = "archive"
 # LLM Config (OpenAI via LiteLLM, with Gemini fallback)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-5-mini")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "google/gemini-2.5-flash")
 
 if not OPENAI_API_KEY:
@@ -44,11 +44,11 @@ litellm.failure_callback = ["langfuse"]
 if not DB_URL:
     logger.error("DB_URL is not set! Database connections will fail.")
 
-# R2 Config
-R2_KEY_ID = os.getenv("R2_KEY_ID")
-R2_APPLICATION_KEY = os.getenv("R2_APPLICATION_KEY")
-R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
-R2_ENDPOINT = os.getenv("R2_ENDPOINT")
+# B2/R2 Storage Config (env vars use R2_ prefix, code uses B2_ for Backblaze)
+B2_KEY_ID = os.getenv("R2_KEY_ID") or os.getenv("B2_KEY_ID")
+B2_APPLICATION_KEY = os.getenv("R2_APPLICATION_KEY") or os.getenv("B2_APPLICATION_KEY")
+B2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME") or os.getenv("B2_BUCKET_NAME")
+B2_ENDPOINT = os.getenv("R2_ENDPOINT") or os.getenv("B2_ENDPOINT")
 
 # Langfuse Observability (opt-in: no-op when keys are absent)
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
