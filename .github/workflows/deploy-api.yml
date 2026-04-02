@@ -76,14 +76,19 @@ jobs:
             # Restart service
             systemctl restart oyechats-api
 
-            # Health check — retry up to 5 times (2s apart)
-            for i in 1 2 3 4 5; do
-              sleep 2
+            # Health check — retry up to 8 times (3s apart = 24s total)
+            # uvicorn with 2 workers + Sentry/Playwright init can take 10-15s
+            set +e  # Temporarily disable errexit for the retry loop
+            for i in 1 2 3 4 5 6 7 8; do
+              sleep 3
               if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
                 echo "✅ Deploy successful (attempt $i)"
                 exit 0
               fi
               echo "⏳ Health check attempt $i failed, retrying..."
             done
-            echo "❌ Deploy failed — server not responding after 10s"
+            echo "❌ Deploy failed — server not responding after 24s"
+            # Print service status for debugging
+            systemctl status oyechats-api --no-pager || true
+            journalctl -u oyechats-api --since '1 minute ago' --no-pager -n 30 || true
             exit 1
