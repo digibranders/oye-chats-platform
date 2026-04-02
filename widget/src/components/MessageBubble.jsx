@@ -1,13 +1,11 @@
 import React from 'react';
 import { ThumbsUp, ThumbsDown, Copy, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import StreamingText from './StreamingText';
 
 const MessageBubble = ({
     msg,
     currentTheme,
     streamingId,
-    setStreamingId,
     copiedId,
     onCopy,
     onFeedback,
@@ -20,21 +18,17 @@ const MessageBubble = ({
                 <div className="w-full">
                     <div className={`text-[14px] ${currentTheme.botText}`}>
                         <div className="prose prose-sm max-w-none break-words">
-                            {streamingId === msg.id ? (
-                                <StreamingText
-                                    text={msg.text}
-                                    onComplete={() => setStreamingId(null)}
-                                />
-                            ) : (
-                                <ReactMarkdown
-                                    components={{
-                                        a: ({ ...props }) => (
-                                            <a {...props} className="text-blue-600 font-medium hover:underline" target="_blank" rel="noopener noreferrer" />
-                                        )
-                                    }}
-                                >
-                                    {msg.text}
-                                </ReactMarkdown>
+                            <ReactMarkdown
+                                components={{
+                                    a: ({ ...props }) => (
+                                        <a {...props} className="text-blue-600 font-medium hover:underline" target="_blank" rel="noopener noreferrer" />
+                                    )
+                                }}
+                            >
+                                {msg.text}
+                            </ReactMarkdown>
+                            {streamingId === msg.id && (
+                                <span className="inline-block animate-pulse text-gray-400">▌</span>
                             )}
                         </div>
                     </div>
