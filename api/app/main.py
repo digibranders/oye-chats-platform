@@ -105,10 +105,14 @@ except Exception as e:
     logger.warning(f"Could not apply bots column defaults (non-fatal): {e}")
 
 # --- CORS ---
+# Note: allow_credentials=True is incompatible with allow_origins=["*"] per the
+# CORS spec — browsers silently reject the response. When using wildcard origins
+# (e.g. for an embeddable widget), credentials must be disabled.
+_cors_origins = get_cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_cors_origins(),
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
