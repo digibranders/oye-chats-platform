@@ -130,16 +130,16 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
 
 @router.post("/chat")
 @limiter.limit("30/minute", key_func=key_from_bot_key)
-def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Depends(get_current_bot)):
+def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """
     RAG Endpoint: Analyzes the question, retrieves relevant documents for the bot,
     and generates a standalone answer.
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
     try:
-        ip_address, formatted_device = _parse_request_context(fastapi_request)
+        ip_address, formatted_device = _parse_request_context(request)
         location = f"IP: {ip_address}"
-        session_id = request.session_id or str(uuid.uuid4())
+        session_id = body.session_id or str(uuid.uuid4())
 
         # Fire-and-forget geolocation (saves 2-8s per request)
         submit_background(_resolve_and_update_location, session_id, ip_address)
@@ -148,7 +148,7 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
 
         result = rag_pipeline(
             bot,
-            request.question,
+            body.question,
             session_id=session_id,
             location=location,
             device=formatted_device,
@@ -166,15 +166,15 @@ def chat_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Dep
 
 @router.post("/chat/stream")
 @limiter.limit("30/minute", key_func=key_from_bot_key)
-async def chat_stream_endpoint(request: ChatRequest, fastapi_request: Request, bot: Bot = Depends(get_current_bot)):
+async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """
     Streaming RAG Endpoint: Streams the response token-by-token via SSE.
     Protocol: METADATA:{json} → text chunks → FINAL_METADATA:{json}
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
-    ip_address, formatted_device = _parse_request_context(fastapi_request)
+    ip_address, formatted_device = _parse_request_context(request)
     location = f"IP: {ip_address}"
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = body.session_id or str(uuid.uuid4())
 
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address)
@@ -184,7 +184,7 @@ async def chat_stream_endpoint(request: ChatRequest, fastapi_request: Request, b
     return StreamingResponse(
         rag_pipeline_stream(
             bot,
-            request.question,
+            body.question,
             session_id=session_id,
             location=location,
             device=formatted_device,
@@ -195,42 +195,42 @@ async def chat_stream_endpoint(request: ChatRequest, fastapi_request: Request, b
 
 
 @router.post("/chat/lead-capture")
-def lead_capture_endpoint(request: LeadCaptureRequest, bot: Bot = Depends(get_current_bot)):
+def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key."""
     try:
         with get_session() as session:
-            ensure_chat_session(session, request.session_id, bot_id=bot.id)
+            ensure_chat_session(session, body.session_id, bot_id=bot.id)
             create_or_update_lead_info(
                 session,
-                session_id=request.session_id,
+                session_id=body.session_id,
                 bot_id=bot.id,
-                name=request.name,
-                email=request.email,
-                phone=request.phone,
-                company=request.company,
+                name=body.name,
+                email=body.email,
+                phone=body.phone,
+                company=body.company,
             )
             session.commit()
-            logger.info(f"Lead captured | bot={bot.id} session={request.session_id} email={request.email}")
-            return {"success": True, "session_id": request.session_id}
+            logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={body.email}")
+            return {"success": True, "session_id": body.session_id}
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to capture lead information.") from e
 
 
 @router.post("/chat/sdr")
-def chat_sdr_endpoint(request: ChatRequest, bot: Bot = Depends(get_current_bot)):
+def chat_sdr_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """
     SDR Qualification Endpoint: Qualifies leads using BANT framework.
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
     try:
-        session_id = request.session_id or str(uuid.uuid4())
+        session_id = body.session_id or str(uuid.uuid4())
 
         with get_session() as session:
             ensure_chat_session(session, session_id, client_id=None, bot_id=bot.id)
             session.commit()
 
-        result = run_sdr_qualification(bot, request.question, session_id, bot_id=bot.id)
+        result = run_sdr_qualification(bot, body.question, session_id, bot_id=bot.id)
 
         if "error" in result:
             logger.error(f"SDR qualification error: {result['error']}")
@@ -245,14 +245,16 @@ def chat_sdr_endpoint(request: ChatRequest, bot: Bot = Depends(get_current_bot))
 
 
 @router.post("/chat/feedback/{message_id}")
-def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot = Depends(get_current_bot)):
+def submit_feedback_endpoint(
+    message_id: int, body: FeedbackRequest, request: Request, bot: Bot = Depends(get_current_bot)
+):
     """Submit feedback (thumbs up/down) for a specific bot reply. Also scores the Langfuse trace if available."""
     try:
         with get_session() as session:
             from app.db.models import ChatMessage as CM
 
             success = update_message_feedback(
-                session, message_id, client_id=None, feedback_value=request.feedback, bot_id=bot.id
+                session, message_id, client_id=None, feedback_value=body.feedback, bot_id=bot.id
             )
             session.commit()
             if not success:
@@ -267,7 +269,7 @@ def submit_feedback_endpoint(message_id: int, request: FeedbackRequest, bot: Bot
                         lf.create_score(
                             trace_id=msg.trace_id,
                             name="user-feedback",
-                            value=float(request.feedback),
+                            value=float(body.feedback),
                             data_type="NUMERIC",
                         )
                     except Exception as score_err:
