@@ -64,15 +64,15 @@ class ConnectionManager:
             self._recover_orphaned_sessions()
 
     def _recover_orphaned_sessions(self):
-        """On startup, reset sessions stuck in stale states due to previous server crash."""
+        """On startup, restore waiting queue from DB and clean orphaned live sessions."""
         try:
             with get_session() as db:
-                # 1. Stale "waiting" sessions with no active timeout → revert to bot
+                # 1. Restore waiting sessions to in-memory queue
                 stale_waiting = db.execute(select(ChatSession).where(ChatSession.status == "waiting")).scalars().all()
                 for cs in stale_waiting:
                     if cs.id not in self.waiting_queue:
-                        cs.status = "bot"
-                        cs.assigned_operator_id = None
+                        self.waiting_queue.append(cs.id)
+                        logger.info(f"Restored waiting session from DB: {cs.id}")
 
                 # 2. "Live" sessions assigned to offline operators → revert to bot
                 live_sessions = (
@@ -705,7 +705,13 @@ class ConnectionManager:
             await self._send_to_operator(operator_id, msg)
         elif operator_id in self._operator_disconnect_tasks:
             # BUG-1: Operator is in grace period — queue for delivery on reconnect
-            self._operator_message_queue.setdefault(operator_id, []).append(msg)
+            queue = self._operator_message_queue.setdefault(operator_id, [])
+            if len(queue) < 500:
+                queue.append(msg)
+            else:
+                queue.pop(0)
+                queue.append(msg)
+                logger.warning(f"Message queue full for operator {operator_id} — dropped oldest")
             logger.debug(f"Queued message for operator {operator_id} (in grace period)")
 
     async def route_operator_message(self, session_id: str, content: str, operator_name: str):
@@ -742,7 +748,13 @@ class ConnectionManager:
         if operator_id in self.operator_connections:
             await self._send_to_operator(operator_id, msg)
         elif operator_id in self._operator_disconnect_tasks:
-            self._operator_message_queue.setdefault(operator_id, []).append(msg)
+            queue = self._operator_message_queue.setdefault(operator_id, [])
+            if len(queue) < 500:
+                queue.append(msg)
+            else:
+                queue.pop(0)
+                queue.append(msg)
+                logger.warning(f"Message queue full for operator {operator_id} — dropped oldest")
 
     async def route_operator_file(
         self, session_id: str, file_url: str, filename: str, content_type: str, operator_name: str
@@ -1008,6 +1020,24 @@ class ConnectionManager:
 
     def is_visitor_in_live_chat(self, session_id: str) -> bool:
         return session_id in self.assignments
+
+    async def shutdown(self):
+        """Graceful shutdown: notify clients and clean up tasks."""
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+        for task in list(self._timeout_tasks.values()):
+            task.cancel()
+        for task in list(self._disconnect_tasks.values()):
+            task.cancel()
+        for task in list(self._operator_disconnect_tasks.values()):
+            task.cancel()
+        for ws in list(self.visitor_connections.values()):
+            with contextlib.suppress(Exception):
+                await ws.close(code=1001, reason="Server shutdown")
+        for ws in list(self.operator_connections.values()):
+            with contextlib.suppress(Exception):
+                await ws.close(code=1001, reason="Server shutdown")
+        logger.info("ConnectionManager shutdown complete")
 
 
 # Singleton instance

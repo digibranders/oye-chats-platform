@@ -137,7 +137,6 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                     if chat_session and chat_session.status == "live":
                         bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
                         bot_name = bot.name if bot else "AI Assistant"
-                        # BUG-22: Persist system message for chat closure
                         add_chat_message(
                             session, session_id, role="system", content="Visitor ended the live chat.", bot_id=bot_id
                         )
@@ -146,10 +145,13 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                         session.commit()
                         await manager.close_chat(session_id, bot_name)
 
+            elif msg_type and msg_type != "pong":
+                logger.warning(f"Unknown visitor WS message type: {msg_type} from {session_id}")
+
     except WebSocketDisconnect:
         manager.disconnect_visitor(session_id)
     except Exception as e:
-        logger.error(f"Visitor WS error for {session_id}: {e}")
+        logger.error(f"Visitor WS error for {session_id}: {type(e).__name__}: {e}")
         manager.disconnect_visitor(session_id)
 
 
@@ -340,12 +342,9 @@ async def operator_websocket(
                             await manager.close_chat(target_session, bot_name)
 
     except WebSocketDisconnect:
-        # Start the grace period — do NOT immediately mark offline in DB.
-        # The ConnectionManager will handle full cleanup + DB update if the operator
-        # does not reconnect within OPERATOR_DISCONNECT_TIMEOUT seconds.
         await manager.disconnect_operator_and_broadcast(operator_id)
     except Exception as e:
-        logger.error(f"Operator WS error for operator {operator_id}: {e}")
+        logger.error(f"Operator WS error for operator {operator_id}: {type(e).__name__}: {e}")
         await manager.disconnect_operator_and_broadcast(operator_id)
 
 
