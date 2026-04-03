@@ -130,7 +130,7 @@ def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> s
 
 
 def upload_chat_file(file_data: bytes, original_filename: str, content_type: str) -> str:
-    """BUG-14: Upload a chat attachment (image, PDF, etc.) to B2.
+    """Upload a chat attachment (image, PDF, etc.) to B2.
 
     Unlike upload_to_b2 (which crops/resizes logos), this preserves files as-is.
     Returns the B2 object key (e.g. 'chat-files/uuid.pdf').

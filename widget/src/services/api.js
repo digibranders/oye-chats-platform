@@ -56,6 +56,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let metadataReceived = false;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -63,9 +64,9 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
 
             buffer += decoder.decode(value, { stream: true });
 
-            // Process complete lines in the buffer
+            // Extract and process any complete lines (needed for METADATA parsing)
             const lines = buffer.split('\n');
-            buffer = lines.pop(); // Keep incomplete line in buffer
+            buffer = lines.pop(); // Keep incomplete last segment in buffer
 
             for (const line of lines) {
                 if (!line.trim()) continue;
@@ -74,6 +75,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                     try {
                         const metadata = JSON.parse(line.slice(9));
                         onMetadata?.(metadata);
+                        metadataReceived = true;
                     } catch { /* ignore parse errors */ }
                 } else if (line.startsWith('FINAL_METADATA:')) {
                     try {
@@ -81,8 +83,19 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                         onFinalMetadata?.(finalMeta);
                     } catch { /* ignore parse errors */ }
                 } else {
-                    onChunk?.(line);
+                    onChunk?.(line + '\n');
                 }
+            }
+
+            // Flush partial content immediately — don't wait for a newline.
+            // LLM tokens arrive without \n delimiters, so without this flush the
+            // entire response would accumulate in buffer and appear all at once
+            // at stream end. Guard against flushing a partial METADATA line.
+            if (metadataReceived && buffer &&
+                !buffer.startsWith('METADATA:') &&
+                !buffer.startsWith('FINAL_METADATA:')) {
+                onChunk?.(buffer);
+                buffer = '';
             }
         }
 

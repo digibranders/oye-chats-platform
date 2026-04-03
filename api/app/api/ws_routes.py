@@ -81,7 +81,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             return
         bot_id = bot.id
 
-        # P0-6: Validate session belongs to this bot (prevent cross-session messaging)
+        # Validate session belongs to this bot (prevent cross-session messaging)
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if chat_session and chat_session.bot_id != bot_id:
             await ws.close(code=4003, reason="Session does not belong to this bot")
@@ -128,11 +128,11 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 await manager.send_typing_to_operator(session_id)
 
             elif msg_type == "stopped_typing":
-                # BUG-17: Explicit stopped typing event
+                # Explicit stopped-typing event
                 await manager.send_stopped_typing_to_operator(session_id)
 
             elif msg_type == "read_receipt":
-                # BUG-16: Visitor confirms they've read messages up to this ID
+                # Visitor confirms they've read messages up to this ID
                 last_read_id = data.get("last_read_id")
                 if last_read_id is not None:
                     await manager.send_read_receipt_to_operator(session_id, last_read_id)
@@ -289,7 +289,7 @@ async def operator_websocket(
                 await manager.route_operator_message(target_session, content, operator_name)
 
             elif msg_type == "file":
-                # BUG-14: File sharing — operator sends a file URL
+                # File sharing — operator sends a file URL
                 target_session = data.get("session_id")
                 file_url = data.get("file_url", "").strip()
                 filename = data.get("filename", "file")
@@ -319,7 +319,7 @@ async def operator_websocket(
                     await manager.send_typing_to_visitor(target_session)
 
             elif msg_type == "read_receipt":
-                # BUG-16: Operator confirms they've read messages up to this ID
+                # Operator confirms they've read messages up to this ID
                 target_session = data.get("session_id")
                 last_read_id = data.get("last_read_id")
                 if target_session and last_read_id is not None:
@@ -343,7 +343,7 @@ async def operator_websocket(
                                 continue
                             # Capture bot_name before session closes (avoid DetachedInstanceError)
                             bot_name = bot.name
-                            # BUG-22: Persist system message for operator-initiated closure
+                            # Persist system message for operator-initiated closure
                             add_chat_message(
                                 session,
                                 target_session,

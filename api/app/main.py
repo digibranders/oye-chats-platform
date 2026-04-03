@@ -156,7 +156,7 @@ def health_check():
 
 @app.on_event("shutdown")
 async def shutdown_services():
-    """BUG-18: Broadcast server restart to all WS clients, then flush services."""
+    """Broadcast server restart to all WS clients, then flush services."""
     from app.services.live_chat_service import manager
 
     await manager.shutdown()

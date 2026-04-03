@@ -56,7 +56,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
 
-    // P3-8: Mobile keyboard push-up — update container height when virtual keyboard opens
+    // Mobile keyboard push-up — update container height when virtual keyboard opens
     useEffect(() => {
         const viewport = window.visualViewport;
         if (!viewport || window.innerWidth >= 768) return;
@@ -257,7 +257,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             // Smart handoff: track consecutive fallback responses
             // 1st fallback → show prominent button; 2nd+ consecutive → auto-trigger form
             setMessages(prev => {
-                // Reverse scan to correctly find the last bot message (fixes prev.find() which returns the first)
+                // Reverse scan to find the last bot message; Array.find() returns the first match
                 const lastBot = [...prev].reverse().find(msg => msg.sender === 'bot');
                 if (lastBot && checkBotFallback(lastBot.text)) {
                     consecutiveFallbacks.current += 1;

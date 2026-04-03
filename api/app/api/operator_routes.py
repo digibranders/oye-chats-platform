@@ -207,7 +207,7 @@ def delete_department(department_id: int, auth=Depends(get_current_client_or_ope
         for op in operators:
             op.department_id = None
 
-        # BUG-21: Capture name before commit to avoid DetachedInstanceError
+        # Capture name before commit to avoid DetachedInstanceError
         dept_name = dept.name
         session.delete(dept)
         session.commit()
@@ -346,7 +346,7 @@ async def update_operator(
         if request.role is not None:
             operator.role = request.role
         if request.department_id is not None:
-            # BUG-8: Track department change for dynamic WS update
+            # Track department change for dynamic WS update
             if operator.department_id != request.department_id:
                 department_changed = True
                 new_department_id = request.department_id
@@ -360,7 +360,7 @@ async def update_operator(
 
         session.commit()
 
-    # BUG-8: Dynamically update operator's department in WS manager without reconnect
+    # Update operator's department in WS manager without triggering reconnect
     if department_changed:
         await manager.update_operator_department(operator_id, new_department_id)
 
@@ -389,7 +389,7 @@ def delete_operator(operator_id: int, auth=Depends(get_current_client_or_operato
             cs.assigned_operator_id = None
             cs.status = "bot"
 
-        # BUG-21: Capture name before commit to avoid DetachedInstanceError
+        # Capture name before commit to avoid DetachedInstanceError
         op_name = operator.name
         session.delete(operator)
         session.commit()
@@ -429,7 +429,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         db_bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
         timeout = db_bot.operator_timeout_seconds if db_bot else 120
 
-        # BUG-12: Audit log — handoff requested
+        # Audit log — handoff requested
         session.add(
             ChatAuditLog(
                 session_id=request.session_id,
@@ -572,7 +572,7 @@ async def accept_chat(
                 raise HTTPException(status_code=404, detail="Session not found")
             raise HTTPException(status_code=409, detail="Chat was already accepted by another operator")
 
-        # BUG-12: Audit log — chat accepted
+        # Audit log — chat accepted
         session.add(
             ChatAuditLog(
                 session_id=session_id,
@@ -606,7 +606,7 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_operato
         # Capture bot_name inside the session block — accessing bot.name after session.close()
         # raises DetachedInstanceError because SQLAlchemy expires objects on commit.
         bot_name = bot.name
-        # BUG-12: Audit log — chat closed by operator
+        # Audit log — chat closed by operator
         operator_id = auth.get("operator_id") or chat_session.assigned_operator_id
         session.add(
             ChatAuditLog(
@@ -661,7 +661,7 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
             chat_session.assigned_operator_id = target_operator.id
             if target_operator.department_id:
                 chat_session.department_id = target_operator.department_id
-            # BUG-12: Audit log — transferred to operator
+            # Audit log — transferred to operator
             session.add(
                 ChatAuditLog(
                     session_id=session_id,
@@ -693,7 +693,7 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
         chat_session.status = "waiting"
         chat_session.assigned_operator_id = None
         chat_session.department_id = request.target_department_id
-        # BUG-12: Audit log — transferred to department
+        # Audit log — transferred to department
         session.add(
             ChatAuditLog(
                 session_id=session_id,
@@ -845,7 +845,7 @@ def list_departments_public(bot_key: str = Query(...)):
         return {"departments": [{"id": d.id, "name": d.name} for d in departments]}
 
 
-# ── BUG-14: Chat File Upload ──
+# ── Chat File Upload ──
 
 
 @router.post("/upload-chat-file")
@@ -854,7 +854,7 @@ async def upload_chat_file_route(
     file: UploadFile = File(...),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """BUG-14: Upload a file during live chat. Returns a URL to embed in messages."""
+    """Upload a file during live chat. Returns a URL to embed in messages."""
     ALLOWED_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf", "text/plain"}
     MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -882,7 +882,7 @@ async def upload_chat_file_route(
     return {"url": url, "filename": file.filename, "content_type": file.content_type, "size": len(file_data)}
 
 
-# ── P3-24: Post-chat visitor satisfaction rating ──
+# ── Post-chat visitor satisfaction rating ──
 
 
 class VisitorRatingRequest(BaseModel):

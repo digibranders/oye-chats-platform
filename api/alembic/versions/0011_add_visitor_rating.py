@@ -1,4 +1,4 @@
-"""P3-24: Add visitor_rating column to chat_sessions for post-chat satisfaction survey.
+"""Add visitor_rating column to chat_sessions for post-chat satisfaction survey.
 
 Revision ID: 0011
 Revises: 0010

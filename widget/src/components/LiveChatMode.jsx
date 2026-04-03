@@ -19,8 +19,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const [isReconnecting, setIsReconnecting] = useState(false);
     const [waitingSeconds, setWaitingSeconds] = useState(0);
     const [offlineError, setOfflineError] = useState(false);
-    const [pendingMessages, setPendingMessages] = useState([]); // BUG-3: queued failed messages
-    const [showEndConfirm, setShowEndConfirm] = useState(false); // BUG-10: end chat confirmation
+    const [pendingMessages, setPendingMessages] = useState([]); // queued failed messages
+    const [showEndConfirm, setShowEndConfirm] = useState(false); // end chat confirmation
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
     const reconnectAttempt = useRef(0);
@@ -66,7 +66,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                             setChatMode('live');
                             setOperatorName(data.operator_name || 'Support');
                             onConnectionStatusChange?.('connected');
-                            // BUG-2: On reconnect/refresh, restore chat history from backend
+                            // On reconnect/refresh, restore chat history from backend
                             // so the visitor doesn't see an empty chat.
                             if (!historyLoadedRef.current) {
                                 historyLoadedRef.current = true;
@@ -297,7 +297,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'typing' }));
         }
-        // BUG-17: Send stopped_typing after 2s of inactivity
+        // Send stopped_typing after 2s of inactivity
         clearTimeout(stoppedTypingTimerRef.current);
         stoppedTypingTimerRef.current = setTimeout(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -440,7 +440,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         return queuePosition ? `You're #${queuePosition} in the queue` : 'Please wait a moment';
     };
 
-    // P3-24: Post-chat satisfaction survey screen
+    // Post-chat satisfaction survey screen
     if (showRating) {
         const primaryColor = settings.primary_color || '#3A0CA3';
         return (

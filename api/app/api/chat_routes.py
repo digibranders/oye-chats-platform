@@ -74,7 +74,9 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
     """Fire-and-forget: resolve geolocation from IP and update the session in DB."""
     try:
         # Resolve public IP if local
-        if ip_address in ("127.0.0.1", "localhost", "::1", "") or ip_address.startswith(("10.", "192.168.", "172.")):
+        is_local = ip_address in ("127.0.0.1", "localhost", "::1", "")
+        is_private = ip_address.startswith(("10.", "192.168.", "172."))
+        if is_local or is_private:
             try:
                 with urllib.request.urlopen("https://api.ipify.org?format=json", timeout=2.0) as resp:
                     ip_address = json.loads(resp.read().decode()).get("ip", ip_address)
@@ -149,7 +151,10 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
         # Fire-and-forget geolocation (saves 2-8s per request)
         submit_background(_resolve_and_update_location, session_id, ip_address)
 
-        logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
+        logger.info(
+            f"Chat request | bot_id={bot.id} | bot_name={bot.name} | "
+            f"session={session_id}"
+        )
 
         result = rag_pipeline(
             bot,
@@ -160,12 +165,20 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
             bot_id=bot.id,
         )
 
-        logger.info(f"Chat response generated | session={session_id} | answer_length={len(result.get('answer', ''))}")
+        ans_len = len(result.get("answer", ""))
+        logger.info(
+            f"Chat response generated | session={session_id} | "
+            f"answer_length={ans_len}"
+        )
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Chat failed for bot {getattr(bot, 'id', '?')}: {type(e).__name__}: {e}", exc_info=True)
+        bot_id = getattr(bot, "id", "?")
+        err_type = type(e).__name__
+        logger.error(
+            f"Chat failed for bot {bot_id}: {err_type}: {e}", exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Chat request failed. Please try again.") from e
 
 
@@ -184,7 +197,10 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address)
 
-    logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
+    logger.info(
+        f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | "
+        f"session={session_id}"
+    )
 
     return StreamingResponse(
         rag_pipeline_stream(
@@ -215,7 +231,10 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
                 company=body.company,
             )
             session.commit()
-            logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={body.email}")
+            logger.info(
+                f"Lead captured | bot={bot.id} session={body.session_id} "
+                f"email={body.email}"
+            )
             return {"success": True, "session_id": body.session_id}
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")
@@ -327,14 +346,14 @@ def get_history_endpoint(
     session_id: str,
     bot_id: int | None = Query(None),
     before: int | None = Query(
-        None, description="BUG-5: Cursor — return messages with id < this value (for pagination)"
+        None, description="Cursor — return messages with id < this value (for pagination)"
     ),
     limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
 ):
     """Retrieve chat history for a given session.
 
     Accepts both admin auth (X-API-Key / X-Operator-Key) and widget auth (X-Bot-Key).
-    BUG-5: Supports cursor-based pagination via `before` param.
+    Supports cursor-based pagination via `before` param.
     """
     # Dual auth: try client/operator first, fall back to bot key (widget)
     auth = None
@@ -369,13 +388,14 @@ def get_history_endpoint(
 
             resolve_bot_ids = []
             if not resolved_bot_id:
-                bots = (
-                    session.execute(select(BotModel.id).where(BotModel.client_id == auth["client_id"])).scalars().all()
+                query = select(BotModel.id).where(
+                    BotModel.client_id == auth["client_id"]
                 )
+                bots = session.execute(query).scalars().all()
                 resolve_bot_ids = list(bots)
 
             for sid in sids:
-                # BUG-5: Build paginated query with cursor support
+                # Build paginated query with cursor support
                 stmt = (
                     select(ChatMessage)
                     .join(ChatSession, ChatMessage.session_id == ChatSession.id)
@@ -414,7 +434,7 @@ def get_history_endpoint(
         raise HTTPException(status_code=500, detail="Failed to fetch chat history.") from e
 
 
-# ── P3-7: Visitor file upload — presigned B2 PUT URL ──
+# ── Visitor file upload — presigned B2 PUT URL ──
 
 _ALLOWED_CONTENT_TYPES = {
     "image/png",
