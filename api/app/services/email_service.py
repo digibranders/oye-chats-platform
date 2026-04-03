@@ -69,12 +69,16 @@ def send_email_async(to_email: str, subject: str, html_body: str):
 
 def _base_template(title: str, content: str) -> str:
     return f"""
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 32px 24px;">
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                sans-serif; max-width: 560px; margin: 0 auto; padding: 32px 24px;">
         <div style="text-align: center; margin-bottom: 24px;">
-            <h1 style="font-size: 20px; font-weight: 700; color: #1a1a2e; margin: 0;">OyeChats</h1>
+            <h1 style="font-size: 20px; font-weight: 700; color: #1a1a2e;
+                       margin: 0;">OyeChats</h1>
         </div>
-        <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px;">
-            <h2 style="font-size: 18px; font-weight: 600; color: #1a1a2e; margin: 0 0 16px 0;">{title}</h2>
+        <div style="background: #ffffff; border: 1px solid #e5e7eb;
+                    border-radius: 12px; padding: 24px;">
+            <h2 style="font-size: 18px; font-weight: 600; color: #1a1a2e;
+                       margin: 0 0 16px 0;">{title}</h2>
             {content}
         </div>
         <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 24px;">
@@ -178,7 +182,8 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
     """Send email when no agent was available and visitor left contact details."""
     content = f"""
     <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        A visitor on <strong>{bot_name}</strong> requested live support but no agent was available. They left their contact details for a callback.
+        A visitor on <strong>{bot_name}</strong> requested live support but no
+        agent was available. They left their contact details for a callback.
     </p>
     <div style="background: #fef2f2; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
         <ul style="margin: 0; padding-left: 20px; color: #991b1b; line-height: 1.8;">
@@ -246,12 +251,15 @@ def send_password_reset_email(to_email: str, otp: str):
                margin-bottom: 24px; margin-top: 16px;">
         <p style="color: #6b7280; font-size: 13px; text-transform: uppercase;
            letter-spacing: 0.05em; margin: 0 0 8px 0;">Your Reset Code</p>
-        <div style="font-family: monospace; font-size: 32px; font-weight: 700; color: #111827; letter-spacing: 4px;">
+        <div style="font-family: monospace; font-size: 32px; font-weight: 700;
+                    color: #111827; letter-spacing: 4px;">
             {otp}
         </div>
     </div>
     <p style="color: #4b5563; font-size: 14px; margin: 0;">
-        This code is valid for <strong>15 minutes</strong>. If you did not request a password reset, please ignore this email or contact support if you have concerns.
+        This code is valid for <strong>15 minutes</strong>. If you did not
+        request a password reset, please ignore this email or contact support
+        if you have concerns.
     </p>
     """
     send_email_async(
