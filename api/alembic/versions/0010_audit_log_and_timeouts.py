@@ -1,5 +1,5 @@
-"""BUG-11: Add configurable disconnect timeouts to bots.
-BUG-12: Add chat_audit_logs table for live chat audit trail.
+"""Add configurable disconnect timeouts to bots.
+Add chat_audit_logs table for live chat audit trail.
 
 Revision ID: 0010
 Revises: 0009
@@ -19,11 +19,11 @@ depends_on: Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # BUG-11: Add configurable disconnect timeouts to bots table
+    # Add configurable disconnect timeouts to bots table
     op.add_column("bots", sa.Column("visitor_disconnect_timeout", sa.Integer(), server_default="120", nullable=False))
     op.add_column("bots", sa.Column("operator_disconnect_timeout", sa.Integer(), server_default="60", nullable=False))
 
-    # BUG-12: Create chat_audit_logs table
+    # Create chat_audit_logs table
     op.create_table(
         "chat_audit_logs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),

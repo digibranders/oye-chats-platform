@@ -63,10 +63,8 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 LANGFUSE_ENABLED = bool(LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY)
 
 if LANGFUSE_ENABLED:
-    # Disabled: langfuse_otel callback causes APIConnectionError during LiteLLM
-    # streaming on low-memory servers (1.9GB RAM). Re-enable after upgrading.
-    # import litellm
-    # litellm.callbacks = ["langfuse_otel"]
+    # langfuse_otel callback causes APIConnectionError during LiteLLM streaming
+    # on low-memory servers — disabled until server RAM is upgraded.
     logger.info(f"Langfuse tracing disabled (causes streaming errors) | host={LANGFUSE_HOST}")
 else:
     logger.info("Langfuse tracing disabled (no keys configured)")

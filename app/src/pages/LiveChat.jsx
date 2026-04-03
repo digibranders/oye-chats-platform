@@ -184,7 +184,7 @@ export default function LiveChat({ embedded = false }) {
         manualCloseRef.current = false;
 
         const wsUrl = API_URL.replace(/^http/, 'ws').replace(/\/+$/, '');
-        // Bug fix: operators must use operator_key param (their operator_api_key is stored in admin_token).
+        // Operators use operator_key param (their operator_api_key is stored in admin_token).
         // Owners/clients use api_key param (resolves to their first operator record on the backend).
         const encodedKey = encodeURIComponent(apiKey);
         const wsParam = authType === 'operator' ? `operator_key=${encodedKey}` : `api_key=${encodedKey}`;
@@ -200,7 +200,7 @@ export default function LiveChat({ embedded = false }) {
             // longer when backgrounded (browsers throttle timers in hidden tabs).
             const startPing = () => {
                 clearInterval(pingIntervalRef.current);
-                // BUG-19: Standardized heartbeat timing (25s visible, 50s hidden) across widget and admin
+                // Adaptive heartbeat: 25s when tab visible, 50s when hidden
                 const delay = document.visibilityState === 'visible' ? 25000 : 50000;
                 pingIntervalRef.current = setInterval(() => {
                     if (socket.readyState === WebSocket.OPEN) {
@@ -418,7 +418,7 @@ export default function LiveChat({ embedded = false }) {
             console.log('[LiveChat] WebSocket closed', event.code, event.reason);
             clearInterval(pingIntervalRef.current);
 
-            // BUG-9: If closed because another tab opened, show message and don't reconnect
+            // Closed because another tab connected (code 4001) — don't reconnect
             if (event.code === 4001) {
                 setConnectionLost(true);
                 manualCloseRef.current = true;
@@ -488,7 +488,7 @@ export default function LiveChat({ embedded = false }) {
         };
     }, [isOnline]);
 
-    // BUG-6: Queue fallback polling — only runs when WS is disconnected.
+    // Fallback polling — only runs when WS is disconnected.
     // When WS is connected, real-time queue_update events are sufficient.
     // This prevents stale REST data from flickering over fresh WS state.
     useEffect(() => {
@@ -521,7 +521,7 @@ export default function LiveChat({ embedded = false }) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isTyping]);
 
-    // P2-24: Keyboard shortcuts — Ctrl+1…9 to switch active chats, Escape to close modal
+    // Keyboard shortcuts — Ctrl+1…9 to switch active chats, Escape to close modal
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {

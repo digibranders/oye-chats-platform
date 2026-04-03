@@ -327,14 +327,14 @@ def get_history_endpoint(
     session_id: str,
     bot_id: int | None = Query(None),
     before: int | None = Query(
-        None, description="BUG-5: Cursor — return messages with id < this value (for pagination)"
+        None, description="Cursor — return messages with id < this value (for pagination)"
     ),
     limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
 ):
     """Retrieve chat history for a given session.
 
     Accepts both admin auth (X-API-Key / X-Operator-Key) and widget auth (X-Bot-Key).
-    BUG-5: Supports cursor-based pagination via `before` param.
+    Supports cursor-based pagination via `before` param.
     """
     # Dual auth: try client/operator first, fall back to bot key (widget)
     auth = None
@@ -375,7 +375,7 @@ def get_history_endpoint(
                 resolve_bot_ids = list(bots)
 
             for sid in sids:
-                # BUG-5: Build paginated query with cursor support
+                # Build paginated query with cursor support
                 stmt = (
                     select(ChatMessage)
                     .join(ChatSession, ChatMessage.session_id == ChatSession.id)
@@ -414,7 +414,7 @@ def get_history_endpoint(
         raise HTTPException(status_code=500, detail="Failed to fetch chat history.") from e
 
 
-# ── P3-7: Visitor file upload — presigned B2 PUT URL ──
+# ── Visitor file upload — presigned B2 PUT URL ──
 
 _ALLOWED_CONTENT_TYPES = {
     "image/png",

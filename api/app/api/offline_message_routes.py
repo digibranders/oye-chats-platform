@@ -94,7 +94,7 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
 
         logger.info(f"Offline message saved: {msg.id} from {request.email} for bot {bot.id}")
 
-    # BUG-15: Notify connected operators about new offline message
+    # Notify connected operators about new offline message
     from app.services.live_chat_service import manager
 
     notification = {

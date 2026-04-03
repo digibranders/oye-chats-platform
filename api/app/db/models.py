@@ -90,7 +90,7 @@ class Bot(Base):
     # Live chat settings
     live_chat_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
     operator_timeout_seconds = Column(Integer, default=120, server_default="120", nullable=False)
-    # BUG-11: Configurable timeouts for visitor/operator disconnect grace periods
+    # Configurable timeouts for visitor/operator disconnect grace periods
     visitor_disconnect_timeout = Column(Integer, default=120, server_default="120", nullable=False)
     operator_disconnect_timeout = Column(Integer, default=60, server_default="60", nullable=False)
     business_hours = Column(sqlalchemy.JSON, nullable=True)  # e.g. {"mon":{"start":"09:00","end":"17:00"}, ...}
@@ -263,7 +263,7 @@ class OfflineMessage(Base):
 
 
 class ChatAuditLog(Base):
-    """BUG-12: Audit trail for live chat state transitions (accept, close, transfer, etc.)."""
+    """Audit trail for live chat state transitions (accept, close, transfer, etc.)."""
 
     __tablename__ = "chat_audit_logs"
 
