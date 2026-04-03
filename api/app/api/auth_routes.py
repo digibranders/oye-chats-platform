@@ -1,6 +1,6 @@
 import logging
-import random
 import re
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -414,7 +414,7 @@ def request_password_reset(request: RequestPasswordResetRequest):
                 # Return success anyway to avoid email enumeration
                 return {"message": "If an account exists, a reset link has been sent."}
 
-            otp = str(random.randint(100000, 999999))
+            otp = str(secrets.randbelow(900000) + 100000)
             client.reset_otp = otp
             client.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
             session.commit()

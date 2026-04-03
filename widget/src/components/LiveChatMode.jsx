@@ -43,7 +43,9 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         const wsUrl = API_URL.replace(/^http/, 'ws');
 
         const connect = () => {
-            const socket = new WebSocket(`${wsUrl}/ws/chat/${sessionId}?bot_key=${botKey}`);
+            const wsUrlObj = new URL(`${wsUrl}/ws/chat/${sessionId}`);
+            wsUrlObj.searchParams.set('bot_key', botKey);
+            const socket = new WebSocket(wsUrlObj.toString());
 
             socket.onopen = () => {
                 console.log('[OyeChats] Live chat WebSocket connected');
