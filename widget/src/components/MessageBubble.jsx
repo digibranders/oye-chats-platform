@@ -26,7 +26,7 @@ const MessageBubble = ({
             <div className="flex flex-col items-start w-full">
                 <div className="w-full">
                     <div className={`text-[14px] ${currentTheme.botText}`}>
-                        <div className="prose prose-sm max-w-none break-words">
+                        <div className="prose prose-sm max-w-none break-words font-[100]">
                             <ReactMarkdown
                                 components={{
                                     a: SafeLink,
