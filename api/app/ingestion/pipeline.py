@@ -43,7 +43,7 @@ def _ingest_document(
             return 0
 
         # 2. Chunk text (Preserves metadata)
-        chunks = chunk_text(pages_data)
+        chunks = chunk_text(pages_data, document_name=source_name)
 
         # Extract content and metadata for external processing
         chunk_contents = [c.page_content for c in chunks]
@@ -184,7 +184,7 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
 
             # Chunk this page
             pages_data = [{"text": content, "metadata": {"page": 1, "url": url}}]
-            chunks = chunk_text(pages_data)
+            chunks = chunk_text(pages_data, document_name=url)
 
             if not chunks:
                 continue

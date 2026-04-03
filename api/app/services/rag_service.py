@@ -365,9 +365,9 @@ def rag_pipeline(
             )
 
             vector_results = search_similar_documents(
-                session, client_id=cid, query_embedding=query_embedding, k=5, bot_id=bid
+                session, client_id=cid, query_embedding=query_embedding, k=15, bot_id=bid
             )
-            keyword_results = search_keyword_documents(session, client_id=cid, query=question, k=5, bot_id=bid)
+            keyword_results = search_keyword_documents(session, client_id=cid, query=question, k=15, bot_id=bid)
 
             # Merge with Reciprocal Rank Fusion and rerank
             final_results = reciprocal_rank_fusion(vector_results, keyword_results)
@@ -520,9 +520,9 @@ async def rag_pipeline_stream(
         )
 
         vector_results = search_similar_documents(
-            session, client_id=cid, query_embedding=query_embedding, k=5, bot_id=bid
+            session, client_id=cid, query_embedding=query_embedding, k=15, bot_id=bid
         )
-        keyword_results = search_keyword_documents(session, client_id=cid, query=search_query, k=5, bot_id=bid)
+        keyword_results = search_keyword_documents(session, client_id=cid, query=search_query, k=15, bot_id=bid)
 
         # Merge with Reciprocal Rank Fusion and rerank
         final_results = reciprocal_rank_fusion(vector_results, keyword_results)
