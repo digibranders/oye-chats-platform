@@ -94,5 +94,5 @@ else:
 DOCUMENTS_DIR = "documents"
 ARCHIVE_DIR = "archive"
 # Crawler defaults (read by crawler_script.py subprocess via os.getenv):
-# MAX_CRAWL_PAGES=50, CRAWL_CONCURRENCY=5, CRAWL_PAGE_TIMEOUT=20,
+# MAX_CRAWL_PAGES=50, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=20,
 # MAX_CRAWL_DEPTH=3, CRAWL_SUBPROCESS_TIMEOUT=600
