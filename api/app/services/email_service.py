@@ -103,7 +103,13 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
         if contact.get("company"):
             parts.append(f"<li><strong>Company:</strong> {_esc(contact['company'])}</li>")
         if parts:
-            contact_section = f'<h3 style="font-size: 14px; font-weight: 600; color: #374151; margin: 16px 0 8px 0;">Contact Info</h3><ul style="margin: 0; padding-left: 20px; color: #4b5563;">{"".join(parts)}</ul>'
+            parts_html = "".join(parts)
+            contact_section = (
+                '<h3 style="font-size: 14px; font-weight: 600; color: #374151; '
+                'margin: 16px 0 8px 0;">Contact Info</h3>'
+                '<ul style="margin: 0; padding-left: 20px; color: #4b5563;">'
+                f'{parts_html}</ul>'
+            )
 
     content = f"""
     <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
@@ -119,7 +125,9 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
         </ul>
     </div>
     {contact_section}
-    <a href="https://admin.oyechats.com/leads" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; margin-top: 8px;">
+    <a href="https://admin.oyechats.com/leads" style="display: inline-block; background: #6366f1;
+        color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none;
+        font-weight: 600; font-size: 14px; margin-top: 8px;">
         View in Dashboard
     </a>
     """
@@ -147,8 +155,12 @@ def send_handoff_request_email(notification_email: str, bot_name: str, reason: s
         A visitor on <strong>{bot_name}</strong> has requested to speak with a team member.
     </p>
     {contact_info}
-    {f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:</strong> {_esc(reason)}</p></div>' if reason else ""}
-    <a href="https://admin.oyechats.com/live-chat" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    {f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; margin: 16px 0;">'
+        f'<p style="margin: 0; color: #92400e;"><strong>Reason:</strong> {_esc(reason)}</p></div>'
+        if reason else ""}
+    <a href="https://admin.oyechats.com/live-chat" style="display: inline-block;
+        background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px;
+        text-decoration: none; font-weight: 600; font-size: 14px;">
         Open Live Chat
     </a>
     """
@@ -169,10 +181,13 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
         <ul style="margin: 0; padding-left: 20px; color: #991b1b; line-height: 1.8;">
             <li><strong>Name:</strong> {_esc(contact.get("name"))}</li>
             <li><strong>Email:</strong> {_esc(contact.get("email"))}</li>
-            {f"<li><strong>Phone:</strong> {_esc(contact.get('phone'))}</li>" if contact.get("phone") else ""}
+            {f"<li><strong>Phone:</strong> {_esc(contact.get('phone'))}</li>"
+                if contact.get("phone") else ""}
         </ul>
     </div>
-    <a href="https://admin.oyechats.com/leads" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="https://admin.oyechats.com/leads" style="display: inline-block;
+        background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px;
+        text-decoration: none; font-weight: 600; font-size: 14px;">
         Follow Up
     </a>
     """
@@ -195,11 +210,16 @@ def send_offline_message_email(
     <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
         A visitor on <strong>{bot_name}</strong> left a message while no agent was available.
     </p>
-    <div style="background: #f0f9ff; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-        <p style="color: #4b5563; margin: 0 0 8px 0;"><strong>From:</strong> {_esc(visitor_name)} ({_esc(visitor_email)})</p>
-        <p style="color: #1e3a5f; margin: 0; line-height: 1.6; white-space: pre-wrap;">{_esc(message_preview)}</p>
+    <div style="background: #f0f9ff; border-radius: 8px; padding: 16px;
+        margin-bottom: 16px;">
+        <p style="color: #4b5563; margin: 0 0 8px 0;"><strong>From:</strong>
+            {_esc(visitor_name)} ({_esc(visitor_email)})</p>
+        <p style="color: #1e3a5f; margin: 0; line-height: 1.6;
+            white-space: pre-wrap;">{_esc(message_preview)}</p>
     </div>
-    <a href="https://admin.oyechats.com/messages" style="display: inline-block; background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="https://admin.oyechats.com/messages" style="display: inline-block;
+        background: #6366f1; color: #ffffff; padding: 10px 24px; border-radius: 8px;
+        text-decoration: none; font-weight: 600; font-size: 14px;">
         View Messages
     </a>
     """
@@ -216,8 +236,11 @@ def send_password_reset_email(to_email: str, otp: str):
     <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
         You recently requested to reset your password for your OyeChats account.
     </p>
-    <div style="background: #f3f4f6; border: 1px dashed #d1d5db; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 24px; margin-top: 16px;">
-        <p style="color: #6b7280; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px 0;">Your Reset Code</p>
+    <div style="background: #f3f4f6; border: 1px dashed #d1d5db;
+        border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 24px;
+        margin-top: 16px;">
+        <p style="color: #6b7280; font-size: 13px; text-transform: uppercase;
+            letter-spacing: 0.05em; margin: 0 0 8px 0;">Your Reset Code</p>
         <div style="font-family: monospace; font-size: 32px; font-weight: 700; color: #111827; letter-spacing: 4px;">
             {otp}
         </div>
