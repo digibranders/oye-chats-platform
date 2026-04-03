@@ -38,7 +38,7 @@ def _get_crawl_lock(client_id: int) -> asyncio.Lock:
 def _check_memory():
     """Raise if memory usage is too high to safely run a crawl."""
     mem = psutil.virtual_memory()
-    if mem.percent > 85:
+    if mem.percent > 70:
         raise HTTPException(
             status_code=503,
             detail="Server memory too high for crawling. Please try again later.",
@@ -107,7 +107,9 @@ def delete_document_endpoint(
             if deleted_count == 0:
                 raise HTTPException(status_code=404, detail=f"Source '{document_name}' not found.")
 
-            file_path = os.path.join(DOCUMENTS_DIR, document_name)
+            file_path = os.path.normpath(os.path.join(DOCUMENTS_DIR, document_name))
+            if not file_path.startswith(os.path.normpath(DOCUMENTS_DIR) + os.sep):
+                raise HTTPException(status_code=403, detail="Invalid document path.")
             if os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info(f"Deleted file from disk: {file_path}")
@@ -176,7 +178,10 @@ def ingest_documents(
 
     # ── Phase 2: All files validated — write to disk ──
     for filename, content in file_buffers:
-        file_path = os.path.join(DOCUMENTS_DIR, filename)
+        file_path = os.path.normpath(os.path.join(DOCUMENTS_DIR, filename))
+        if not file_path.startswith(os.path.normpath(DOCUMENTS_DIR) + os.sep):
+            logger.warning(f"Blocked path traversal attempt in upload: {filename}")
+            continue
         try:
             with open(file_path, "wb") as buffer:
                 buffer.write(content)
@@ -233,7 +238,11 @@ async def crawl_endpoint(
         valid_pages = [p for p in results if p.get("url") and p.get("content")]
         pages_processed = len(valid_pages)
         logger.info(f"Batch ingesting {pages_processed} pages")
-        total_chunks = batch_web_ingestion(client_id, valid_pages, bot_id=bot_id)
+        loop = asyncio.get_event_loop()
+        total_chunks = await loop.run_in_executor(
+            None,
+            lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
+        )
 
         if recommended_colors:
             with get_session() as session:
@@ -268,3 +277,4 @@ async def crawl_endpoint(
         raise HTTPException(status_code=500, detail="Crawling failed. Please try again.") from e
     finally:
         lock.release()
+        _crawl_locks.pop(client_id, None)

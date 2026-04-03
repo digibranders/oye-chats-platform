@@ -146,7 +146,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const handleNewChat = () => {
         setIsInitializing(true);
         localStorage.removeItem('chat_session_id');
-        const newSession = `session_${Date.now()}`;
+        const newSession = `session_${crypto.randomUUID()}`;
         setSessionId(newSession);
         localStorage.setItem('chat_session_id', newSession);
         setShowWelcome(true);
@@ -320,7 +320,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Handle lead form submission
     const handleLeadFormSubmit = async (formData) => {
-        const newSessionId = sessionId || `session_${Date.now()}`;
+        const newSessionId = sessionId || `session_${crypto.randomUUID()}`;
         if (!sessionId) {
             setSessionId(newSessionId);
             localStorage.setItem('chat_session_id', newSessionId);
@@ -349,7 +349,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const triggerHandoff = () => {
         // Ensure we have a session for the handoff
         if (!sessionId) {
-            const newSession = `session_${Date.now()}`;
+            const newSession = `session_${crypto.randomUUID()}`;
             setSessionId(newSession);
             localStorage.setItem('chat_session_id', newSession);
         }

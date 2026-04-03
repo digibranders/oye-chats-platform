@@ -652,7 +652,7 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
     # Read config from env
     if max_pages is None:
         max_pages = int(os.getenv("MAX_CRAWL_PAGES", "50"))
-    concurrency = int(os.getenv("CRAWL_CONCURRENCY", "5"))
+    concurrency = int(os.getenv("CRAWL_CONCURRENCY", "3"))
     page_timeout = int(os.getenv("CRAWL_PAGE_TIMEOUT", "20"))
 
     max_depth = int(os.getenv("MAX_CRAWL_DEPTH", str(max_depth)))
