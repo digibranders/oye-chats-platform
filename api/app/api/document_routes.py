@@ -38,7 +38,7 @@ def _get_crawl_lock(client_id: int) -> asyncio.Lock:
 def _check_memory():
     """Raise if memory usage is too high to safely run a crawl."""
     mem = psutil.virtual_memory()
-    if mem.percent > 85:
+    if mem.percent > 70:
         raise HTTPException(
             status_code=503,
             detail="Server memory too high for crawling. Please try again later.",
@@ -238,7 +238,11 @@ async def crawl_endpoint(
         valid_pages = [p for p in results if p.get("url") and p.get("content")]
         pages_processed = len(valid_pages)
         logger.info(f"Batch ingesting {pages_processed} pages")
-        total_chunks = batch_web_ingestion(client_id, valid_pages, bot_id=bot_id)
+        loop = asyncio.get_event_loop()
+        total_chunks = await loop.run_in_executor(
+            None,
+            lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
+        )
 
         if recommended_colors:
             with get_session() as session:
@@ -273,3 +277,4 @@ async def crawl_endpoint(
         raise HTTPException(status_code=500, detail="Crawling failed. Please try again.") from e
     finally:
         lock.release()
+        _crawl_locks.pop(client_id, None)
