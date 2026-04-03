@@ -277,4 +277,3 @@ async def crawl_endpoint(
         raise HTTPException(status_code=500, detail="Crawling failed. Please try again.") from e
     finally:
         lock.release()
-        _crawl_locks.pop(client_id, None)
