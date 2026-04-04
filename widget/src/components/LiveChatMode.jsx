@@ -39,8 +39,11 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const [pendingFile, setPendingFile] = useState(null);
     // Lightbox: URL of the image to show full-screen, null = closed
     const [lightboxSrc, setLightboxSrc] = useState(null);
-    // Read receipts: Set of message IDs the operator has read
-    const [readMessageIds, setReadMessageIds] = useState(new Set());
+    // Read receipts: ISO timestamp of the last time the operator read the chat.
+    // The backend sends last_read_id (a DB cursor), but the widget only has local
+    // string IDs ("live-1", etc.) with no DB→local mapping. We instead record the
+    // receipt arrival time and mark all earlier user messages as read.
+    const [lastReadAt, setLastReadAt] = useState(null);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -139,8 +142,11 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         break;
 
                     case 'read_receipt':
-                        if (data.message_id) {
-                            setReadMessageIds(prev => new Set([...prev, data.message_id]));
+                        // Backend sends { last_read_id, reader: 'operator' } — a DB cursor.
+                        // Record the arrival time; all user messages sent before this moment
+                        // are considered read by the operator.
+                        if (data.reader === 'operator') {
+                            setLastReadAt(new Date().toISOString());
                         }
                         break;
 
@@ -352,9 +358,15 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         });
     };
 
-    // Show rating survey before returning to bot (called when live chat ends)
+    // Show rating survey before returning to bot (called when live chat ends).
+    // If the post_chat_rating feature flag is disabled, skip the survey and
+    // return to bot immediately to avoid a stuck/blank widget state.
     const handleChatEnded = () => {
-        setShowRating(true);
+        if (settings?.feature_flags?.post_chat_rating === false) {
+            handleReturnToBot();
+        } else {
+            setShowRating(true);
+        }
     };
 
     const handleSubmitRating = async (stars) => {
@@ -819,10 +831,10 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                     ) : (
                                         <span
                                             className="text-[10px] select-none"
-                                            style={{ color: readMessageIds.has(msg.id) ? '#53bdeb' : '#9CA3AF' }}
-                                            title={readMessageIds.has(msg.id) ? 'Read' : 'Sent'}
+                                            style={{ color: (lastReadAt && msg.timestamp <= lastReadAt) ? '#53bdeb' : '#9CA3AF' }}
+                                            title={(lastReadAt && msg.timestamp <= lastReadAt) ? 'Read' : 'Sent'}
                                         >
-                                            {readMessageIds.has(msg.id) ? '✓✓' : '✓'}
+                                            {(lastReadAt && msg.timestamp <= lastReadAt) ? '✓✓' : '✓'}
                                         </span>
                                     )}
                                 </div>
