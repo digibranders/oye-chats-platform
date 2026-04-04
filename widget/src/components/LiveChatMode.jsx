@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, Paperclip, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, Paperclip, User, Mail, MessageSquare, ArrowRight, CheckCircle2, Phone, Clock, AlertCircle, X } from 'lucide-react';
 import SendIcon from './SendIcon';
 import { submitOfflineMessage, getChatHistory } from '../services/api';
 
@@ -35,6 +35,10 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const stoppedTypingTimerRef = useRef(null);
     const fileInputRef = useRef(null);
     const [uploadProgress, setUploadProgress] = useState(null); // null | 0–100
+    // Pre-send preview: { file, previewUrl, caption, isImage } — null means no pending file
+    const [pendingFile, setPendingFile] = useState(null);
+    // Lightbox: URL of the image to show full-screen, null = closed
+    const [lightboxSrc, setLightboxSrc] = useState(null);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -360,19 +364,56 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         }
     };
 
-    const handleFileSelect = async (e) => {
-        const file = e.target.files?.[0];
-        if (!fileInputRef.current) return;
-        fileInputRef.current.value = '';
-        if (!file) return;
-
+    /** Open the pre-send preview for a file (from picker or clipboard paste). */
+    const openFilePreview = (file) => {
         const ALLOWED = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
         if (!ALLOWED.includes(file.type)) return;
         if (file.size > 10 * 1024 * 1024) return;
+        const isImage = file.type.startsWith('image/');
+        setPendingFile({
+            file,
+            previewUrl: isImage ? URL.createObjectURL(file) : null,
+            caption: '',
+            isImage,
+        });
+    };
 
+    const handleFileSelect = (e) => {
+        const file = e.target.files?.[0];
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        if (file) openFilePreview(file);
+    };
+
+    /** Paste handler — intercepts clipboard images. */
+    const handlePaste = (e) => {
+        if (!settings?.feature_flags?.file_sharing) return;
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (file) openFilePreview(file);
+                break;
+            }
+        }
+    };
+
+    /** Discard the pending file preview and free the object URL. */
+    const cancelPendingFile = () => {
+        if (pendingFile?.previewUrl) URL.revokeObjectURL(pendingFile.previewUrl);
+        setPendingFile(null);
+    };
+
+    /** Upload and send the confirmed pending file. */
+    const sendPendingFile = async () => {
+        if (!pendingFile) return;
+        const { file, previewUrl, caption } = pendingFile;
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPendingFile(null);
         setUploadProgress(0);
         try {
-            // 1. Get presigned PUT URL from backend
+            // 1. Get presigned PUT URL
             const res = await fetch(`${API_URL}/chat/upload-url`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Bot-Key': settings.bot_key || '' },
@@ -390,7 +431,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
             if (!putRes.ok) throw new Error(`B2 upload failed: ${putRes.status}`);
             setUploadProgress(100);
 
-            // 3. Send file message over WS
+            // 3. Send file WS message + optimistic local render
             const wsInstance = ws;
             if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
                 wsInstance.send(JSON.stringify({
@@ -408,6 +449,18 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                     status: 'sent',
                     timestamp: new Date().toISOString(),
                 }]);
+
+                // 4. Send caption as a follow-up text message if provided
+                if (caption.trim()) {
+                    wsInstance.send(JSON.stringify({ type: 'message', content: caption.trim() }));
+                    setMessages(prev => [...prev, {
+                        id: `live-msg-${++msgIdCounter.current}`,
+                        sender: 'user',
+                        text: caption.trim(),
+                        status: 'sent',
+                        timestamp: new Date().toISOString(),
+                    }]);
+                }
             }
         } catch {
             /* silent — user can retry by re-selecting */
@@ -710,7 +763,18 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                     >
                                         {msg.file_url ? (
                                             msg.content_type?.startsWith('image/') ? (
-                                                <img src={msg.file_url} alt={msg.filename || 'image'} className="max-w-[200px] rounded-lg block" />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setLightboxSrc(msg.file_url)}
+                                                    className="focus:outline-none"
+                                                    aria-label="View image"
+                                                >
+                                                    <img
+                                                        src={msg.file_url}
+                                                        alt={msg.filename || 'image'}
+                                                        className="max-w-[200px] rounded-xl block cursor-zoom-in hover:opacity-90 transition-opacity"
+                                                    />
+                                                </button>
                                             ) : (
                                                 <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
                                                     📎 {msg.filename || 'file'}
@@ -756,14 +820,35 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                 </div>
                             </>
                         ) : (
-                            /* Operator message — matches bot mode plain text styling */
+                            /* Operator message */
                             <div className="w-full">
                                 {msg.operatorName && (
                                     <p className="text-[11px] font-semibold mb-0.5 ml-0.5" style={{ color: settings.primary_color || '#3A0CA3' }}>{msg.operatorName}</p>
                                 )}
-                                <p className="text-[14px] text-[#16202C] leading-relaxed break-words">
-                                    {msg.text}
-                                </p>
+                                {msg.file_url ? (
+                                    msg.content_type?.startsWith('image/') ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => setLightboxSrc(msg.file_url)}
+                                            className="focus:outline-none"
+                                            aria-label="View image"
+                                        >
+                                            <img
+                                                src={msg.file_url}
+                                                alt={msg.filename || 'image'}
+                                                className="max-w-[200px] rounded-xl block cursor-zoom-in hover:opacity-90 transition-opacity"
+                                            />
+                                        </button>
+                                    ) : (
+                                        <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
+                                            📎 {msg.filename || 'file'}
+                                        </a>
+                                    )
+                                ) : (
+                                    <p className="text-[14px] text-[#16202C] leading-relaxed break-words">
+                                        {msg.text}
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>
@@ -848,6 +933,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                     handleSend(e);
                                 }
                             }}
+                            onPaste={handlePaste}
                             placeholder="Type a message..."
                             rows={1}
                             className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[100px]"
@@ -890,6 +976,106 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                     </form>
                 </div>
             </div>
+
+            {/* ── Pre-send file preview overlay ── */}
+            {pendingFile && (
+                <div className="absolute inset-0 z-20 flex flex-col bg-white">
+                    {/* Header */}
+                    <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
+                        <button
+                            type="button"
+                            onClick={cancelPendingFile}
+                            aria-label="Cancel"
+                            className="text-gray-400 hover:text-gray-700 transition-colors"
+                        >
+                            <X size={20} />
+                        </button>
+                        <span className="text-sm font-semibold text-[#16202C]">Send file</span>
+                    </div>
+
+                    {/* Preview area */}
+                    <div className="flex-1 flex items-center justify-center p-6 bg-gray-50 overflow-hidden">
+                        {pendingFile.isImage ? (
+                            <img
+                                src={pendingFile.previewUrl}
+                                alt="Preview"
+                                className="max-w-full max-h-full object-contain rounded-xl shadow-sm"
+                            />
+                        ) : (
+                            <div className="flex flex-col items-center gap-3 text-gray-500">
+                                <div className="w-16 h-16 rounded-2xl bg-gray-200 flex items-center justify-center text-2xl">
+                                    📎
+                                </div>
+                                <p className="text-sm font-medium text-[#16202C] text-center break-all px-4">
+                                    {pendingFile.file.name}
+                                </p>
+                                <p className="text-xs text-gray-400">
+                                    {(pendingFile.file.size / 1024).toFixed(1)} KB
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Caption + send */}
+                    <div className="px-4 pb-4 pt-2 bg-white border-t border-gray-100">
+                        {uploadProgress !== null && (
+                            <div className="w-full h-1 bg-gray-100 rounded-full mb-3 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full transition-all duration-300"
+                                    style={{ width: `${uploadProgress}%`, backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                />
+                            </div>
+                        )}
+                        <div className="flex items-center gap-2 rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 py-2 shadow-sm">
+                            <input
+                                type="text"
+                                value={pendingFile.caption}
+                                onChange={(e) => setPendingFile(prev => ({ ...prev, caption: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === 'Enter') sendPendingFile(); }}
+                                placeholder="Add a caption…"
+                                className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400"
+                                autoFocus
+                            />
+                            <button
+                                type="button"
+                                onClick={sendPendingFile}
+                                disabled={uploadProgress !== null}
+                                aria-label="Send"
+                                className="w-9 h-9 flex items-center justify-center rounded-xl transition-all disabled:opacity-40"
+                                style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                            >
+                                <SendIcon size={16} className="text-white" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Image lightbox ── */}
+            {lightboxSrc && (
+                <div
+                    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90"
+                    onClick={() => setLightboxSrc(null)}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Image viewer"
+                >
+                    <button
+                        type="button"
+                        onClick={() => setLightboxSrc(null)}
+                        aria-label="Close"
+                        className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
+                    >
+                        <X size={28} />
+                    </button>
+                    <img
+                        src={lightboxSrc}
+                        alt="Full size"
+                        className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                </div>
+            )}
         </>
     );
 };

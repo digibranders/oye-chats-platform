@@ -75,6 +75,10 @@ export default function LiveChat({ embedded = false }) {
     // File upload
     const fileInputRef = useRef(null);
     const [fileUploading, setFileUploading] = useState(false);
+    // Pre-send preview: { file, previewUrl, caption, isImage } — null = no pending file
+    const [pendingFile, setPendingFile] = useState(null);
+    // Lightbox: URL of image to show full-screen
+    const [lightboxSrc, setLightboxSrc] = useState(null);
 
     // Refs — avoids stale closures in WebSocket handlers
     const messagesEndRef = useRef(null);
@@ -749,12 +753,8 @@ export default function LiveChat({ embedded = false }) {
         inputRef.current?.focus();
     };
 
-    const handleFileUpload = async (e) => {
-        const file = e.target.files?.[0];
-        // Reset input immediately so the same file can be re-selected after an error
-        e.target.value = '';
-        if (!file || !selectedChat) return;
-
+    /** Validate and open the pre-send preview for a file. */
+    const openFilePreview = (file) => {
         const ALLOWED_TYPES = [
             'image/jpeg', 'image/png', 'image/gif', 'image/webp',
             'application/pdf', 'text/plain',
@@ -771,15 +771,55 @@ export default function LiveChat({ embedded = false }) {
             closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
             return;
         }
+        const isImage = file.type.startsWith('image/');
+        setPendingFile({
+            file,
+            previewUrl: isImage ? URL.createObjectURL(file) : null,
+            caption: '',
+            isImage,
+        });
+    };
 
+    const handleFileUpload = (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file && selectedChat) openFilePreview(file);
+    };
+
+    /** Paste handler — intercept clipboard images into the pre-send preview. */
+    const handleOperatorPaste = (e) => {
+        if (!bots[0]?.feature_flags?.file_sharing || !selectedChat) return;
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (file) openFilePreview(file);
+                break;
+            }
+        }
+    };
+
+    /** Discard pending file preview and free the object URL. */
+    const cancelPendingFile = () => {
+        if (pendingFile?.previewUrl) URL.revokeObjectURL(pendingFile.previewUrl);
+        setPendingFile(null);
+    };
+
+    /** Upload and send the confirmed pending file. */
+    const sendPendingFile = async () => {
+        if (!pendingFile || !selectedChat) return;
+        const { file, previewUrl, caption } = pendingFile;
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPendingFile(null);
         setFileUploading(true);
         try {
             const { file_url, filename, content_type } = await uploadOperatorChatFile(file, selectedChat);
 
             const socket = wsRef.current;
-            if (!socket || socket.readyState !== WebSocket.OPEN) {
-                throw new Error('WebSocket not connected');
-            }
+            if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected');
+
             socket.send(JSON.stringify({
                 type: 'file',
                 session_id: selectedChat,
@@ -788,8 +828,6 @@ export default function LiveChat({ embedded = false }) {
                 content_type,
                 role: 'operator',
             }));
-
-            // Optimistic local message
             setMessages((prev) => [
                 ...prev,
                 {
@@ -802,7 +840,26 @@ export default function LiveChat({ embedded = false }) {
                     timestamp: new Date().toISOString(),
                 },
             ]);
-            setLastMessages((prev) => ({ ...prev, [selectedChat]: `📎 ${filename}` }));
+
+            // Send caption as a follow-up text message if provided
+            if (caption.trim()) {
+                const socket2 = wsRef.current;
+                if (socket2 && socket2.readyState === WebSocket.OPEN) {
+                    socket2.send(JSON.stringify({ type: 'message', session_id: selectedChat, content: caption.trim() }));
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                            role: 'operator',
+                            content: caption.trim(),
+                            timestamp: new Date().toISOString(),
+                        },
+                    ]);
+                }
+                setLastMessages((prev) => ({ ...prev, [selectedChat]: caption.trim().slice(0, 60) }));
+            } else {
+                setLastMessages((prev) => ({ ...prev, [selectedChat]: `📎 ${filename}` }));
+            }
         } catch {
             setCloseChatError('File upload failed. Please try again.');
             clearTimeout(closeChatErrorTimerRef.current);
@@ -1073,7 +1130,18 @@ export default function LiveChat({ embedded = false }) {
                                             }`}>
                                                 {msg.file_url ? (
                                                     msg.content_type?.startsWith('image/') ? (
-                                                        <img src={msg.file_url} alt={msg.filename || 'image'} className="max-w-[200px] rounded-lg block" />
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setLightboxSrc(msg.file_url)}
+                                                            className="focus:outline-none"
+                                                            aria-label="View image"
+                                                        >
+                                                            <img
+                                                                src={msg.file_url}
+                                                                alt={msg.filename || 'image'}
+                                                                className="max-w-[200px] rounded-xl block cursor-zoom-in hover:opacity-90 transition-opacity"
+                                                            />
+                                                        </button>
                                                     ) : (
                                                         <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="underline break-all">
                                                             📎 {msg.filename || 'file'}
@@ -1130,6 +1198,7 @@ export default function LiveChat({ embedded = false }) {
                                             value={inputText}
                                             onChange={handleInputChange}
                                             onKeyDown={(e) => { if (e.key === 'Escape') setShowCannedDropdown(false); }}
+                                            onPaste={handleOperatorPaste}
                                             placeholder="Type your reply... (/ for quick replies)"
                                             className="flex-1 px-4 py-2.5 text-sm bg-secondary-50 rounded-xl outline-none border border-transparent focus:border-primary-300 transition-colors"
                                         />
@@ -1426,6 +1495,100 @@ export default function LiveChat({ embedded = false }) {
                             )}
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* ── Pre-send file preview modal ── */}
+            {pendingFile && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100">
+                            <h3 className="text-sm font-semibold text-secondary-900">Send file</h3>
+                            <button
+                                type="button"
+                                onClick={cancelPendingFile}
+                                aria-label="Cancel"
+                                className="text-secondary-400 hover:text-secondary-700 transition-colors"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Preview */}
+                        <div className="flex items-center justify-center bg-secondary-50 p-6 min-h-[200px]">
+                            {pendingFile.isImage ? (
+                                <img
+                                    src={pendingFile.previewUrl}
+                                    alt="Preview"
+                                    className="max-w-full max-h-64 object-contain rounded-xl shadow-sm"
+                                />
+                            ) : (
+                                <div className="flex flex-col items-center gap-3 text-secondary-500">
+                                    <div className="w-16 h-16 rounded-2xl bg-secondary-200 flex items-center justify-center text-2xl">📎</div>
+                                    <p className="text-sm font-medium text-secondary-800 text-center break-all">{pendingFile.file.name}</p>
+                                    <p className="text-xs text-secondary-400">{(pendingFile.file.size / 1024).toFixed(1)} KB</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Caption + actions */}
+                        <div className="px-5 py-4 space-y-3">
+                            <input
+                                type="text"
+                                value={pendingFile.caption}
+                                onChange={(e) => setPendingFile((prev) => ({ ...prev, caption: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === 'Enter') sendPendingFile(); }}
+                                placeholder="Add a caption…"
+                                autoFocus
+                                className="w-full px-3 py-2 text-sm rounded-xl border border-secondary-200 bg-secondary-50 outline-none focus:border-primary-400 transition-colors"
+                            />
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={cancelPendingFile}
+                                    className="flex-1 py-2 text-sm font-medium rounded-xl border border-secondary-200 text-secondary-600 hover:bg-secondary-50 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={sendPendingFile}
+                                    disabled={fileUploading}
+                                    className="flex-1 py-2 text-sm font-medium rounded-xl bg-primary-600 text-white hover:bg-primary-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                    {fileUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                    Send
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Image lightbox ── */}
+            {lightboxSrc && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 animate-fade-in"
+                    onClick={() => setLightboxSrc(null)}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Image viewer"
+                >
+                    <button
+                        type="button"
+                        onClick={() => setLightboxSrc(null)}
+                        aria-label="Close"
+                        className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
+                    >
+                        <X className="w-7 h-7" />
+                    </button>
+                    <img
+                        src={lightboxSrc}
+                        alt="Full size"
+                        className="max-w-[90vw] max-h-[90vh] object-contain rounded-xl shadow-2xl"
+                        onClick={(e) => e.stopPropagation()}
+                    />
                 </div>
             )}
         </div>

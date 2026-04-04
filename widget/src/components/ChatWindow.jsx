@@ -497,7 +497,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             />
 
             {/* Content — keyed by chatMode so each mode switch triggers enter animation */}
-            <div key={chatMode} className="mode-enter flex flex-col flex-1 overflow-hidden">
+            <div key={chatMode} className="mode-enter flex flex-col flex-1 overflow-hidden relative">
 
             {/* Handoff form */}
             {chatMode === 'handoff_form' ? (
