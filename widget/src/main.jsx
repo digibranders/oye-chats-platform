@@ -16,7 +16,7 @@ if (SENTRY_DSN) {
   });
 }
 
-console.log('[OyeChats] Widget script initializing...');
+console.log('[OyeChats] Widget v2.1.0 — faster AI, new thinking loader');
 
 // ── CSS Auto-Injection ──────────────────────────────────────────────
 // In production the build outputs oyechats-widget.js + oyechats-widget.css as
