@@ -39,12 +39,12 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                     {/* Bottom row — left action, send right */}
                     <div className="flex items-center justify-between mt-2">
                         {onHandoff ? (
-                            /* Talk to a human — always visible, emphasis increases when bot is struggling */
+                            /* Live chat — always visible, emphasis increases when bot is struggling */
                             <button
                                 type="button"
                                 onClick={onHandoff}
-                                title="Talk to a human"
-                                aria-label="Talk to a human"
+                                title="Live chat"
+                                aria-label="Live chat"
                                 className="relative flex items-center gap-1.5 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current rounded-md px-0.5"
                                 style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
                             >
@@ -64,7 +64,7 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                                         showProminentHandoff ? 'font-semibold' : 'font-normal'
                                     }`}
                                 >
-                                    Talk to a human
+                                    Live chat
                                 </span>
                             </button>
                         ) : (

@@ -101,13 +101,13 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                                 <button
                                     type="button"
                                     onClick={onTalkToHuman}
-                                    title="Talk to a human"
-                                    aria-label="Talk to a human"
+                                    title="Live chat"
+                                    aria-label="Live chat"
                                     className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current rounded-md px-0.5"
                                 >
                                     <Headphones size={16} className="flex-shrink-0" />
                                     <span className="text-[11px] font-normal leading-none whitespace-nowrap">
-                                        Talk to a human
+                                        Live chat
                                     </span>
                                 </button>
                             ) : (
