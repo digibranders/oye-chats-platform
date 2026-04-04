@@ -3,6 +3,7 @@ import { Bot } from 'lucide-react';
 
 const SIZES = {
     sm: { container: 'w-7 h-7', icon: 14, orbShadow: '0 0 6px' },
+    header: { container: 'w-8 h-8', icon: 16, orbShadow: '0 0 8px' },
     md: { container: 'w-12 h-12', icon: 24, orbShadow: '0 0 10px' },
     lg: { container: 'w-[72px] h-[72px]', icon: 36, orbShadow: '0 0 20px' },
 };

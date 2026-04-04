@@ -3,6 +3,12 @@ import Launcher from './Launcher';
 import ChatWindow from './ChatWindow';
 import { getChatbotSettings } from '../services/api';
 
+/** Ref used to pass a pre-typed message from the greeting bubble into the chat window. */
+const usePendingMessage = () => {
+    const ref = useRef(null);
+    return ref;
+};
+
 const OPEN_DURATION = 300;  // ms — matches widgetOpen animation (280ms + buffer)
 const CLOSE_DURATION = 220; // ms — matches widgetClose animation (200ms + buffer)
 
@@ -62,6 +68,9 @@ const ChatWidget = () => {
   // Derived: is the bot currently "online" per its business hours schedule?
   const isOnline = isWithinBusinessHours(settings.business_hours);
 
+  // Pending message from greeting bubble → auto-sent on chat open
+  const pendingMessageRef = usePendingMessage();
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -113,6 +122,11 @@ const ChatWidget = () => {
     }
   }, [isVisible, isAnimating, openChat, closeChat]);
 
+  const handleBubbleSend = useCallback((text) => {
+      pendingMessageRef.current = text;
+      openChat();
+  }, [pendingMessageRef, openChat]);
+
   return (
     <>
       {isVisible && (
@@ -121,13 +135,20 @@ const ChatWidget = () => {
           initialSettings={settings}
           isAnimating={isAnimating}
           isOnline={isOnline}
+          initialMessage={pendingMessageRef}
         />
       )}
-      <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">
+      {/* Launcher fades out while chat is open — LiveChat/Intercom pattern.
+          Kept in DOM (not unmounted) so it can fade back in after the close animation. */}
+      <div
+        className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4 transition-opacity duration-200"
+        style={{ opacity: isVisible ? 0 : 1, pointerEvents: isVisible ? 'none' : 'auto' }}
+      >
         <Launcher
-          isOpen={isVisible && isAnimating !== null}
+          isOpen={false}
           toggleChat={toggleChat}
           settings={settings}
+          onBubbleSend={handleBubbleSend}
         />
       </div>
     </>

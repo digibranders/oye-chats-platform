@@ -351,14 +351,27 @@ def _doc_owner_filter(bot_id=None, client_id=None):
     return Document.client_id == client_id
 
 
-def get_dashboard_stats(session, client_id: int = None, bot_id: int = None):
-    """Fetch aggregate statistics for admin dashboard."""
+def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days: int = None):
+    """Fetch aggregate statistics for admin dashboard.
+
+    Args:
+        days: When provided, restricts conversation/message counts to the
+              last N days.  active_users and total_documents are always live.
+    """
     sf = _session_owner_filter(bot_id, client_id)
     df = _doc_owner_filter(bot_id, client_id)
 
-    total_sessions = session.execute(select(func.count(ChatSession.id)).where(sf)).scalar() or 0
+    # Optional time window filter on ChatSession.created_at
+    time_filter = []
+    if days is not None:
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        time_filter = [ChatSession.created_at >= cutoff]
 
-    total_messages = session.execute(select(func.count(ChatMessage.id)).join(ChatSession).where(sf)).scalar() or 0
+    total_sessions = session.execute(select(func.count(ChatSession.id)).where(sf, *time_filter)).scalar() or 0
+
+    total_messages = (
+        session.execute(select(func.count(ChatMessage.id)).join(ChatSession).where(sf, *time_filter)).scalar() or 0
+    )
 
     root_name_expr = func.coalesce(
         func.replace(func.substring(Document.document_name, r"^(https?://[^/]+)"), "www.", ""), Document.document_name
@@ -391,6 +404,36 @@ def get_dashboard_stats(session, client_id: int = None, bot_id: int = None):
         "total_documents": total_sources,
         "active_users": active_users,
         "success_rate": success_rate,
+    }
+
+
+def get_ratings_summary(session, client_id: int = None, bot_id: int = None):
+    """Fetch post-chat visitor rating summary (avg, total, distribution by 1–5 stars)."""
+    sf = _session_owner_filter(bot_id, client_id)
+
+    rows = session.execute(
+        select(ChatSession.visitor_rating, func.count(ChatSession.id).label("cnt"))
+        .where(sf, ChatSession.visitor_rating.isnot(None))
+        .group_by(ChatSession.visitor_rating)
+    ).all()
+
+    distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    total = 0
+    weighted_sum = 0
+
+    for row in rows:
+        star = int(row.visitor_rating)
+        if 1 <= star <= 5:
+            distribution[star] = row.cnt
+            total += row.cnt
+            weighted_sum += star * row.cnt
+
+    avg = round(weighted_sum / total, 1) if total > 0 else None
+
+    return {
+        "avg": avg,
+        "total": total,
+        "distribution": distribution,
     }
 
 

@@ -44,6 +44,7 @@ export default function LiveChat({ embedded = false }) {
     const [cannedResponses, setCannedResponses] = useState([]);
     const [showCannedDropdown, setShowCannedDropdown] = useState(false);
     const [cannedFilter, setCannedFilter] = useState('');
+    const [cannedHighlightIndex, setCannedHighlightIndex] = useState(0);
 
     // Accept loading state
     const [acceptingSessionId, setAcceptingSessionId] = useState(null);
@@ -535,6 +536,7 @@ export default function LiveChat({ embedded = false }) {
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
                 if (showTransferModal) { setShowTransferModal(false); setTransferTarget(null); }
+                if (showCannedDropdown) { setShowCannedDropdown(false); setCannedFilter(''); }
                 return;
             }
             if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
@@ -547,7 +549,7 @@ export default function LiveChat({ embedded = false }) {
         };
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [showTransferModal, activeChats]);
+    }, [showTransferModal, showCannedDropdown, activeChats]);
 
     // Load canned responses once
     useEffect(() => {
@@ -680,6 +682,7 @@ export default function LiveChat({ embedded = false }) {
         if (val.startsWith('/')) {
             setCannedFilter(val.slice(1).toLowerCase());
             setShowCannedDropdown(true);
+            setCannedHighlightIndex(0);
         } else {
             setShowCannedDropdown(false);
         }
@@ -1172,11 +1175,12 @@ export default function LiveChat({ embedded = false }) {
                                 <div className="border-t border-secondary-200 px-4 py-3 relative flex-shrink-0">
                                     {showCannedDropdown && filteredCanned.length > 0 && (
                                         <div className="absolute bottom-full left-4 right-4 mb-1 bg-white border border-secondary-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
-                                            {filteredCanned.slice(0, 8).map(r => (
+                                            {filteredCanned.slice(0, 8).map((r, idx) => (
                                                 <button
                                                     key={r.id}
                                                     onClick={() => selectCannedResponse(r)}
-                                                    className="w-full text-left px-4 py-2.5 hover:bg-secondary-50 transition-colors border-b border-secondary-100 last:border-b-0"
+                                                    onMouseEnter={() => setCannedHighlightIndex(idx)}
+                                                    className={`w-full text-left px-4 py-2.5 transition-colors border-b border-secondary-100 last:border-b-0 ${idx === cannedHighlightIndex ? 'bg-primary-50' : 'hover:bg-secondary-50'}`}
                                                 >
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-sm font-medium text-secondary-900">{r.title}</span>
@@ -1197,7 +1201,22 @@ export default function LiveChat({ embedded = false }) {
                                             type="text"
                                             value={inputText}
                                             onChange={handleInputChange}
-                                            onKeyDown={(e) => { if (e.key === 'Escape') setShowCannedDropdown(false); }}
+                                            onKeyDown={(e) => {
+                                                if (!showCannedDropdown) return;
+                                                const maxIdx = Math.min(filteredCanned.length, 8) - 1;
+                                                if (e.key === 'ArrowDown') {
+                                                    e.preventDefault();
+                                                    setCannedHighlightIndex(i => Math.min(i + 1, maxIdx));
+                                                } else if (e.key === 'ArrowUp') {
+                                                    e.preventDefault();
+                                                    setCannedHighlightIndex(i => Math.max(i - 1, 0));
+                                                } else if (e.key === 'Enter' && filteredCanned[cannedHighlightIndex]) {
+                                                    e.preventDefault();
+                                                    selectCannedResponse(filteredCanned[cannedHighlightIndex]);
+                                                } else if (e.key === 'Escape') {
+                                                    setShowCannedDropdown(false);
+                                                }
+                                            }}
                                             onPaste={handleOperatorPaste}
                                             placeholder="Type your reply... (/ for quick replies)"
                                             className="flex-1 px-4 py-2.5 text-sm bg-secondary-50 rounded-xl outline-none border border-transparent focus:border-primary-300 transition-colors"

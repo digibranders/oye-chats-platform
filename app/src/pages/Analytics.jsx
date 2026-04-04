@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Activity, BarChart3, Zap, MessageSquare } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Zap, MessageSquare, Star } from 'lucide-react';
 import {
     AreaChart,
     Area,
@@ -9,7 +9,7 @@ import {
     Tooltip,
     ResponsiveContainer,
 } from 'recharts';
-import { getActivityStats, getTopQuestions } from '../services/api';
+import { getActivityStats, getTopQuestions, getRatingsSummary } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import StatCard from '../components/ui/StatCard';
@@ -22,6 +22,7 @@ export default function Analytics({ embedded = false }) {
     const { showToast } = useToast();
     const [activityData, setActivityData] = useState([]);
     const [topQuestions, setTopQuestions] = useState([]);
+    const [ratingsSummary, setRatingsSummary] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [timeRange, setTimeRange] = useState('all');
 
@@ -29,9 +30,10 @@ export default function Analytics({ embedded = false }) {
         const fetchData = async () => {
             setIsLoading(true);
             try {
-                const [activity, questions] = await Promise.all([
+                const [activity, questions, ratings] = await Promise.all([
                     getActivityStats(selectedBot?.id),
-                    getTopQuestions(selectedBot?.id)
+                    getTopQuestions(selectedBot?.id),
+                    getRatingsSummary(selectedBot?.id),
                 ]);
 
                 const activityMap = {};
@@ -74,6 +76,7 @@ export default function Analytics({ embedded = false }) {
 
                 setActivityData(filled);
                 setTopQuestions(questions);
+                setRatingsSummary(ratings);
             } catch (error) {
                 console.error('Failed to load analytics data', error);
                 showToast('error', error.message || 'Failed to load analytics data');
@@ -237,6 +240,65 @@ export default function Analytics({ embedded = false }) {
                     </div>
                 )}
             </div>
+            {/* Customer Satisfaction (post-chat ratings) */}
+            {(isLoading || (ratingsSummary && ratingsSummary.total > 0)) && (
+                <div className="bg-white p-6 rounded-2xl border border-secondary-200 shadow-sm">
+                    <div className="flex items-center gap-2 mb-5">
+                        <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center">
+                            <Star size={18} className="text-amber-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-secondary-900">Customer Satisfaction</h2>
+                            <p className="text-sm text-secondary-500">Post-chat ratings from live chat sessions</p>
+                        </div>
+                        {!isLoading && ratingsSummary?.avg != null && (
+                            <div className="ml-auto flex items-baseline gap-1">
+                                <span className="text-3xl font-bold text-secondary-900">{ratingsSummary.avg}</span>
+                                <span className="text-sm text-secondary-400">/ 5</span>
+                                <span className="ml-2 text-xs text-secondary-400">({ratingsSummary.total} rating{ratingsSummary.total !== 1 ? 's' : ''})</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {isLoading ? (
+                        <div className="space-y-2">
+                            {[5, 4, 3, 2, 1].map(s => (
+                                <div key={s} className="animate-pulse flex items-center gap-3 h-6">
+                                    <div className="w-10 h-4 bg-secondary-100 rounded" />
+                                    <div className="flex-1 h-4 bg-secondary-100 rounded-full" />
+                                    <div className="w-8 h-4 bg-secondary-100 rounded" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="space-y-2.5">
+                            {[5, 4, 3, 2, 1].map((star) => {
+                                const count = ratingsSummary?.distribution?.[star] ?? 0;
+                                const pct = ratingsSummary?.total > 0
+                                    ? Math.round((count / ratingsSummary.total) * 100)
+                                    : 0;
+                                const barColor = star >= 4 ? 'bg-green-400' : star === 3 ? 'bg-amber-400' : 'bg-red-400';
+                                return (
+                                    <div key={star} className="flex items-center gap-3">
+                                        <span className="text-xs font-medium text-secondary-500 w-8 shrink-0 flex items-center gap-0.5">
+                                            {star}<Star size={10} className="text-amber-400 fill-amber-400 inline" />
+                                        </span>
+                                        <div className="flex-1 h-4 bg-secondary-100 rounded-full overflow-hidden">
+                                            <div
+                                                className={`h-full ${barColor} rounded-full transition-all duration-700`}
+                                                style={{ width: `${pct}%` }}
+                                            />
+                                        </div>
+                                        <span className="text-xs font-medium text-secondary-500 w-10 text-right shrink-0">
+                                            {pct}%
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

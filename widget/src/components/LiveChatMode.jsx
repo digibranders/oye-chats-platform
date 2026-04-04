@@ -5,7 +5,7 @@ import { submitOfflineMessage, getChatHistory } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorName, onNewMessage, botMessages = [], onConnectionStatusChange }) => {
+const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorName, setOperatorDepartment, onNewMessage, botMessages = [], onConnectionStatusChange }) => {
     const [ws, setWs] = useState(null);
     const [inputText, setInputText] = useState('');
     const [messages, setMessages] = useState([]);
@@ -39,6 +39,11 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const [pendingFile, setPendingFile] = useState(null);
     // Lightbox: URL of the image to show full-screen, null = closed
     const [lightboxSrc, setLightboxSrc] = useState(null);
+    // Read receipts: ISO timestamp of the last time the operator read the chat.
+    // The backend sends last_read_id (a DB cursor), but the widget only has local
+    // string IDs ("live-1", etc.) with no DB→local mapping. We instead record the
+    // receipt arrival time and mark all earlier user messages as read.
+    const [lastReadAt, setLastReadAt] = useState(null);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -71,6 +76,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         } else if (data.status === 'connected') {
                             setChatMode('live');
                             setOperatorName(data.operator_name || 'Support');
+                            setOperatorDepartment?.(data.operator_department || null);
                             onConnectionStatusChange?.('connected');
                             // On reconnect/refresh, restore chat history from backend
                             // so the visitor doesn't see an empty chat.
@@ -136,6 +142,15 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
 
                     case 'pong':
                         clearTimeout(pongTimeoutRef.current);
+                        break;
+
+                    case 'read_receipt':
+                        // Backend sends { last_read_id, reader: 'operator' } — a DB cursor.
+                        // Record the arrival time; all user messages sent before this moment
+                        // are considered read by the operator.
+                        if (data.reader === 'operator') {
+                            setLastReadAt(new Date().toISOString());
+                        }
                         break;
 
                     default:
@@ -297,6 +312,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     }, [ws, pendingMessages]);
 
     const handleTyping = () => {
+        // Gated by typing_preview feature flag (default: enabled)
+        if (settings?.feature_flags?.typing_preview === false) return;
         const now = Date.now();
         if (now - lastTypingSentRef.current < 3000) return;
         lastTypingSentRef.current = now;
@@ -344,9 +361,15 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         });
     };
 
-    // Show rating survey before returning to bot (called when live chat ends)
+    // Show rating survey before returning to bot (called when live chat ends).
+    // If the post_chat_rating feature flag is disabled, skip the survey and
+    // return to bot immediately to avoid a stuck/blank widget state.
     const handleChatEnded = () => {
-        setShowRating(true);
+        if (settings?.feature_flags?.post_chat_rating === false) {
+            handleReturnToBot();
+        } else {
+            setShowRating(true);
+        }
     };
 
     const handleSubmitRating = async (stars) => {
@@ -495,8 +518,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         return queuePosition ? `You're #${queuePosition} in the queue` : 'Please wait a moment';
     };
 
-    // Post-chat satisfaction survey screen
-    if (showRating) {
+    // Post-chat satisfaction survey screen — gated by post_chat_rating feature flag (default: enabled)
+    if (showRating && settings?.feature_flags?.post_chat_rating !== false) {
         const primaryColor = settings.primary_color || '#3A0CA3';
         return (
             <div className="flex-1 flex flex-col items-center justify-center px-6 py-8" style={{ backgroundColor: settings.background_color || '#fff' }}>
@@ -809,14 +832,12 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                             <AlertCircle className="w-3 h-3" /> Not sent · Retry
                                         </button>
                                     ) : (
-                                        <span className="text-[10px] text-gray-400">
-                                            {msg.status === 'read' ? (
-                                                <span style={{ color: '#53bdeb' }}>Read</span>
-                                            ) : msg.status === 'delivered' ? (
-                                                'Delivered'
-                                            ) : (
-                                                'Sent'
-                                            )}
+                                        <span
+                                            className="text-[10px] select-none"
+                                            style={{ color: (lastReadAt && msg.timestamp <= lastReadAt) ? '#53bdeb' : '#9CA3AF' }}
+                                            title={(lastReadAt && msg.timestamp <= lastReadAt) ? 'Read' : 'Sent'}
+                                        >
+                                            {(lastReadAt && msg.timestamp <= lastReadAt) ? '✓✓' : '✓'}
                                         </span>
                                     )}
                                 </div>
