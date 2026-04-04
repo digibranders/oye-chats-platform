@@ -39,7 +39,7 @@ const ChatInput = ({
     const handleChange = (e) => {
         setInputText(e.target.value);
         e.target.style.height = 'auto';
-        e.target.style.height = e.target.scrollHeight + 'px';
+        e.target.style.height = Math.min(e.target.scrollHeight, 60) + 'px';
         if (isLive) onLiveTyping?.();
     };
 
@@ -62,6 +62,9 @@ const ChatInput = ({
             }
         } else {
             onSubmit?.(e);
+        }
+        if (inputRef?.current) {
+            inputRef.current.style.height = 'auto';
         }
     };
 
