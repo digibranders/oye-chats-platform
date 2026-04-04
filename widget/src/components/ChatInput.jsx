@@ -21,35 +21,31 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
     return (
         <div className={currentTheme.inputArea}>
             <form onSubmit={onSubmit}>
-                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
-                    {/* Text area */}
+                {/* Single-row: textarea + send button side-by-side */}
+                <div className="flex items-end gap-2 rounded-2xl border border-[#BBE7FF]/50 bg-white pl-4 pr-2 py-2 shadow-sm">
                     <textarea
                         value={inputText}
                         onChange={handleChange}
                         onKeyDown={handleKeyDown}
                         placeholder={placeholder || 'Type a message...'}
                         aria-label="Chat message input"
-                        className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[100px]"
+                        className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[22px] max-h-[80px] leading-[22px]"
                         style={{ border: 'none' }}
                         disabled={isTyping}
                         ref={inputRef}
                         rows={1}
                     />
-
-                    {/* Send button — right-aligned */}
-                    <div className="flex items-center justify-end mt-2">
-                        <button
-                            type="submit"
-                            disabled={!hasText || isTyping}
-                            aria-label="Send message"
-                            className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-                        >
-                            <SendIcon
-                                size={20}
-                                className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
-                            />
-                        </button>
-                    </div>
+                    <button
+                        type="submit"
+                        disabled={!hasText || isTyping}
+                        aria-label="Send message"
+                        className="w-9 h-9 flex-shrink-0 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                    >
+                        <SendIcon
+                            size={18}
+                            className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
+                        />
+                    </button>
                 </div>
             </form>
 
