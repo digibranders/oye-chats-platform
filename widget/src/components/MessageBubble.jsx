@@ -1,5 +1,4 @@
 import React from 'react';
-import { ThumbsUp, ThumbsDown, Copy, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const SafeLink = ({ href, ...props }) => {
@@ -15,9 +14,6 @@ const MessageBubble = ({
     msg,
     currentTheme,
     streamingId,
-    copiedId,
-    onCopy,
-    onFeedback,
     settings,
 }) => {
     if (msg.sender === 'bot') {
@@ -39,31 +35,6 @@ const MessageBubble = ({
                             )}
                         </div>
                     </div>
-                    {streamingId !== msg.id && (
-                        <div className="flex items-center gap-1.5 mt-2">
-                            <button
-                                onClick={() => onCopy(msg.text, msg.id)}
-                                className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                                title="Copy response"
-                            >
-                                {copiedId === msg.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                            </button>
-                            <button
-                                onClick={() => onFeedback(msg.id, 'like')}
-                                className={`p-1 transition-colors ${msg.feedback === 'like' ? 'text-green-500' : 'text-gray-400 hover:text-green-500'}`}
-                                title="Good response"
-                            >
-                                <ThumbsUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                                onClick={() => onFeedback(msg.id, 'dislike')}
-                                className={`p-1 transition-colors ${msg.feedback === 'dislike' ? 'text-red-500' : 'text-gray-400 hover:text-red-500'}`}
-                                title="Bad response"
-                            >
-                                <ThumbsDown className="w-3.5 h-3.5" />
-                            </button>
-                        </div>
-                    )}
                 </div>
             </div>
         );

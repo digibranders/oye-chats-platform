@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Plus, MessageCircle, Headphones, Clock } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitFeedback, submitLeadCapture, requestHandoff, getLeadInfo } from '../services/api';
+import { X, Plus, Clock } from 'lucide-react';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -34,7 +34,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [isInitializing, setIsInitializing] = useState(true);
-    const [copiedId, setCopiedId] = useState(null);
     const [sessionId, setSessionId] = useState(() => {
         try { return localStorage.getItem('chat_session_id'); } catch { return null; }
     });
@@ -291,34 +290,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
     };
 
-    const handleCopy = (text, id) => {
-        navigator.clipboard.writeText(text);
-        setCopiedId(id);
-        setTimeout(() => setCopiedId(null), 2000);
-    };
-
-    const handleFeedback = async (id, type) => {
-        const currentMsg = messages.find(m => m.id === id);
-        if (!currentMsg) return;
-
-        const newFeedback = currentMsg.feedback === type ? null : type;
-
-        setMessages(prev => prev.map(msg =>
-            msg.id === id ? { ...msg, feedback: newFeedback } : msg
-        ));
-
-        if (typeof id === 'number' && id < 1000000000) {
-            try {
-                const feedbackValue = newFeedback === 'like' ? 1 : (newFeedback === 'dislike' ? -1 : null);
-                if (feedbackValue !== null) {
-                    await submitFeedback(id, feedbackValue);
-                }
-            } catch (error) {
-                console.error("Feedback failed to save", error);
-            }
-        }
-    };
-
     // Handle lead form submission
     const handleLeadFormSubmit = async (formData) => {
         const newSessionId = sessionId || `session_${crypto.randomUUID()}`;
@@ -540,14 +511,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     <MessageBubble
                                         key={msg.id}
                                         msg={msg}
-                                        theme={theme}
                                         currentTheme={currentTheme}
                                         settings={settings}
                                         streamingId={streamingId}
-                                        setStreamingId={setStreamingId}
-                                        copiedId={copiedId}
-                                        onCopy={handleCopy}
-                                        onFeedback={handleFeedback}
                                     />
                                 ))}
 
@@ -557,36 +523,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         )}
                     </div>
 
-                    {/* Input + Connect with support button */}
-                    <div>
-                        {!isInitializing && chatMode === 'bot' && settings.live_chat_enabled !== false && (
-                            <div className="px-3 pb-1">
-                                <button
-                                    onClick={triggerHandoff}
-                                    className={`w-full py-2 text-[12px] font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                                        showProminentHandoff
-                                            ? 'text-white shadow-sm'
-                                            : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'
-                                    }`}
-                                    style={showProminentHandoff ? { backgroundColor: settings.primary_color || '#3A0CA3' } : undefined}
-                                >
-                                    {showProminentHandoff
-                                        ? <><Headphones className="w-3.5 h-3.5" /> Talk to a human</>
-                                        : <><MessageCircle className="w-3.5 h-3.5" /> Talk to a human</>
-                                    }
-                                </button>
-                            </div>
-                        )}
-                        <ChatInput
-                            inputText={inputText}
-                            setInputText={setInputText}
-                            onSubmit={handleSend}
-                            isTyping={isTyping}
-                            settings={settings}
-                            currentTheme={currentTheme}
-                            inputRef={inputRef}
-                        />
-                    </div>
+                    {/* Input area — handoff CTA lives inside the composer */}
+                    <ChatInput
+                        inputText={inputText}
+                        setInputText={setInputText}
+                        onSubmit={handleSend}
+                        isTyping={isTyping}
+                        settings={settings}
+                        currentTheme={currentTheme}
+                        inputRef={inputRef}
+                        onHandoff={!isInitializing && settings.live_chat_enabled !== false ? triggerHandoff : undefined}
+                        showProminentHandoff={showProminentHandoff}
+                        primaryColor={settings.primary_color}
+                    />
                 </>
             )}
 
