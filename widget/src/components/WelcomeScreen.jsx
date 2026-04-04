@@ -1,6 +1,5 @@
 import React from 'react';
-import { X, Headphones } from 'lucide-react';
-import SendIcon from './SendIcon';
+import { X, Headphones, ArrowUp } from 'lucide-react';
 import BotAvatar from './BotAvatar';
 
 const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, setInputText, inputRef, isAnimating = true, onTalkToHuman }) => {
@@ -14,13 +13,14 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
     };
 
     const hasText = inputText.trim().length > 0;
+    const showBranding = settings?.feature_flags?.show_branding !== false;
 
     return (
         <div className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
-            {/* Header — white bg, avatar + name, close X */}
+            {/* Compact header */}
             <div className={currentTheme.header}>
-                <div className="flex items-center gap-3">
-                    <BotAvatar settings={settings} size="md" />
+                <div className="flex items-center gap-2.5">
+                    <BotAvatar settings={settings} size="header" />
                     <h3 className="font-semibold text-sm text-[#16202C]">{settings.bot_name}</h3>
                 </div>
                 <button
@@ -32,32 +32,15 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                 </button>
             </div>
 
-            {/* Content — centered greeting + suggestions */}
-            <div className="flex-1 flex flex-col items-center justify-center overflow-hidden px-5" style={{ backgroundColor: settings.background_color || '#ffffff' }}>
-                <div className="flex flex-col items-center text-center" style={{ animation: 'fadeUp 0.4s ease-out' }}>
-                    {/* Avatar glow */}
-                    <div className="relative flex items-center justify-center mb-5">
-                        <div
-                            style={{
-                                position: 'absolute',
-                                width: 90,
-                                height: 90,
-                                borderRadius: '50%',
-                                background: `radial-gradient(circle, ${settings.primary_color || '#2B66BC'}20 0%, transparent 70%)`,
-                                filter: 'blur(10px)',
-                            }}
-                        />
-                        <div className="relative">
-                            <BotAvatar settings={settings} size="lg" />
-                        </div>
-                    </div>
-
-                    {/* Greeting */}
-                    <p className="text-gray-500 text-[15px]">{getGreeting()},</p>
-                    <p className="text-[#16202C] text-lg font-bold mt-0.5">can I help you with something?</p>
+            {/* Content — bottom-aligned, left-justified greeting + suggestion pills */}
+            <div className="flex-1 flex flex-col items-start justify-end overflow-hidden px-5 pb-4" style={{ backgroundColor: settings.background_color || '#ffffff' }}>
+                <div className="flex flex-col items-start text-left w-full" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                    {/* Greeting — headline */}
+                    <h2 className="text-2xl font-bold text-[#16202C]">{getGreeting()}</h2>
+                    <p className="text-[15px] text-gray-500 mt-1">How can I help you today?</p>
 
                     {/* Suggestion pills */}
-                    <div className="flex flex-wrap gap-2 mt-5 justify-center">
+                    <div className="flex flex-wrap gap-2 mt-5 justify-start">
                         {suggestions.map((s, i) => (
                             <button
                                 key={s}
@@ -69,69 +52,75 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                             </button>
                         ))}
                     </div>
-
                 </div>
             </div>
 
-            {/* Input — stacked: text on top, icons below */}
+            {/* Slick input area */}
             <div className={currentTheme.inputArea}>
                 <form onSubmit={(e) => onSend(e)}>
-                    <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
-                        <textarea
-                            value={inputText}
-                            onChange={(e) => {
-                                setInputText(e.target.value);
-                                e.target.style.height = 'auto';
-                                e.target.style.height = e.target.scrollHeight + 'px';
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    onSend(e);
-                                }
-                            }}
-                            placeholder="Ask anything?"
-                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[80px]"
-                            style={{ border: 'none' }}
-                            ref={inputRef}
-                            rows={1}
-                        />
-                        <div className="flex items-center justify-between mt-2">
-                            {onTalkToHuman ? (
-                                <button
-                                    type="button"
-                                    onClick={onTalkToHuman}
-                                    title="Live chat"
-                                    aria-label="Live chat"
-                                    className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current rounded-md px-0.5"
-                                >
-                                    <Headphones size={16} className="flex-shrink-0" />
-                                    <span className="text-[11px] font-normal leading-none whitespace-nowrap">
-                                        Live chat
-                                    </span>
-                                </button>
-                            ) : (
-                                <span />
-                            )}
+                    <div className="rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-2 transition-colors focus-within:border-gray-300 focus-within:bg-white">
+                        <div className="flex items-end gap-2">
+                            <textarea
+                                value={inputText}
+                                onChange={(e) => {
+                                    setInputText(e.target.value);
+                                    e.target.style.height = 'auto';
+                                    e.target.style.height = e.target.scrollHeight + 'px';
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        onSend(e);
+                                    }
+                                }}
+                                placeholder="Type a message..."
+                                className="flex-1 outline-none bg-transparent text-[13px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[20px] max-h-[80px]"
+                                style={{ border: 'none' }}
+                                ref={inputRef}
+                                rows={1}
+                            />
                             <button
                                 type="submit"
                                 disabled={!hasText}
                                 aria-label="Send message"
-                                className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed ${
+                                    hasText ? 'bg-[#16202C] text-white' : 'text-gray-300'
+                                }`}
                             >
-                                <SendIcon size={20} className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`} />
+                                <ArrowUp size={14} />
                             </button>
                         </div>
                     </div>
                 </form>
-            </div>
 
-            <style>{`
-                @keyframes fadeUp {
-                    from { opacity: 0; transform: translateY(8px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-            `}</style>
+                {/* Action bar — below input */}
+                <div className="flex items-center justify-between mt-1.5 px-1">
+                    <div className="flex items-center gap-3">
+                        {onTalkToHuman && (
+                            <button
+                                type="button"
+                                onClick={onTalkToHuman}
+                                title="Live chat"
+                                aria-label="Live chat"
+                                className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                            >
+                                <Headphones size={12} className="flex-shrink-0" />
+                                <span>Live chat</span>
+                            </button>
+                        )}
+                    </div>
+                    {showBranding && (
+                        <a
+                            href="https://oyechats.com"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
+                        >
+                            Powered by OyeChats
+                        </a>
+                    )}
+                </div>
+            </div>
         </div>
     );
 };

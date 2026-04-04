@@ -3,6 +3,12 @@ import Launcher from './Launcher';
 import ChatWindow from './ChatWindow';
 import { getChatbotSettings } from '../services/api';
 
+/** Ref used to pass a pre-typed message from the greeting bubble into the chat window. */
+const usePendingMessage = () => {
+    const ref = useRef(null);
+    return ref;
+};
+
 const OPEN_DURATION = 300;  // ms — matches widgetOpen animation (280ms + buffer)
 const CLOSE_DURATION = 220; // ms — matches widgetClose animation (200ms + buffer)
 
@@ -62,6 +68,9 @@ const ChatWidget = () => {
   // Derived: is the bot currently "online" per its business hours schedule?
   const isOnline = isWithinBusinessHours(settings.business_hours);
 
+  // Pending message from greeting bubble → auto-sent on chat open
+  const pendingMessageRef = usePendingMessage();
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -113,6 +122,11 @@ const ChatWidget = () => {
     }
   }, [isVisible, isAnimating, openChat, closeChat]);
 
+  const handleBubbleSend = useCallback((text) => {
+      pendingMessageRef.current = text;
+      openChat();
+  }, [pendingMessageRef, openChat]);
+
   return (
     <>
       {isVisible && (
@@ -121,6 +135,7 @@ const ChatWidget = () => {
           initialSettings={settings}
           isAnimating={isAnimating}
           isOnline={isOnline}
+          initialMessage={pendingMessageRef}
         />
       )}
       {/* Launcher fades out while chat is open — LiveChat/Intercom pattern.
@@ -133,6 +148,7 @@ const ChatWidget = () => {
           isOpen={false}
           toggleChat={toggleChat}
           settings={settings}
+          onBubbleSend={handleBubbleSend}
         />
       </div>
     </>

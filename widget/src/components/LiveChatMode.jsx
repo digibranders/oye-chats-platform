@@ -5,7 +5,7 @@ import { submitOfflineMessage, getChatHistory } from '../services/api';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorName, onNewMessage, botMessages = [], onConnectionStatusChange }) => {
+const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorName, setOperatorDepartment, onNewMessage, botMessages = [], onConnectionStatusChange }) => {
     const [ws, setWs] = useState(null);
     const [inputText, setInputText] = useState('');
     const [messages, setMessages] = useState([]);
@@ -74,6 +74,7 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                         } else if (data.status === 'connected') {
                             setChatMode('live');
                             setOperatorName(data.operator_name || 'Support');
+                            setOperatorDepartment?.(data.operator_department || null);
                             onConnectionStatusChange?.('connected');
                             // On reconnect/refresh, restore chat history from backend
                             // so the visitor doesn't see an empty chat.

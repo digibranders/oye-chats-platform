@@ -11,7 +11,7 @@ import LeadCaptureForm from './LeadCaptureForm';
 import HandoffForm from './HandoffForm';
 import LiveChatMode from './LiveChatMode';
 
-const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, isOnline = true }) => {
+const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, isOnline = true, initialMessage }) => {
     const containerRef = useRef(null);
     const [messages, setMessages] = useState([
         {
@@ -42,6 +42,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showLeadForm, setShowLeadForm] = useState(false);
     const [chatMode, setChatMode] = useState(isOnline ? 'bot' : 'unavailable'); // bot|handoff_form|waiting|live|unavailable
     const [operatorName, setOperatorName] = useState(null);
+    const [operatorDepartment, setOperatorDepartment] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
@@ -138,6 +139,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 }
             }
             setIsInitializing(false);
+
+            // Auto-send message from greeting bubble (if present)
+            if (initialMessage?.current) {
+                const text = initialMessage.current;
+                initialMessage.current = null;
+                // Small delay to let state settle before triggering send
+                setTimeout(() => handleSend(null, text), 150);
+            }
         };
 
         initChat();
@@ -443,13 +452,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         );
     }
 
-    // Dynamic header content based on chat mode
+    // Dynamic header content based on chat mode (compact 32px avatars)
     const renderHeader = () => {
         if (chatMode === 'waiting') {
             return (
-                <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                        <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                        <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
                     </div>
                     <h3 className="font-semibold text-sm text-[#16202C]">Connecting to support...</h3>
                 </div>
@@ -459,9 +468,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             const primaryColor = settings.primary_color || '#3A0CA3';
             const isReconnecting = liveConnectionStatus === 'reconnecting';
             return (
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2.5">
                     <div
-                        className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-base flex-shrink-0"
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
                         style={{ backgroundColor: isReconnecting ? '#F59E0B' : primaryColor }}
                     >
                         {operatorName?.charAt(0)?.toUpperCase() || '?'}
@@ -477,9 +486,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         if (chatMode === 'unavailable') {
             return (
-                <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0">
-                        <Clock className="w-5 h-5" />
+                <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0">
+                        <Clock className="w-4 h-4" />
                     </div>
                     <h3 className="font-semibold text-sm text-gray-500">Support Unavailable</h3>
                 </div>
@@ -487,9 +496,43 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         // Default: bot mode
         return (
-            <div className="flex items-center gap-3">
-                <BotAvatar settings={settings} size="md" />
+            <div className="flex items-center gap-2.5">
+                <BotAvatar settings={settings} size="header" />
                 <h3 className="font-semibold text-sm text-[#16202C]">{settings.bot_name}</h3>
+            </div>
+        );
+    };
+
+    // Floating glass agent badge — shows who you're chatting with
+    const renderAgentBadge = () => {
+        if (chatMode === 'waiting' || chatMode === 'unavailable' || chatMode === 'handoff_form') return null;
+        const isLive = chatMode === 'live' && operatorName;
+        return (
+            <div className="flex justify-center pt-2 pb-1" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                <div
+                    className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40"
+                    style={{ background: 'rgba(255,255,255,0.75)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
+                >
+                    {isLive ? (
+                        <div
+                            className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                            style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                        >
+                            {operatorName?.charAt(0)?.toUpperCase() || 'S'}
+                        </div>
+                    ) : (
+                        <BotAvatar settings={settings} size="sm" />
+                    )}
+                    <div className="flex flex-col">
+                        <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
+                            {isLive ? operatorName : (settings.bot_name || 'AI Assistant')}
+                        </span>
+                        <span className="text-[10px] text-gray-400 leading-tight">
+                            {isLive ? (operatorDepartment || 'Support Team') : 'AI Assistant'}
+                        </span>
+                    </div>
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+                </div>
             </div>
         );
     };
@@ -544,6 +587,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     chatMode={chatMode}
                     setChatMode={setChatMode}
                     setOperatorName={setOperatorName}
+                    setOperatorDepartment={setOperatorDepartment}
                     onNewMessage={handleLiveChatMessage}
                     botMessages={messages.slice(-5)}
                     onConnectionStatusChange={setLiveConnectionStatus}
@@ -559,6 +603,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </div>
                         ) : (
                             <>
+                                {/* Floating glass agent badge */}
+                                {renderAgentBadge()}
+
                                 <div className="text-center">
                                     <span className="inline-block px-3 rounded-full text-xs" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
                                         {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
@@ -581,21 +628,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         )}
                     </div>
 
-                    {/* "Powered by OyeChats" branding — hidden when show_branding flag is false */}
-                    {settings?.feature_flags?.show_branding !== false && (
-                        <div className="text-center pb-1 shrink-0">
-                            <a
-                                href="https://oyechats.com"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
-                            >
-                                Powered by OyeChats
-                            </a>
-                        </div>
-                    )}
-
-                    {/* Input area — handoff CTA lives inside the composer */}
+                    {/* Input area — branding moved inside ChatInput's action bar */}
                     <ChatInput
                         inputText={inputText}
                         setInputText={setInputText}
@@ -607,6 +640,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         onHandoff={!isInitializing && settings.live_chat_enabled !== false ? triggerHandoff : undefined}
                         showProminentHandoff={showProminentHandoff}
                         primaryColor={settings.primary_color}
+                        showBranding={settings?.feature_flags?.show_branding !== false}
                     />
                 </>
             )}
