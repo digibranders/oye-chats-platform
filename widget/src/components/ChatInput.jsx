@@ -1,8 +1,8 @@
 import React from 'react';
-import { Paperclip } from 'lucide-react';
+import { Headphones } from 'lucide-react';
 import SendIcon from './SendIcon';
 
-const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, inputRef, placeholder }) => {
+const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, inputRef, placeholder, onHandoff, showProminentHandoff, primaryColor }) => {
     const handleChange = (e) => {
         setInputText(e.target.value);
         e.target.style.height = 'auto';
@@ -36,17 +36,41 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                         rows={1}
                     />
 
-                    {/* Bottom row — paperclip left (placeholder), send right */}
+                    {/* Bottom row — left action, send right */}
                     <div className="flex items-center justify-between mt-2">
-                        <button
-                            type="button"
-                            disabled
-                            title="File sharing coming soon"
-                            aria-label="Attach file (coming soon)"
-                            className="opacity-30 cursor-not-allowed"
-                        >
-                            <Paperclip size={20} className="text-[#16202C]" />
-                        </button>
+                        {onHandoff ? (
+                            /* Live chat — always visible, emphasis increases when bot is struggling */
+                            <button
+                                type="button"
+                                onClick={onHandoff}
+                                title="Live chat"
+                                aria-label="Live chat"
+                                className="relative flex items-center gap-1.5 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current rounded-md px-0.5"
+                                style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
+                            >
+                                <span className="relative flex-shrink-0">
+                                    <Headphones size={16} />
+                                    {/* Pulse dot — only when bot is struggling */}
+                                    {showProminentHandoff && (
+                                        <span
+                                            className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full animate-pulse"
+                                            style={{ backgroundColor: primaryColor || '#3A0CA3' }}
+                                        />
+                                    )}
+                                </span>
+                                {/* Label is always shown so users know what the button does */}
+                                <span
+                                    className={`text-[11px] leading-none whitespace-nowrap transition-all ${
+                                        showProminentHandoff ? 'font-semibold' : 'font-normal'
+                                    }`}
+                                >
+                                    Live chat
+                                </span>
+                            </button>
+                        ) : (
+                            /* Fallback spacer so send button stays right-aligned */
+                            <span />
+                        )}
                         <button
                             type="submit"
                             disabled={!hasText || isTyping}
