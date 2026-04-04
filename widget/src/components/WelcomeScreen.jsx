@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Paperclip } from 'lucide-react';
+import { X, Headphones } from 'lucide-react';
 import SendIcon from './SendIcon';
 import BotAvatar from './BotAvatar';
 
@@ -70,16 +70,6 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                         ))}
                     </div>
 
-                    {/* Talk to a human — subtle link */}
-                    {onTalkToHuman && (
-                        <button
-                            onClick={onTalkToHuman}
-                            className="mt-4 text-[12px] text-gray-400 hover:text-indigo-600 transition-colors cursor-pointer"
-                            style={{ animation: `fadeUp 0.3s ease-out ${suggestions.length * 0.08 + 0.1}s both` }}
-                        >
-                            or talk to a human
-                        </button>
-                    )}
                 </div>
             </div>
 
@@ -107,15 +97,19 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                             rows={1}
                         />
                         <div className="flex items-center justify-between mt-2">
-                            <button
-                                type="button"
-                                disabled
-                                title="File sharing coming soon"
-                                aria-label="Attach file (coming soon)"
-                                className="opacity-30 cursor-not-allowed"
-                            >
-                                <Paperclip size={20} className="text-[#16202C]" />
-                            </button>
+                            {onTalkToHuman ? (
+                                <button
+                                    type="button"
+                                    onClick={onTalkToHuman}
+                                    title="Talk to a human"
+                                    aria-label="Talk to a human"
+                                    className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current rounded-md px-0.5"
+                                >
+                                    <Headphones size={18} />
+                                </button>
+                            ) : (
+                                <span />
+                            )}
                             <button
                                 type="submit"
                                 disabled={!hasText}
