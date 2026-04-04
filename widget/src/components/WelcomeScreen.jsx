@@ -59,7 +59,7 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
             {/* Slick input area */}
             <div className={currentTheme.inputArea}>
                 <form onSubmit={(e) => onSend(e)}>
-                    <div className="flex items-end gap-2 rounded-2xl border border-[#BBE7FF]/50 bg-white pl-4 pr-2 py-2 shadow-sm">
+                    <div className="flex items-center gap-2 rounded-2xl border border-[#BBE7FF]/50 bg-white pl-4 pr-2 py-2.5 shadow-sm">
                         <textarea
                             value={inputText}
                             onChange={(e) => {
@@ -74,8 +74,8 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                                 }
                             }}
                             placeholder="Type a message..."
-                            className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[22px] max-h-[80px] leading-[22px]"
-                            style={{ border: 'none' }}
+                            className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[20px] max-h-[80px] leading-[20px] py-0"
+                            style={{ border: 'none', margin: 0 }}
                             ref={inputRef}
                             rows={1}
                         />
