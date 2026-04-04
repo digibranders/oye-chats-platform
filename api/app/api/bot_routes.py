@@ -68,6 +68,12 @@ class UpdateBotRequest(BaseModel):
     business_hours: dict | None = None
     # Feature flags — partial merge applied on PATCH (existing flags are preserved)
     feature_flags: dict | None = None
+    # Configurable visitor-facing messages
+    welcome_title: str | None = None
+    welcome_subtitle: str | None = None
+    waiting_message: str | None = None
+    offline_message: str | None = None
+    handoff_delay_seconds: int | None = None
 
 
 class BotResponse(BaseModel):
@@ -96,6 +102,12 @@ class BotResponse(BaseModel):
     operator_timeout_seconds: int = 120
     business_hours: dict | None = None
     feature_flags: dict = {}
+    # Configurable visitor-facing messages
+    welcome_title: str = "Hi there 👋"
+    welcome_subtitle: str = "How can we help you today?"
+    waiting_message: str = "Connecting you to support..."
+    offline_message: str = "Our team is currently unavailable."
+    handoff_delay_seconds: int = 0
     is_active: bool
     created_at: str
 
@@ -142,6 +154,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "live_chat_enabled": bot.live_chat_enabled,
         "business_hours": bot.business_hours,
         "feature_flags": bot.feature_flags or {},
+        "welcome_title": bot.welcome_title or "Hi there 👋",
+        "welcome_subtitle": bot.welcome_subtitle or "How can we help you today?",
+        "waiting_message": bot.waiting_message or "Connecting you to support...",
+        "offline_message": bot.offline_message or "Our team is currently unavailable.",
+        "handoff_delay_seconds": bot.handoff_delay_seconds or 0,
     }
 
 
@@ -188,6 +205,11 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     operator_timeout_seconds=b.operator_timeout_seconds,
                     business_hours=b.business_hours,
                     feature_flags=b.feature_flags or {},
+                    welcome_title=b.welcome_title or "Hi there 👋",
+                    welcome_subtitle=b.welcome_subtitle or "How can we help you today?",
+                    waiting_message=b.waiting_message or "Connecting you to support...",
+                    offline_message=b.offline_message or "Our team is currently unavailable.",
+                    handoff_delay_seconds=b.handoff_delay_seconds or 0,
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
                 )
@@ -260,6 +282,11 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             operator_timeout_seconds=bot.operator_timeout_seconds,
             business_hours=bot.business_hours,
             feature_flags=bot.feature_flags or {},
+            welcome_title=bot.welcome_title or "Hi there 👋",
+            welcome_subtitle=bot.welcome_subtitle or "How can we help you today?",
+            waiting_message=bot.waiting_message or "Connecting you to support...",
+            offline_message=bot.offline_message or "Our team is currently unavailable.",
+            handoff_delay_seconds=bot.handoff_delay_seconds or 0,
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )

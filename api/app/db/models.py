@@ -95,6 +95,24 @@ class Bot(Base):
     operator_disconnect_timeout = Column(Integer, default=60, server_default="60", nullable=False)
     business_hours = Column(sqlalchemy.JSON, nullable=True)  # e.g. {"mon":{"start":"09:00","end":"17:00"}, ...}
 
+    # Configurable messages shown to visitors (admin-editable from the Live Chat settings tab)
+    welcome_title = Column(String, default="Hi there 👋", server_default="Hi there 👋", nullable=False)
+    welcome_subtitle = Column(
+        String, default="How can we help you today?", server_default="How can we help you today?", nullable=False
+    )
+    waiting_message = Column(
+        String, default="Connecting you to support...", server_default="Connecting you to support...", nullable=False
+    )
+    offline_message = Column(
+        String,
+        default="Our team is currently unavailable.",
+        server_default="Our team is currently unavailable.",
+        nullable=False,
+    )
+    # Delay (seconds) before handoff form auto-appears after the bot suggests a handoff.
+    # 0 = show immediately; useful to give the visitor time to read the bot's last response.
+    handoff_delay_seconds = Column(Integer, default=0, server_default="0", nullable=False)
+
     # Feature flags — controls per-bot widget/operator behavior toggles
     feature_flags = Column(
         JSONB,
