@@ -105,7 +105,10 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
                                     aria-label="Talk to a human"
                                     className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current rounded-md px-0.5"
                                 >
-                                    <Headphones size={18} />
+                                    <Headphones size={16} className="flex-shrink-0" />
+                                    <span className="text-[11px] font-normal leading-none whitespace-nowrap">
+                                        Talk to a human
+                                    </span>
                                 </button>
                             ) : (
                                 <span />

@@ -39,7 +39,7 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                     {/* Bottom row — left action, send right */}
                     <div className="flex items-center justify-between mt-2">
                         {onHandoff ? (
-                            /* Talk to a human — lives where disabled paperclip was */
+                            /* Talk to a human — always visible, emphasis increases when bot is struggling */
                             <button
                                 type="button"
                                 onClick={onHandoff}
@@ -48,8 +48,8 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                                 className="relative flex items-center gap-1.5 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current rounded-md px-0.5"
                                 style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
                             >
-                                <span className="relative">
-                                    <Headphones size={18} />
+                                <span className="relative flex-shrink-0">
+                                    <Headphones size={16} />
                                     {/* Pulse dot — only when bot is struggling */}
                                     {showProminentHandoff && (
                                         <span
@@ -58,11 +58,14 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
                                         />
                                     )}
                                 </span>
-                                {showProminentHandoff && (
-                                    <span className="text-[11px] font-semibold leading-none whitespace-nowrap">
-                                        Talk to a human
-                                    </span>
-                                )}
+                                {/* Label is always shown so users know what the button does */}
+                                <span
+                                    className={`text-[11px] leading-none whitespace-nowrap transition-all ${
+                                        showProminentHandoff ? 'font-semibold' : 'font-normal'
+                                    }`}
+                                >
+                                    Talk to a human
+                                </span>
                             </button>
                         ) : (
                             /* Fallback spacer so send button stays right-aligned */
