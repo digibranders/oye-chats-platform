@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getAuthState } from '../utils/auth';
 import {
     Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2,
@@ -7,7 +7,7 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
-import { createBot, deleteBot, crawlWebsite } from '../services/api';
+import { createBot, deleteBot, crawlWebsite, updateBot } from '../services/api';
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from '../components/PlatformSelector';
 import IntegrationGuide from '../components/IntegrationGuide';
@@ -39,6 +39,11 @@ export default function Chatbot() {
     const [showKeys, setShowKeys] = useState({});
     const [embedTab, setEmbedTab] = useState({});
     const [selectedPlatform, setSelectedPlatform] = useState({});
+
+    // Inline bot rename state
+    const [renamingBot, setRenamingBot] = useState(null);   // botId | null
+    const [renameValue, setRenameValue] = useState('');
+    const renameInputRef = useRef(null);
 
     // Auto-open create modal when navigated with ?create=true
     useEffect(() => {
@@ -86,6 +91,34 @@ export default function Chatbot() {
         } catch (err) {
             showToast('error', err.message || 'Failed to delete bot');
         } finally { setDeletingBot(null); setConfirmDelete(null); }
+    };
+
+    const startRename = (bot) => {
+        setRenamingBot(bot.id);
+        setRenameValue(bot.name);
+        // Focus the input after React paints
+        setTimeout(() => renameInputRef.current?.focus(), 30);
+    };
+
+    const cancelRename = () => {
+        setRenamingBot(null);
+        setRenameValue('');
+    };
+
+    const commitRename = async (botId) => {
+        const trimmed = renameValue.trim();
+        if (!trimmed) { cancelRename(); return; }
+        const originalBot = bots.find(b => b.id === botId);
+        if (trimmed === originalBot?.name) { cancelRename(); return; }
+        try {
+            await updateBot(botId, { name: trimmed });
+            await refreshBots();
+            showToast('success', 'Bot renamed successfully.');
+        } catch (err) {
+            showToast('error', err.message || 'Failed to rename bot');
+        } finally {
+            cancelRename();
+        }
     };
 
     const toggleKey = (botId) => setShowKeys(prev => ({ ...prev, [botId]: !prev[botId] }));
@@ -167,7 +200,29 @@ export default function Chatbot() {
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2">
-                                            <h3 className="text-sm font-bold text-secondary-900 truncate">{bot.name}</h3>
+                                            {renamingBot === bot.id ? (
+                                                <input
+                                                    ref={renameInputRef}
+                                                    type="text"
+                                                    value={renameValue}
+                                                    onChange={(e) => setRenameValue(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') { e.preventDefault(); commitRename(bot.id); }
+                                                        else if (e.key === 'Escape') cancelRename();
+                                                    }}
+                                                    onBlur={() => commitRename(bot.id)}
+                                                    maxLength={50}
+                                                    className="text-sm font-bold text-secondary-900 bg-white border border-primary-400 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-primary-500/20 w-48"
+                                                />
+                                            ) : (
+                                                <h3
+                                                    className={`text-sm font-bold text-secondary-900 truncate ${isBotManager ? 'cursor-text hover:underline decoration-dashed underline-offset-2' : ''}`}
+                                                    title={isBotManager ? 'Click to rename' : undefined}
+                                                    onClick={isBotManager ? () => startRename(bot) : undefined}
+                                                >
+                                                    {bot.name}
+                                                </h3>
+                                            )}
                                             {isSelected && <span className="px-2 py-0.5 text-[9px] font-bold text-primary-600 bg-primary-100 rounded-full uppercase">Active</span>}
                                         </div>
                                         <div className="flex items-center gap-3 mt-0.5">

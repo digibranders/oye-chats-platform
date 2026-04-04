@@ -214,9 +214,13 @@ export const deleteDocument = async (documentName, botId) => {
  * Fetches aggregate statistics for the admin dashboard.
  * @returns {Promise<Object>} Object containing total counts
  */
-export const getDashboardStats = async (botId) => {
+export const getDashboardStats = async (botId, days = null) => {
     try {
-        const url = botId ? `/analytics/dashboard?bot_id=${botId}` : '/analytics/dashboard';
+        const params = new URLSearchParams();
+        if (botId) params.set('bot_id', botId);
+        if (days) params.set('days', days);
+        const query = params.toString();
+        const url = query ? `/analytics/dashboard?${query}` : '/analytics/dashboard';
         const response = await api.get(url);
         return response.data;
     } catch (error) {
@@ -238,6 +242,17 @@ export const getActivityStats = async (botId) => {
     } catch (error) {
         console.error('API Error fetching activity stats:', error);
         throw buildApiError(error, 'Failed to load activity data');
+    }
+};
+
+export const getRatingsSummary = async (botId) => {
+    try {
+        const url = botId ? `/analytics/ratings-summary?bot_id=${botId}` : '/analytics/ratings-summary';
+        const response = await api.get(url);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching ratings summary:', error);
+        throw buildApiError(error, 'Failed to load ratings summary');
     }
 };
 

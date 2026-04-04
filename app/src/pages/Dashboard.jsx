@@ -8,12 +8,20 @@ import StatCard from '../components/ui/StatCard';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 
+const DATE_RANGES = [
+    { id: 7, label: '7 days' },
+    { id: 30, label: '30 days' },
+    { id: 90, label: '90 days' },
+    { id: null, label: 'All time' },
+];
+
 export default function Dashboard() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
     const [stats, setStats] = useState(null);
     const [topQuestions, setTopQuestions] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [dateRange, setDateRange] = useState(null); // null = all time, or days number
     const navigate = useNavigate();
 
     const adminName = localStorage.getItem('admin_name') || 'there';
@@ -27,7 +35,7 @@ export default function Dashboard() {
             setIsLoading(true);
             try {
                 const [statsData, questionsData] = await Promise.all([
-                    getDashboardStats(selectedBot.id),
+                    getDashboardStats(selectedBot.id, dateRange),
                     getTopQuestions(selectedBot.id)
                 ]);
                 setStats(statsData);
@@ -40,7 +48,7 @@ export default function Dashboard() {
             }
         };
         fetchData();
-    }, [selectedBot?.id, showToast]);
+    }, [selectedBot?.id, dateRange, showToast]);
 
     // Greeting based on time of day
     const hour = new Date().getHours();
@@ -69,6 +77,22 @@ export default function Dashboard() {
                     {greeting}, {adminName.split(' ')[0]}
                 </h1>
                 <p className="text-secondary-500 mt-1 text-sm">{today}</p>
+            </div>
+
+            {/* Date Range Pills */}
+            <div className="flex items-center gap-1 p-1 bg-secondary-100 rounded-lg self-start">
+                {DATE_RANGES.map((r) => (
+                    <button
+                        key={String(r.id)}
+                        onClick={() => setDateRange(r.id)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${dateRange === r.id
+                                ? 'bg-white text-secondary-900 shadow-sm'
+                                : 'text-secondary-500 hover:text-secondary-700'
+                            }`}
+                    >
+                        {r.label}
+                    </button>
+                ))}
             </div>
 
             {/* Stat Cards */}

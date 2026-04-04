@@ -123,9 +123,14 @@ const ChatWidget = () => {
           isOnline={isOnline}
         />
       )}
-      <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">
+      {/* Launcher fades out while chat is open — LiveChat/Intercom pattern.
+          Kept in DOM (not unmounted) so it can fade back in after the close animation. */}
+      <div
+        className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4 transition-opacity duration-200"
+        style={{ opacity: isVisible ? 0 : 1, pointerEvents: isVisible ? 'none' : 'auto' }}
+      >
         <Launcher
-          isOpen={isVisible && isAnimating !== null}
+          isOpen={false}
           toggleChat={toggleChat}
           settings={settings}
         />

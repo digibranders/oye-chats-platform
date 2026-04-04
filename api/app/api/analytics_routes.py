@@ -7,6 +7,7 @@ from app.db.repository import (
     get_dashboard_stats,
     get_feedback_data,
     get_message_activity,
+    get_ratings_summary,
     get_top_questions,
     get_visitor_data,
 )
@@ -20,12 +21,13 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 @router.get("/dashboard")
 def get_dashboard_analytics_endpoint(
     bot_id: int | None = Query(None),
+    days: int | None = Query(None, ge=1, le=365, description="Restrict stats to the last N days"),
     auth: dict = Depends(get_current_client_or_operator),
 ):
     """Retrieve live aggregate statistics for the admin dashboard."""
     try:
         with get_session() as session:
-            stats = get_dashboard_stats(session, client_id=auth["client_id"], bot_id=bot_id)
+            stats = get_dashboard_stats(session, client_id=auth["client_id"], bot_id=bot_id, days=days)
             return stats
     except Exception as e:
         logger.error(f"Failed to fetch dashboard stats: {e}")
@@ -113,6 +115,20 @@ def get_visitors_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch visitors: {e}")
         raise HTTPException(status_code=500, detail="Failed to load visitor data.") from e
+
+
+@router.get("/ratings-summary")
+def get_ratings_summary_endpoint(
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Retrieve post-chat visitor rating summary (avg, total, distribution)."""
+    try:
+        with get_session() as session:
+            return get_ratings_summary(session, client_id=auth["client_id"], bot_id=bot_id)
+    except Exception as e:
+        logger.error(f"Failed to fetch ratings summary: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load ratings summary.") from e
 
 
 @router.get("/feedback")

@@ -581,6 +581,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         )}
                     </div>
 
+                    {/* "Powered by OyeChats" branding — hidden when show_branding flag is false */}
+                    {settings?.feature_flags?.show_branding !== false && (
+                        <div className="text-center pb-1 shrink-0">
+                            <a
+                                href="https://oyechats.com"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
+                            >
+                                Powered by OyeChats
+                            </a>
+                        </div>
+                    )}
+
                     {/* Input area — handoff CTA lives inside the composer */}
                     <ChatInput
                         inputText={inputText}

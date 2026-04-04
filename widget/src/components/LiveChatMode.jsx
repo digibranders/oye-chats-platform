@@ -39,6 +39,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     const [pendingFile, setPendingFile] = useState(null);
     // Lightbox: URL of the image to show full-screen, null = closed
     const [lightboxSrc, setLightboxSrc] = useState(null);
+    // Read receipts: Set of message IDs the operator has read
+    const [readMessageIds, setReadMessageIds] = useState(new Set());
 
     useEffect(() => {
         if (!sessionId) return;
@@ -134,6 +136,12 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
 
                     case 'pong':
                         clearTimeout(pongTimeoutRef.current);
+                        break;
+
+                    case 'read_receipt':
+                        if (data.message_id) {
+                            setReadMessageIds(prev => new Set([...prev, data.message_id]));
+                        }
                         break;
 
                     default:
@@ -295,6 +303,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
     }, [ws, pendingMessages]);
 
     const handleTyping = () => {
+        // Gated by typing_preview feature flag (default: enabled)
+        if (settings?.feature_flags?.typing_preview === false) return;
         const now = Date.now();
         if (now - lastTypingSentRef.current < 3000) return;
         lastTypingSentRef.current = now;
@@ -493,8 +503,8 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
         return queuePosition ? `You're #${queuePosition} in the queue` : 'Please wait a moment';
     };
 
-    // Post-chat satisfaction survey screen
-    if (showRating) {
+    // Post-chat satisfaction survey screen — gated by post_chat_rating feature flag (default: enabled)
+    if (showRating && settings?.feature_flags?.post_chat_rating !== false) {
         const primaryColor = settings.primary_color || '#3A0CA3';
         return (
             <div className="flex-1 flex flex-col items-center justify-center px-6 py-8" style={{ backgroundColor: settings.background_color || '#fff' }}>
@@ -807,14 +817,12 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                                             <AlertCircle className="w-3 h-3" /> Not sent · Retry
                                         </button>
                                     ) : (
-                                        <span className="text-[10px] text-gray-400">
-                                            {msg.status === 'read' ? (
-                                                <span style={{ color: '#53bdeb' }}>Read</span>
-                                            ) : msg.status === 'delivered' ? (
-                                                'Delivered'
-                                            ) : (
-                                                'Sent'
-                                            )}
+                                        <span
+                                            className="text-[10px] select-none"
+                                            style={{ color: readMessageIds.has(msg.id) ? '#53bdeb' : '#9CA3AF' }}
+                                            title={readMessageIds.has(msg.id) ? 'Read' : 'Sent'}
+                                        >
+                                            {readMessageIds.has(msg.id) ? '✓✓' : '✓'}
                                         </span>
                                     )}
                                 </div>
