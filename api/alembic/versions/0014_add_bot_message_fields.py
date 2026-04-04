@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0014_add_bot_message_fields"
-down_revision = "0013_add_fk_indexes"
+down_revision = "0013"
 branch_labels = None
 depends_on = None
 

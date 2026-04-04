@@ -237,7 +237,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const getWaitingMessage = () => {
         if (waitingSeconds >= 45) return "Taking a bit longer than usual — you can leave a message if you'd prefer";
         if (waitingSeconds >= 15) return 'Still connecting — our team will be right with you';
-        return 'Please wait a moment';
+        return settings.waiting_message || 'Please wait a moment';
     };
 
     // ── Welcome exit ─────────────────────────────────────────────────────────────
@@ -388,10 +388,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
+                        const delay = (settings.handoff_delay_seconds || 0) * 1000 || 600;
                         setTimeout(() => {
                             triggerHandoff();
                             handoffTriggeredRef.current = false;
-                        }, 600);
+                        }, delay);
                     }
                 },
                 onError: () => {
@@ -433,7 +434,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     if (consecutiveFallbacks.current >= 2 && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
                         consecutiveFallbacks.current = 0;
-                        setTimeout(() => { triggerHandoff(); handoffTriggeredRef.current = false; }, 600);
+                        setTimeout(() => { triggerHandoff(); handoffTriggeredRef.current = false; }, (settings.handoff_delay_seconds || 0) * 1000 || 600);
                     } else if (consecutiveFallbacks.current === 1) {
                         setShowProminentHandoff(true);
                     }
@@ -650,7 +651,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
                         <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
                     </div>
-                    <h3 className="font-semibold text-sm text-[#16202C]">Connecting to support...</h3>
+                    <h3 className="font-semibold text-sm text-[#16202C]">{settings.waiting_message || 'Connecting to support...'}</h3>
                 </div>
             );
         }
@@ -1056,7 +1057,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <>
                                 <div className="flex items-center gap-2 mb-2">
                                     <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                                    <p className="text-[13px] font-semibold text-[#16202C]">Team is currently unavailable</p>
+                                    <p className="text-[13px] font-semibold text-[#16202C]">{settings.offline_message || 'Team is currently unavailable'}</p>
                                 </div>
                                 <p className="text-[12px] text-gray-500 mb-3">Leave us a message and we'll get back to you.</p>
                                 <form onSubmit={handleOfflineSubmit} className="space-y-2">
