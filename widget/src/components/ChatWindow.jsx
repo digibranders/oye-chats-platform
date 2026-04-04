@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, Volume2 } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo } from '../services/api';
+import { X, Plus, Clock, MoreHorizontal, Mail, Volume2, CheckCircle2, AlertCircle, User, Phone, MessageSquare } from 'lucide-react';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -10,6 +10,19 @@ import WelcomeScreen from './WelcomeScreen';
 import LeadCaptureForm from './LeadCaptureForm';
 import HandoffForm from './HandoffForm';
 import LiveChatMode from './LiveChatMode';
+
+const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+
+const FALLBACK_PATTERNS = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+
+// Centered divider — iMessage/WhatsApp style system transition message
+const SystemMessage = ({ text }) => (
+    <div className="flex items-center gap-2 my-2 px-4">
+        <div className="flex-1 h-px bg-gray-100" />
+        <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{text}</span>
+        <div className="flex-1 h-px bg-gray-100" />
+    </div>
+);
 
 const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, isOnline = true, initialMessage }) => {
     const containerRef = useRef(null);
@@ -37,11 +50,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [sessionId, setSessionId] = useState(() => {
         try { return localStorage.getItem('chat_session_id'); } catch { return null; }
     });
-    // When the bot is outside business hours, skip the welcome screen and go straight to unavailable/offline form
     const [showWelcome, setShowWelcome] = useState(isOnline);
-    const [welcomeExiting, setWelcomeExiting] = useState(false); // cross-fade transition
+    const [welcomeExiting, setWelcomeExiting] = useState(false);
     const [showLeadForm, setShowLeadForm] = useState(false);
-    const [chatMode, setChatMode] = useState(isOnline ? 'bot' : 'unavailable'); // bot|handoff_form|waiting|live|unavailable
+    // bot | waiting | live | unavailable
+    const [chatMode, setChatMode] = useState(isOnline ? 'bot' : 'unavailable');
     const [operatorName, setOperatorName] = useState(null);
     const [operatorDepartment, setOperatorDepartment] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
@@ -50,15 +63,41 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
     const [existingLeadInfo, setExistingLeadInfo] = useState(null);
 
-    // Header menu state (three-dot menu with Send transcript + Sounds toggle)
+    // Header menu
     const [showHeaderMenu, setShowHeaderMenu] = useState(false);
     const [soundsEnabled, setSoundsEnabled] = useState(() => {
         try { return localStorage.getItem('oyechats_sounds') !== 'off'; } catch { return true; }
     });
     const headerMenuRef = useRef(null);
 
-    // Streaming chunk buffer — accumulate tokens and flush once per animation frame
-    // to cap React re-renders at ~60/s regardless of LLM token throughput.
+    // ── Live chat lifted state ───────────────────────────────────────────────────
+    const [liveMessages, setLiveMessages] = useState([]);
+    const [isOperatorTyping, setIsOperatorTyping] = useState(false);
+    const [lastReadAt, setLastReadAt] = useState(null);
+    const [isLiveReconnecting, setIsLiveReconnecting] = useState(false);
+    const [showRating, setShowRating] = useState(false);
+    const [ratingSubmitting, setRatingSubmitting] = useState(false);
+    const [showEndConfirm, setShowEndConfirm] = useState(false);
+    const [uploadProgress] = useState(null); // controlled by LiveChatMode file upload
+    // Waiting screen timer
+    const [waitingSeconds, setWaitingSeconds] = useState(0);
+    const waitingTimerRef = useRef(null);
+    // Offline form
+    const [offlineForm, setOfflineForm] = useState({ name: '', email: '', phone: '', message: '' });
+    const [offlineSubmitting, setOfflineSubmitting] = useState(false);
+    const [offlineSubmitted, setOfflineSubmitted] = useState(false);
+    const [offlineError, setOfflineError] = useState(false);
+
+    // WS function handles exposed by LiveChatMode via onWsReady
+    const wsSendRef = useRef(null);
+    const wsTypingRef = useRef(null);
+    const wsFilePickRef = useRef(null);
+    const wsEndChatRef = useRef(null);
+
+    // Prevent double handoff form injection
+    const handoffFormInjectedRef = useRef(false);
+
+    // Streaming chunk buffer
     const chunkBufferRef = useRef('');
     const rafRef = useRef(null);
 
@@ -66,11 +105,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const inputRef = useRef(null);
     const recentMessageTimestamps = useRef([]);
     const consecutiveFallbacks = useRef(0);
-    const handoffTriggeredRef = useRef(false); // prevents double-trigger race between fallback and suggest_handoff
+    const handoffTriggeredRef = useRef(false);
+    const prevOperatorNameRef = useRef(null);
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
+    const isLiveMode = ['waiting', 'live', 'unavailable'].includes(chatMode);
 
-    // Mobile keyboard push-up — update container height when virtual keyboard opens
+    // ── Mobile keyboard push-up ──────────────────────────────────────────────────
     useEffect(() => {
         const viewport = window.visualViewport;
         if (!viewport || window.innerWidth >= 768) return;
@@ -87,7 +128,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
-    // Load History and Settings on Mount
+    // ── Initialization ───────────────────────────────────────────────────────────
     useEffect(() => {
         const initChat = async () => {
             if (initialSettings) {
@@ -97,7 +138,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 ));
             }
 
-            // Check if lead form should be shown (new visitors only)
             const resolvedSettings = initialSettings || settings;
             const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
             const leadCapturedKey = `oyechats_lead_captured_${botKey}`;
@@ -131,28 +171,22 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             timestamp: new Date().toISOString(),
                             feedback: null
                         }]);
-
                         setShowWelcome(false);
                     }
-                } catch (error) {
-                    console.error("Failed to load history:", error);
+                } catch {
+                    console.error('[OyeChats] Failed to load history');
                 }
 
-                // Fetch existing lead info to pre-fill the handoff form (non-blocking)
                 try {
                     const leadData = await getLeadInfo(sessionId);
                     if (leadData) setExistingLeadInfo(leadData);
-                } catch {
-                    // Non-critical — never fails widget load
-                }
+                } catch { /* non-critical */ }
             }
             setIsInitializing(false);
 
-            // Auto-send message from greeting bubble (if present)
             if (initialMessage?.current) {
                 const text = initialMessage.current;
                 initialMessage.current = null;
-                // Small delay to let state settle before triggering send
                 setTimeout(() => handleSend(null, text), 150);
             }
         };
@@ -161,14 +195,53 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Scroll to bottom when a new message is added or streaming starts/ends.
-    // Intentionally NOT dependent on `messages` so the DOM isn't thrashed on every token.
+    // Scroll when messages or live messages change
     useEffect(() => {
         scrollToBottom();
-    }, [streamingId, isTyping, messages.length]);
+    }, [streamingId, isTyping, messages.length, liveMessages.length]);
 
-    // Smooth cross-fade transition from welcome screen → chat
-    const WELCOME_EXIT_DURATION = 350; // ms — matches CSS transition
+    // Inject "operator joined" system message when operator first connects
+    useEffect(() => {
+        if (operatorName && !prevOperatorNameRef.current) {
+            setMessages(prev => [
+                ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with a support agent...')),
+                {
+                    id: `sys-joined-${Date.now()}`,
+                    type: 'system',
+                    text: `${operatorName}${operatorDepartment ? ` from ${operatorDepartment}` : ''} joined`,
+                    timestamp: new Date().toISOString(),
+                }
+            ]);
+        }
+        prevOperatorNameRef.current = operatorName;
+    }, [operatorName, operatorDepartment]);
+
+    // Waiting timer
+    useEffect(() => {
+        if (chatMode === 'waiting') {
+            setWaitingSeconds(0);
+            waitingTimerRef.current = setInterval(() => {
+                setWaitingSeconds(prev => prev + 1);
+            }, 1000);
+        } else {
+            if (waitingTimerRef.current) {
+                clearInterval(waitingTimerRef.current);
+                waitingTimerRef.current = null;
+            }
+        }
+        return () => {
+            if (waitingTimerRef.current) clearInterval(waitingTimerRef.current);
+        };
+    }, [chatMode]);
+
+    const getWaitingMessage = () => {
+        if (waitingSeconds >= 45) return "Taking a bit longer than usual — you can leave a message if you'd prefer";
+        if (waitingSeconds >= 15) return 'Still connecting — our team will be right with you';
+        return settings.waiting_message || 'Please wait a moment';
+    };
+
+    // ── Welcome exit ─────────────────────────────────────────────────────────────
+    const WELCOME_EXIT_DURATION = 350;
     const exitWelcome = useCallback(() => {
         setWelcomeExiting(true);
         setTimeout(() => {
@@ -177,7 +250,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }, WELCOME_EXIT_DURATION);
     }, []);
 
-    // Close header menu when clicking outside
+    // ── Header menu ──────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!showHeaderMenu) return;
         const handler = (e) => {
@@ -198,7 +271,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     const handleSendTranscript = () => {
         setShowHeaderMenu(false);
-        // Compile messages into a mailto: link for now (backend email endpoint can be added later)
         const transcript = messages
             .map(m => `[${m.sender === 'user' ? 'You' : settings.bot_name || 'Bot'}] ${m.text}`)
             .join('\n\n');
@@ -207,6 +279,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
     };
 
+    // ── New chat ─────────────────────────────────────────────────────────────────
     const handleNewChat = () => {
         setIsInitializing(true);
         localStorage.removeItem('chat_session_id');
@@ -214,10 +287,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setSessionId(newSession);
         localStorage.setItem('chat_session_id', newSession);
         setShowWelcome(true);
-        // Reset auto-handoff state for the new session
         handoffTriggeredRef.current = false;
+        handoffFormInjectedRef.current = false;
         consecutiveFallbacks.current = 0;
         setExistingLeadInfo(null);
+        setLiveMessages([]);
+        setIsOperatorTyping(false);
+        setLastReadAt(null);
+        setIsLiveReconnecting(false);
+        setShowRating(false);
+        setShowEndConfirm(false);
+        setOfflineSubmitted(false);
+        setOfflineError(false);
+        setOfflineForm({ name: '', email: '', phone: '', message: '' });
         setTimeout(() => {
             setMessages([{
                 id: 'welcome',
@@ -227,16 +309,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 feedback: null
             }]);
             setIsReturningUser(false);
+            setChatMode('bot');
+            setOperatorName(null);
             setIsInitializing(false);
         }, 600);
     };
 
+    // ── Bot message send ─────────────────────────────────────────────────────────
     const handleSend = async (e, prefillText) => {
         if (e) e.preventDefault();
         const text = prefillText || inputText;
         if (!text.trim()) return;
 
-        // Smooth cross-fade out of welcome screen
         if (showWelcome) exitWelcome(); else setShowWelcome(false);
 
         const userMsg = {
@@ -248,30 +332,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         setMessages(prev => [...prev, userMsg]);
         setInputText('');
-        if (inputRef.current) {
-            inputRef.current.style.height = 'auto';
-        }
+        if (inputRef.current) inputRef.current.style.height = 'auto';
         setIsTyping(true);
 
-        // Smart handoff: frustration signal → show proactive offer button
-        // Keyword-based handoff intent is now detected server-side via suggest_handoff flag
-        if (detectFrustration()) {
-            setShowProminentHandoff(true);
-        }
+        if (detectFrustration()) setShowProminentHandoff(true);
 
         try {
-            // placeholderId is null until the first token arrives.
-            // The TypingIndicator (isTyping=true) stays visible the whole time the
-            // bot is "thinking" — it's hidden only when the first chunk is received
-            // and the streaming placeholder message is created.
             let placeholderId = null;
-
-            // Reset RAF buffer before each new stream
             chunkBufferRef.current = '';
-            if (rafRef.current) {
-                cancelAnimationFrame(rafRef.current);
-                rafRef.current = null;
-            }
+            if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
             await sendMessageStream(userMsg.text, sessionId, {
                 onMetadata: (metadata) => {
@@ -282,7 +351,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 },
                 onChunk: (chunk) => {
                     if (placeholderId === null) {
-                        // First token — swap TypingIndicator for the streaming message
                         placeholderId = Date.now() + 1;
                         setIsTyping(false);
                         setMessages(prev => [...prev, {
@@ -295,7 +363,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setStreamingId(placeholderId);
                         return;
                     }
-                    // Subsequent tokens — accumulate and flush once per animation frame
                     chunkBufferRef.current += chunk;
                     if (!rafRef.current) {
                         rafRef.current = requestAnimationFrame(() => {
@@ -315,20 +382,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 onFinalMetadata: (finalMeta) => {
                     if (finalMeta.message_id && placeholderId !== null) {
                         setMessages(prev => prev.map(msg =>
-                            msg.id === placeholderId
-                                ? { ...msg, id: finalMeta.message_id }
-                                : msg
+                            msg.id === placeholderId ? { ...msg, id: finalMeta.message_id } : msg
                         ));
                         setStreamingId(finalMeta.message_id);
                     }
-                    // Auto-trigger handoff when backend LLM detected human request intent
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
-                        // Short delay so user reads the AI's warm response before the form appears
+                        const delay = (settings.handoff_delay_seconds || 0) * 1000 || 600;
                         setTimeout(() => {
                             triggerHandoff();
                             handoffTriggeredRef.current = false;
-                        }, 600);
+                        }, delay);
                     }
                 },
                 onError: () => {
@@ -351,50 +415,35 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 }
             });
 
-            // Flush any tokens still buffered in the RAF queue before removing cursor
-            if (rafRef.current) {
-                cancelAnimationFrame(rafRef.current);
-                rafRef.current = null;
-            }
+            if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
             if (chunkBufferRef.current && placeholderId !== null) {
                 const remaining = chunkBufferRef.current;
                 chunkBufferRef.current = '';
                 setMessages(prev => prev.map(msg =>
-                    msg.id === placeholderId
-                        ? { ...msg, text: msg.text + remaining }
-                        : msg
+                    msg.id === placeholderId ? { ...msg, text: msg.text + remaining } : msg
                 ));
             }
 
             setIsTyping(false);
-            // Stream complete — stop showing cursor
             setStreamingId(null);
 
-            // Smart handoff: track consecutive fallback responses
-            // 1st fallback → show prominent button; 2nd+ consecutive → auto-trigger form
             setMessages(prev => {
-                // Reverse scan to find the last bot message; Array.find() returns the first match
                 const lastBot = [...prev].reverse().find(msg => msg.sender === 'bot');
                 if (lastBot && checkBotFallback(lastBot.text)) {
                     consecutiveFallbacks.current += 1;
                     if (consecutiveFallbacks.current >= 2 && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
                         consecutiveFallbacks.current = 0;
-                        setTimeout(() => {
-                            triggerHandoff();
-                            handoffTriggeredRef.current = false;
-                        }, 600);
+                        setTimeout(() => { triggerHandoff(); handoffTriggeredRef.current = false; }, (settings.handoff_delay_seconds || 0) * 1000 || 600);
                     } else if (consecutiveFallbacks.current === 1) {
                         setShowProminentHandoff(true);
                     }
                 } else {
-                    consecutiveFallbacks.current = 0; // good answer — reset counter
+                    consecutiveFallbacks.current = 0;
                 }
                 return prev;
             });
-
-        } catch (error) {
-            console.error("Failed to get response:", error);
+        } catch {
             setIsTyping(false);
             setMessages(prev => [...prev, {
                 id: Date.now() + 2,
@@ -406,7 +455,72 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
     };
 
-    // Handle lead form submission
+    // ── Handoff flow ─────────────────────────────────────────────────────────────
+    const injectHandoffForm = useCallback(() => {
+        setMessages(prev => {
+            if (prev.some(m => m.type === 'handoff_form')) return prev;
+            return [...prev, {
+                id: 'handoff-form',
+                type: 'handoff_form',
+                status: 'pending',
+                timestamp: new Date().toISOString(),
+            }];
+        });
+    }, []);
+
+    const triggerHandoff = useCallback(() => {
+        if (!sessionId) {
+            const newSession = `session_${crypto.randomUUID()}`;
+            setSessionId(newSession);
+            localStorage.setItem('chat_session_id', newSession);
+        }
+        if (handoffFormInjectedRef.current) return;
+        handoffFormInjectedRef.current = true;
+
+        if (showWelcome) {
+            exitWelcome();
+            setTimeout(injectHandoffForm, WELCOME_EXIT_DURATION);
+        } else {
+            injectHandoffForm();
+        }
+    }, [sessionId, showWelcome, exitWelcome, injectHandoffForm]);
+
+    const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
+    const handleHandoffSubmit = async (formData) => {
+        if (isSubmittingHandoff) return;
+        setIsSubmittingHandoff(true);
+        setMessages(prev => prev.map(m =>
+            m.type === 'handoff_form' ? { ...m, status: 'submitting' } : m
+        ));
+        try {
+            await requestHandoff(sessionId, formData);
+            setMessages(prev => [
+                ...prev.filter(m => m.type !== 'handoff_form'),
+                {
+                    id: `sys-connecting-${Date.now()}`,
+                    type: 'system',
+                    text: 'Connecting you with a support agent...',
+                    timestamp: new Date().toISOString(),
+                }
+            ]);
+            handoffFormInjectedRef.current = false;
+            setChatMode('waiting');
+        } catch {
+            setMessages(prev => prev.map(m =>
+                m.type === 'handoff_form' ? { ...m, status: 'pending' } : m
+            ));
+            handoffFormInjectedRef.current = false;
+        } finally {
+            setIsSubmittingHandoff(false);
+        }
+    };
+
+    const handleHandoffCancel = () => {
+        setMessages(prev => prev.filter(m => m.type !== 'handoff_form'));
+        handoffFormInjectedRef.current = false;
+    };
+
+    // ── Lead form submit ─────────────────────────────────────────────────────────
     const handleLeadFormSubmit = async (formData) => {
         const newSessionId = sessionId || `session_${crypto.randomUUID()}`;
         if (!sessionId) {
@@ -420,41 +534,103 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setShowWelcome(true);
     };
 
-    // Handle handoff form submission (debounced to prevent duplicate requests)
-    const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
-    const handleHandoffSubmit = async (formData) => {
-        if (isSubmittingHandoff) return;
-        setIsSubmittingHandoff(true);
+    // ── Live chat send (via WS) ──────────────────────────────────────────────────
+    const handleLiveSend = useCallback((text) => {
+        if (!wsSendRef.current || !text.trim()) return;
+
+        const msgId = `live-${Date.now()}`;
+        const timestamp = new Date().toISOString();
+        const newMsg = { id: msgId, text, sender: 'user', timestamp, failed: false, status: 'sent' };
+
         try {
-            await requestHandoff(sessionId, formData);
-            setChatMode('waiting');
-        } finally {
-            setIsSubmittingHandoff(false);
+            wsSendRef.current(text);
+        } catch {
+            newMsg.failed = true;
         }
-    };
+        setLiveMessages(prev => [...prev, newMsg]);
+    }, []);
 
-    // Trigger handoff (called from a button or auto-detected)
-    const triggerHandoff = () => {
-        // Ensure we have a session for the handoff
-        if (!sessionId) {
-            const newSession = `session_${crypto.randomUUID()}`;
-            setSessionId(newSession);
-            localStorage.setItem('chat_session_id', newSession);
-        }
-        if (showWelcome) {
-            // Welcome → handoff: fade out welcome content, then switch mode
-            exitWelcome();
-            setTimeout(() => setChatMode('handoff_form'), WELCOME_EXIT_DURATION);
+    // ── Return to bot after live chat ends ───────────────────────────────────────
+    const handleReturnToBot = useCallback(() => {
+        setShowRating(false);
+        setShowEndConfirm(false);
+        setLiveMessages([]);
+        setIsOperatorTyping(false);
+        setLastReadAt(null);
+        setIsLiveReconnecting(false);
+        setOfflineSubmitted(false);
+        setOfflineError(false);
+        setOfflineForm({ name: '', email: '', phone: '', message: '' });
+        setChatMode('bot');
+        setOperatorName(null);
+        handoffFormInjectedRef.current = false;
+        setMessages(prev => [...prev, {
+            id: Date.now(),
+            text: "Thanks for your message! We'll get back to you soon. In the meantime, feel free to ask me anything.",
+            sender: 'bot',
+            timestamp: new Date().toISOString(),
+            feedback: null,
+        }]);
+    }, []);
+
+    const handleChatEnded = useCallback(() => {
+        if (settings?.feature_flags?.post_chat_rating === false) {
+            handleReturnToBot();
         } else {
-            setChatMode('handoff_form');
+            setShowRating(true);
+        }
+    }, [settings, handleReturnToBot]);
+
+    const handleSubmitRating = async (stars) => {
+        setRatingSubmitting(true);
+        try {
+            await fetch(`${API_URL}/operators/sessions/${sessionId}/rating`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Bot-Key': settings.bot_key || window.OYECHATS_BOT_KEY || '',
+                },
+                body: JSON.stringify({ rating: stars }),
+            });
+        } catch { /* non-fatal */ } finally {
+            setRatingSubmitting(false);
+            handleReturnToBot();
         }
     };
 
-    // --- Smart handoff emphasis logic ---
-    // Note: keyword-based handoff intent detection is handled server-side via suggest_handoff flag
-    const FALLBACK_PATTERNS = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+    // ── Offline message submit ───────────────────────────────────────────────────
+    const handleOfflineSubmit = async (e) => {
+        e.preventDefault();
+        setOfflineSubmitting(true);
+        try {
+            await submitOfflineMessage({
+                name: offlineForm.name,
+                email: offlineForm.email,
+                phone: offlineForm.phone || null,
+                message: offlineForm.message,
+                session_id: sessionId,
+            });
+            setOfflineSubmitted(true);
+        } catch {
+            setOfflineError(true);
+        } finally {
+            setOfflineSubmitting(false);
+        }
+    };
 
-    // Detect frustration: 3+ user messages within 30 seconds
+    // ── WS callbacks exposed from LiveChatMode ───────────────────────────────────
+    const handleWsReady = useCallback(({ send, typing, triggerFilePick, endChat }) => {
+        wsSendRef.current = send;
+        wsTypingRef.current = typing;
+        wsFilePickRef.current = triggerFilePick;
+        wsEndChatRef.current = endChat;
+    }, []);
+
+    const handleLiveMessagesChange = useCallback((updater) => {
+        setLiveMessages(typeof updater === 'function' ? updater : () => updater);
+    }, []);
+
+    // ── Smart handoff helpers ────────────────────────────────────────────────────
     const detectFrustration = useCallback(() => {
         const now = Date.now();
         recentMessageTimestamps.current = recentMessageTimestamps.current.filter(t => now - t < 30000);
@@ -462,53 +638,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         return recentMessageTimestamps.current.length >= 3;
     }, []);
 
-    // Check if latest bot response is a fallback / low-confidence answer
     const checkBotFallback = useCallback((botText) => {
-        return FALLBACK_PATTERNS.test(botText);
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        const fallbackPatterns = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+        return fallbackPatterns.test(botText);
+    }, []);
 
-    // Add message from live chat back to main messages (for transition messages)
-    const handleLiveChatMessage = (msg) => {
-        setMessages(prev => [...prev, msg]);
-        setChatMode('bot');
-    };
-
-    // Render based on chat mode
-    const isLiveMode = ['handoff_form', 'waiting', 'live', 'unavailable'].includes(chatMode);
-
-    // Lead capture form (shown before welcome for new visitors)
-    if (showLeadForm) {
-        return (
-            <LeadCaptureForm
-                settings={settings}
-                currentTheme={currentTheme}
-                onClose={onClose}
-                onSubmit={handleLeadFormSubmit}
-                isAnimating={isAnimating}
-            />
-        );
-    }
-
-    // Welcome screen — slides up smoothly when exiting (same bg, no black flash)
-    if (showWelcome) {
-        return (
-            <WelcomeScreen
-                settings={settings}
-                currentTheme={currentTheme}
-                onClose={onClose}
-                onSend={handleSend}
-                inputText={inputText}
-                setInputText={setInputText}
-                inputRef={inputRef}
-                isAnimating={welcomeExiting ? 'done' : isAnimating}
-                welcomeExiting={welcomeExiting}
-                exitDuration={WELCOME_EXIT_DURATION}
-                onTalkToHuman={settings.live_chat_enabled !== false ? triggerHandoff : undefined}
-            />
-        );
-    }
-
-    // Dynamic header content based on chat mode (compact 32px avatars)
+    // ── Header rendering ─────────────────────────────────────────────────────────
     const renderHeader = () => {
         if (chatMode === 'waiting') {
             return (
@@ -516,7 +651,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
                         <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
                     </div>
-                    <h3 className="font-semibold text-sm text-[#16202C]">Connecting to support...</h3>
+                    <h3 className="font-semibold text-sm text-[#16202C]">{settings.waiting_message || 'Connecting to support...'}</h3>
                 </div>
             );
         }
@@ -550,7 +685,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </div>
             );
         }
-        // Default: bot mode — timestamp as status bar (identity shown via floating agent badge)
         return (
             <span className="text-[11px] text-gray-400 font-medium tracking-wide">
                 {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
@@ -558,7 +692,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         );
     };
 
-    // Floating glass agent badge — shows who you're chatting with
+    // ── Floating agent badge ─────────────────────────────────────────────────────
     const renderAgentBadge = () => {
         const isLive = chatMode === 'live' && operatorName;
         return (
@@ -589,9 +723,101 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         );
     };
 
+    // ── Inline live message renderer ─────────────────────────────────────────────
+    const renderLiveMessage = (msg) => {
+        const userBubbleBg = settings.user_bubble_color || '#DBE9FF';
+        const primaryColor = settings.primary_color || '#3A0CA3';
+
+        if (msg.sender === 'user') {
+            return (
+                <div key={msg.id} className="flex flex-col items-end">
+                    <div className="flex justify-end w-full">
+                        <div
+                            className="max-w-[85%] px-4 py-3 rounded-2xl text-[14px] break-words"
+                            style={{ backgroundColor: userBubbleBg, color: '#16202C' }}
+                        >
+                            {msg.file_url ? (
+                                msg.content_type?.startsWith('image/') ? (
+                                    <img
+                                        src={msg.file_url}
+                                        alt={msg.filename || 'image'}
+                                        className="max-w-[200px] rounded-xl block cursor-zoom-in hover:opacity-90 transition-opacity"
+                                    />
+                                ) : (
+                                    <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
+                                        📎 {msg.filename || 'file'}
+                                    </a>
+                                )
+                            ) : (
+                                <p className="break-words" style={{ color: '#16202C' }}>{msg.text}</p>
+                            )}
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-1 mt-0.5 mr-1">
+                        {msg.failed ? (
+                            <button
+                                type="button"
+                                aria-label="Message not sent — tap to retry"
+                                onClick={() => {
+                                    if (wsSendRef.current && msg.text) {
+                                        try {
+                                            wsSendRef.current(msg.text);
+                                            setLiveMessages(prev => prev.map(m =>
+                                                m.id === msg.id ? { ...m, failed: false, status: 'sent' } : m
+                                            ));
+                                        } catch { /* stay failed */ }
+                                    }
+                                }}
+                                className="text-[10px] text-red-500 flex items-center gap-0.5 hover:text-red-700 underline cursor-pointer"
+                            >
+                                <AlertCircle className="w-3 h-3" /> Not sent · Retry
+                            </button>
+                        ) : (
+                            <span
+                                className="text-[10px] select-none"
+                                style={{ color: (lastReadAt && msg.timestamp <= lastReadAt) ? '#53bdeb' : '#9CA3AF' }}
+                                title={(lastReadAt && msg.timestamp <= lastReadAt) ? 'Read' : 'Sent'}
+                            >
+                                {(lastReadAt && msg.timestamp <= lastReadAt) ? '✓✓' : '✓'}
+                            </span>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Operator message
+        return (
+            <div key={msg.id} className="flex flex-col items-start w-full">
+                {msg.operatorName && (
+                    <p className="text-[11px] font-semibold mb-0.5 ml-0.5" style={{ color: primaryColor }}>{msg.operatorName}</p>
+                )}
+                {msg.file_url ? (
+                    msg.content_type?.startsWith('image/') ? (
+                        <img
+                            src={msg.file_url}
+                            alt={msg.filename || 'image'}
+                            className="max-w-[200px] rounded-xl block hover:opacity-90 transition-opacity"
+                        />
+                    ) : (
+                        <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
+                            📎 {msg.filename || 'file'}
+                        </a>
+                    )
+                ) : (
+                    <p className="text-[14px] text-[#16202C] leading-relaxed break-words">{msg.text}</p>
+                )}
+            </div>
+        );
+    };
+
+    // ── Main render ──────────────────────────────────────────────────────────────
     return (
-        <div ref={containerRef} className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
-            {/* Header — minimal in bot mode (just icons), contextual in other modes */}
+        <div
+            ref={containerRef}
+            className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}
+        >
+            {/* ── Header ── */}
             <div className={currentTheme.header}>
                 {renderHeader() || <div />}
                 <div className="flex items-center gap-1 relative" ref={headerMenuRef}>
@@ -604,7 +830,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <Plus className="w-4 h-4" />
                         </button>
                     )}
-                    {/* Three-dot menu */}
                     <button
                         onClick={() => setShowHeaderMenu(prev => !prev)}
                         className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
@@ -620,7 +845,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         <X className="w-5 h-5" />
                     </button>
 
-                    {/* Dropdown menu */}
                     {showHeaderMenu && (
                         <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
                             <button
@@ -636,7 +860,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             >
                                 <Volume2 className="w-4 h-4 text-gray-400" />
                                 <span className="flex-1 text-left">Sounds</span>
-                                {/* Toggle switch */}
                                 <div className={`w-9 h-5 rounded-full relative transition-colors duration-200 ${soundsEnabled ? 'bg-green-500' : 'bg-gray-300'}`}>
                                     <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${soundsEnabled ? 'left-[18px]' : 'left-0.5'}`} />
                                 </div>
@@ -646,26 +869,317 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </div>
             </div>
 
-            {/* Floating glass agent badge — overlaps header bottom edge for premium feel */}
-            {!isInitializing && !showWelcome && (chatMode === 'bot' || (chatMode === 'live' && operatorName)) && (
+            {/* ── Floating agent badge (always on top of messages area) ── */}
+            {!isInitializing && !showLeadForm && (chatMode === 'bot' || (chatMode === 'live' && operatorName)) && (
                 <div className="shrink-0 flex justify-center -mb-5 relative z-30" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                     {renderAgentBadge()}
                 </div>
             )}
 
-            {/* Content — keyed by chatMode so each mode switch triggers enter animation */}
-            <div key={chatMode} className="mode-enter flex flex-col flex-1 overflow-hidden relative">
+            {/* ── Unified messages area — one scroll, always visible ── */}
+            <div
+                className={`${currentTheme.messagesArea} relative`}
+                style={{
+                    backgroundColor: (settings.background_color && settings.background_color !== '#ffffff') ? settings.background_color : undefined,
+                    paddingTop: !isInitializing && !showLeadForm ? 24 : undefined,
+                }}
+                aria-live="polite"
+                aria-label="Chat messages"
+                role="log"
+            >
+                {/* Welcome overlay — absolute, covers the messages area until first send */}
+                {showWelcome && !isInitializing && (
+                    <div
+                        className="absolute inset-0 z-10 flex flex-col items-start justify-end px-5 pb-4 pointer-events-auto"
+                        style={{
+                            backgroundColor: (settings.background_color && settings.background_color !== '#ffffff')
+                                ? settings.background_color
+                                : '#F8F8F8',
+                        }}
+                    >
+                        <WelcomeScreen
+                            settings={settings}
+                            onSend={handleSend}
+                            onTalkToHuman={settings.live_chat_enabled !== false ? triggerHandoff : undefined}
+                            welcomeExiting={welcomeExiting}
+                            exitDuration={WELCOME_EXIT_DURATION}
+                        />
+                    </div>
+                )}
 
-            {/* Handoff form */}
-            {chatMode === 'handoff_form' ? (
-                <HandoffForm
-                    settings={settings}
-                    onSubmit={handleHandoffSubmit}
-                    onCancel={() => setChatMode('bot')}
-                    existingLeadInfo={existingLeadInfo}
+                {/* Lead capture form overlay — shown before any conversation begins */}
+                {showLeadForm && (
+                    <div className="absolute inset-0 z-20 pointer-events-auto">
+                        <LeadCaptureForm
+                            settings={settings}
+                            currentTheme={currentTheme}
+                            onClose={onClose}
+                            onSubmit={handleLeadFormSubmit}
+                            isAnimating={isAnimating}
+                        />
+                    </div>
+                )}
+
+                {/* Loading spinner */}
+                {isInitializing && (
+                    <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                        <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+                        <p className="text-gray-500 font-medium animate-pulse text-sm">Starting new chat...</p>
+                    </div>
+                )}
+
+                {/* Bot conversation messages (always visible, even during live chat) */}
+                {!isInitializing && messages.map((msg) => {
+                    if (msg.type === 'system') {
+                        return <SystemMessage key={msg.id} text={msg.text} />;
+                    }
+                    if (msg.type === 'handoff_form') {
+                        return (
+                            <HandoffForm
+                                key={msg.id}
+                                settings={settings}
+                                onSubmit={handleHandoffSubmit}
+                                onCancel={handleHandoffCancel}
+                                existingLeadInfo={existingLeadInfo}
+                                status={msg.status}
+                            />
+                        );
+                    }
+                    return (
+                        <MessageBubble
+                            key={msg.id}
+                            msg={msg}
+                            currentTheme={currentTheme}
+                            settings={settings}
+                            streamingId={streamingId}
+                        />
+                    );
+                })}
+
+                {/* Bot typing indicator */}
+                {isTyping && <TypingIndicator settings={settings} />}
+
+                {/* Reconnecting banner */}
+                {isLiveReconnecting && (
+                    <div className="mx-3 my-1 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
+                        <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                        <span className="text-xs text-amber-700 font-medium">Reconnecting...</span>
+                    </div>
+                )}
+
+                {/* Live chat session timestamp divider */}
+                {!isInitializing && liveMessages.length > 0 && (
+                    <SystemMessage text={new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
+                )}
+
+                {/* Live chat messages — seamless continuation in the same stream */}
+                {!isInitializing && liveMessages.map(renderLiveMessage)}
+
+                {/* Operator typing indicator */}
+                {isOperatorTyping && (
+                    <div className="flex justify-start px-5">
+                        <div className="flex gap-1.5 px-1 py-2">
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                        </div>
+                    </div>
+                )}
+
+                {/* Waiting state — inline spinner below the handoff system message */}
+                {chatMode === 'waiting' && !isInitializing && (
+                    <div className="flex flex-col items-center py-4 px-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                        <div
+                            className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin mb-2"
+                            style={{ borderColor: `${settings.primary_color || '#3A0CA3'}40`, borderTopColor: settings.primary_color || '#3A0CA3' }}
+                        />
+                        <p
+                            className="text-[13px] text-gray-500 text-center"
+                            key={getWaitingMessage()}
+                            style={{ animation: 'fadeUp 0.3s ease-out' }}
+                        >
+                            {getWaitingMessage()}
+                        </p>
+                        {waitingSeconds >= 45 && (
+                            <button
+                                onClick={() => setChatMode('unavailable')}
+                                className="mt-2 text-[12px] font-medium hover:underline transition-colors"
+                                style={{ color: settings.primary_color || '#3A0CA3' }}
+                            >
+                                Leave a message instead
+                            </button>
+                        )}
+                        <button
+                            onClick={() => {
+                                if (wsEndChatRef.current) wsEndChatRef.current();
+                                setChatMode('bot');
+                                setOperatorName(null);
+                            }}
+                            className="mt-1 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                            Cancel and return to AI chat
+                        </button>
+                    </div>
+                )}
+
+                {/* Unavailable — offline message form as inline card */}
+                {chatMode === 'unavailable' && !isInitializing && (
+                    <div className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                        {offlineError ? (
+                            <div className="text-center py-2">
+                                <AlertCircle className="w-7 h-7 text-red-400 mx-auto mb-2" />
+                                <p className="text-[13px] text-gray-600 mb-3">We couldn't send your message. Please try again.</p>
+                                <button
+                                    onClick={() => setOfflineError(false)}
+                                    className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
+                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                >
+                                    Try Again
+                                </button>
+                            </div>
+                        ) : offlineSubmitted ? (
+                            <div className="text-center py-2">
+                                <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
+                                <p className="text-[13px] font-semibold text-[#16202C] mb-1">Message sent!</p>
+                                <p className="text-[12px] text-gray-500 mb-3">
+                                    We'll get back to you at <strong>{offlineForm.email}</strong>
+                                    {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
+                                </p>
+                                <button
+                                    onClick={handleReturnToBot}
+                                    className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
+                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                >
+                                    Continue chatting with AI
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                    <p className="text-[13px] font-semibold text-[#16202C]">{settings.offline_message || 'Team is currently unavailable'}</p>
+                                </div>
+                                <p className="text-[12px] text-gray-500 mb-3">Leave us a message and we'll get back to you.</p>
+                                <form onSubmit={handleOfflineSubmit} className="space-y-2">
+                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                        <input type="text" placeholder="Your name" required value={offlineForm.name}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                    </div>
+                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                        <input type="email" placeholder="Email address" required value={offlineForm.email}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, email: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                    </div>
+                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                        <input type="tel" placeholder="Phone number (optional)" value={offlineForm.phone}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, phone: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                    </div>
+                                    <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+                                        <textarea placeholder="How can we help you?" required rows={2} value={offlineForm.message}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
+                                    </div>
+                                    <button type="submit" disabled={offlineSubmitting}
+                                        className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
+                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}>
+                                        {offlineSubmitting
+                                            ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                            : 'Send Message'}
+                                    </button>
+                                </form>
+                            </>
+                        )}
+                    </div>
+                )}
+
+                {/* Rating card — inline in stream after live chat ends */}
+                {showRating && settings?.feature_flags?.post_chat_rating !== false && (
+                    <div className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                        <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: settings.primary_color || '#3A0CA3' }} />
+                        <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">Chat ended</p>
+                        <p className="text-[12px] text-gray-500 mb-3">How was your experience?</p>
+                        <div className="flex justify-center gap-2 mb-2">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                                <button
+                                    key={star}
+                                    onClick={() => !ratingSubmitting && handleSubmitRating(star)}
+                                    disabled={ratingSubmitting}
+                                    aria-label={`Rate ${star} star${star !== 1 ? 's' : ''}`}
+                                    className="text-2xl transition-transform hover:scale-125 disabled:opacity-50 focus-visible:outline-none"
+                                >
+                                    ⭐
+                                </button>
+                            ))}
+                        </div>
+                        <button
+                            onClick={() => !ratingSubmitting && handleReturnToBot()}
+                            disabled={ratingSubmitting}
+                            className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                        >
+                            Skip
+                        </button>
+                    </div>
+                )}
+
+                {/* End-chat confirmation */}
+                {showEndConfirm && (
+                    <div className="mx-3 my-1 px-3 py-3 bg-red-50 border border-red-200 rounded-2xl">
+                        <p className="text-xs text-red-700 font-medium mb-2">End this conversation and return to AI?</p>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => {
+                                    if (wsEndChatRef.current) wsEndChatRef.current();
+                                    setShowEndConfirm(false);
+                                }}
+                                className="flex-1 py-1.5 rounded-lg bg-red-500 text-white text-xs font-medium"
+                            >
+                                Yes, end chat
+                            </button>
+                            <button
+                                onClick={() => setShowEndConfirm(false)}
+                                className="flex-1 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 text-xs font-medium"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                <div ref={messagesEndRef} />
+            </div>
+
+            {/* ── Unified ChatInput — always visible (hidden only behind lead form) ── */}
+            {!showLeadForm && (
+                <ChatInput
+                    inputText={inputText}
+                    setInputText={setInputText}
+                    onSubmit={handleSend}
+                    isTyping={isTyping}
+                    currentTheme={currentTheme}
+                    inputRef={inputRef}
+                    onHandoff={!isInitializing && chatMode === 'bot' && settings.live_chat_enabled !== false ? triggerHandoff : undefined}
+                    showProminentHandoff={showProminentHandoff}
+                    primaryColor={settings.primary_color}
+                    showBranding={settings?.feature_flags?.show_branding !== false}
+                    chatMode={chatMode}
+                    onLiveSend={handleLiveSend}
+                    onLiveTyping={() => wsTypingRef.current?.()}
+                    onEndChat={() => setShowEndConfirm(true)}
+                    onFilePick={() => wsFilePickRef.current?.()}
+                    fileSharing={settings?.feature_flags?.file_sharing === true}
+                    isReconnecting={isLiveReconnecting}
+                    uploadProgress={uploadProgress}
                 />
-            ) : isLiveMode ? (
-                /* Live chat / waiting / unavailable modes */
+            )}
+
+            {/* ── Headless LiveChatMode — WebSocket + file upload logic only ── */}
+            {isLiveMode && sessionId && (
                 <LiveChatMode
                     sessionId={sessionId}
                     settings={settings}
@@ -673,58 +1187,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     setChatMode={setChatMode}
                     setOperatorName={setOperatorName}
                     setOperatorDepartment={setOperatorDepartment}
-                    onNewMessage={handleLiveChatMessage}
-                    botMessages={messages.slice(-5)}
-                    onConnectionStatusChange={setLiveConnectionStatus}
+                    onConnectionStatusChange={(status) => {
+                        setLiveConnectionStatus(status);
+                        if (status === 'reconnecting') setIsLiveReconnecting(true);
+                        else if (status === 'connected') setIsLiveReconnecting(false);
+                    }}
+                    onLiveMessagesChange={handleLiveMessagesChange}
+                    onOperatorTyping={setIsOperatorTyping}
+                    onLastReadAtChange={setLastReadAt}
+                    onReconnectingChange={setIsLiveReconnecting}
+                    onWsReady={handleWsReady}
+                    onChatEnded={handleChatEnded}
                 />
-            ) : (
-                /* Normal bot chat mode */
-                <>
-                    <div className={currentTheme.messagesArea} style={{
-                        backgroundColor: (settings.background_color && settings.background_color !== '#ffffff') ? settings.background_color : undefined,
-                        paddingTop: !isInitializing ? 24 : undefined,
-                    }}>
-                        {isInitializing ? (
-                            <div className="flex-1 flex flex-col items-center justify-center gap-3">
-                                <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-                                <p className="text-gray-500 font-medium animate-pulse text-sm">Starting new chat...</p>
-                            </div>
-                        ) : (
-                            <>
-                                {messages.map((msg) => (
-                                    <MessageBubble
-                                        key={msg.id}
-                                        msg={msg}
-                                        currentTheme={currentTheme}
-                                        settings={settings}
-                                        streamingId={streamingId}
-                                    />
-                                ))}
-
-                                {isTyping && <TypingIndicator settings={settings} />}
-                                <div ref={messagesEndRef} />
-                            </>
-                        )}
-                    </div>
-
-                    {/* Input area — branding moved inside ChatInput's action bar */}
-                    <ChatInput
-                        inputText={inputText}
-                        setInputText={setInputText}
-                        onSubmit={handleSend}
-                        isTyping={isTyping}
-                        settings={settings}
-                        currentTheme={currentTheme}
-                        inputRef={inputRef}
-                        onHandoff={!isInitializing && settings.live_chat_enabled !== false ? triggerHandoff : undefined}
-                        showProminentHandoff={showProminentHandoff}
-                        primaryColor={settings.primary_color}
-                        showBranding={settings?.feature_flags?.show_branding !== false}
-                    />
-                </>
             )}
-
-            </div>{/* end mode-enter content wrapper */}
         </div>
     );
 };

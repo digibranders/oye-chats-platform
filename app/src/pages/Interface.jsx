@@ -131,7 +131,13 @@ export default function Interface({ embedded = false }) {
     const [emailOnQualified, setEmailOnQualified] = useState(true);
     const [emailOnHandoff, setEmailOnHandoff] = useState(true);
     const [liveChatEnabled, setLiveChatEnabled] = useState(true);
+    const [welcomeTitle, setWelcomeTitle] = useState('Hi there 👋');
+    const [welcomeSubtitle, setWelcomeSubtitle] = useState('How can we help you today?');
+    const [waitingMessage, setWaitingMessage] = useState('Connecting you to support...');
+    const [offlineMessage, setOfflineMessage] = useState('Our team is currently unavailable.');
+    const [handoffDelaySeconds, setHandoffDelaySeconds] = useState(0);
     const [activeTab, setActiveTab] = useState('General');
+    const [previewState, setPreviewState] = useState('chat');
     const inputRef = useRef(null);
 
     // Crop state
@@ -165,6 +171,11 @@ export default function Interface({ embedded = false }) {
                 setEmailOnQualified(settings.email_on_qualified ?? true);
                 setEmailOnHandoff(settings.email_on_handoff ?? true);
                 setLiveChatEnabled(settings.live_chat_enabled ?? true);
+                setWelcomeTitle(settings.welcome_title || 'Hi there 👋');
+                setWelcomeSubtitle(settings.welcome_subtitle || 'How can we help you today?');
+                setWaitingMessage(settings.waiting_message || 'Connecting you to support...');
+                setOfflineMessage(settings.offline_message || 'Our team is currently unavailable.');
+                setHandoffDelaySeconds(settings.handoff_delay_seconds ?? 0);
                 if (settings.bot_logo) {
                     setLogo(settings.bot_logo);
                 } else {
@@ -187,7 +198,7 @@ export default function Interface({ embedded = false }) {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
-    const tabs = ['General', 'Avatar', 'Leads Form', 'Custom Brand'];
+    const tabs = ['General', 'Avatar', 'Leads Form', 'Live Chat', 'Custom Brand'];
 
     const handleFile = (file) => {
         if (!isBotManager) return;
@@ -252,7 +263,12 @@ export default function Interface({ embedded = false }) {
                 notification_email: notificationEmail || null,
                 email_on_qualified: emailOnQualified,
                 email_on_handoff: emailOnHandoff,
-                live_chat_enabled: liveChatEnabled
+                live_chat_enabled: liveChatEnabled,
+                welcome_title: welcomeTitle,
+                welcome_subtitle: welcomeSubtitle,
+                waiting_message: waitingMessage,
+                offline_message: offlineMessage,
+                handoff_delay_seconds: handoffDelaySeconds,
             };
             console.log('[Interface] Saving settings:', payload, 'botId:', selectedBot?.id);
             await updateClientSettings(payload, selectedBot?.id);
@@ -882,12 +898,128 @@ export default function Interface({ embedded = false }) {
                                         <div className="w-9 h-5 bg-secondary-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
                                     </label>
                                 </div>
-                                <div className="flex items-center justify-between py-2">
-                                    <span className="text-[13px] text-secondary-700">Enable live chat (show &quot;Talk to a human&quot; in widget)</span>
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input type="checkbox" className="sr-only peer" checked={liveChatEnabled} onChange={(e) => setLiveChatEnabled(e.target.checked)} />
-                                        <div className="w-9 h-5 bg-secondary-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
-                                    </label>
+                            </div>
+                        </div>
+                    ) : activeTab === 'Live Chat' ? (
+                        <div className="space-y-6 animate-fade-in">
+                            {/* Master Toggle */}
+                            <div>
+                                <h3 className="text-[15px] font-bold text-secondary-900 flex items-center gap-2">
+                                    <Settings2 className="w-4 h-4 text-primary-500" />
+                                    Live Chat
+                                </h3>
+                                <p className="text-[13px] text-secondary-500 mt-0.5">
+                                    Allow visitors to request a live operator during a chat session.
+                                </p>
+                            </div>
+                            <div className="bg-white p-5 rounded-2xl border border-secondary-200 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <h4 className="text-[14px] font-semibold text-secondary-900">Enable Live Chat</h4>
+                                    <p className="text-[12px] text-secondary-500 mt-1">Show &quot;Talk to a human&quot; button in the widget.</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" className="sr-only peer" checked={liveChatEnabled} onChange={(e) => setLiveChatEnabled(e.target.checked)} />
+                                    <div className="w-11 h-6 bg-secondary-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                                </label>
+                            </div>
+
+                            {/* Widget Messages */}
+                            <div className="border-t border-secondary-200 pt-6">
+                                <h3 className="text-[15px] font-bold text-secondary-900 flex items-center gap-2">
+                                    <Bot className="w-4 h-4 text-primary-500" />
+                                    Widget Messages
+                                </h3>
+                                <p className="text-[13px] text-secondary-500 mt-0.5">
+                                    Customize the text visitors see when they open the chat.
+                                </p>
+                            </div>
+                            <div className="bg-white p-5 rounded-2xl border border-secondary-200 shadow-sm space-y-4">
+                                <div className="space-y-2">
+                                    <label className="text-[13px] font-bold text-secondary-700">Welcome Title</label>
+                                    <input
+                                        type="text"
+                                        value={welcomeTitle}
+                                        onChange={(e) => setWelcomeTitle(e.target.value)}
+                                        maxLength={80}
+                                        placeholder="Hi there 👋"
+                                        className="w-full h-10 px-3 text-sm text-secondary-600 bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                    />
+                                    <p className="text-[11px] text-secondary-400">Main heading shown on the welcome screen.</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[13px] font-bold text-secondary-700">Welcome Subtitle</label>
+                                    <input
+                                        type="text"
+                                        value={welcomeSubtitle}
+                                        onChange={(e) => setWelcomeSubtitle(e.target.value)}
+                                        maxLength={120}
+                                        placeholder="How can we help you today?"
+                                        className="w-full h-10 px-3 text-sm text-secondary-600 bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                    />
+                                    <p className="text-[11px] text-secondary-400">Subtitle shown below the welcome title.</p>
+                                </div>
+                            </div>
+
+                            {/* What happens when... */}
+                            <div className="border-t border-secondary-200 pt-6">
+                                <h3 className="text-[15px] font-bold text-secondary-900 flex items-center gap-2">
+                                    <Sparkles className="w-4 h-4 text-primary-500" />
+                                    What happens when…
+                                </h3>
+                                <p className="text-[13px] text-secondary-500 mt-0.5">
+                                    Configure what visitors see in each availability state.
+                                </p>
+                            </div>
+
+                            {/* Waiting state */}
+                            <div className="bg-white p-5 rounded-2xl border border-secondary-200 shadow-sm space-y-4">
+                                <div>
+                                    <h4 className="text-[14px] font-semibold text-secondary-900">Visitor requests live chat</h4>
+                                    <p className="text-[12px] text-secondary-500 mt-0.5">Shown while the visitor waits for an operator to accept.</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[13px] font-bold text-secondary-700">Waiting Message</label>
+                                    <textarea
+                                        value={waitingMessage}
+                                        onChange={(e) => setWaitingMessage(e.target.value)}
+                                        maxLength={200}
+                                        rows={2}
+                                        placeholder="Connecting you to support..."
+                                        className="w-full px-3 py-2.5 text-sm text-secondary-600 bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400 resize-none"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[13px] font-bold text-secondary-700">Handoff Delay</label>
+                                    <p className="text-[11px] text-secondary-400">Time before the handoff form appears after the bot suggests live chat.</p>
+                                    <select
+                                        value={handoffDelaySeconds}
+                                        onChange={(e) => setHandoffDelaySeconds(Number(e.target.value))}
+                                        className="h-10 px-3 text-sm text-secondary-600 bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                    >
+                                        <option value={0}>Immediately</option>
+                                        <option value={2}>After 2 seconds</option>
+                                        <option value={5}>After 5 seconds</option>
+                                        <option value={10}>After 10 seconds</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Offline / unavailable state */}
+                            <div className="bg-white p-5 rounded-2xl border border-secondary-200 shadow-sm space-y-4">
+                                <div>
+                                    <h4 className="text-[14px] font-semibold text-secondary-900">No operators are available</h4>
+                                    <p className="text-[12px] text-secondary-500 mt-0.5">Shown when live chat is off or all operators are offline.</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[13px] font-bold text-secondary-700">Offline / Unavailable Message</label>
+                                    <textarea
+                                        value={offlineMessage}
+                                        onChange={(e) => setOfflineMessage(e.target.value)}
+                                        maxLength={200}
+                                        rows={2}
+                                        placeholder="Our team is currently unavailable."
+                                        className="w-full px-3 py-2.5 text-sm text-secondary-600 bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400 resize-none"
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -931,13 +1063,30 @@ export default function Interface({ embedded = false }) {
 
                 {/* Right Side: 40% Live Preview Column (Sticky) */}
                 <div className="lg:w-[40%] flex flex-col items-center sticky top-8 animate-fade-in" style={{ animationDelay: '0.15s' }}>
-                    <div className="flex items-center justify-between w-full max-w-[360px] mb-4 px-2">
+                    <div className="flex items-center justify-between w-full max-w-[360px] mb-3 px-2">
                         <span className="text-[11px] font-black uppercase tracking-widest text-secondary-400">Live Preview</span>
                         <div className="flex gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-red-400/30" />
                             <div className="w-2 h-2 rounded-full bg-amber-400/30" />
                             <div className="w-2 h-2 rounded-full bg-green-400/30" />
                         </div>
+                    </div>
+
+                    {/* Preview State Tabs */}
+                    <div className="flex gap-1 bg-secondary-100 p-1 rounded-lg w-full max-w-[360px] mb-3">
+                        {[
+                            { key: 'chat', label: 'Chat' },
+                            { key: 'waiting', label: 'Waiting' },
+                            { key: 'unavailable', label: 'Unavailable' },
+                        ].map(({ key, label }) => (
+                            <button
+                                key={key}
+                                onClick={() => setPreviewState(key)}
+                                className={`flex-1 py-1.5 text-[11px] font-semibold rounded-md transition-all ${previewState === key ? 'bg-white text-secondary-900 shadow-sm' : 'text-secondary-500 hover:text-secondary-700'}`}
+                            >
+                                {label}
+                            </button>
+                        ))}
                     </div>
 
                     {/* Chat Window Preview Wrapper — matches widget classic theme */}
@@ -966,9 +1115,20 @@ export default function Interface({ embedded = false }) {
                                         <Bot className="w-5 h-5 text-white" />
                                     </div>
                                 )}
-                                <span className="font-semibold text-sm text-[#16202C]">
-                                    {botName || 'AI Assistant'}
-                                </span>
+                                <div className="flex flex-col">
+                                    <span className="font-semibold text-sm text-[#16202C] leading-tight">
+                                        {botName || 'AI Assistant'}
+                                    </span>
+                                    {previewState === 'waiting' && (
+                                        <span className="text-[11px] text-amber-500 font-medium">Connecting...</span>
+                                    )}
+                                    {previewState === 'unavailable' && (
+                                        <span className="text-[11px] text-gray-400 font-medium">Offline</span>
+                                    )}
+                                    {previewState === 'chat' && (
+                                        <span className="text-[11px] text-green-500 font-medium">Online</span>
+                                    )}
+                                </div>
                             </div>
                             <div className="flex items-center gap-1">
                                 <div className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400">
@@ -980,60 +1140,100 @@ export default function Interface({ embedded = false }) {
                             </div>
                         </div>
 
-                        {/* 2. Messages Area — white bg, gap-5 (matches widget) */}
+                        {/* 2. Messages Area — conditional by previewState */}
                         <div className="flex-grow px-5 py-4 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px] bg-white">
 
-                            {/* Timestamp pill (matches widget) */}
-                            <div className="text-center">
-                                <span className="inline-block px-3 rounded-full text-[11px]" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
-                                    Today &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                            </div>
+                            {previewState === 'chat' && (
+                                <>
+                                    {/* Timestamp pill */}
+                                    <div className="text-center">
+                                        <span className="inline-block px-3 rounded-full text-[11px]" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
+                                            Today &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                    </div>
 
-                            {/* Bot Message 1 — plain text, no bubble */}
-                            <div className="flex flex-col items-start w-full">
-                                <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C]">
-                                    How can we help you today?
-                                </div>
-                                <div className="flex items-center gap-1.5 mt-2">
-                                    <Copy className="w-3.5 h-3.5 text-gray-400" />
-                                    <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
-                                    <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
-                                </div>
-                            </div>
+                                    {/* Bot Message 1 */}
+                                    <div className="flex flex-col items-start w-full">
+                                        <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C]">
+                                            {welcomeSubtitle || 'How can we help you today?'}
+                                        </div>
+                                        <div className="flex items-center gap-1.5 mt-2">
+                                            <Copy className="w-3.5 h-3.5 text-gray-400" />
+                                            <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
+                                            <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
+                                        </div>
+                                    </div>
 
-                            {/* User Message 1 — dynamic bubble color, dark text */}
-                            <div className="flex flex-col items-end">
-                                <div className="max-w-[85%] text-[#16202C] rounded-2xl px-4 py-3 text-[14px] leading-relaxed" style={{ backgroundColor: userBubbleColor }}>
-                                    Tell me about your services.
-                                </div>
-                            </div>
+                                    {/* User Message */}
+                                    <div className="flex flex-col items-end">
+                                        <div className="max-w-[85%] text-[#16202C] rounded-2xl px-4 py-3 text-[14px] leading-relaxed" style={{ backgroundColor: userBubbleColor }}>
+                                            Tell me about your services.
+                                        </div>
+                                    </div>
 
-                            {/* Bot Message 2 — plain text, no bubble */}
-                            <div className="flex flex-col items-start w-full">
-                                <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C]">
-                                    I&apos;m exploring the new customization options!
+                                    {/* Bot Message 2 */}
+                                    <div className="flex flex-col items-start w-full">
+                                        <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C]">
+                                            I&apos;m here to help! Ask me anything about our offerings.
+                                        </div>
+                                        <div className="flex items-center gap-1.5 mt-2">
+                                            <Copy className="w-3.5 h-3.5 text-gray-400" />
+                                            <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
+                                            <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {previewState === 'waiting' && (
+                                <div className="flex flex-col items-center justify-center h-full py-10 gap-4 text-center">
+                                    <div
+                                        className="w-14 h-14 rounded-full flex items-center justify-center"
+                                        style={{ backgroundColor: `${primaryColor}22` }}
+                                    >
+                                        <div
+                                            className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+                                            style={{ borderColor: `${primaryColor} transparent transparent transparent` }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <p className="text-[14px] font-semibold text-[#16202C]">
+                                            {waitingMessage || 'Connecting you to support...'}
+                                        </p>
+                                        <p className="text-[12px] text-gray-400 mt-1">Please wait a moment.</p>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-2">
-                                    <Copy className="w-3.5 h-3.5 text-gray-400" />
-                                    <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
-                                    <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
+                            )}
+
+                            {previewState === 'unavailable' && (
+                                <div className="flex flex-col items-center justify-center h-full py-10 gap-4 text-center">
+                                    <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
+                                        <Bot className="w-7 h-7 text-gray-400" />
+                                    </div>
+                                    <div>
+                                        <p className="text-[14px] font-semibold text-[#16202C]">
+                                            {offlineMessage || 'Our team is currently unavailable.'}
+                                        </p>
+                                        <p className="text-[12px] text-gray-400 mt-1">Leave a message and we&apos;ll get back to you.</p>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
 
-                        {/* 3. Input Area — rounded box with paperclip + send icon */}
-                        <div className="px-4 pb-4 pt-2 shrink-0 bg-white">
-                            <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
-                                <div className="text-[14px] text-gray-400">Ask anything?</div>
-                                <div className="flex items-center justify-between mt-2">
-                                    <Paperclip className="w-5 h-5 text-[#16202C]" />
-                                    <svg width="20" height="20" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-[#BBE7FF]">
-                                        <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
-                                    </svg>
+                        {/* 3. Input Area — only shown in chat state */}
+                        {previewState === 'chat' && (
+                            <div className="px-4 pb-4 pt-2 shrink-0 bg-white">
+                                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
+                                    <div className="text-[14px] text-gray-400">Ask anything...</div>
+                                    <div className="flex items-center justify-between mt-2">
+                                        <Paperclip className="w-5 h-5 text-[#16202C]" />
+                                        <svg width="20" height="20" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: primaryColor }}>
+                                            <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
+                                        </svg>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
+                        )}
                     </div>
                 </div>
             </div>

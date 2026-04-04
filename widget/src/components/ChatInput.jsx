@@ -1,92 +1,182 @@
 import React from 'react';
-import { Headphones } from 'lucide-react';
+import { Headphones, Paperclip } from 'lucide-react';
 import SendIcon from './SendIcon';
 
-const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, inputRef, placeholder, onHandoff, showProminentHandoff, primaryColor, showBranding = false }) => {
+/**
+ * Unified chat input for both bot mode and live-chat mode.
+ *
+ * Bot mode:  onSubmit is called with the form event, inputText is controlled externally.
+ * Live mode: onLiveSend is called with the trimmed text string; typing events go to onLiveTyping.
+ *            The "Live chat" action bar is hidden; "End chat" link appears above the input.
+ */
+const ChatInput = ({
+    // Shared props
+    inputText,
+    setInputText,
+    currentTheme,
+    inputRef,
+    placeholder,
+    primaryColor,
+    showBranding = false,
+    // Bot mode
+    onSubmit,
+    isTyping = false,
+    onHandoff,
+    showProminentHandoff = false,
+    // Live mode
+    chatMode = 'bot',
+    onLiveSend,
+    onLiveTyping,
+    onEndChat,
+    onFilePick,
+    fileSharing = false,
+    isReconnecting = false,
+    uploadProgress = null,
+}) => {
+    const isWaiting = chatMode === 'waiting';
+    const isLive = chatMode === 'live';
+
     const handleChange = (e) => {
         setInputText(e.target.value);
         e.target.style.height = 'auto';
         e.target.style.height = e.target.scrollHeight + 'px';
+        if (isLive) onLiveTyping?.();
     };
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            onSubmit(e);
+            handleSubmit(e);
+        }
+    };
+
+    const handleSubmit = (e) => {
+        e?.preventDefault();
+        if (isLive) {
+            const text = inputText.trim();
+            if (!text) return;
+            onLiveSend?.(text);
+            setInputText('');
+            if (inputRef?.current) {
+                inputRef.current.style.height = 'auto';
+            }
+        } else {
+            onSubmit?.(e);
         }
     };
 
     const hasText = inputText.trim().length > 0;
+    const sendDisabled = !hasText || isTyping || isWaiting;
 
     return (
         <div className={currentTheme.inputArea}>
-            <form onSubmit={onSubmit}>
-                {/* Single-row: textarea + send button side-by-side */}
-                <div className="flex items-center gap-2 rounded-2xl border border-[#BBE7FF]/50 bg-white pl-4 pr-2 py-1.5 shadow-sm">
-                    <textarea
-                        value={inputText}
-                        onChange={handleChange}
-                        onKeyDown={handleKeyDown}
-                        placeholder={placeholder || 'Write a message...'}
-                        aria-label="Chat message input"
-                        className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[80px] leading-[20px] py-1"
-                        style={{ border: 'none', margin: 0, scrollbarWidth: 'none' }}
-                        disabled={isTyping}
-                        ref={inputRef}
-                        rows={1}
-                    />
+            {/* End chat link — live mode only */}
+            {isLive && (
+                <div className="flex items-center justify-center mb-1.5">
+                    <button
+                        type="button"
+                        onClick={onEndChat}
+                        className="text-[11px] text-gray-400 hover:text-red-500 transition-colors focus-visible:outline-none"
+                    >
+                        End chat and return to AI
+                    </button>
+                </div>
+            )}
+
+            <form onSubmit={handleSubmit}>
+                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-3 py-2 shadow-sm flex items-end gap-2">
+                    {/* File attachment — live mode only */}
+                    {isLive && fileSharing && (
+                        <button
+                            type="button"
+                            onClick={onFilePick}
+                            disabled={uploadProgress !== null || isReconnecting}
+                            title="Attach file"
+                            aria-label="Attach file"
+                            className={`mb-0.5 flex-shrink-0 transition-opacity ${(uploadProgress !== null || isReconnecting) ? 'opacity-30 cursor-not-allowed' : 'opacity-60 hover:opacity-100'}`}
+                        >
+                            <Paperclip size={16} className="text-[#16202C]" />
+                        </button>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                        {/* File upload progress bar — live mode only */}
+                        {uploadProgress !== null && (
+                            <div className="w-full h-1 bg-gray-100 rounded-full mb-1.5 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full transition-all duration-300"
+                                    style={{ width: `${uploadProgress}%`, backgroundColor: primaryColor || '#3A0CA3' }}
+                                />
+                            </div>
+                        )}
+                        <textarea
+                            value={inputText}
+                            onChange={handleChange}
+                            onKeyDown={handleKeyDown}
+                            placeholder={isWaiting ? 'Connecting you with support...' : (placeholder || 'Write a message...')}
+                            aria-label="Chat message input"
+                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[80px] leading-[20px]"
+                            style={{ border: 'none', margin: 0, scrollbarWidth: 'none' }}
+                            disabled={isTyping || isWaiting || isReconnecting}
+                            ref={inputRef}
+                            rows={1}
+                        />
+                    </div>
+
                     <button
                         type="submit"
-                        disabled={!hasText || isTyping}
+                        disabled={sendDisabled}
                         aria-label="Send message"
-                        className="w-9 h-9 flex-shrink-0 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                        className="mb-0.5 flex-shrink-0 flex items-center justify-center transition-all disabled:cursor-not-allowed focus-visible:outline-none"
                     >
                         <SendIcon
                             size={18}
-                            className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
+                            className={`transition-colors ${hasText && !isWaiting ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
                         />
                     </button>
                 </div>
             </form>
 
-            {/* Action bar — below input */}
-            <div className="flex items-center justify-between mt-1.5 px-1">
-                <div className="flex items-center gap-3">
-                    {onHandoff && (
-                        <button
-                            type="button"
-                            onClick={onHandoff}
-                            title="Live chat"
-                            aria-label="Live chat"
-                            className="flex items-center gap-1 text-[11px] transition-colors"
-                            style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
+            {/* Action bar — bot mode only */}
+            {!isLive && !isWaiting && (
+                <div className="flex items-center justify-between mt-1.5 px-1">
+                    <div className="flex items-center gap-3">
+                        {onHandoff && (
+                            <button
+                                type="button"
+                                onClick={onHandoff}
+                                title="Live chat"
+                                aria-label="Live chat"
+                                className="flex items-center gap-1 text-[11px] transition-colors"
+                                style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
+                            >
+                                <span className="relative flex-shrink-0">
+                                    <Headphones size={12} />
+                                    {showProminentHandoff && (
+                                        <span
+                                            className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse"
+                                            style={{ backgroundColor: primaryColor || '#3A0CA3' }}
+                                        />
+                                    )}
+                                </span>
+                                <span className={showProminentHandoff ? 'font-semibold' : 'font-normal'}>
+                                    Live chat
+                                </span>
+                            </button>
+                        )}
+                    </div>
+                    {showBranding && (
+                        <a
+                            href="https://oyechats.com"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
                         >
-                            <span className="relative flex-shrink-0">
-                                <Headphones size={12} />
-                                {showProminentHandoff && (
-                                    <span
-                                        className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full animate-pulse"
-                                        style={{ backgroundColor: primaryColor || '#3A0CA3' }}
-                                    />
-                                )}
-                            </span>
-                            <span className={showProminentHandoff ? 'font-semibold' : 'font-normal'}>
-                                Live chat
-                            </span>
-                        </button>
+                            Powered by OyeChats
+                        </a>
                     )}
                 </div>
-                {showBranding && (
-                    <a
-                        href="https://oyechats.com"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[10px] text-gray-300 hover:text-gray-400 transition-colors"
-                    >
-                        Powered by OyeChats
-                    </a>
-                )}
-            </div>
+            )}
         </div>
     );
 };
