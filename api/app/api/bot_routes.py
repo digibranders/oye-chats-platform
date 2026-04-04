@@ -64,6 +64,10 @@ class UpdateBotRequest(BaseModel):
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = None
+    # Business hours
+    business_hours: dict | None = None
+    # Feature flags — partial merge applied on PATCH (existing flags are preserved)
+    feature_flags: dict | None = None
 
 
 class BotResponse(BaseModel):
@@ -90,6 +94,8 @@ class BotResponse(BaseModel):
     email_on_handoff: bool = True
     live_chat_enabled: bool = True
     operator_timeout_seconds: int = 120
+    business_hours: dict | None = None
+    feature_flags: dict = {}
     is_active: bool
     created_at: str
 
@@ -134,6 +140,8 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "lead_form_enabled": bot.lead_form_enabled,
         "lead_form_fields": bot.lead_form_fields,
         "live_chat_enabled": bot.live_chat_enabled,
+        "business_hours": bot.business_hours,
+        "feature_flags": bot.feature_flags or {},
     }
 
 
@@ -178,6 +186,8 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     email_on_handoff=b.email_on_handoff,
                     live_chat_enabled=b.live_chat_enabled,
                     operator_timeout_seconds=b.operator_timeout_seconds,
+                    business_hours=b.business_hours,
+                    feature_flags=b.feature_flags or {},
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
                 )
@@ -248,6 +258,8 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             email_on_handoff=bot.email_on_handoff,
             live_chat_enabled=bot.live_chat_enabled,
             operator_timeout_seconds=bot.operator_timeout_seconds,
+            business_hours=bot.business_hours,
+            feature_flags=bot.feature_flags or {},
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )
@@ -269,6 +281,12 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 update_data["launcher_logo"] = update_data["bot_logo"]
             elif "launcher_logo" in update_data:
                 update_data["bot_logo"] = update_data["launcher_logo"]
+
+            # Merge feature_flags — partial updates must not wipe existing flags
+            if "feature_flags" in update_data and update_data["feature_flags"] is not None:
+                current_flags = dict(bot.feature_flags or {})
+                current_flags.update(update_data.pop("feature_flags"))
+                bot.feature_flags = current_flags
 
             for key, value in update_data.items():
                 setattr(bot, key, value)

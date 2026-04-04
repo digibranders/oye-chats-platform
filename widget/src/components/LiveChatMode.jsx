@@ -854,23 +854,27 @@ const LiveChatMode = ({ sessionId, settings, chatMode, setChatMode, setOperatorN
                             style={{ border: 'none' }}
                         />
                         <div className="flex items-center justify-between mt-2">
-                            <button
-                                type="button"
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={uploadProgress !== null}
-                                title="Attach file"
-                                aria-label="Attach file"
-                                className={`transition-opacity ${uploadProgress !== null ? 'opacity-30 cursor-not-allowed' : 'opacity-60 hover:opacity-100'}`}
-                            >
-                                <Paperclip size={20} className="text-[#16202C]" />
-                            </button>
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*,.pdf,.txt"
-                                className="hidden"
-                                onChange={handleFileSelect}
-                            />
+                            {settings?.feature_flags?.file_sharing && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={uploadProgress !== null || isReconnecting}
+                                    title="Attach file"
+                                    aria-label="Attach file"
+                                    className={`transition-opacity ${(uploadProgress !== null || isReconnecting) ? 'opacity-30 cursor-not-allowed' : 'opacity-60 hover:opacity-100'}`}
+                                >
+                                    <Paperclip size={20} className="text-[#16202C]" />
+                                </button>
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*,.pdf,.txt"
+                                    className="hidden"
+                                    onChange={handleFileSelect}
+                                />
+                            </>
+                        )}
                             <button
                                 type="submit"
                                 disabled={!inputText.trim()}

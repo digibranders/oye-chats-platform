@@ -837,3 +837,26 @@ export const deleteCannedResponse = async (responseId) => {
         throw buildApiError(error, 'Failed to delete response');
     }
 };
+
+/**
+ * Uploads a file during a live chat session (operator side).
+ * Uses multipart/form-data. Returns { file_url, filename, content_type }.
+ * @param {File} file
+ * @param {string} sessionId
+ * @returns {Promise<{ file_url: string, filename: string, content_type: string }>}
+ */
+export const uploadOperatorChatFile = async (file, sessionId) => {
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await api.post(
+            `/operators/upload-chat-file?session_id=${sessionId}`,
+            formData,
+            { headers: { 'Content-Type': 'multipart/form-data' } }
+        );
+        return response.data;
+    } catch (error) {
+        console.error('API Error uploading operator chat file:', error);
+        throw buildApiError(error, 'Failed to upload file');
+    }
+};
