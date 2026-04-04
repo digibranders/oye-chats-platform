@@ -48,6 +48,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
     const [existingLeadInfo, setExistingLeadInfo] = useState(null);
 
+    // Streaming chunk buffer — accumulate tokens and flush once per animation frame
+    // to cap React re-renders at ~60/s regardless of LLM token throughput.
+    const chunkBufferRef = useRef('');
+    const rafRef = useRef(null);
+
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
     const recentMessageTimestamps = useRef([]);
@@ -139,9 +144,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Scroll to bottom when a new message is added or streaming starts/ends.
+    // Intentionally NOT dependent on `messages` so the DOM isn't thrashed on every token.
     useEffect(() => {
         scrollToBottom();
-    }, [messages, isTyping]);
+    }, [streamingId, isTyping, messages.length]);
 
     const handleNewChat = () => {
         setIsInitializing(true);
@@ -195,19 +202,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
 
         try {
-            // Create a placeholder bot message for progressive rendering
-            const placeholderId = Date.now() + 1;
-            const botMsg = {
-                id: placeholderId,
-                text: '',
-                sender: 'bot',
-                timestamp: new Date().toISOString(),
-                feedback: null
-            };
+            // placeholderId is null until the first token arrives.
+            // The TypingIndicator (isTyping=true) stays visible the whole time the
+            // bot is "thinking" — it's hidden only when the first chunk is received
+            // and the streaming placeholder message is created.
+            let placeholderId = null;
 
-            setMessages(prev => [...prev, botMsg]);
-            setStreamingId(placeholderId);
-            setIsTyping(false);
+            // Reset RAF buffer before each new stream
+            chunkBufferRef.current = '';
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
 
             await sendMessageStream(userMsg.text, sessionId, {
                 onMetadata: (metadata) => {
@@ -217,14 +223,39 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                 },
                 onChunk: (chunk) => {
-                    setMessages(prev => prev.map(msg =>
-                        msg.id === placeholderId
-                            ? { ...msg, text: msg.text + chunk }
-                            : msg
-                    ));
+                    if (placeholderId === null) {
+                        // First token — swap TypingIndicator for the streaming message
+                        placeholderId = Date.now() + 1;
+                        setIsTyping(false);
+                        setMessages(prev => [...prev, {
+                            id: placeholderId,
+                            text: chunk,
+                            sender: 'bot',
+                            timestamp: new Date().toISOString(),
+                            feedback: null
+                        }]);
+                        setStreamingId(placeholderId);
+                        return;
+                    }
+                    // Subsequent tokens — accumulate and flush once per animation frame
+                    chunkBufferRef.current += chunk;
+                    if (!rafRef.current) {
+                        rafRef.current = requestAnimationFrame(() => {
+                            const buffered = chunkBufferRef.current;
+                            chunkBufferRef.current = '';
+                            rafRef.current = null;
+                            if (buffered) {
+                                setMessages(prev => prev.map(msg =>
+                                    msg.id === placeholderId
+                                        ? { ...msg, text: msg.text + buffered }
+                                        : msg
+                                ));
+                            }
+                        });
+                    }
                 },
                 onFinalMetadata: (finalMeta) => {
-                    if (finalMeta.message_id) {
+                    if (finalMeta.message_id && placeholderId !== null) {
                         setMessages(prev => prev.map(msg =>
                             msg.id === placeholderId
                                 ? { ...msg, id: finalMeta.message_id }
@@ -243,14 +274,41 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                 },
                 onError: () => {
-                    setMessages(prev => prev.map(msg =>
-                        msg.id === placeholderId && !msg.text
-                            ? { ...msg, text: "I'm sorry, I couldn't generate a response. Please try again." }
-                            : msg
-                    ));
+                    setIsTyping(false);
+                    if (placeholderId !== null) {
+                        setMessages(prev => prev.map(msg =>
+                            msg.id === placeholderId && !msg.text
+                                ? { ...msg, text: "I'm sorry, I couldn't generate a response. Please try again." }
+                                : msg
+                        ));
+                    } else {
+                        setMessages(prev => [...prev, {
+                            id: Date.now() + 2,
+                            text: "I'm sorry, I couldn't generate a response. Please try again.",
+                            sender: 'bot',
+                            timestamp: new Date().toISOString(),
+                            feedback: null
+                        }]);
+                    }
                 }
             });
 
+            // Flush any tokens still buffered in the RAF queue before removing cursor
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+                rafRef.current = null;
+            }
+            if (chunkBufferRef.current && placeholderId !== null) {
+                const remaining = chunkBufferRef.current;
+                chunkBufferRef.current = '';
+                setMessages(prev => prev.map(msg =>
+                    msg.id === placeholderId
+                        ? { ...msg, text: msg.text + remaining }
+                        : msg
+                ));
+            }
+
+            setIsTyping(false);
             // Stream complete — stop showing cursor
             setStreamingId(null);
 
@@ -517,7 +575,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     />
                                 ))}
 
-                                {isTyping && <TypingIndicator />}
+                                {isTyping && <TypingIndicator settings={settings} />}
                                 <div ref={messagesEndRef} />
                             </>
                         )}

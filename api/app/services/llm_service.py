@@ -1,4 +1,5 @@
 import logging
+import time
 
 import litellm
 
@@ -35,8 +36,15 @@ def generate_response(prompt: str, *, metadata: dict | None = None) -> str:
         return f"I encountered an error generating the response. Error: {type(e).__name__}"
 
 
+_STREAM_CHUNK_TIMEOUT_S = 30
+
+
 def generate_response_stream(prompt: str, *, metadata: dict | None = None):
-    """Generate a streaming response via LiteLLM. Yields text chunks."""
+    """Generate a streaming response via LiteLLM. Yields text chunks.
+
+    Enforces a per-chunk wall-clock timeout of ``_STREAM_CHUNK_TIMEOUT_S``
+    seconds so a stalled upstream connection never hangs the client forever.
+    """
     if not OPENAI_API_KEY:
         logger.error("Cannot stream response: OPENAI_API_KEY is not set.")
         yield "Configuration error: AI service is not configured. Please contact the administrator."
@@ -52,9 +60,16 @@ def generate_response_stream(prompt: str, *, metadata: dict | None = None):
             stream=True,
             metadata=metadata,
         )
+        deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
         for chunk in response:
+            if time.monotonic() > deadline:
+                logger.error(f"LLM streaming timed out after {_STREAM_CHUNK_TIMEOUT_S}s — aborting stream")
+                yield " [Response timed out. Please try again.]"
+                return
             content = chunk.choices[0].delta.content
             if content:
+                # Reset deadline on each received chunk so slow-but-live streams aren't killed
+                deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
                 yield content
     except Exception as e:
         logger.error(f"LLM Streaming Error ({type(e).__name__}): {e}", exc_info=True)
