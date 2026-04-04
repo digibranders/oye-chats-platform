@@ -1,5 +1,6 @@
 import React from 'react';
-import { X, Headphones, ArrowUp } from 'lucide-react';
+import { X, Headphones } from 'lucide-react';
+import SendIcon from './SendIcon';
 import BotAvatar from './BotAvatar';
 
 const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, setInputText, inputRef, isAnimating = true, onTalkToHuman }) => {
@@ -58,36 +59,34 @@ const WelcomeScreen = ({ settings, currentTheme, onClose, onSend, inputText, set
             {/* Slick input area */}
             <div className={currentTheme.inputArea}>
                 <form onSubmit={(e) => onSend(e)}>
-                    <div className="rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-2 transition-colors focus-within:border-gray-300 focus-within:bg-white">
-                        <div className="flex items-end gap-2">
-                            <textarea
-                                value={inputText}
-                                onChange={(e) => {
-                                    setInputText(e.target.value);
-                                    e.target.style.height = 'auto';
-                                    e.target.style.height = e.target.scrollHeight + 'px';
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && !e.shiftKey) {
-                                        e.preventDefault();
-                                        onSend(e);
-                                    }
-                                }}
-                                placeholder="Type a message..."
-                                className="flex-1 outline-none bg-transparent text-[13px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[20px] max-h-[80px]"
-                                style={{ border: 'none' }}
-                                ref={inputRef}
-                                rows={1}
-                            />
+                    <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
+                        <textarea
+                            value={inputText}
+                            onChange={(e) => {
+                                setInputText(e.target.value);
+                                e.target.style.height = 'auto';
+                                e.target.style.height = e.target.scrollHeight + 'px';
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    onSend(e);
+                                }
+                            }}
+                            placeholder="Type a message..."
+                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[80px]"
+                            style={{ border: 'none' }}
+                            ref={inputRef}
+                            rows={1}
+                        />
+                        <div className="flex items-center justify-end mt-2">
                             <button
                                 type="submit"
                                 disabled={!hasText}
                                 aria-label="Send message"
-                                className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed ${
-                                    hasText ? 'bg-[#16202C] text-white' : 'text-gray-300'
-                                }`}
+                                className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             >
-                                <ArrowUp size={14} />
+                                <SendIcon size={20} className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`} />
                             </button>
                         </div>
                     </div>

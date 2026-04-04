@@ -1,5 +1,6 @@
 import React from 'react';
-import { Headphones, ArrowUp } from 'lucide-react';
+import { Headphones } from 'lucide-react';
+import SendIcon from './SendIcon';
 
 const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, inputRef, placeholder, onHandoff, showProminentHandoff, primaryColor, showBranding = false }) => {
     const handleChange = (e) => {
@@ -20,29 +21,33 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
     return (
         <div className={currentTheme.inputArea}>
             <form onSubmit={onSubmit}>
-                <div className="rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-2 transition-colors focus-within:border-gray-300 focus-within:bg-white">
-                    <div className="flex items-end gap-2">
-                        <textarea
-                            value={inputText}
-                            onChange={handleChange}
-                            onKeyDown={handleKeyDown}
-                            placeholder={placeholder || 'Type a message...'}
-                            aria-label="Chat message input"
-                            className="flex-1 outline-none bg-transparent text-[13px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[20px] max-h-[80px]"
-                            style={{ border: 'none' }}
-                            disabled={isTyping}
-                            ref={inputRef}
-                            rows={1}
-                        />
+                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
+                    {/* Text area */}
+                    <textarea
+                        value={inputText}
+                        onChange={handleChange}
+                        onKeyDown={handleKeyDown}
+                        placeholder={placeholder || 'Type a message...'}
+                        aria-label="Chat message input"
+                        className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[24px] max-h-[100px]"
+                        style={{ border: 'none' }}
+                        disabled={isTyping}
+                        ref={inputRef}
+                        rows={1}
+                    />
+
+                    {/* Send button — right-aligned */}
+                    <div className="flex items-center justify-end mt-2">
                         <button
                             type="submit"
                             disabled={!hasText || isTyping}
                             aria-label="Send message"
-                            className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full transition-all disabled:cursor-not-allowed ${
-                                hasText ? 'bg-[#16202C] text-white' : 'text-gray-300'
-                            }`}
+                            className="w-11 h-11 flex items-center justify-center transition-all disabled:cursor-not-allowed rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                         >
-                            <ArrowUp size={14} />
+                            <SendIcon
+                                size={20}
+                                className={`transition-colors ${hasText ? 'text-[#16202C]' : 'text-[#BBE7FF]'}`}
+                            />
                         </button>
                     </div>
                 </div>
