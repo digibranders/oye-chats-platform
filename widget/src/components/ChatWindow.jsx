@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Plus, Clock } from 'lucide-react';
+import { X, Plus, Clock, MoreHorizontal, Mail, Volume2 } from 'lucide-react';
 import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
@@ -39,6 +39,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     });
     // When the bot is outside business hours, skip the welcome screen and go straight to unavailable/offline form
     const [showWelcome, setShowWelcome] = useState(isOnline);
+    const [welcomeExiting, setWelcomeExiting] = useState(false); // cross-fade transition
     const [showLeadForm, setShowLeadForm] = useState(false);
     const [chatMode, setChatMode] = useState(isOnline ? 'bot' : 'unavailable'); // bot|handoff_form|waiting|live|unavailable
     const [operatorName, setOperatorName] = useState(null);
@@ -48,6 +49,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
     const [existingLeadInfo, setExistingLeadInfo] = useState(null);
+
+    // Header menu state (three-dot menu with Send transcript + Sounds toggle)
+    const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+    const [soundsEnabled, setSoundsEnabled] = useState(() => {
+        try { return localStorage.getItem('oyechats_sounds') !== 'off'; } catch { return true; }
+    });
+    const headerMenuRef = useRef(null);
 
     // Streaming chunk buffer — accumulate tokens and flush once per animation frame
     // to cap React re-renders at ~60/s regardless of LLM token throughput.
@@ -159,6 +167,46 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         scrollToBottom();
     }, [streamingId, isTyping, messages.length]);
 
+    // Smooth cross-fade transition from welcome screen → chat
+    const WELCOME_EXIT_DURATION = 350; // ms — matches CSS transition
+    const exitWelcome = useCallback(() => {
+        setWelcomeExiting(true);
+        setTimeout(() => {
+            setShowWelcome(false);
+            setWelcomeExiting(false);
+        }, WELCOME_EXIT_DURATION);
+    }, []);
+
+    // Close header menu when clicking outside
+    useEffect(() => {
+        if (!showHeaderMenu) return;
+        const handler = (e) => {
+            if (headerMenuRef.current && !headerMenuRef.current.contains(e.target)) {
+                setShowHeaderMenu(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showHeaderMenu]);
+
+    const toggleSounds = () => {
+        const next = !soundsEnabled;
+        setSoundsEnabled(next);
+        try { localStorage.setItem('oyechats_sounds', next ? 'on' : 'off'); } catch { /* noop */ }
+        setShowHeaderMenu(false);
+    };
+
+    const handleSendTranscript = () => {
+        setShowHeaderMenu(false);
+        // Compile messages into a mailto: link for now (backend email endpoint can be added later)
+        const transcript = messages
+            .map(m => `[${m.sender === 'user' ? 'You' : settings.bot_name || 'Bot'}] ${m.text}`)
+            .join('\n\n');
+        const subject = encodeURIComponent(`Chat transcript — ${settings.bot_name || 'OyeChats'}`);
+        const body = encodeURIComponent(transcript);
+        window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+    };
+
     const handleNewChat = () => {
         setIsInitializing(true);
         localStorage.removeItem('chat_session_id');
@@ -188,7 +236,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const text = prefillText || inputText;
         if (!text.trim()) return;
 
-        setShowWelcome(false);
+        // Smooth cross-fade out of welcome screen
+        if (showWelcome) exitWelcome(); else setShowWelcome(false);
 
         const userMsg = {
             id: Date.now(),
@@ -392,8 +441,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             setSessionId(newSession);
             localStorage.setItem('chat_session_id', newSession);
         }
-        setShowWelcome(false);
-        setChatMode('handoff_form');
+        if (showWelcome) {
+            // Welcome → handoff: fade out welcome content, then switch mode
+            exitWelcome();
+            setTimeout(() => setChatMode('handoff_form'), WELCOME_EXIT_DURATION);
+        } else {
+            setChatMode('handoff_form');
+        }
     };
 
     // --- Smart handoff emphasis logic ---
@@ -435,7 +489,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         );
     }
 
-    // Welcome screen
+    // Welcome screen — slides up smoothly when exiting (same bg, no black flash)
     if (showWelcome) {
         return (
             <WelcomeScreen
@@ -446,7 +500,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 inputText={inputText}
                 setInputText={setInputText}
                 inputRef={inputRef}
-                isAnimating={isAnimating}
+                isAnimating={welcomeExiting ? 'done' : isAnimating}
+                welcomeExiting={welcomeExiting}
+                exitDuration={WELCOME_EXIT_DURATION}
                 onTalkToHuman={settings.live_chat_enabled !== false ? triggerHandoff : undefined}
             />
         );
@@ -494,55 +550,51 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </div>
             );
         }
-        // Default: bot mode
+        // Default: bot mode — timestamp as status bar (identity shown via floating agent badge)
         return (
-            <div className="flex items-center gap-2.5">
-                <BotAvatar settings={settings} size="header" />
-                <h3 className="font-semibold text-sm text-[#16202C]">{settings.bot_name}</h3>
-            </div>
+            <span className="text-[11px] text-gray-400 font-medium tracking-wide">
+                {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+            </span>
         );
     };
 
     // Floating glass agent badge — shows who you're chatting with
     const renderAgentBadge = () => {
-        if (chatMode === 'waiting' || chatMode === 'unavailable' || chatMode === 'handoff_form') return null;
         const isLive = chatMode === 'live' && operatorName;
         return (
-            <div className="flex justify-center pt-2 pb-1" style={{ animation: 'fadeUp 0.4s ease-out' }}>
-                <div
-                    className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40"
-                    style={{ background: 'rgba(255,255,255,0.75)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
-                >
-                    {isLive ? (
-                        <div
-                            className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                            style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
-                        >
-                            {operatorName?.charAt(0)?.toUpperCase() || 'S'}
-                        </div>
-                    ) : (
-                        <BotAvatar settings={settings} size="sm" />
-                    )}
-                    <div className="flex flex-col">
-                        <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
-                            {isLive ? operatorName : (settings.bot_name || 'AI Assistant')}
-                        </span>
-                        <span className="text-[10px] text-gray-400 leading-tight">
-                            {isLive ? (operatorDepartment || 'Support Team') : 'AI Assistant'}
-                        </span>
+            <div
+                className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40 pointer-events-auto"
+                style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
+            >
+                {isLive ? (
+                    <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                    >
+                        {operatorName?.charAt(0)?.toUpperCase() || 'S'}
                     </div>
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+                ) : (
+                    <BotAvatar settings={settings} size="sm" />
+                )}
+                <div className="flex flex-col">
+                    <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
+                        {isLive ? operatorName : (settings.bot_name || 'AI Assistant')}
+                    </span>
+                    <span className="text-[10px] text-gray-400 leading-tight">
+                        {isLive ? (operatorDepartment || 'Support Team') : 'AI Assistant'}
+                    </span>
                 </div>
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
             </div>
         );
     };
 
     return (
         <div ref={containerRef} className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}>
-            {/* Header — dynamic based on chat mode */}
+            {/* Header — minimal in bot mode (just icons), contextual in other modes */}
             <div className={currentTheme.header}>
-                {renderHeader()}
-                <div className="flex items-center gap-2">
+                {renderHeader() || <div />}
+                <div className="flex items-center gap-1 relative" ref={headerMenuRef}>
                     {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
                         <button
                             onClick={handleNewChat}
@@ -552,6 +604,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <Plus className="w-4 h-4" />
                         </button>
                     )}
+                    {/* Three-dot menu */}
+                    <button
+                        onClick={() => setShowHeaderMenu(prev => !prev)}
+                        className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
+                        title="More options"
+                    >
+                        <MoreHorizontal className="w-4 h-4" />
+                    </button>
                     <button
                         onClick={onClose}
                         className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
@@ -559,14 +619,39 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     >
                         <X className="w-5 h-5" />
                     </button>
+
+                    {/* Dropdown menu */}
+                    {showHeaderMenu && (
+                        <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
+                            <button
+                                onClick={handleSendTranscript}
+                                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                            >
+                                <Mail className="w-4 h-4 text-gray-400" />
+                                Send transcript
+                            </button>
+                            <button
+                                onClick={toggleSounds}
+                                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                            >
+                                <Volume2 className="w-4 h-4 text-gray-400" />
+                                <span className="flex-1 text-left">Sounds</span>
+                                {/* Toggle switch */}
+                                <div className={`w-9 h-5 rounded-full relative transition-colors duration-200 ${soundsEnabled ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${soundsEnabled ? 'left-[18px]' : 'left-0.5'}`} />
+                                </div>
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Gradient fade — header blends into messages area */}
-            <div
-                className="shrink-0 h-7 -mb-7 relative z-10 pointer-events-none"
-                style={{ background: 'linear-gradient(to bottom, #ffffff 0%, transparent 100%)' }}
-            />
+            {/* Floating glass agent badge — overlaps header bottom edge for premium feel */}
+            {!isInitializing && !showWelcome && (chatMode === 'bot' || (chatMode === 'live' && operatorName)) && (
+                <div className="shrink-0 flex justify-center -mb-5 relative z-30" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                    {renderAgentBadge()}
+                </div>
+            )}
 
             {/* Content — keyed by chatMode so each mode switch triggers enter animation */}
             <div key={chatMode} className="mode-enter flex flex-col flex-1 overflow-hidden relative">
@@ -595,7 +680,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             ) : (
                 /* Normal bot chat mode */
                 <>
-                    <div className={currentTheme.messagesArea} style={{ backgroundColor: settings.background_color }}>
+                    <div className={currentTheme.messagesArea} style={{
+                        backgroundColor: (settings.background_color && settings.background_color !== '#ffffff') ? settings.background_color : undefined,
+                        paddingTop: !isInitializing ? 24 : undefined,
+                    }}>
                         {isInitializing ? (
                             <div className="flex-1 flex flex-col items-center justify-center gap-3">
                                 <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
@@ -603,15 +691,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </div>
                         ) : (
                             <>
-                                {/* Floating glass agent badge */}
-                                {renderAgentBadge()}
-
-                                <div className="text-center">
-                                    <span className="inline-block px-3 rounded-full text-xs" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
-                                        {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                                    </span>
-                                </div>
-
                                 {messages.map((msg) => (
                                     <MessageBubble
                                         key={msg.id}

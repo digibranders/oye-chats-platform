@@ -22,15 +22,15 @@ const ChatInput = ({ inputText, setInputText, onSubmit, isTyping, currentTheme, 
         <div className={currentTheme.inputArea}>
             <form onSubmit={onSubmit}>
                 {/* Single-row: textarea + send button side-by-side */}
-                <div className="flex items-center gap-2 rounded-2xl border border-[#BBE7FF]/50 bg-white pl-4 pr-2 py-2.5 shadow-sm">
+                <div className="flex items-center gap-2 rounded-2xl border border-[#BBE7FF]/50 bg-white pl-4 pr-2 py-1.5 shadow-sm">
                     <textarea
                         value={inputText}
                         onChange={handleChange}
                         onKeyDown={handleKeyDown}
-                        placeholder={placeholder || 'Type a message...'}
+                        placeholder={placeholder || 'Write a message...'}
                         aria-label="Chat message input"
-                        className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-hidden min-h-[20px] max-h-[80px] leading-[20px] py-0"
-                        style={{ border: 'none', margin: 0 }}
+                        className="flex-1 outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[80px] leading-[20px] py-1"
+                        style={{ border: 'none', margin: 0, scrollbarWidth: 'none' }}
                         disabled={isTyping}
                         ref={inputRef}
                         rows={1}

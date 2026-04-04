@@ -138,12 +138,12 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
                     <p className="text-[13px] text-gray-500 leading-relaxed px-4 pb-3">{greetingMessage}</p>
                     {/* Mini input */}
                     <form onSubmit={handleBubbleSend} className="px-3 pb-3">
-                        <div className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5">
+                        <div className="flex items-center gap-1.5 rounded-2xl border border-[#BBE7FF]/50 bg-white px-2.5 py-1.5 shadow-sm">
                             <input
                                 type="text"
                                 value={bubbleInput}
                                 onChange={(e) => setBubbleInput(e.target.value)}
-                                placeholder="Type a message..."
+                                placeholder="Write a message..."
                                 className="flex-1 text-[13px] text-[#16202C] placeholder:text-gray-400 bg-transparent outline-none"
                             />
                             <button
