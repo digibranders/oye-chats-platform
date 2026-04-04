@@ -27,6 +27,18 @@ from app.services.llm_service import (
 logger = logging.getLogger(__name__)
 
 
+def _vector_search(cid: int | None, bid: int | None, query_embedding: list, k: int = 15) -> list:
+    """Run vector similarity search in its own DB session (thread-safe)."""
+    with get_session() as s:
+        return search_similar_documents(s, client_id=cid, query_embedding=query_embedding, k=k, bot_id=bid)
+
+
+def _keyword_search(cid: int | None, bid: int | None, query: str, k: int = 15) -> list:
+    """Run full-text keyword search in its own DB session (thread-safe)."""
+    with get_session() as s:
+        return search_keyword_documents(s, client_id=cid, query=query, k=k, bot_id=bid)
+
+
 def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
     """Merge ranked lists using Reciprocal Rank Fusion (RRF).
 
@@ -506,19 +518,22 @@ async def rag_pipeline_stream(
         # 2. Get History
         history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
 
-        # 3. Contextual Query Re-writing
-        search_query = rewrite_query(session_id, question, history)
-
-        # Detect handoff intent concurrently in a thread (runs alongside embedding — zero added latency)
+        # 3a. Kick off handoff intent detection BEFORE rewrite so both run concurrently
         handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
 
-        # 4. Embed & Retrieve (async to avoid blocking event loop)
+        # 3b. Contextual Query Re-writing — run in thread pool so it doesn't stall the event loop
+        search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
+
+        # 4. Embed query (async, non-blocking)
         query_embedding = (await embed_chunks_async([search_query]))[0]
+
+        # 5. Await handoff result — should be done by now since embedding took time
         try:
             suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
         except TimeoutError:
             suggest_handoff = False
             logger.warning(f"Handoff intent detection timed out for session {session_id}")
+
         add_chat_message(
             session,
             session_id,
@@ -530,10 +545,11 @@ async def rag_pipeline_stream(
             bot_id=bid,
         )
 
-        vector_results = search_similar_documents(
-            session, client_id=cid, query_embedding=query_embedding, k=15, bot_id=bid
+        # 6. Hybrid search — vector + keyword run in parallel, each with its own DB session
+        vector_results, keyword_results = await asyncio.gather(
+            asyncio.to_thread(_vector_search, cid, bid, query_embedding),
+            asyncio.to_thread(_keyword_search, cid, bid, search_query),
         )
-        keyword_results = search_keyword_documents(session, client_id=cid, query=search_query, k=15, bot_id=bid)
 
         # Merge with Reciprocal Rank Fusion and rerank
         final_results = reciprocal_rank_fusion(vector_results, keyword_results)
