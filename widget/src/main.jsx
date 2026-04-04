@@ -16,7 +16,7 @@ if (SENTRY_DSN) {
   });
 }
 
-console.log('[OyeChats] Widget v2.1.0 — faster AI, new thinking loader');
+console.log(`[OyeChats] Widget v2.1.0 — build ${import.meta.env.VITE_BUILD_TIMESTAMP || 'dev'}`);
 
 // ── CSS Auto-Injection ──────────────────────────────────────────────
 // In production the build outputs oyechats-widget.js + oyechats-widget.css as
