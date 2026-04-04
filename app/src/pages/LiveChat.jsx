@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Headphones, Send, X, User, Mail, MapPin, Monitor, MessageCircle,
     Loader2, Circle, ArrowRightLeft, ChevronRight, ChevronLeft,
-    Users, Info, Phone, Building2, Clock,
+    Users, Info, Phone, Building2, Clock, Paperclip,
 } from 'lucide-react';
 import {
     acceptChat, closeOperatorChat, toggleOperatorStatus, getChatHistory,
     getCannedResponses, transferChat, getOperators, getDepartments, getSessionDetails, getOperatorQueue,
+    uploadOperatorChatFile,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
@@ -70,6 +71,10 @@ export default function LiveChat({ embedded = false }) {
     // End Chat error banner (auto-dismisses after 4s)
     const [closeChatError, setCloseChatError] = useState(null);
     const closeChatErrorTimerRef = useRef(null);
+
+    // File upload
+    const fileInputRef = useRef(null);
+    const [fileUploading, setFileUploading] = useState(false);
 
     // Refs — avoids stale closures in WebSocket handlers
     const messagesEndRef = useRef(null);
@@ -744,6 +749,69 @@ export default function LiveChat({ embedded = false }) {
         inputRef.current?.focus();
     };
 
+    const handleFileUpload = async (e) => {
+        const file = e.target.files?.[0];
+        // Reset input immediately so the same file can be re-selected after an error
+        e.target.value = '';
+        if (!file || !selectedChat) return;
+
+        const ALLOWED_TYPES = [
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+            'application/pdf', 'text/plain',
+        ];
+        if (!ALLOWED_TYPES.includes(file.type)) {
+            setCloseChatError('Unsupported file type. Allowed: images, PDF, TXT.');
+            clearTimeout(closeChatErrorTimerRef.current);
+            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            setCloseChatError('File must be under 10 MB.');
+            clearTimeout(closeChatErrorTimerRef.current);
+            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            return;
+        }
+
+        setFileUploading(true);
+        try {
+            const { file_url, filename, content_type } = await uploadOperatorChatFile(file, selectedChat);
+
+            const socket = wsRef.current;
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                throw new Error('WebSocket not connected');
+            }
+            socket.send(JSON.stringify({
+                type: 'file',
+                session_id: selectedChat,
+                file_url,
+                filename,
+                content_type,
+                role: 'operator',
+            }));
+
+            // Optimistic local message
+            setMessages((prev) => [
+                ...prev,
+                {
+                    id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                    role: 'operator',
+                    content: `[File: ${filename}](${file_url})`,
+                    file_url,
+                    filename,
+                    content_type,
+                    timestamp: new Date().toISOString(),
+                },
+            ]);
+            setLastMessages((prev) => ({ ...prev, [selectedChat]: `📎 ${filename}` }));
+        } catch {
+            setCloseChatError('File upload failed. Please try again.');
+            clearTimeout(closeChatErrorTimerRef.current);
+            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+        } finally {
+            setFileUploading(false);
+        }
+    };
+
     const handleAgentTyping = () => {
         const now = Date.now();
         if (now - lastAgentTypingSentRef.current < 3000) return;
@@ -1065,6 +1133,31 @@ export default function LiveChat({ embedded = false }) {
                                             placeholder="Type your reply... (/ for quick replies)"
                                             className="flex-1 px-4 py-2.5 text-sm bg-secondary-50 rounded-xl outline-none border border-transparent focus:border-primary-300 transition-colors"
                                         />
+                                        {/* File attach — visible only when file_sharing feature flag is on */}
+                                        {bots[0]?.feature_flags?.file_sharing && (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => fileInputRef.current?.click()}
+                                                    disabled={fileUploading || !selectedChat}
+                                                    aria-label="Attach file"
+                                                    title="Attach file (images, PDF, TXT — max 10 MB)"
+                                                    className="w-10 h-10 flex items-center justify-center text-secondary-400 hover:text-secondary-600 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                >
+                                                    {fileUploading
+                                                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                                                        : <Paperclip className="w-4 h-4" />
+                                                    }
+                                                </button>
+                                                <input
+                                                    ref={fileInputRef}
+                                                    type="file"
+                                                    accept="image/*,.pdf,.txt"
+                                                    className="hidden"
+                                                    onChange={handleFileUpload}
+                                                />
+                                            </>
+                                        )}
                                         <button
                                             type="submit"
                                             disabled={!inputText.trim()}

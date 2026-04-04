@@ -6,6 +6,43 @@ import { getChatbotSettings } from '../services/api';
 const OPEN_DURATION = 300;  // ms — matches widgetOpen animation (280ms + buffer)
 const CLOSE_DURATION = 220; // ms — matches widgetClose animation (200ms + buffer)
 
+/**
+ * Returns true if the current time is within the bot's configured business hours.
+ * Returns true (open) when business_hours is absent or disabled.
+ */
+function isWithinBusinessHours(businessHours) {
+  if (!businessHours?.enabled) return true;
+
+  try {
+    const tz = businessHours.timezone || 'UTC';
+    const now = new Date();
+
+    // Resolve current day key (mon/tue/.../sun) in the bot's timezone
+    const dayName = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' }).toLowerCase();
+    const dayKey = dayName.slice(0, 3); // "mon", "tue", etc.
+
+    const day = businessHours.days?.[dayKey];
+    if (!day?.enabled) return false;
+
+    // Resolve current HH:MM in the bot's timezone
+    const timeParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+
+    const hour = timeParts.find((p) => p.type === 'hour')?.value ?? '00';
+    const minute = timeParts.find((p) => p.type === 'minute')?.value ?? '00';
+    const currentTime = `${hour}:${minute}`;
+
+    return currentTime >= day.start && currentTime <= day.end;
+  } catch {
+    // Fallback: treat as open on any parsing error (e.g. unknown timezone)
+    return true;
+  }
+}
+
 const ChatWidget = () => {
   const [isVisible, setIsVisible] = useState(false);   // controls DOM presence
   const [isAnimating, setIsAnimating] = useState(null); // null=hidden(no anim), true=open, false=close
@@ -17,8 +54,13 @@ const ChatWidget = () => {
     launcher_logo: null,
     primary_color: '#2B66BC',
     header_color: '#2B66BC',
-    background_color: '#ffffff'
+    background_color: '#ffffff',
+    business_hours: null,
+    feature_flags: {},
   });
+
+  // Derived: is the bot currently "online" per its business hours schedule?
+  const isOnline = isWithinBusinessHours(settings.business_hours);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -78,6 +120,7 @@ const ChatWidget = () => {
           onClose={closeChat}
           initialSettings={settings}
           isAnimating={isAnimating}
+          isOnline={isOnline}
         />
       )}
       <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4">

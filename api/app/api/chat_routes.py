@@ -151,10 +151,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
         # Fire-and-forget geolocation (saves 2-8s per request)
         submit_background(_resolve_and_update_location, session_id, ip_address)
 
-        logger.info(
-            f"Chat request | bot_id={bot.id} | bot_name={bot.name} | "
-            f"session={session_id}"
-        )
+        logger.info(f"Chat request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
         result = rag_pipeline(
             bot,
@@ -166,19 +163,14 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
         )
 
         ans_len = len(result.get("answer", ""))
-        logger.info(
-            f"Chat response generated | session={session_id} | "
-            f"answer_length={ans_len}"
-        )
+        logger.info(f"Chat response generated | session={session_id} | answer_length={ans_len}")
         return result
     except HTTPException:
         raise
     except Exception as e:
         bot_id = getattr(bot, "id", "?")
         err_type = type(e).__name__
-        logger.error(
-            f"Chat failed for bot {bot_id}: {err_type}: {e}", exc_info=True
-        )
+        logger.error(f"Chat failed for bot {bot_id}: {err_type}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Chat request failed. Please try again.") from e
 
 
@@ -197,10 +189,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address)
 
-    logger.info(
-        f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | "
-        f"session={session_id}"
-    )
+    logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
     return StreamingResponse(
         rag_pipeline_stream(
@@ -231,10 +220,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
                 company=body.company,
             )
             session.commit()
-            logger.info(
-                f"Lead captured | bot={bot.id} session={body.session_id} "
-                f"email={body.email}"
-            )
+            logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={body.email}")
             return {"success": True, "session_id": body.session_id}
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")
@@ -345,9 +331,7 @@ def get_history_endpoint(
     request: Request,
     session_id: str,
     bot_id: int | None = Query(None),
-    before: int | None = Query(
-        None, description="Cursor — return messages with id < this value (for pagination)"
-    ),
+    before: int | None = Query(None, description="Cursor — return messages with id < this value (for pagination)"),
     limit: int = Query(50, ge=1, le=200, description="Max messages to return"),
 ):
     """Retrieve chat history for a given session.
@@ -388,9 +372,7 @@ def get_history_endpoint(
 
             resolve_bot_ids = []
             if not resolved_bot_id:
-                query = select(BotModel.id).where(
-                    BotModel.client_id == auth["client_id"]
-                )
+                query = select(BotModel.id).where(BotModel.client_id == auth["client_id"])
                 bots = session.execute(query).scalars().all()
                 resolve_bot_ids = list(bots)
 

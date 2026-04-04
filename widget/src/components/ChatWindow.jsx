@@ -11,7 +11,7 @@ import LeadCaptureForm from './LeadCaptureForm';
 import HandoffForm from './HandoffForm';
 import LiveChatMode from './LiveChatMode';
 
-const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true }) => {
+const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, isOnline = true }) => {
     const containerRef = useRef(null);
     const [messages, setMessages] = useState([
         {
@@ -38,9 +38,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [sessionId, setSessionId] = useState(() => {
         try { return localStorage.getItem('chat_session_id'); } catch { return null; }
     });
-    const [showWelcome, setShowWelcome] = useState(true);
+    // When the bot is outside business hours, skip the welcome screen and go straight to unavailable/offline form
+    const [showWelcome, setShowWelcome] = useState(isOnline);
     const [showLeadForm, setShowLeadForm] = useState(false);
-    const [chatMode, setChatMode] = useState('bot'); // bot|handoff_form|waiting|live|unavailable
+    const [chatMode, setChatMode] = useState(isOnline ? 'bot' : 'unavailable'); // bot|handoff_form|waiting|live|unavailable
     const [operatorName, setOperatorName] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);

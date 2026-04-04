@@ -112,7 +112,7 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
                 '<h3 style="font-size: 14px; font-weight: 600; color: #374151; '
                 'margin: 16px 0 8px 0;">Contact Info</h3>'
                 '<ul style="margin: 0; padding-left: 20px; color: #4b5563;">'
-                f'{parts_html}</ul>'
+                f"{parts_html}</ul>"
             )
 
     content = f"""
@@ -160,10 +160,15 @@ def send_handoff_request_email(notification_email: str, bot_name: str, reason: s
         A visitor on <strong>{bot_name}</strong> has requested to speak with a team member.
     </p>
     {contact_info}
-    {(f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; '
-      f'margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:'
-      f'</strong> {_esc(reason)}</p></div>')
-      if reason else ""}
+    {
+        (
+            f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; '
+            f'margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:'
+            f"</strong> {_esc(reason)}</p></div>"
+        )
+        if reason
+        else ""
+    }
     <a href="https://admin.oyechats.com/live-chat"
         style="display: inline-block; background: #6366f1; color: #ffffff;
                padding: 10px 24px; border-radius: 8px; text-decoration: none;
@@ -189,8 +194,7 @@ def send_unavailable_callback_email(notification_email: str, bot_name: str, cont
         <ul style="margin: 0; padding-left: 20px; color: #991b1b; line-height: 1.8;">
             <li><strong>Name:</strong> {_esc(contact.get("name"))}</li>
             <li><strong>Email:</strong> {_esc(contact.get("email"))}</li>
-            {(f"<li><strong>Phone:</strong> {_esc(contact.get('phone'))}</li>")
-              if contact.get("phone") else ""}
+            {(f"<li><strong>Phone:</strong> {_esc(contact.get('phone'))}</li>") if contact.get("phone") else ""}
         </ul>
     </div>
     <a href="https://admin.oyechats.com/leads"
