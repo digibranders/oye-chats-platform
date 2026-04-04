@@ -31,6 +31,12 @@ def list_leads(
     with get_session() as session:
         # Get bot IDs for this client
         if bot_id:
+            # Verify the bot belongs to the authenticated client
+            owns_bot = session.execute(
+                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not owns_bot:
+                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
             bot_ids = [bot_id]
         else:
             bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
@@ -84,6 +90,11 @@ def lead_stats(
     """Aggregate lead stats: total, cold, warm, hot, qualified counts."""
     with get_session() as session:
         if bot_id:
+            owns_bot = session.execute(
+                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not owns_bot:
+                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
             bot_ids = [bot_id]
         else:
             bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
@@ -115,6 +126,11 @@ def export_leads_csv(
     """Export leads as a CSV file download."""
     with get_session() as session:
         if bot_id:
+            owns_bot = session.execute(
+                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not owns_bot:
+                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
             bot_ids = [bot_id]
         else:
             bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
