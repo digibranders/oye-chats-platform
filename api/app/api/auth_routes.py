@@ -1,7 +1,7 @@
 import hmac
 import logging
-import random
 import re
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -417,7 +417,7 @@ def request_password_reset(request: RequestPasswordResetRequest, fastapi_request
                 # Return success anyway to avoid email enumeration
                 return {"message": "If an account exists, a reset link has been sent."}
 
-            otp = str(random.randint(100000, 999999))
+            otp = str(secrets.randbelow(900000) + 100000)
             client.reset_otp = otp
             client.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
             session.commit()
@@ -442,14 +442,17 @@ def reset_password(request: ResetPasswordRequest, fastapi_request: Request):
                 raise HTTPException(status_code=400, detail="Invalid or expired reset code.")
 
             if datetime.now(UTC) > client.reset_otp_expires_at:
-                # Check expiry before OTP to avoid leaking timing info on expired codes
                 client.reset_otp = None
                 client.reset_otp_expires_at = None
                 session.commit()
                 raise HTTPException(status_code=400, detail="Reset code has expired.")
 
             if not hmac.compare_digest(client.reset_otp, request.otp.strip()):
-                raise HTTPException(status_code=400, detail="Invalid reset code.")
+                # Invalidate OTP after wrong guess to prevent brute-force
+                client.reset_otp = None
+                client.reset_otp_expires_at = None
+                session.commit()
+                raise HTTPException(status_code=400, detail="Invalid reset code. Please request a new code.")
 
             client.hashed_password = get_password_hash(request.new_password)
             client.reset_otp = None
