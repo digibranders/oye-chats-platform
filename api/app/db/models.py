@@ -130,6 +130,7 @@ class Bot(Base):
     chat_sessions = relationship("ChatSession", back_populates="bot", cascade="all, delete-orphan")
     lead_infos = relationship("LeadInfo", back_populates="bot", cascade="all, delete-orphan")
     growth_events = relationship("BotGrowthEvent", back_populates="bot", cascade="all, delete-orphan")
+    webhooks = relationship("Webhook", back_populates="bot", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -278,6 +279,39 @@ class BotGrowthEvent(Base):
             name="ck_bot_growth_events_event_type",
         ),
     )
+
+
+class Webhook(Base):
+    __tablename__ = "webhooks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+    url = Column(String, nullable=False)
+    secret = Column(String, nullable=False)
+    events = Column(JSONB, default=list, server_default="[]", nullable=False)
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    bot = relationship("Bot", back_populates="webhooks")
+    deliveries = relationship("WebhookDelivery", back_populates="webhook", cascade="all, delete-orphan")
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    webhook_id = Column(Integer, ForeignKey("webhooks.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String, nullable=False)
+    payload = Column(JSONB, nullable=False)
+    status_code = Column(Integer, nullable=True)
+    response_body = Column(Text, nullable=True)
+    attempt = Column(Integer, default=1, server_default="1", nullable=False)
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+
+    webhook = relationship("Webhook", back_populates="deliveries")
 
 
 class Department(Base):

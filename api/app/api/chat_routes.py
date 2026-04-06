@@ -231,6 +231,22 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             )
             session.commit()
             logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={body.email}")
+            try:
+                from app.services.webhook_service import fire_webhook
+
+                fire_webhook(
+                    bot.id,
+                    "lead_captured",
+                    {
+                        "session_id": body.session_id,
+                        "name": body.name,
+                        "email": body.email,
+                        "phone": body.phone,
+                        "company": body.company,
+                    },
+                )
+            except Exception as wh_err:
+                logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
             return {"success": True, "session_id": body.session_id}
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")

@@ -18,6 +18,7 @@ from app.api.analytics_routes import router as analytics_router
 
 # Route imports
 from app.api.auth_routes import router as auth_router
+from app.api.bot_routes import public_router as public_bot_router
 from app.api.bot_routes import router as bot_router
 from app.api.canned_response_routes import router as canned_response_router
 from app.api.chat_routes import router as chat_router
@@ -27,6 +28,7 @@ from app.api.lead_routes import router as lead_router
 from app.api.offline_message_routes import router as offline_message_router
 from app.api.operator_routes import router as operator_router
 from app.api.superadmin_routes import router as superadmin_router
+from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
 from app.core.middleware import (
@@ -71,6 +73,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # --- Routers ---
 app.include_router(auth_router)
 app.include_router(superadmin_router)
+app.include_router(public_bot_router)
 app.include_router(bot_router)
 app.include_router(chat_router)
 app.include_router(document_router)
@@ -81,6 +84,7 @@ app.include_router(offline_message_router)
 app.include_router(canned_response_router)
 app.include_router(ws_router)
 app.include_router(client_router)
+app.include_router(webhook_router)
 
 # --- Exception Handlers ---
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
@@ -185,6 +189,15 @@ def backfill_session_client_ids():
                 logger.info(f"Backfilled client_id for {len(null_sessions)} chat sessions.")
     except Exception as e:
         logger.warning(f"Session client_id backfill skipped: {e}")
+
+    try:
+        from app.services.webhook_service import process_pending_retries
+
+        queued = process_pending_retries()
+        if queued:
+            logger.info(f"Queued {queued} pending webhook retries on startup.")
+    except Exception as e:
+        logger.warning(f"Webhook retry bootstrap skipped: {e}")
 
 
 # --- Root & File Serving ---

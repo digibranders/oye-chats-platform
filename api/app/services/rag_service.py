@@ -315,6 +315,22 @@ def _background_bant_extraction(
                         "bant_timeline": chat_session.bant_timeline,
                     }
                     send_qualified_lead_email(notification_email, bot.name, bant_updates, contact)
+                try:
+                    from app.services.webhook_service import fire_webhook
+
+                    fire_webhook(
+                        bot.id,
+                        "tier_transition",
+                        {
+                            "session_id": session_id,
+                            "old_tier": old_tier,
+                            "new_tier": new_tier,
+                            "score": chat_session.bant_score,
+                            "behavioral_score": getattr(chat_session, "behavioral_score", 0),
+                        },
+                    )
+                except Exception as wh_err:
+                    logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
 
             session.commit()
     except Exception as e:
