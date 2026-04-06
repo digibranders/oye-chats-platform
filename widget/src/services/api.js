@@ -201,8 +201,9 @@ export const requestHandoff = async (sessionId, formData) => {
 
 export const getDepartments = async () => {
     try {
-        const botKey = window.OYECHATS_BOT_KEY || '';
-        const response = await fetch(`${API_URL}/operators/departments/public?bot_key=${botKey}`);
+        const response = await fetch(`${API_URL}/operators/departments/public`, {
+            headers: getHeaders(),
+        });
         if (!response.ok) return { departments: [] };
         return await response.json();
     } catch (error) {

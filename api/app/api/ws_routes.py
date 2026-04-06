@@ -292,9 +292,9 @@ async def operator_websocket(
                 # File sharing — operator sends a file URL
                 target_session = data.get("session_id")
                 file_url = data.get("file_url", "").strip()
-                filename = data.get("filename", "file")
+                filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]
                 content_type_val = data.get("content_type", "")
-                if not target_session or not file_url:
+                if not target_session or not file_url or not file_url.startswith(("https://", "http://")):
                     continue
 
                 with get_session() as session:
