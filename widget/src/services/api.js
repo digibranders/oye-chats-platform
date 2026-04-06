@@ -173,6 +173,26 @@ export const submitLeadCapture = async (sessionId, formData) => {
     }
 };
 
+export const submitMeetingBooked = async (sessionId, data = {}) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/meeting-booked`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+                session_id: sessionId,
+                booking_url: data.booking_url || null,
+                meeting_time: data.meeting_time || null,
+                attendee_email: data.attendee_email || null,
+            }),
+        });
+        if (!response.ok) throw new Error('Failed to submit meeting booking');
+        return await response.json();
+    } catch (error) {
+        console.error('[OyeChats] Error submitting meeting booking:', error);
+        throw error;
+    }
+};
+
 export const requestHandoff = async (sessionId, formData) => {
     try {
         const response = await fetch(`${API_URL}/operators/handoff`, {

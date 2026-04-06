@@ -86,6 +86,8 @@ class UpdateBotRequest(BaseModel):
     waiting_message: str | None = None
     offline_message: str | None = None
     handoff_delay_seconds: int | None = None
+    calendly_url: str | None = None
+    meeting_booking_enabled: bool | None = None
 
 
 class BotResponse(BaseModel):
@@ -121,6 +123,8 @@ class BotResponse(BaseModel):
     waiting_message: str = "Connecting you to support..."
     offline_message: str = "Our team is currently unavailable."
     handoff_delay_seconds: int = 0
+    calendly_url: str | None = None
+    meeting_booking_enabled: bool = False
     is_active: bool
     created_at: str
 
@@ -421,6 +425,8 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     waiting_message=b.waiting_message or "Connecting you to support...",
                     offline_message=b.offline_message or "Our team is currently unavailable.",
                     handoff_delay_seconds=b.handoff_delay_seconds or 0,
+                    calendly_url=b.calendly_url,
+                    meeting_booking_enabled=b.meeting_booking_enabled,
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
                 )
@@ -519,6 +525,8 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             waiting_message=bot.waiting_message or "Connecting you to support...",
             offline_message=bot.offline_message or "Our team is currently unavailable.",
             handoff_delay_seconds=bot.handoff_delay_seconds or 0,
+            calendly_url=bot.calendly_url,
+            meeting_booking_enabled=bot.meeting_booking_enabled,
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )

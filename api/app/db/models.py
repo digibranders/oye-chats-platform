@@ -113,6 +113,8 @@ class Bot(Base):
     # Delay (seconds) before handoff form auto-appears after the bot suggests a handoff.
     # 0 = show immediately; useful to give the visitor time to read the bot's last response.
     handoff_delay_seconds = Column(Integer, default=0, server_default="0", nullable=False)
+    calendly_url = Column(String, nullable=True)
+    meeting_booking_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Feature flags — controls per-bot widget/operator behavior toggles
     feature_flags = Column(
@@ -131,6 +133,7 @@ class Bot(Base):
     lead_infos = relationship("LeadInfo", back_populates="bot", cascade="all, delete-orphan")
     growth_events = relationship("BotGrowthEvent", back_populates="bot", cascade="all, delete-orphan")
     webhooks = relationship("Webhook", back_populates="bot", cascade="all, delete-orphan")
+    meeting_bookings = relationship("MeetingBooking", back_populates="bot", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -314,6 +317,22 @@ class WebhookDelivery(Base):
     delivered_at = Column(DateTime(timezone=True), nullable=True)
 
     webhook = relationship("Webhook", back_populates="deliveries")
+
+
+class MeetingBooking(Base):
+    __tablename__ = "meeting_bookings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False)
+    booking_url = Column(String, nullable=True)
+    meeting_time = Column(DateTime(timezone=True), nullable=True)
+    attendee_email = Column(String, nullable=True)
+    status = Column(String, default="scheduled", server_default="scheduled", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("ChatSession")
+    bot = relationship("Bot", back_populates="meeting_bookings")
 
 
 class Department(Base):

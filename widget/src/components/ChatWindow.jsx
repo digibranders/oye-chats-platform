@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, Volume2, CheckCircle2, AlertCircle, User, Phone, MessageSquare } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage } from '../services/api';
+import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare } from 'lucide-react';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -10,6 +10,7 @@ import WelcomeScreen from './WelcomeScreen';
 import LeadCaptureForm from './LeadCaptureForm';
 import HandoffForm from './HandoffForm';
 import LiveChatMode from './LiveChatMode';
+import MeetingBooking from './MeetingBooking';
 import QualificationCTA from './QualificationCTA';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -96,6 +97,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
     const [activeCTA, setActiveCTA] = useState(null);
+    const [showBooking, setShowBooking] = useState(false);
+    const [calendlyUrl, setCalendlyUrl] = useState(null);
+    const [meetingBooked, setMeetingBooked] = useState(false);
     const ctaShownRef = useRef(false);
     const ctaDimensionsShownRef = useRef(new Set());
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
@@ -103,9 +107,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // Header menu
     const [showHeaderMenu, setShowHeaderMenu] = useState(false);
-    const [soundsEnabled, setSoundsEnabled] = useState(() => {
-        try { return localStorage.getItem('oyechats_sounds') !== 'off'; } catch { return true; }
-    });
     const headerMenuRef = useRef(null);
 
     // ── Live chat lifted state ───────────────────────────────────────────────────
@@ -312,13 +313,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         return () => document.removeEventListener('mousedown', handler);
     }, [showHeaderMenu]);
 
-    const toggleSounds = () => {
-        const next = !soundsEnabled;
-        setSoundsEnabled(next);
-        try { localStorage.setItem('oyechats_sounds', next ? 'on' : 'off'); } catch { /* noop */ }
-        setShowHeaderMenu(false);
-    };
-
     const handleSendTranscript = () => {
         setShowHeaderMenu(false);
         const transcript = messages
@@ -372,6 +366,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         pageContextRef.current = collectPageContext();
         ctaShownRef.current = false;
         ctaDimensionsShownRef.current = new Set();
+        setShowBooking(false);
+        setCalendlyUrl(null);
+        setMeetingBooked(false);
         consecutiveFallbacks.current = 0;
         setExistingLeadInfo(null);
         setLiveMessages([]);
@@ -485,6 +482,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             ctaShownRef.current = true;
                             setActiveCTA(finalMeta.cta);
                         }
+                    }
+                    if (finalMeta.show_booking && finalMeta.calendly_url && !meetingBooked) {
+                        setCalendlyUrl(finalMeta.calendly_url);
+                        setShowBooking(true);
                     }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
@@ -958,16 +959,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <Mail className="w-4 h-4 text-gray-400" />
                                 Send transcript
                             </button>
-                            <button
-                                onClick={toggleSounds}
-                                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
-                            >
-                                <Volume2 className="w-4 h-4 text-gray-400" />
-                                <span className="flex-1 text-left">Sounds</span>
-                                <div className={`w-9 h-5 rounded-full relative transition-colors duration-200 ${soundsEnabled ? 'bg-green-500' : 'bg-gray-300'}`}>
-                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${soundsEnabled ? 'left-[18px]' : 'left-0.5'}`} />
-                                </div>
-                            </button>
                         </div>
                     )}
                 </div>
@@ -1092,6 +1083,45 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                 {/* Bot typing indicator */}
                 {isTyping && <TypingIndicator settings={settings} />}
+
+                {/* Meeting booking widget for qualified leads */}
+                {showBooking && calendlyUrl && (
+                    <MeetingBooking
+                        calendlyUrl={calendlyUrl}
+                        sessionId={sessionId}
+                        onDismiss={() => setShowBooking(false)}
+                        onBooked={async (bookingData) => {
+                            const sid = sessionId || bookingData.session_id;
+                            if (!sid) return;
+                            try {
+                                await submitMeetingBooked(sid, bookingData);
+                                setMeetingBooked(true);
+                                setShowBooking(false);
+                                setMessages(prev => [
+                                    ...prev,
+                                    {
+                                        id: `meeting-booked-${Date.now()}`,
+                                        text: 'Great, your meeting is confirmed. Our team will connect with you soon.',
+                                        sender: 'bot',
+                                        timestamp: new Date().toISOString(),
+                                        feedback: null,
+                                    }
+                                ]);
+                            } catch {
+                                setMessages(prev => [
+                                    ...prev,
+                                    {
+                                        id: `meeting-booked-error-${Date.now()}`,
+                                        text: 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
+                                        sender: 'bot',
+                                        timestamp: new Date().toISOString(),
+                                        feedback: null,
+                                    }
+                                ]);
+                            }
+                        }}
+                    />
+                )}
 
                 {/* BANT qualification quick-reply chips */}
                 <QualificationCTA
@@ -1319,7 +1349,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
             {/* ── Unified ChatInput — hidden when any form is active ── */}
             {!showLeadForm &&
-             !showWelcome &&
              !showRating &&
              !hasActiveHandoffForm &&
              chatMode !== 'unavailable' && (

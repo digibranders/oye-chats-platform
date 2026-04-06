@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import urllib.request
@@ -41,6 +42,13 @@ class BehavioralSignalsRequest(PydanticBaseModel):
     time_on_page: float | None = None  # seconds
     pages_viewed: int | None = None
     is_return_visit: bool = False
+
+
+class MeetingBookedRequest(PydanticBaseModel):
+    session_id: str
+    booking_url: str | None = None
+    meeting_time: str | None = None
+    attendee_email: str | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -341,6 +349,53 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, bot: Bot = Depen
     except Exception as e:
         logger.error(f"Behavioral signals failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to record behavioral signals.") from e
+
+
+@router.post("/chat/meeting-booked")
+def meeting_booked_endpoint(body: MeetingBookedRequest, bot: Bot = Depends(get_current_bot)):
+    try:
+        from datetime import datetime
+
+        from app.db.models import MeetingBooking
+        from app.services.webhook_service import fire_webhook
+
+        with get_session() as session:
+            ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            meeting_time = None
+            if body.meeting_time:
+                with contextlib.suppress(Exception):
+                    meeting_time = datetime.fromisoformat(body.meeting_time)
+
+            session.add(
+                MeetingBooking(
+                    session_id=body.session_id,
+                    bot_id=bot.id,
+                    booking_url=body.booking_url,
+                    meeting_time=meeting_time,
+                    attendee_email=body.attendee_email,
+                    status="scheduled",
+                )
+            )
+            session.commit()
+
+            try:
+                fire_webhook(
+                    bot.id,
+                    "meeting_booked",
+                    {
+                        "session_id": body.session_id,
+                        "booking_url": body.booking_url,
+                        "meeting_time": body.meeting_time,
+                        "attendee_email": body.attendee_email,
+                    },
+                )
+            except Exception as wh_err:
+                logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
+
+            return {"success": True}
+    except Exception as e:
+        logger.error(f"Meeting booking save failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save meeting booking.") from e
 
 
 @router.get("/chat/lead-info/{session_id}")

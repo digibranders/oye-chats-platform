@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from app.config import LLM_FALLBACKS, LLM_MODEL
 from app.core.langfuse_client import get_langfuse
 from app.core.thread_pool import submit_background
-from app.db.models import BANTSignal, Bot, ChatSession
+from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
     add_chat_message,
     ensure_chat_session,
@@ -867,6 +867,21 @@ async def rag_pipeline_stream(
             final_meta["suggest_handoff"] = True
         if cta_data:
             final_meta["cta"] = cta_data
+        if (
+            bot
+            and getattr(bot, "meeting_booking_enabled", False)
+            and getattr(bot, "calendly_url", None)
+            and (chat_session.bant_tier or "unqualified") == "sql"
+        ):
+            has_booking = (
+                session.query(MeetingBooking)
+                .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
+                .first()
+                is not None
+            )
+            if not has_booking:
+                final_meta["show_booking"] = True
+                final_meta["calendly_url"] = bot.calendly_url
         yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
 
         logger.info(f"Hybrid RAG stream finished for session: {session_id}")
