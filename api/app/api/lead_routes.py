@@ -33,9 +33,12 @@ def list_leads(
         # Get bot IDs for this client (always scoped to authenticated client)
         client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
         if bot_id:
-            # Verify the requested bot belongs to this client
-            if bot_id not in client_bot_ids:
-                return {"leads": [], "total": 0, "page": page, "limit": limit}
+            # Verify the bot belongs to the authenticated client
+            owns_bot = session.execute(
+                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not owns_bot:
+                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
             bot_ids = [bot_id]
         else:
             bot_ids = client_bot_ids
@@ -101,8 +104,11 @@ def lead_stats(
     with get_session() as session:
         client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
         if bot_id:
-            if bot_id not in client_bot_ids:
-                return {"total": 0, "unqualified": 0, "mql": 0, "sal": 0, "sql": 0, "avg_score": 0}
+            owns_bot = session.execute(
+                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not owns_bot:
+                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
             bot_ids = [bot_id]
         else:
             bot_ids = client_bot_ids
@@ -141,8 +147,11 @@ def export_leads_csv(
     with get_session() as session:
         client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
         if bot_id:
-            if bot_id not in client_bot_ids:
-                raise HTTPException(status_code=404, detail="Bot not found")
+            owns_bot = session.execute(
+                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not owns_bot:
+                raise HTTPException(status_code=403, detail="Bot not found or access denied.")
             bot_ids = [bot_id]
         else:
             bot_ids = client_bot_ids

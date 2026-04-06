@@ -830,13 +830,9 @@ def get_session_details(session_id: str, auth=Depends(get_current_client_or_oper
 
 
 @router.get("/departments/public")
-def list_departments_public(bot_key: str = Query(...)):
+def list_departments_public(bot: Bot = Depends(get_current_bot)):
     """List departments for a bot (used by widget to show department picker)."""
     with get_session() as session:
-        bot = session.execute(select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))).scalar_one_or_none()
-        if not bot:
-            raise HTTPException(status_code=404, detail="Bot not found.")
-
         departments = (
             session.execute(select(Department).where(Department.client_id == bot.client_id).order_by(Department.id))
             .scalars()

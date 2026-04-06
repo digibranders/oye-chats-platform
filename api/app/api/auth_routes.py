@@ -1,14 +1,16 @@
+import hmac
 import logging
-import random
 import re
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 from app.api.auth import get_current_operator
+from app.core.rate_limit import limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
 from app.db.session import get_session
@@ -404,7 +406,8 @@ def register(request: RegisterRequest):
 
 
 @router.post("/request-password-reset")
-def request_password_reset(request: RequestPasswordResetRequest):
+@limiter.limit("3/minute")
+def request_password_reset(request: RequestPasswordResetRequest, fastapi_request: Request):
     """Generates an OTP and sends it via email."""
     try:
         with get_session() as session:
@@ -414,7 +417,7 @@ def request_password_reset(request: RequestPasswordResetRequest):
                 # Return success anyway to avoid email enumeration
                 return {"message": "If an account exists, a reset link has been sent."}
 
-            otp = str(random.randint(100000, 999999))
+            otp = str(secrets.randbelow(900000) + 100000)
             client.reset_otp = otp
             client.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
             session.commit()
@@ -427,7 +430,8 @@ def request_password_reset(request: RequestPasswordResetRequest):
 
 
 @router.post("/reset-password")
-def reset_password(request: ResetPasswordRequest):
+@limiter.limit("5/minute")
+def reset_password(request: ResetPasswordRequest, fastapi_request: Request):
     """Verifies OTP and resets the password."""
     try:
         with get_session() as session:
@@ -437,11 +441,18 @@ def reset_password(request: ResetPasswordRequest):
             if not client or not client.reset_otp or not client.reset_otp_expires_at:
                 raise HTTPException(status_code=400, detail="Invalid or expired reset code.")
 
-            if client.reset_otp != request.otp.strip():
-                raise HTTPException(status_code=400, detail="Invalid reset code.")
-
             if datetime.now(UTC) > client.reset_otp_expires_at:
+                client.reset_otp = None
+                client.reset_otp_expires_at = None
+                session.commit()
                 raise HTTPException(status_code=400, detail="Reset code has expired.")
+
+            if not hmac.compare_digest(client.reset_otp, request.otp.strip()):
+                # Invalidate OTP after wrong guess to prevent brute-force
+                client.reset_otp = None
+                client.reset_otp_expires_at = None
+                session.commit()
+                raise HTTPException(status_code=400, detail="Invalid reset code. Please request a new code.")
 
             client.hashed_password = get_password_hash(request.new_password)
             client.reset_otp = None

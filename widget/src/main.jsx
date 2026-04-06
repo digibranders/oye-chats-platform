@@ -74,11 +74,11 @@ if (scriptTag) {
 
   if (botKey) {
     window.OYECHATS_BOT_KEY = botKey;
-    console.log('[OyeChats] Bot Key initialized:', botKey);
+    console.log('[OyeChats] Bot Key initialized');
   } else if (apiKey) {
     // Backward compatibility — old embed codes still work
     window.OYECHATS_API_KEY = apiKey;
-    console.log('[OyeChats] API Key initialized (legacy):', apiKey);
+    console.log('[OyeChats] API Key initialized (legacy)');
   } else {
     console.error('[OyeChats] Script tag found but no data-bot-key or data-api-key attribute');
   }
