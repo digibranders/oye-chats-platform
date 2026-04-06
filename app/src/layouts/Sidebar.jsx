@@ -5,6 +5,7 @@ import {
     BookOpen,
     BarChart3,
     Target,
+    Crosshair,
     Headphones,
     Bot,
     ChevronDown,
@@ -57,6 +58,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             { path: '/insights', name: 'Insights', icon: BarChart3 },
             { path: '/support', name: 'Support', icon: Headphones },
             { path: '/leads', name: 'Leads', icon: Target },
+            { path: '/qualification', name: 'Qualification', icon: Crosshair },
         ];
 
     const configItems = isOperatorRole

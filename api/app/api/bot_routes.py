@@ -52,6 +52,7 @@ class UpdateBotRequest(BaseModel):
     header_color: str | None = None
     user_bubble_color: str | None = None
     bant_enabled: bool | None = None
+    bant_config: dict | None = None
     avatar_type: str | None = None
     orb_color: str | None = None
     # Lead form settings
@@ -91,6 +92,7 @@ class BotResponse(BaseModel):
     recommended_colors: list | None
     user_bubble_color: str = "#DBE9FF"
     bant_enabled: bool
+    bant_config: dict | None = None
     avatar_type: str
     orb_color: str | None
     lead_form_enabled: bool = False
@@ -159,7 +161,24 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "waiting_message": bot.waiting_message or "Connecting you to support...",
         "offline_message": bot.offline_message or "Our team is currently unavailable.",
         "handoff_delay_seconds": bot.handoff_delay_seconds or 0,
+        "bant_cta_options": _build_public_cta_options(bot),
     }
+
+
+def _build_public_cta_options(bot) -> dict:
+    """Build sanitized CTA options for the widget (no scoring rubric exposed)."""
+    from app.services.lead_service import get_bant_config
+
+    config = get_bant_config(bot)
+    cta_options = {}
+    for dim in ["need", "timeline", "authority", "budget"]:
+        dim_config = config.get(dim, {})
+        if dim_config.get("cta_enabled", False):
+            cta_options[dim] = {
+                "prompt": dim_config.get("cta_prompt", ""),
+                "options": [o["label"] for o in dim_config.get("options", [])],
+            }
+    return cta_options
 
 
 @router.get("", response_model=list[BotResponse])
@@ -194,6 +213,7 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     recommended_colors=b.recommended_colors or [],
                     user_bubble_color=b.user_bubble_color or "#DBE9FF",
                     bant_enabled=b.bant_enabled,
+                    bant_config=b.bant_config,
                     avatar_type=b.avatar_type or "upload",
                     orb_color=b.orb_color,
                     lead_form_enabled=b.lead_form_enabled,
@@ -271,6 +291,7 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             recommended_colors=bot.recommended_colors or [],
             user_bubble_color=bot.user_bubble_color or "#DBE9FF",
             bant_enabled=bot.bant_enabled,
+            bant_config=bot.bant_config,
             avatar_type=bot.avatar_type or "upload",
             orb_color=bot.orb_color,
             lead_form_enabled=bot.lead_form_enabled,

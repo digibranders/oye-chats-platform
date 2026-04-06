@@ -9,9 +9,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select
 
 from app.api.auth import get_current_client_or_operator
-from app.db.models import Bot, ChatMessage, ChatSession, LeadInfo
+from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, LeadInfo
 from app.db.session import get_session
-from app.services.lead_service import build_lead_response, calculate_lead_score, get_lead_status
+from app.services.lead_service import build_lead_response
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,8 @@ router = APIRouter(prefix="/leads", tags=["leads"])
 @router.get("")
 def list_leads(
     bot_id: int | None = Query(None),
-    status: str | None = Query(None, description="cold|warm|hot|qualified"),
+    tier: str | None = Query(None, description="unqualified|mql|sal|sql"),
+    status: str | None = Query(None, description="backward-compat alias for tier"),
     min_score: int | None = Query(None, ge=0, le=100),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
@@ -29,11 +30,15 @@ def list_leads(
 ):
     """List leads with BANT data, scores, and optional filters."""
     with get_session() as session:
-        # Get bot IDs for this client
+        # Get bot IDs for this client (always scoped to authenticated client)
+        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
         if bot_id:
+            # Verify the requested bot belongs to this client
+            if bot_id not in client_bot_ids:
+                return {"leads": [], "total": 0, "page": page, "limit": limit}
             bot_ids = [bot_id]
         else:
-            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+            bot_ids = client_bot_ids
 
         if not bot_ids:
             return {"leads": [], "total": 0, "page": page, "limit": limit}
@@ -49,6 +54,11 @@ def list_leads(
 
         results = session.execute(stmt).all()
 
+        bot_map: dict[int, Bot] = {}
+        if bot_ids:
+            bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all()
+            bot_map = {bot.id: bot for bot in bots}
+
         # Batch-load all LeadInfo records for these sessions in a single query
         session_ids = [cs.id for cs, _ in results]
         lead_info_map: dict = {}
@@ -56,13 +66,19 @@ def list_leads(
             lead_infos = session.execute(select(LeadInfo).where(LeadInfo.session_id.in_(session_ids))).scalars().all()
             lead_info_map = {li.session_id: li for li in lead_infos}
 
-        # Build leads with scores — filters are Python-computed (score/status not in DB)
+        # Build leads with scores — filters are Python-computed (score/tier not in DB)
         leads = []
         for chat_session, msg_count in results:
-            lead = build_lead_response(chat_session, lead_info_map.get(chat_session.id), msg_count)
+            lead = build_lead_response(
+                chat_session,
+                lead_info_map.get(chat_session.id),
+                msg_count,
+                bot=bot_map.get(chat_session.bot_id),
+            )
 
-            # Apply filters
-            if status and lead["status"] != status:
+            # Apply filters (tier or legacy status param)
+            effective_tier = tier or status
+            if effective_tier and lead["tier"] != effective_tier:
                 continue
             if min_score is not None and lead["score"] < min_score:
                 continue
@@ -81,28 +97,37 @@ def lead_stats(
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Aggregate lead stats: total, cold, warm, hot, qualified counts."""
+    """Aggregate lead stats: total, unqualified, MQL, SAL, and SQL counts."""
     with get_session() as session:
+        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
         if bot_id:
+            if bot_id not in client_bot_ids:
+                return {"total": 0, "unqualified": 0, "mql": 0, "sal": 0, "sql": 0, "avg_score": 0}
             bot_ids = [bot_id]
         else:
-            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+            bot_ids = client_bot_ids
 
         sessions = session.execute(select(ChatSession).where(ChatSession.bot_id.in_(bot_ids))).scalars().all()
+        bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else []
+        bot_map = {bot.id: bot for bot in bots}
 
-        counts = {"cold": 0, "warm": 0, "hot": 0, "qualified": 0}
+        counts = {"unqualified": 0, "mql": 0, "sal": 0, "sql": 0}
         total_score = 0
 
         for s in sessions:
-            score = calculate_lead_score(s)
-            status = get_lead_status(score)
-            counts[status] += 1
-            total_score += score
+            lead = build_lead_response(s, None, bot=bot_map.get(s.bot_id))
+            counts[lead["tier"]] += 1
+            total_score += lead["score"]
 
         total = len(sessions)
         return {
             "total": total,
             **counts,
+            # backward-compat aliases for frontend expecting old status names
+            "cold": counts["unqualified"],
+            "warm": counts["mql"],
+            "hot": counts["sal"],
+            "qualified": counts["sql"],
             "avg_score": round(total_score / total) if total > 0 else 0,
         }
 
@@ -114,10 +139,13 @@ def export_leads_csv(
 ):
     """Export leads as a CSV file download."""
     with get_session() as session:
+        client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
         if bot_id:
+            if bot_id not in client_bot_ids:
+                raise HTTPException(status_code=404, detail="Bot not found")
             bot_ids = [bot_id]
         else:
-            bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+            bot_ids = client_bot_ids
 
         results = session.execute(
             select(ChatSession, func.count(ChatMessage.id).label("msg_count"))
@@ -126,6 +154,17 @@ def export_leads_csv(
             .group_by(ChatSession.id)
             .order_by(desc(ChatSession.last_active_at))
         ).all()
+
+        bot_map: dict[int, Bot] = {}
+        if bot_ids:
+            bots = session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all()
+            bot_map = {bot.id: bot for bot in bots}
+
+        session_ids = [chat_session.id for chat_session, _ in results]
+        lead_info_map: dict[str, LeadInfo] = {}
+        if session_ids:
+            lead_infos = session.execute(select(LeadInfo).where(LeadInfo.session_id.in_(session_ids))).scalars().all()
+            lead_info_map = {lead_info.session_id: lead_info for lead_info in lead_infos}
 
         output = io.StringIO()
         writer = csv.writer(output)
@@ -151,11 +190,13 @@ def export_leads_csv(
         )
 
         for chat_session, msg_count in results:
-            lead_info = session.execute(
-                select(LeadInfo).where(LeadInfo.session_id == chat_session.id).limit(1)
-            ).scalar_one_or_none()
-
-            score = calculate_lead_score(chat_session)
+            lead_info = lead_info_map.get(chat_session.id)
+            lead = build_lead_response(
+                chat_session,
+                lead_info,
+                msg_count,
+                bot=bot_map.get(chat_session.bot_id),
+            )
             writer.writerow(
                 [
                     chat_session.id,
@@ -163,12 +204,12 @@ def export_leads_csv(
                     lead_info.email if lead_info else "",
                     lead_info.phone if lead_info else "",
                     lead_info.company if lead_info else "",
-                    score,
-                    get_lead_status(score),
-                    chat_session.bant_need or "",
-                    chat_session.bant_budget or "",
-                    chat_session.bant_authority or "",
-                    chat_session.bant_timeline or "",
+                    lead["score"],
+                    lead["tier"],
+                    lead["bant"]["need"]["value"] or "",
+                    lead["bant"]["budget"]["value"] or "",
+                    lead["bant"]["authority"]["value"] or "",
+                    lead["bant"]["timeline"]["value"] or "",
                     chat_session.location or "",
                     chat_session.device or "",
                     msg_count,
@@ -204,6 +245,8 @@ def get_lead_detail(
         if not chat_session:
             raise HTTPException(status_code=404, detail="Lead not found")
 
+        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id).limit(1)).scalar_one_or_none()
+
         lead_info = session.execute(
             select(LeadInfo).where(LeadInfo.session_id == session_id).limit(1)
         ).scalar_one_or_none()
@@ -220,7 +263,7 @@ def get_lead_detail(
         )
 
         msg_count = len(messages)
-        lead = build_lead_response(chat_session, lead_info, msg_count)
+        lead = build_lead_response(chat_session, lead_info, msg_count, bot=bot)
         lead["messages"] = [
             {
                 "role": m.role,
@@ -229,6 +272,27 @@ def get_lead_detail(
                 "feedback": m.feedback,
             }
             for m in messages
+        ]
+
+        # Add BANT signal evidence trail
+        signals = (
+            session.execute(
+                select(BANTSignal).where(BANTSignal.session_id == session_id).order_by(BANTSignal.created_at)
+            )
+            .scalars()
+            .all()
+        )
+        lead["signals"] = [
+            {
+                "dimension": s.dimension,
+                "signal_text": s.signal_text,
+                "extracted_value": s.extracted_value,
+                "confidence": s.confidence,
+                "score_before": s.score_before,
+                "score_after": s.score_after,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in signals
         ]
 
         return lead

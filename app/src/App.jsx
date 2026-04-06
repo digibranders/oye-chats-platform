@@ -14,6 +14,7 @@ import KnowledgeBase from './pages/KnowledgeBase';
 import Settings from './pages/Settings';
 import Chatbot from './pages/Chatbot';
 import Leads from './pages/Leads';
+import Qualification from './pages/Qualification';
 import Insights from './pages/Insights';
 import Support from './pages/Support';
 import TeamManagement from './pages/TeamManagement';
@@ -77,6 +78,7 @@ function App() {
                         <Route path="knowledge" element={<ClientOnlyPage pageName="Sources"><KnowledgeBase /></ClientOnlyPage>} />
                         <Route path="insights" element={<ClientOnlyPage pageName="Insights"><Insights /></ClientOnlyPage>} />
                         <Route path="leads" element={<ClientOnlyPage pageName="Leads"><Leads /></ClientOnlyPage>} />
+                        <Route path="qualification" element={<ClientOnlyPage pageName="Qualification"><Qualification /></ClientOnlyPage>} />
                         <Route path="integrations/email" element={<ClientOnlyPage pageName="Integrations"><Email /></ClientOnlyPage>} />
 
                         {/* Accessible to all authenticated users */}

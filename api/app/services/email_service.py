@@ -93,8 +93,29 @@ def _esc(value: str | None) -> str:
     return html.escape(str(value)) if value else "—"
 
 
-def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict, contact: dict | None = None):
-    """Send email when a lead is fully BANT qualified."""
+def send_qualified_lead_email(
+    notification_email: str,
+    bot_name: str,
+    bant: dict,
+    contact: dict | None = None,
+    tier: str = "sql",
+):
+    """Send email when a lead reaches a BANT qualification tier.
+
+    Args:
+        notification_email: Recipient address.
+        bot_name: Name of the bot that captured the lead.
+        bant: Dict with BANT fields (bant_need, bant_budget, bant_authority, bant_timeline).
+        contact: Optional visitor contact info (name, email, phone, company).
+        tier: Qualification tier — "mql" or "sql" (default "sql").
+    """
+    tier_upper = tier.upper()
+    tier_labels: dict[str, str] = {
+        "MQL": "Lead reached MQL",
+        "SQL": "New SQL Lead",
+    }
+    tier_label = tier_labels.get(tier_upper, f"New {tier_upper} Lead")
+
     contact_section = ""
     if contact:
         parts = []
@@ -115,19 +136,33 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
                 f"{parts_html}</ul>"
             )
 
+    # Build BANT summary rows, only including fields that have a value.
+    bant_rows: list[str] = []
+    for key, label in [
+        ("bant_need", "Need"),
+        ("bant_budget", "Budget"),
+        ("bant_authority", "Authority"),
+        ("bant_timeline", "Timeline"),
+    ]:
+        value = bant.get(key)
+        if value:
+            bant_rows.append(f"<li><strong>{label}:</strong> {_esc(value)}</li>")
+
+    bant_section = ""
+    if bant_rows:
+        rows_html = "".join(bant_rows)
+        bant_section = (
+            '<div style="background: #f0fdf4; border-radius: 8px; padding: 16px; margin-bottom: 16px;">'
+            '<h3 style="font-size: 14px; font-weight: 600; color: #166534; margin: 0 0 12px 0;">BANT Summary</h3>'
+            f'<ul style="margin: 0; padding-left: 20px; color: #15803d; line-height: 1.8;">{rows_html}</ul>'
+            "</div>"
+        )
+
     content = f"""
     <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        A visitor on <strong>{bot_name}</strong> has been fully qualified with all BANT fields captured.
+        A visitor on <strong>{bot_name}</strong> has reached <strong>{tier_upper}</strong> qualification.
     </p>
-    <div style="background: #f0fdf4; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-        <h3 style="font-size: 14px; font-weight: 600; color: #166534; margin: 0 0 12px 0;">BANT Summary</h3>
-        <ul style="margin: 0; padding-left: 20px; color: #15803d; line-height: 1.8;">
-            <li><strong>Need:</strong> {_esc(bant.get("bant_need"))}</li>
-            <li><strong>Budget:</strong> {_esc(bant.get("bant_budget"))}</li>
-            <li><strong>Authority:</strong> {_esc(bant.get("bant_authority"))}</li>
-            <li><strong>Timeline:</strong> {_esc(bant.get("bant_timeline"))}</li>
-        </ul>
-    </div>
+    {bant_section}
     {contact_section}
     <a href="https://admin.oyechats.com/leads"
         style="display: inline-block; background: #6366f1; color: #ffffff;
@@ -138,8 +173,8 @@ def send_qualified_lead_email(notification_email: str, bot_name: str, bant: dict
     """
     send_email_async(
         notification_email,
-        f"[OyeChats] New Qualified Lead — {bot_name}",
-        _base_template("New Qualified Lead 🎯", content),
+        f"[OyeChats] {tier_label} — {bot_name}",
+        _base_template(f"{tier_label} \U0001f3af", content),
     )
 
 

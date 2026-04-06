@@ -75,6 +75,7 @@ class Bot(Base):
     user_bubble_color = Column(String, default="#DBE9FF", server_default="#DBE9FF")
 
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
+    bant_config = Column(JSONB, nullable=True)  # per-bot qualification rubric config
     avatar_type = Column(String, default="upload", server_default="upload", nullable=False)
     orb_color = Column(String, nullable=True)
 
@@ -188,6 +189,14 @@ class ChatSession(Base):
     bant_timeline = Column(String, nullable=True)
     bant_authority = Column(String, nullable=True)
     bant_budget = Column(String, nullable=True)
+    bant_need_score = Column(Integer, default=0, server_default="0", nullable=False)
+    bant_budget_score = Column(Integer, default=0, server_default="0", nullable=False)
+    bant_authority_score = Column(Integer, default=0, server_default="0", nullable=False)
+    bant_timeline_score = Column(Integer, default=0, server_default="0", nullable=False)
+    bant_score = Column(Integer, default=0, server_default="0", nullable=False)  # composite 0-100
+    bant_tier = Column(String, default="unqualified", server_default="unqualified", nullable=False)
+    dimensions_assessed = Column(Integer, default=0, server_default="0", nullable=False)
+    bant_last_updated = Column(DateTime(timezone=True), nullable=True)
 
     # Live chat state
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed
@@ -205,6 +214,24 @@ class ChatSession(Base):
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     lead_info = relationship("LeadInfo", back_populates="session", uselist=False, cascade="all, delete-orphan")
     assigned_operator = relationship("Operator", back_populates="active_sessions")
+    bant_signals = relationship("BANTSignal", back_populates="session", cascade="all, delete-orphan")
+
+
+class BANTSignal(Base):
+    __tablename__ = "bant_signals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True)
+    dimension = Column(String, nullable=False)  # budget|authority|need|timeline
+    signal_text = Column(Text, nullable=False)
+    extracted_value = Column(Text, nullable=True)
+    confidence = Column(String, default="medium", server_default="medium", nullable=False)
+    score_before = Column(Integer, default=0, server_default="0", nullable=False)
+    score_after = Column(Integer, default=0, server_default="0", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("ChatSession", back_populates="bant_signals")
 
 
 class Department(Base):
