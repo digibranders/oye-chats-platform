@@ -10,6 +10,7 @@ import WelcomeScreen from './WelcomeScreen';
 import LeadCaptureForm from './LeadCaptureForm';
 import HandoffForm from './HandoffForm';
 import LiveChatMode from './LiveChatMode';
+import QualificationCTA from './QualificationCTA';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -94,6 +95,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showWelcomeBackBanner, setShowWelcomeBackBanner] = useState(true);
     const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
+    const [activeCTA, setActiveCTA] = useState(null);
+    const ctaShownRef = useRef(false);
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
     const [existingLeadInfo, setExistingLeadInfo] = useState(null);
 
@@ -383,6 +386,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (!text.trim()) return;
 
         if (showWelcome) exitWelcome(); else setShowWelcome(false);
+        setActiveCTA(null);
 
         const userMsg = {
             id: Date.now(),
@@ -446,6 +450,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             msg.id === placeholderId ? { ...msg, id: finalMeta.message_id } : msg
                         ));
                         setStreamingId(finalMeta.message_id);
+                    }
+                    // Show CTA quick-reply chips (max 1 per conversation)
+                    if (finalMeta.cta && !ctaShownRef.current) {
+                        ctaShownRef.current = true;
+                        setActiveCTA(finalMeta.cta);
                     }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
@@ -1053,6 +1062,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                 {/* Bot typing indicator */}
                 {isTyping && <TypingIndicator settings={settings} />}
+
+                {/* BANT qualification quick-reply chips */}
+                <QualificationCTA
+                    cta={activeCTA}
+                    dismissed={!activeCTA}
+                    onSelect={(option) => {
+                        setActiveCTA(null);
+                        handleSend(null, option);
+                    }}
+                />
 
                 {/* Reconnecting banner */}
                 {isLiveReconnecting && (

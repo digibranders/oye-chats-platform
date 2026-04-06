@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import case, desc, func, insert, select, text
 
-from app.db.models import ChatMessage, ChatSession, Client, Document, LeadInfo
+from app.db.models import BANTSignal, ChatMessage, ChatSession, Client, Document, LeadInfo
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: Resolve bot_id or client_id for backward compatibility
@@ -72,6 +72,15 @@ def update_session_bant(session, session_id: str, client_id: int = None, bant_da
         session.flush()
         return True
     return False
+
+
+def get_bant_signals(session, session_id: str) -> list:
+    """Return all BANT signal records for a session, ordered by creation time."""
+    return (
+        session.execute(select(BANTSignal).where(BANTSignal.session_id == session_id).order_by(BANTSignal.created_at))
+        .scalars()
+        .all()
+    )
 
 
 def add_chat_message(

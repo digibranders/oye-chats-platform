@@ -8,14 +8,18 @@ import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const STATUS_CONFIG = {
-    cold: { label: 'Cold', color: 'bg-blue-100 text-blue-700' },
-    warm: { label: 'Warm', color: 'bg-yellow-100 text-yellow-700' },
-    hot: { label: 'Hot', color: 'bg-orange-100 text-orange-700' },
-    qualified: { label: 'Qualified', color: 'bg-green-100 text-green-700' },
+    unqualified: { label: 'Unqualified', color: 'bg-secondary-100 text-secondary-600' },
+    mql: { label: 'MQL', color: 'bg-blue-100 text-blue-700' },
+    sal: { label: 'SAL', color: 'bg-orange-100 text-orange-700' },
+    sql: { label: 'SQL', color: 'bg-green-100 text-green-700' },
+    // backward-compat aliases
+    cold: { label: 'Unqualified', color: 'bg-secondary-100 text-secondary-600' },
+    warm: { label: 'MQL', color: 'bg-blue-100 text-blue-700' },
+    hot: { label: 'SAL', color: 'bg-orange-100 text-orange-700' },
+    qualified: { label: 'SQL', color: 'bg-green-100 text-green-700' },
 };
 
 const BANT_LABELS = { need: 'Need', budget: 'Budget', authority: 'Authority', timeline: 'Timeline' };
-const BANT_WEIGHTS = { need: 30, budget: 25, authority: 25, timeline: 20 };
 
 export default function Leads() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
@@ -210,11 +214,11 @@ export default function Leads() {
                                                     <span
                                                         key={key}
                                                         className={`w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center ${
-                                                            lead.bant?.[key]
+                                                            (lead.bant?.[key]?.score || 0) > 0
                                                                 ? 'bg-green-100 text-green-700'
                                                                 : 'bg-secondary-100 text-secondary-400'
                                                         }`}
-                                                        title={`${label}: ${lead.bant?.[key] || 'Not captured'}`}
+                                                        title={`${label}: ${lead.bant?.[key]?.value || 'Not captured'} (${lead.bant?.[key]?.score || 0}/25)`}
                                                     >
                                                         {label[0]}
                                                     </span>
@@ -298,22 +302,47 @@ export default function Leads() {
                                 <div className="space-y-3">
                                     <h3 className="text-[13px] font-bold uppercase tracking-wider text-secondary-500">BANT Qualification</h3>
                                     <div className="space-y-2">
-                                        {Object.entries(BANT_LABELS).map(([key, label]) => (
-                                            <div key={key} className="bg-secondary-50 rounded-lg px-4 py-3">
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <span className="text-[12px] font-bold text-secondary-600">{label} (+{BANT_WEIGHTS[key]})</span>
-                                                    {leadDetail.bant?.[key] ? (
-                                                        <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">Captured</span>
-                                                    ) : (
-                                                        <span className="text-[10px] font-bold text-secondary-400 bg-secondary-100 px-2 py-0.5 rounded-full">Missing</span>
+                                        {Object.entries(BANT_LABELS).map(([key, label]) => {
+                                            const dimScore = leadDetail.bant?.[key]?.score || 0;
+                                            const dimValue = leadDetail.bant?.[key]?.value;
+                                            return (
+                                                <div key={key} className="bg-secondary-50 rounded-lg px-4 py-3">
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <span className="text-[12px] font-bold text-secondary-600">{label}</span>
+                                                        <span className="text-[11px] font-bold text-secondary-500">{dimScore}/25</span>
+                                                    </div>
+                                                    <div className="w-full bg-secondary-200 rounded-full h-1.5 mb-1.5">
+                                                        <div
+                                                            className={`h-1.5 rounded-full transition-all ${dimScore >= 20 ? 'bg-green-500' : dimScore >= 10 ? 'bg-blue-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-secondary-300'}`}
+                                                            style={{ width: `${(dimScore / 25) * 100}%` }}
+                                                        />
+                                                    </div>
+                                                    {dimValue && (
+                                                        <p className="text-sm text-secondary-700">{dimValue}</p>
                                                     )}
                                                 </div>
-                                                {leadDetail.bant?.[key] && (
-                                                    <p className="text-sm text-secondary-700">{leadDetail.bant[key]}</p>
-                                                )}
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
+
+                                    {/* Signal evidence trail */}
+                                    {leadDetail.signals?.length > 0 && (
+                                        <div className="mt-4">
+                                            <h4 className="text-[12px] font-bold text-secondary-500 mb-2">Evidence Trail</h4>
+                                            <div className="space-y-2 max-h-48 overflow-y-auto">
+                                                {leadDetail.signals.map((s, i) => (
+                                                    <div key={i} className="bg-white border border-secondary-100 rounded-lg px-3 py-2">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <span className="text-[10px] font-bold uppercase text-secondary-400">{s.dimension}</span>
+                                                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${s.confidence === 'high' ? 'bg-green-100 text-green-700' : s.confidence === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-secondary-100 text-secondary-500'}`}>{s.confidence}</span>
+                                                            <span className="text-[10px] text-secondary-400 ml-auto">{s.score_before} → {s.score_after}</span>
+                                                        </div>
+                                                        <p className="text-[12px] text-secondary-600 italic">&ldquo;{s.signal_text}&rdquo;</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Meta */}
