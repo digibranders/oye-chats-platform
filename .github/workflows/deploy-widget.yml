@@ -23,6 +23,7 @@ jobs:
           npm run build
         env:
           VITE_API_URL: https://api.oyechats.com
+          VITE_BUILD_TIMESTAMP: ${{ github.sha }}
 
       - name: Verify build output exists
         run: |
@@ -36,21 +37,33 @@ jobs:
       - name: Upload versioned JS backup
         uses: cloudflare/wrangler-action@v3
         with:
-          command: r2 object put oyechats-cdn/versions/oyechats-widget-${{ github.sha }}.js --file widget/dist/oyechats-widget.js --content-type "text/javascript"
+          command: >-
+            r2 object put oyechats-cdn/versions/oyechats-widget-${{ github.sha }}.js
+            --file widget/dist/oyechats-widget.js
+            --content-type "text/javascript"
+            --cache-control "public, max-age=31536000, immutable"
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
 
       - name: Upload JS to Cloudflare R2
         uses: cloudflare/wrangler-action@v3
         with:
-          command: r2 object put oyechats-cdn/oyechats-widget.js --file widget/dist/oyechats-widget.js --content-type "text/javascript"
+          command: >-
+            r2 object put oyechats-cdn/oyechats-widget.js
+            --file widget/dist/oyechats-widget.js
+            --content-type "text/javascript"
+            --cache-control "public, max-age=3600, s-maxage=60"
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
 
       - name: Upload CSS to Cloudflare R2
         uses: cloudflare/wrangler-action@v3
         with:
-          command: r2 object put oyechats-cdn/oyechats-widget.css --file widget/dist/oyechats-widget.css --content-type "text/css"
+          command: >-
+            r2 object put oyechats-cdn/oyechats-widget.css
+            --file widget/dist/oyechats-widget.css
+            --content-type "text/css"
+            --cache-control "public, max-age=3600, s-maxage=60"
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
 
@@ -58,10 +71,15 @@ jobs:
         env:
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-        if: env.CF_ZONE_ID != ''
         run: |
-          curl -sf -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+          if [ -z "$CF_ZONE_ID" ]; then
+            echo "❌ CF_ZONE_ID secret is not set — cannot purge CDN cache"
+            exit 1
+          fi
+          RESPONSE=$(curl -sf -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"files":["https://cdn.oyechats.com/oyechats-widget.js","https://cdn.oyechats.com/oyechats-widget.css"]}' \
-            && echo "✅ CDN cache purged" || echo "⚠️ Cache purge failed (non-fatal)"
+            -d '{"files":["https://cdn.oyechats.com/oyechats-widget.js","https://cdn.oyechats.com/oyechats-widget.css"]}')
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q '"success":true' || { echo "❌ Cache purge failed"; exit 1; }
+          echo "✅ CDN cache purged successfully"

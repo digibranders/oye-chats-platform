@@ -39,7 +39,7 @@ const ChatInput = ({
     const handleChange = (e) => {
         setInputText(e.target.value);
         e.target.style.height = 'auto';
-        e.target.style.height = e.target.scrollHeight + 'px';
+        e.target.style.height = Math.min(e.target.scrollHeight, 60) + 'px';
         if (isLive) onLiveTyping?.();
     };
 
@@ -62,6 +62,9 @@ const ChatInput = ({
             }
         } else {
             onSubmit?.(e);
+        }
+        if (inputRef?.current) {
+            inputRef.current.style.height = 'auto';
         }
     };
 
@@ -115,7 +118,7 @@ const ChatInput = ({
                             onKeyDown={handleKeyDown}
                             placeholder={isWaiting ? 'Connecting you with support...' : (placeholder || 'Write a message...')}
                             aria-label="Chat message input"
-                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[80px] leading-[20px]"
+                            className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"
                             style={{ border: 'none', margin: 0, scrollbarWidth: 'none' }}
                             disabled={isTyping || isWaiting || isReconnecting}
                             ref={inputRef}

@@ -639,7 +639,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, []);
 
     const checkBotFallback = useCallback((botText) => {
-        const fallbackPatterns = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+        const fallbackPatterns = /connect.*with.*(team|support|human)|don't have.*specific information|I'm not sure about that|couldn't find.*specific information|not contained in/i;
         return fallbackPatterns.test(botText);
     }, []);
 
