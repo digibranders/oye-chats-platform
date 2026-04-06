@@ -15,6 +15,17 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const FALLBACK_PATTERNS = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
 
+// Strip trailing orphaned markdown tokens that ReactMarkdown would render as raw text
+// e.g. a stream interrupted mid-bold: "Here is **important" → "Here is"
+const sanitizeMarkdown = (text) => {
+    if (!text) return text;
+    return text
+        .replace(/\*{1,2}$/, '')  // trailing * or **
+        .replace(/_+$/, '')        // trailing _
+        .replace(/`+$/, '')        // trailing `
+        .trim();
+};
+
 // Centered divider — iMessage/WhatsApp style system transition message
 const SystemMessage = ({ text }) => (
     <div className="flex items-center gap-2 my-2 px-4">
@@ -23,6 +34,26 @@ const SystemMessage = ({ text }) => (
         <div className="flex-1 h-px bg-gray-100" />
     </div>
 );
+
+// Date separator — shown between messages from different days (Intercom/Crisp pattern)
+const DateSeparator = ({ date }) => {
+    const label = (() => {
+        const d = new Date(date);
+        const today = new Date();
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (d.toDateString() === today.toDateString()) return 'Today';
+        if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+        return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    })();
+    return (
+        <div className="flex items-center gap-2 my-3 px-4">
+            <div className="flex-1 h-px bg-gray-100" />
+            <span className="text-[11px] text-gray-400 font-medium whitespace-nowrap">{label}</span>
+            <div className="flex-1 h-px bg-gray-100" />
+        </div>
+    );
+};
 
 const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, isOnline = true, initialMessage }) => {
     const containerRef = useRef(null);
@@ -59,6 +90,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [operatorDepartment, setOperatorDepartment] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
     const [isReturningUser, setIsReturningUser] = useState(false);
+    const [hasMoreHistory, setHasMoreHistory] = useState(false);
+    const [showWelcomeBackBanner, setShowWelcomeBackBanner] = useState(true);
+    const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
     const [existingLeadInfo, setExistingLeadInfo] = useState(null);
@@ -110,6 +144,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
     const isLiveMode = ['waiting', 'live', 'unavailable'].includes(chatMode);
+    const hasActiveHandoffForm = messages.some(
+        (m) => m.type === 'handoff_form' && m.status !== 'submitted'
+    );
 
     // ── Mobile keyboard push-up ──────────────────────────────────────────────────
     useEffect(() => {
@@ -150,27 +187,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
             if (sessionId) {
                 try {
-                    const history = await getChatHistory(sessionId);
+                    const history = await getChatHistory(sessionId, { limit: 50 });
                     if (history && history.length > 0) {
-                        const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
+                        const mapped = history.map(m => ({
+                            id: m.id,
+                            text: m.content,
+                            sender: m.role === 'user' ? 'user' : 'bot',
+                            timestamp: m.timestamp,
+                            feedback: null,
+                            ...(m.role === 'system' ? { type: 'system' } : {}),
+                        }));
+                        setMessages(mapped);
                         setIsReturningUser(true);
-                        let welcomeBackText = `Welcome back! 👋`;
-                        if (lastUserMsg) {
-                            const preview = lastUserMsg.content.length > 80
-                                ? lastUserMsg.content.substring(0, 80) + '...'
-                                : lastUserMsg.content;
-                            welcomeBackText += `\n\nLast time you asked about: **"${preview}"**\n\nFeel free to continue where you left off or ask something new!`;
-                        } else {
-                            welcomeBackText += `\n\nGood to see you again! Feel free to continue where you left off or ask something new.`;
-                        }
-
-                        setMessages([{
-                            id: 'welcome-back',
-                            text: welcomeBackText,
-                            sender: 'bot',
-                            timestamp: new Date().toISOString(),
-                            feedback: null
-                        }]);
+                        setShowWelcomeBackBanner(true);
+                        setHasMoreHistory(history.length >= 50);
                         setShowWelcome(false);
                     }
                 } catch {
@@ -279,6 +309,35 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
     };
 
+    // ── Load earlier messages (cursor-based pagination) ──────────────────────────
+    const loadEarlierMessages = async () => {
+        if (isLoadingEarlier || !sessionId || messages.length === 0) return;
+        const oldestId = messages[0]?.id;
+        if (typeof oldestId !== 'number') return; // guard: DB ids are numeric
+        setIsLoadingEarlier(true);
+        try {
+            const earlier = await getChatHistory(sessionId, { before: oldestId, limit: 50 });
+            if (earlier && earlier.length > 0) {
+                const mapped = earlier.map(m => ({
+                    id: m.id,
+                    text: m.content,
+                    sender: m.role === 'user' ? 'user' : 'bot',
+                    timestamp: m.timestamp,
+                    feedback: null,
+                    ...(m.role === 'system' ? { type: 'system' } : {}),
+                }));
+                setMessages(prev => [...mapped, ...prev]);
+                setHasMoreHistory(earlier.length >= 50);
+            } else {
+                setHasMoreHistory(false);
+            }
+        } catch {
+            console.error('[OyeChats] Failed to load earlier messages');
+        } finally {
+            setIsLoadingEarlier(false);
+        }
+    };
+
     // ── New chat ─────────────────────────────────────────────────────────────────
     const handleNewChat = () => {
         setIsInitializing(true);
@@ -309,6 +368,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 feedback: null
             }]);
             setIsReturningUser(false);
+            setHasMoreHistory(false);
+            setShowWelcomeBackBanner(true);
             setChatMode('bot');
             setOperatorName(null);
             setIsInitializing(false);
@@ -398,11 +459,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 onError: () => {
                     setIsTyping(false);
                     if (placeholderId !== null) {
-                        setMessages(prev => prev.map(msg =>
-                            msg.id === placeholderId && !msg.text
-                                ? { ...msg, text: "I'm sorry, I couldn't generate a response. Please try again." }
-                                : msg
-                        ));
+                        setMessages(prev => prev.map(msg => {
+                            if (msg.id !== placeholderId) return msg;
+                            const cleaned = sanitizeMarkdown(msg.text || '');
+                            if (!cleaned) {
+                                return { ...msg, text: "I'm sorry, I couldn't generate a response. Please try again." };
+                            }
+                            // Partial content streamed before error — preserve it, mark as interrupted
+                            return { ...msg, text: cleaned + '\n\n*Response was interrupted. Please try again.*' };
+                        }));
                     } else {
                         setMessages(prev => [...prev, {
                             id: Date.now() + 2,
@@ -928,33 +993,63 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Bot conversation messages (always visible, even during live chat) */}
-                {!isInitializing && messages.map((msg) => {
-                    if (msg.type === 'system') {
-                        return <SystemMessage key={msg.id} text={msg.text} />;
-                    }
-                    if (msg.type === 'handoff_form') {
-                        return (
-                            <HandoffForm
-                                key={msg.id}
-                                settings={settings}
-                                onSubmit={handleHandoffSubmit}
-                                onCancel={handleHandoffCancel}
-                                existingLeadInfo={existingLeadInfo}
-                                status={msg.status}
-                            />
-                        );
-                    }
-                    return (
-                        <MessageBubble
-                            key={msg.id}
-                            msg={msg}
-                            currentTheme={currentTheme}
-                            settings={settings}
-                            streamingId={streamingId}
-                        />
-                    );
-                })}
+                {/* Load earlier messages — cursor-based pagination */}
+                {!isInitializing && isReturningUser && hasMoreHistory && (
+                    <div className="flex justify-center py-3">
+                        <button
+                            onClick={loadEarlierMessages}
+                            disabled={isLoadingEarlier}
+                            className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium text-gray-500 bg-white border border-gray-200 rounded-full hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isLoadingEarlier ? (
+                                <><div className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />Loading...</>
+                            ) : (
+                                'Load earlier messages'
+                            )}
+                        </button>
+                    </div>
+                )}
+
+                {/* Bot conversation messages — with date separators for returning users */}
+                {!isInitializing && (() => {
+                    const items = [];
+                    let lastDateStr = null;
+                    messages.forEach((msg) => {
+                        // Insert a date separator when the day changes (only for returning users with history)
+                        if (isReturningUser && msg.timestamp) {
+                            const msgDateStr = new Date(msg.timestamp).toDateString();
+                            if (msgDateStr !== lastDateStr) {
+                                items.push(<DateSeparator key={`sep-${msgDateStr}-${msg.id}`} date={msg.timestamp} />);
+                                lastDateStr = msgDateStr;
+                            }
+                        }
+                        if (msg.type === 'system') {
+                            items.push(<SystemMessage key={msg.id} text={msg.text} />);
+                        } else if (msg.type === 'handoff_form') {
+                            items.push(
+                                <HandoffForm
+                                    key={msg.id}
+                                    settings={settings}
+                                    onSubmit={handleHandoffSubmit}
+                                    onCancel={handleHandoffCancel}
+                                    existingLeadInfo={existingLeadInfo}
+                                    status={msg.status}
+                                />
+                            );
+                        } else {
+                            items.push(
+                                <MessageBubble
+                                    key={msg.id}
+                                    msg={msg}
+                                    currentTheme={currentTheme}
+                                    settings={settings}
+                                    streamingId={streamingId}
+                                />
+                            );
+                        }
+                    });
+                    return items;
+                })()}
 
                 {/* Bot typing indicator */}
                 {isTyping && <TypingIndicator settings={settings} />}
@@ -1151,11 +1246,34 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
+                {/* Welcome-back banner — dismissable, shown just above input after history loads */}
+                {!isInitializing && isReturningUser && showWelcomeBackBanner && (
+                    <div
+                        className="mx-4 mb-2 mt-1 rounded-xl border border-gray-100 bg-gray-50 px-4 py-2.5 flex items-center justify-between gap-3"
+                        style={{ animation: 'fadeUp 0.3s ease-out' }}
+                    >
+                        <span className="text-[12px] text-gray-500 leading-snug">
+                            Welcome back! Continue your conversation or start something new.
+                        </span>
+                        <button
+                            onClick={() => setShowWelcomeBackBanner(false)}
+                            className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
+                            aria-label="Dismiss welcome banner"
+                        >
+                            <X className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                )}
+
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* ── Unified ChatInput — always visible (hidden only behind lead form) ── */}
-            {!showLeadForm && (
+            {/* ── Unified ChatInput — hidden when any form is active ── */}
+            {!showLeadForm &&
+             !showWelcome &&
+             !showRating &&
+             !hasActiveHandoffForm &&
+             chatMode !== 'unavailable' && (
                 <ChatInput
                     inputText={inputText}
                     setInputText={setInputText}
