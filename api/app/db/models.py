@@ -206,6 +206,8 @@ class ChatSession(Base):
     bant_tier = Column(String, default="unqualified", server_default="unqualified", nullable=False)
     dimensions_assessed = Column(Integer, default=0, server_default="0", nullable=False)
     bant_last_updated = Column(DateTime(timezone=True), nullable=True)
+    dimension_scores = Column(JSONB, nullable=True)
+    qualification_framework = Column(String, default="bant", server_default="bant", nullable=False)
 
     # Live chat state
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed

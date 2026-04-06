@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ClipboardList, Sliders, Loader2, Save, Plus, Trash2, GripVertical } from 'lucide-react';
+import { ClipboardList, Sliders, Loader2, Save, Plus, Trash2, GripVertical, Info } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import Tabs from '../components/ui/Tabs';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
-import { getLeadStats, getBot, updateBot } from '../services/api';
+import { getBot, getFrameworkPresets, getLeadStats, updateBot } from '../services/api';
 
 const tabs = [
     { id: 'scorecard', label: 'Scorecard', icon: ClipboardList },
@@ -20,14 +20,30 @@ const STATUS_CARDS = [
     { key: 'sql', label: 'SQL', color: 'text-green-600', border: 'border-green-200', bg: 'bg-green-50' },
 ];
 
-const DIMENSION_LABELS = {
-    need: 'Need',
-    timeline: 'Timeline',
-    authority: 'Authority',
-    budget: 'Budget',
+const KPI_INFO = {
+    unqualified: 'Leads with a score below the MQL threshold. These leads typically need more nurturing.',
+    mql: 'Marketing Qualified Leads. Score has crossed the MQL threshold and shows early buying intent.',
+    sal: 'Sales Accepted Leads. Score has crossed the SAL threshold and is ready for sales follow-up.',
+    sql: 'Sales Qualified Leads. Score has crossed the SQL threshold and is considered high intent.',
+    avgScore: 'Average qualification score across all leads. Higher scores indicate stronger sales readiness.',
 };
 
+const FRAMEWORK_OPTIONS = [
+    { key: 'bant', label: 'BANT (Default)' },
+    { key: 'meddic', label: 'MEDDIC' },
+    { key: 'champ', label: 'CHAMP' },
+    { key: 'gpctba_ci', label: 'GPCTBA/CI' },
+    { key: 'custom', label: 'Custom' },
+];
+
+const META_KEYS = new Set(['framework', 'thresholds', 'conversation_order', 'decay', 'behavioral_config']);
+
+const cloneConfig = (value) => JSON.parse(JSON.stringify(value));
+const normalizeDimensionKey = (value) => value.toLowerCase().trim().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+const toLabel = (key) => (key || '').replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+
 const DEFAULT_CONFIG = {
+    framework: 'bant',
     need: {
         enabled: true, weight: 25,
         options: [
@@ -37,7 +53,7 @@ const DEFAULT_CONFIG = {
             { label: 'Urgent need', score: 20 },
             { label: 'Critical / blocking', score: 25 },
         ],
-        cta_enabled: true, cta_prompt: 'What best describes your situation?',
+        cta_enabled: true, cta_prompt: 'What best describes your situation?', label: 'Need',
     },
     timeline: {
         enabled: true, weight: 25,
@@ -48,7 +64,7 @@ const DEFAULT_CONFIG = {
             { label: '1-3 months', score: 20 },
             { label: 'This month', score: 25 },
         ],
-        cta_enabled: true, cta_prompt: 'When are you looking to get started?',
+        cta_enabled: true, cta_prompt: 'When are you looking to get started?', label: 'Timeline',
     },
     authority: {
         enabled: true, weight: 25,
@@ -59,7 +75,7 @@ const DEFAULT_CONFIG = {
             { label: 'Decision maker', score: 20 },
             { label: 'Budget owner', score: 25 },
         ],
-        cta_enabled: false, cta_prompt: "What's your role in this decision?",
+        cta_enabled: false, cta_prompt: "What's your role in this decision?", label: 'Authority',
     },
     budget: {
         enabled: true, weight: 25,
@@ -70,14 +86,44 @@ const DEFAULT_CONFIG = {
             { label: '$5K-20K/mo', score: 20 },
             { label: '$20K+/mo', score: 25 },
         ],
-        cta_enabled: false, cta_prompt: 'Do you have a budget range in mind?',
+        cta_enabled: false, cta_prompt: 'Do you have a budget range in mind?', label: 'Budget',
     },
     thresholds: { mql: 30, sal: 55, sql: 75 },
     conversation_order: ['need', 'timeline', 'authority', 'budget'],
     decay: { enabled: true, timeline_decay_per_30d: 5, need_decay_per_30d: 3 },
 };
 
-// ── Scorecard Tab ──
+function getDimensionKeys(config) {
+    if (!config) return [];
+    const order = Array.isArray(config.conversation_order) ? config.conversation_order : [];
+    const keys = [];
+    order.forEach((key) => {
+        if (config[key] && !META_KEYS.has(key)) keys.push(key);
+    });
+    Object.keys(config).forEach((key) => {
+        if (META_KEYS.has(key)) return;
+        if (!keys.includes(key) && typeof config[key] === 'object') keys.push(key);
+    });
+    return keys;
+}
+
+function KpiInfoButton({ text, label }) {
+    return (
+        <div className="relative group">
+            <button
+                type="button"
+                className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-secondary-300 text-secondary-500 hover:text-secondary-700 hover:border-secondary-400 focus:outline-none focus:ring-2 focus:ring-primary-400/60"
+                title={text}
+                aria-label={label}
+            >
+                <Info className="w-2.5 h-2.5" />
+            </button>
+            <div className="pointer-events-none absolute z-20 left-1/2 top-full mt-2 w-64 -translate-x-1/2 rounded-lg border border-secondary-200 bg-white px-3 py-2 text-[11px] font-medium text-secondary-600 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                {text}
+            </div>
+        </div>
+    );
+}
 
 function ScorecardTab() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
@@ -126,17 +172,16 @@ function ScorecardTab() {
 
     return (
         <div className="space-y-6">
-            {/* Status cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {STATUS_CARDS.map((card) => {
                     const count = counts[card.key] || 0;
                     const pct = total > 0 ? Math.round((count / total) * 100) : 0;
                     return (
-                        <div
-                            key={card.key}
-                            className={`p-5 rounded-xl border ${card.border} ${card.bg} transition-all`}
-                        >
-                            <p className="text-[12px] font-bold uppercase tracking-wider text-secondary-500">{card.label}</p>
+                        <div key={card.key} className={`p-5 rounded-xl border ${card.border} ${card.bg} transition-all`}>
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="text-[12px] font-bold uppercase tracking-wider text-secondary-500">{card.label}</p>
+                                <KpiInfoButton text={KPI_INFO[card.key]} label={`${card.label} metric info`} />
+                            </div>
                             <p className={`text-3xl font-bold mt-1 ${card.color}`}>{count}</p>
                             <p className="text-[12px] text-secondary-400 mt-0.5">{pct}% of total</p>
                         </div>
@@ -144,10 +189,12 @@ function ScorecardTab() {
                 })}
             </div>
 
-            {/* Average Score */}
             <div className="bg-white rounded-xl border border-secondary-200 p-5">
                 <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm font-semibold text-secondary-700">Average Lead Score</p>
+                    <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-secondary-700">Average Lead Score</p>
+                        <KpiInfoButton text={KPI_INFO.avgScore} label="Average lead score metric info" />
+                    </div>
                     <span className="text-lg font-bold text-secondary-900">{Math.round(avgScore)}</span>
                 </div>
                 <div className="w-full h-3 bg-secondary-100 rounded-full overflow-hidden">
@@ -160,39 +207,39 @@ function ScorecardTab() {
                     />
                 </div>
                 <div className="flex justify-between mt-1.5 text-[11px] text-secondary-400">
-                    <span>0</span>
-                    <span>25</span>
-                    <span>50</span>
-                    <span>75</span>
-                    <span>100</span>
+                    <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
                 </div>
             </div>
         </div>
     );
 }
 
-// ── Configuration Tab ──
-
 function ConfigurationTab() {
     const { bots, selectedBot, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
+
     const [selectedBotId, setSelectedBotId] = useState(selectedBot?.id || null);
     const [config, setConfig] = useState(null);
+    const [frameworkPresets, setFrameworkPresets] = useState({});
+    const [selectedFramework, setSelectedFramework] = useState('bant');
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
-    // Sync selector when context bot changes
     useEffect(() => {
         if (selectedBot?.id) setSelectedBotId(selectedBot.id);
     }, [selectedBot?.id]);
 
-    const loadConfig = useCallback(async (botId) => {
+    const loadBotConfig = useCallback(async (botId) => {
         if (!botId) return;
         setIsLoading(true);
         try {
             const bot = await getBot(botId);
-            const saved = bot.bant_config;
-            setConfig(saved && Object.keys(saved).length > 0 ? structuredClone(saved) : structuredClone(DEFAULT_CONFIG));
+            const saved = bot.bant_config && Object.keys(bot.bant_config).length > 0
+                ? cloneConfig(bot.bant_config)
+                : cloneConfig(DEFAULT_CONFIG);
+            const framework = saved.framework || 'bant';
+            setSelectedFramework(framework);
+            setConfig(saved);
         } catch (err) {
             showToast('error', err.message || 'Failed to load bot config');
         } finally {
@@ -200,15 +247,28 @@ function ConfigurationTab() {
         }
     }, [showToast]);
 
+    const loadFrameworkPresets = useCallback(async (botId) => {
+        if (!botId) return;
+        try {
+            const presets = await getFrameworkPresets(botId);
+            setFrameworkPresets(presets || {});
+        } catch (err) {
+            showToast('error', err.message || 'Failed to load framework presets');
+        }
+    }, [showToast]);
+
     useEffect(() => {
-        loadConfig(selectedBotId);
-    }, [selectedBotId, loadConfig]);
+        loadBotConfig(selectedBotId);
+        loadFrameworkPresets(selectedBotId);
+    }, [selectedBotId, loadBotConfig, loadFrameworkPresets]);
 
     const handleSave = async () => {
         if (!selectedBotId || !config) return;
         setIsSaving(true);
         try {
-            await updateBot(selectedBotId, { bant_config: config });
+            const payload = cloneConfig(config);
+            payload.framework = selectedFramework;
+            await updateBot(selectedBotId, { bant_config: payload, qualification_framework: selectedFramework });
             showToast('success', 'Qualification config saved');
         } catch (err) {
             showToast('error', err.message || 'Failed to save config');
@@ -217,29 +277,97 @@ function ConfigurationTab() {
         }
     };
 
+    const handleFrameworkChange = (frameworkKey) => {
+        setSelectedFramework(frameworkKey);
+        if (frameworkKey === 'custom') {
+            setConfig((prev) => ({ ...(prev || cloneConfig(DEFAULT_CONFIG)), framework: 'custom' }));
+            return;
+        }
+        const preset = frameworkPresets[frameworkKey];
+        if (preset) {
+            setConfig({ ...cloneConfig(preset), framework: frameworkKey });
+        }
+    };
+
     const updateDimension = (dim, field, value) => {
         setConfig((prev) => ({ ...prev, [dim]: { ...prev[dim], [field]: value } }));
     };
 
+    const updateDimensionName = (oldKey, nextNameRaw) => {
+        const nextKey = normalizeDimensionKey(nextNameRaw);
+        if (!nextKey || nextKey === oldKey) {
+            updateDimension(oldKey, 'label', nextNameRaw);
+            return;
+        }
+        setConfig((prev) => {
+            if (!prev || prev[nextKey]) return prev;
+            const next = cloneConfig(prev);
+            next[nextKey] = { ...next[oldKey], label: nextNameRaw };
+            delete next[oldKey];
+            next.conversation_order = (next.conversation_order || []).map((item) => (item === oldKey ? nextKey : item));
+            return next;
+        });
+    };
+
     const updateOption = (dim, idx, field, value) => {
         setConfig((prev) => {
-            const next = { ...prev, [dim]: { ...prev[dim], options: [...prev[dim].options] } };
-            next[dim].options[idx] = { ...next[dim].options[idx], [field]: value };
+            const next = cloneConfig(prev);
+            next[dim].options[idx][field] = field === 'score' ? Number(value) || 0 : value;
             return next;
         });
     };
 
     const addOption = (dim) => {
         setConfig((prev) => {
-            const opts = prev[dim].options;
-            return { ...prev, [dim]: { ...prev[dim], options: [...opts, { label: '', score: 0 }] } };
+            const next = cloneConfig(prev);
+            next[dim].options.push({ label: '', score: 0 });
+            return next;
         });
     };
 
     const removeOption = (dim, idx) => {
         setConfig((prev) => {
-            const opts = prev[dim].options.filter((_, i) => i !== idx);
-            return { ...prev, [dim]: { ...prev[dim], options: opts } };
+            const next = cloneConfig(prev);
+            next[dim].options = next[dim].options.filter((_, i) => i !== idx);
+            return next;
+        });
+    };
+
+    const addDimension = () => {
+        if (selectedFramework !== 'custom') return;
+        setConfig((prev) => {
+            const next = cloneConfig(prev || {});
+            let base = 'dimension';
+            let key = `${base}_${(next.conversation_order || []).length + 1}`;
+            let i = 2;
+            while (next[key]) {
+                key = `${base}_${i}`;
+                i += 1;
+            }
+            next[key] = {
+                enabled: true,
+                weight: 10,
+                options: [
+                    { label: 'Low', score: 4 },
+                    { label: 'Medium', score: 8 },
+                    { label: 'High', score: 12 },
+                ],
+                cta_enabled: false,
+                cta_prompt: '',
+                label: toLabel(key),
+            };
+            next.conversation_order = [...(next.conversation_order || []), key];
+            return next;
+        });
+    };
+
+    const removeDimension = (dim) => {
+        if (selectedFramework !== 'custom') return;
+        setConfig((prev) => {
+            const next = cloneConfig(prev);
+            delete next[dim];
+            next.conversation_order = (next.conversation_order || []).filter((item) => item !== dim);
+            return next;
         });
     };
 
@@ -252,25 +380,58 @@ function ConfigurationTab() {
         setConfig((prev) => ({ ...prev, decay: { ...prev.decay, [field]: parsed } }));
     };
 
+    const dimensionKeys = getDimensionKeys(config);
+    const totalWeight = dimensionKeys.reduce((acc, dim) => {
+        const enabled = config?.[dim]?.enabled ?? true;
+        const weight = Number(config?.[dim]?.weight || 0);
+        return enabled ? acc + weight : acc;
+    }, 0);
+
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Qualification" description="Create a chatbot first to configure qualification." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
     return (
         <div className="space-y-6">
-            {/* Bot selector */}
-            <div className="bg-white rounded-xl border border-secondary-200 p-5">
-                <label className="block text-sm font-semibold text-secondary-700 mb-2">Select Bot</label>
-                <select
-                    value={selectedBotId || ''}
-                    onChange={(e) => setSelectedBotId(Number(e.target.value))}
-                    className="w-full max-w-xs px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
-                >
-                    <option value="" disabled>Choose a bot...</option>
-                    {bots.map((bot) => (
-                        <option key={bot.id} value={bot.id}>{bot.name}</option>
-                    ))}
-                </select>
+            <div className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
+                <div>
+                    <label className="block text-sm font-semibold text-secondary-700 mb-2">Select Bot</label>
+                    <select
+                        value={selectedBotId || ''}
+                        onChange={(e) => setSelectedBotId(Number(e.target.value))}
+                        className="w-full max-w-xs px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                    >
+                        <option value="" disabled>Choose a bot...</option>
+                        {bots.map((bot) => (
+                            <option key={bot.id} value={bot.id}>{bot.name}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-semibold text-secondary-700 mb-2">Qualification Framework</label>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <select
+                            value={selectedFramework}
+                            onChange={(e) => handleFrameworkChange(e.target.value)}
+                            className="w-full max-w-sm px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                        >
+                            {FRAMEWORK_OPTIONS.map((opt) => (
+                                <option key={opt.key} value={opt.key}>{opt.label}</option>
+                            ))}
+                        </select>
+                        {selectedFramework === 'custom' && (
+                            <button
+                                type="button"
+                                onClick={addDimension}
+                                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-primary-200 text-primary-700 hover:bg-primary-50"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                Add Dimension
+                            </button>
+                        )}
+                    </div>
+                </div>
             </div>
 
             {isLoading && (
@@ -281,18 +442,45 @@ function ConfigurationTab() {
 
             {!isLoading && config && (
                 <>
-                    {/* Dimension sections */}
-                    {Object.keys(DIMENSION_LABELS).map((dim) => {
+                    {totalWeight !== 100 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-[12px] text-amber-700">
+                            Dimension weights currently sum to {totalWeight}. Recommended total is 100.
+                        </div>
+                    )}
+
+                    {dimensionKeys.map((dim) => {
                         const d = config[dim];
                         if (!d) return null;
+                        const label = d.label || toLabel(dim);
                         return (
                             <div key={dim} className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-base font-bold text-secondary-900">{DIMENSION_LABELS[dim]}</h3>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <span className="text-[12px] font-medium text-secondary-500">
-                                            {d.enabled ? 'Enabled' : 'Disabled'}
-                                        </span>
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex-1 space-y-2">
+                                        {selectedFramework === 'custom' ? (
+                                            <input
+                                                type="text"
+                                                value={label}
+                                                onChange={(e) => updateDimensionName(dim, e.target.value)}
+                                                className="w-full max-w-sm px-3 py-2 text-sm font-semibold bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                            />
+                                        ) : (
+                                            <h3 className="text-base font-bold text-secondary-900">{label}</h3>
+                                        )}
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[11px] text-secondary-400">Weight</span>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                max={100}
+                                                value={d.weight ?? 0}
+                                                onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
+                                                className="w-20 px-2 py-1 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
+                                            />
+                                            <span className="text-[11px] text-secondary-400">/100</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
                                         <button
                                             type="button"
                                             role="switch"
@@ -302,15 +490,24 @@ function ConfigurationTab() {
                                         >
                                             <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                                         </button>
-                                    </label>
+                                        {selectedFramework === 'custom' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => removeDimension(dim)}
+                                                className="p-1.5 text-secondary-400 hover:text-red-500"
+                                                title="Remove dimension"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
 
                                 {d.enabled && (
                                     <>
-                                        {/* Options */}
                                         <div className="space-y-2">
                                             <p className="text-[12px] font-bold uppercase tracking-wider text-secondary-500">Options</p>
-                                            {d.options.map((opt, idx) => (
+                                            {(d.options || []).map((opt, idx) => (
                                                 <div key={idx} className="flex items-center gap-3">
                                                     <GripVertical size={14} className="text-secondary-300 flex-shrink-0" />
                                                     <input
@@ -323,9 +520,9 @@ function ConfigurationTab() {
                                                     <input
                                                         type="number"
                                                         min={0}
-                                                        max={25}
+                                                        max={100}
                                                         value={opt.score}
-                                                        onChange={(e) => updateOption(dim, idx, 'score', Number(e.target.value) || 0)}
+                                                        onChange={(e) => updateOption(dim, idx, 'score', e.target.value)}
                                                         className="w-20 px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
                                                     />
                                                     <button
@@ -348,7 +545,6 @@ function ConfigurationTab() {
                                             </button>
                                         </div>
 
-                                        {/* CTA */}
                                         <div className="border-t border-secondary-100 pt-4 space-y-3">
                                             <div className="flex items-center gap-3">
                                                 <label className="flex items-center gap-2 cursor-pointer">
@@ -367,7 +563,7 @@ function ConfigurationTab() {
                                             {d.cta_enabled && (
                                                 <input
                                                     type="text"
-                                                    value={d.cta_prompt}
+                                                    value={d.cta_prompt || ''}
                                                     onChange={(e) => updateDimension(dim, 'cta_prompt', e.target.value)}
                                                     placeholder="CTA prompt text"
                                                     className="w-full px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
@@ -380,7 +576,6 @@ function ConfigurationTab() {
                         );
                     })}
 
-                    {/* Thresholds */}
                     <div className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
                         <h3 className="text-base font-bold text-secondary-900">Thresholds</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -404,7 +599,6 @@ function ConfigurationTab() {
                         </div>
                     </div>
 
-                    {/* Decay */}
                     <div className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
                         <div className="flex items-center justify-between">
                             <h3 className="text-base font-bold text-secondary-900">Score Decay</h3>
@@ -444,7 +638,6 @@ function ConfigurationTab() {
                         )}
                     </div>
 
-                    {/* Save */}
                     <div className="flex justify-end">
                         <button
                             type="button"
@@ -462,8 +655,6 @@ function ConfigurationTab() {
     );
 }
 
-// ── Main Page ──
-
 export default function Qualification() {
     const [searchParams] = useSearchParams();
     const initialTab = searchParams.get('tab') || 'scorecard';
@@ -471,9 +662,8 @@ export default function Qualification() {
 
     return (
         <div className="space-y-4 animate-fade-in">
-            <PageHeader title="Qualification" subtitle="Configure BANT scoring and review lead qualification metrics" />
+            <PageHeader title="Qualification" subtitle="Configure qualification frameworks and review lead metrics" />
             <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
-
             {activeTab === 'scorecard' && <ScorecardTab />}
             {activeTab === 'configuration' && <ConfigurationTab />}
         </div>

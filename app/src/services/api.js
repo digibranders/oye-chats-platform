@@ -529,6 +529,16 @@ export const getBot = async (botId) => {
     }
 };
 
+export const getFrameworkPresets = async (botId) => {
+    try {
+        const response = await api.get(`/bots/${botId}/framework-presets`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching framework presets:', error);
+        throw buildApiError(error, 'Failed to load framework presets');
+    }
+};
+
 /**
  * Updates a bot's settings.
  * @param {number} botId

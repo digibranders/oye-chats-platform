@@ -3,7 +3,6 @@ import contextlib
 import json
 import logging
 import re
-from typing import Literal
 
 import litellm
 from pydantic import BaseModel, Field
@@ -24,15 +23,15 @@ from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.services.email_service import send_qualified_lead_email
 from app.services.intent_service import detect_handoff_intent
-from app.services.lead_service import DEFAULT_BANT_CONFIG, get_bant_config, get_lead_tier
 from app.services.llm_service import (
     generate_response,
     generate_response_stream,
 )
+from app.services.qualification_service import get_framework_config, get_tier
 
 logger = logging.getLogger(__name__)
 
-_CTA_PATTERN = re.compile(r"\[CTA:(need|timeline|authority|budget)\]")
+_CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -40,18 +39,22 @@ _CTA_PATTERN = re.compile(r"\[CTA:(need|timeline|authority|budget)\]")
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class BANTSignalExtraction(BaseModel):
-    dimension: Literal["need", "timeline", "authority", "budget"]
+class QualificationSignalExtraction(BaseModel):
+    dimension: str
     signal_text: str = Field(description="Exact quote from the user message that indicates this signal")
     extracted_value: str = Field(description="Structured summary of the signal")
-    confidence: Literal["low", "medium", "high"] = Field(description="How confident the extraction is")
+    confidence: str = Field(description="How confident the extraction is")
     score: int = Field(ge=0, le=25, description="Score 0-25 based on the provided rubric")
 
 
-class BANTExtractionResult(BaseModel):
-    signals: list[BANTSignalExtraction] = Field(
+class QualificationExtractionResult(BaseModel):
+    signals: list[QualificationSignalExtraction] = Field(
         default_factory=list, description="Only NEW signals from this exchange, empty list if none found"
     )
+
+
+BANTSignalExtraction = QualificationSignalExtraction
+BANTExtractionResult = QualificationExtractionResult
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,16 +102,27 @@ def _trim_results(results: list, top_k: int = 5) -> list:
     return results[:top_k]
 
 
-def _should_skip_bant_extraction(question: str, current_bant: dict) -> bool:
+def _framework_dimensions(config: dict | None) -> list[str]:
+    framework_config = config or {}
+    order = framework_config.get("conversation_order") or []
+    dims: list[str] = []
+    for dim in order:
+        if isinstance(framework_config.get(dim), dict):
+            dims.append(dim)
+    for key, value in framework_config.items():
+        if key in {"framework", "thresholds", "conversation_order", "decay", "behavioral_config"}:
+            continue
+        if isinstance(value, dict) and key not in dims:
+            dims.append(key)
+    return dims
+
+
+def _should_skip_bant_extraction(question: str, current_bant: dict, framework_config: dict | None = None) -> bool:
     """Return True if BANT extraction should be skipped to save LLM cost."""
     if len(question.strip()) < 10:
         return True
-    scores = [
-        current_bant.get("need_score", 0),
-        current_bant.get("budget_score", 0),
-        current_bant.get("authority_score", 0),
-        current_bant.get("timeline_score", 0),
-    ]
+    dimensions = _framework_dimensions(framework_config) or ["need", "budget", "authority", "timeline"]
+    scores = [int(current_bant.get(f"{dim}_score", 0) or 0) for dim in dimensions]
     return all(s >= 15 for s in scores)
 
 
@@ -125,7 +139,7 @@ def _build_bant_state(chat_session: ChatSession | None) -> dict:
             "authority_score": 0,
             "timeline_score": 0,
         }
-    return {
+    state = {
         "need": chat_session.bant_need,
         "timeline": chat_session.bant_timeline,
         "authority": chat_session.bant_authority,
@@ -135,6 +149,13 @@ def _build_bant_state(chat_session: ChatSession | None) -> dict:
         "authority_score": chat_session.bant_authority_score or 0,
         "timeline_score": chat_session.bant_timeline_score or 0,
     }
+    if isinstance(chat_session.dimension_scores, dict):
+        for dim, payload in chat_session.dimension_scores.items():
+            if not isinstance(payload, dict):
+                continue
+            state[dim] = payload.get("value")
+            state[f"{dim}_score"] = int(payload.get("score", 0) or 0)
+    return state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,13 +163,13 @@ def _build_bant_state(chat_session: ChatSession | None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def extract_bant_from_conversation(
+def extract_qualification_signals(
     history_context: str, question: str, bot_answer: str, current_bant: dict, bant_config: dict | None = None
 ) -> list[dict]:
     """Extract BANT signals using structured LLM output. Returns list of signal dicts."""
     try:
-        config = bant_config or DEFAULT_BANT_CONFIG
-        dimensions = ["need", "timeline", "authority", "budget"]
+        config = bant_config or get_framework_config(None)
+        dimensions = _framework_dimensions(config)
 
         rubric_lines = []
         for dim in dimensions:
@@ -156,11 +177,14 @@ def extract_bant_from_conversation(
             if not dim_config.get("enabled", True):
                 continue
             options = dim_config.get("options", [])
+            if not options:
+                continue
+            max_score = max((int(o.get("score", 0)) for o in options), default=25)
             options_str = ", ".join(f'"{o["label"]}" ({o["score"]} pts)' for o in options)
             current_score = current_bant.get(f"{dim}_score", 0)
             current_value = current_bant.get(dim) or "null"
             rubric_lines.append(
-                f"- {dim.upper()}: Current={current_value} (score {current_score}/25). Rubric options: {options_str}"
+                f"- {dim.upper()}: Current={current_value} (score {current_score}/{max_score}). Rubric options: {options_str}"
             )
 
         rubric_text = "\n".join(rubric_lines)
@@ -187,15 +211,15 @@ INSTRUCTIONS:
         response = litellm.completion(
             model=LLM_MODEL,
             messages=[
-                {"role": "system", "content": "You are a BANT qualification signal extractor. Return structured JSON."},
+                {"role": "system", "content": "You are a qualification signal extractor. Return structured JSON."},
                 {"role": "user", "content": extraction_prompt},
             ],
             response_format={
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "BANTExtractionResult",
+                    "name": "QualificationExtractionResult",
                     "strict": True,
-                    "schema": BANTExtractionResult.model_json_schema(),
+                    "schema": QualificationExtractionResult.model_json_schema(),
                 },
             },
             metadata={"generation_name": "bant-extraction-v2"},
@@ -206,11 +230,18 @@ INSTRUCTIONS:
         if not resp_text:
             return []
 
-        result = BANTExtractionResult.model_validate_json(resp_text)
+        result = QualificationExtractionResult.model_validate_json(resp_text)
         return [s.model_dump() for s in result.signals]
     except Exception as e:
         logger.warning(f"BANT extraction failed (non-breaking): {e}")
         return []
+
+
+def extract_bant_from_conversation(
+    history_context: str, question: str, bot_answer: str, current_bant: dict, bant_config: dict | None = None
+) -> list[dict]:
+    """Backward-compatible alias."""
+    return extract_qualification_signals(history_context, question, bot_answer, current_bant, bant_config)
 
 
 def _background_bant_extraction(
@@ -218,11 +249,11 @@ def _background_bant_extraction(
 ):
     """Fire-and-forget BANT extraction with evidence trail. Opens its own DB session."""
     try:
-        signals = extract_bant_from_conversation(history_context, question, answer, current_bant, bant_config)
+        signals = extract_qualification_signals(history_context, question, answer, current_bant, bant_config)
         if not signals:
             return
 
-        config = bant_config or DEFAULT_BANT_CONFIG
+        config = bant_config or get_framework_config(bot)
 
         with get_session() as session:
             chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -236,15 +267,19 @@ def _background_bant_extraction(
                 "authority": ("bant_authority_score", "bant_authority"),
                 "budget": ("bant_budget_score", "bant_budget"),
             }
+            dimension_scores = dict(chat_session.dimension_scores or {})
 
             for signal in signals:
                 dim = signal["dimension"]
-                if dim not in score_field_map:
+                new_score = int(signal.get("score", 0) or 0)
+                if new_score <= 0:
                     continue
-
-                score_col, text_col = score_field_map[dim]
-                current_score = getattr(chat_session, score_col, 0) or 0
-                new_score = signal["score"]
+                signal_value = signal.get("extracted_value") or ""
+                dim_entry = dimension_scores.get(dim) if isinstance(dimension_scores.get(dim), dict) else {}
+                current_score = int(dim_entry.get("score", 0) or 0)
+                if dim in score_field_map:
+                    score_col, _text_col = score_field_map[dim]
+                    current_score = max(current_score, int(getattr(chat_session, score_col, 0) or 0))
 
                 # Never downgrade scores
                 if new_score <= current_score:
@@ -263,9 +298,17 @@ def _background_bant_extraction(
                 )
                 session.add(bant_signal)
 
-                # Update scores
-                setattr(chat_session, score_col, new_score)
-                setattr(chat_session, text_col, signal["extracted_value"])
+                # Keep legacy BANT columns in sync for BANT-compatible dimensions
+                if dim in score_field_map:
+                    score_col, text_col = score_field_map[dim]
+                    setattr(chat_session, score_col, new_score)
+                    setattr(chat_session, text_col, signal_value)
+
+                # Framework-agnostic score store
+                dimension_scores[dim] = {"score": new_score, "value": signal_value}
+
+            chat_session.dimension_scores = dimension_scores
+            chat_session.qualification_framework = config.get("framework", "bant")
 
             # Recalculate composite fields
             chat_session.bant_score = (
@@ -276,17 +319,12 @@ def _background_bant_extraction(
             )
 
             thresholds = config.get("thresholds")
-            chat_session.bant_tier = get_lead_tier(chat_session.bant_score, thresholds=thresholds)
+            chat_session.bant_tier = get_tier(chat_session.bant_score, thresholds=thresholds)
 
             chat_session.dimensions_assessed = sum(
                 1
-                for s in [
-                    chat_session.bant_need_score,
-                    chat_session.bant_budget_score,
-                    chat_session.bant_authority_score,
-                    chat_session.bant_timeline_score,
-                ]
-                if (s or 0) > 0
+                for payload in (dimension_scores or {}).values()
+                if isinstance(payload, dict) and int(payload.get("score", 0) or 0) > 0
             )
 
             from datetime import UTC, datetime
@@ -354,20 +392,24 @@ def build_hybrid_prompt(
     """Construct the Hybrid RAG system prompt with BANT qualification support."""
 
     bs = bant_state or {}
-    config = bant_config or DEFAULT_BANT_CONFIG
-    conversation_order = config.get("conversation_order", ["need", "timeline", "authority", "budget"])
+    config = bant_config or get_framework_config(None)
+    conversation_order = config.get("conversation_order") or _framework_dimensions(config)
 
     qualification_section = ""
     if bant_enabled:
         # Build score-aware qualification state
-        dim_labels = {"need": "Need", "timeline": "Timeline", "authority": "Authority", "budget": "Budget"}
         state_lines = []
         missing_dims = []
         for dim in conversation_order:
-            score = bs.get(f"{dim}_score", 0)
+            dim_cfg = config.get(dim, {}) if isinstance(config.get(dim), dict) else {}
+            options = dim_cfg.get("options") or []
+            max_score = max((int(opt.get("score", 0)) for opt in options), default=25)
+            assess_threshold = max(1, int(round(max_score * 0.6)))
+            score = int(bs.get(f"{dim}_score", 0) or 0)
             value = bs.get(dim) or "Not yet identified"
-            state_lines.append(f"- {dim_labels.get(dim, dim)}: {value} (score: {score}/25)")
-            if score < 15:
+            label = dim_cfg.get("label") or dim.replace("_", " ").title()
+            state_lines.append(f"- {label}: {value} (score: {score}/{max_score})")
+            if score < assess_threshold:
                 missing_dims.append(dim)
 
         state_text = "\n".join(state_lines)
@@ -388,7 +430,7 @@ CTA MARKER (INTERNAL — invisible to user):
 If you ask a qualifying question, append the marker [CTA:dimension_name] at the very end
 of your response (e.g., [CTA:timeline]). This marker will be stripped before showing to
 the visitor. Only include ONE [CTA:] marker per response, only for CTA-enabled dimensions
-that have not been fully assessed yet (score below 15). These are the eligible dimensions:
+that have not been fully assessed yet. These are the eligible dimensions:
 {cta_lines}
 """
 
@@ -526,7 +568,7 @@ def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, 
     dimension = match.group(1)
     clean_text = _CTA_PATTERN.sub("", text).rstrip()
 
-    config = bant_config or DEFAULT_BANT_CONFIG
+    config = bant_config or get_framework_config(None)
     dim_config = config.get(dimension, {})
     if not dim_config.get("cta_enabled", False):
         return clean_text, None
@@ -606,7 +648,7 @@ def rag_pipeline(
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
-            bant_config = get_bant_config(bot) if is_bant_enabled else None
+            bant_config = get_framework_config(bot) if is_bant_enabled else None
 
             prompt = build_hybrid_prompt(
                 client,
@@ -634,7 +676,7 @@ def rag_pipeline(
 
             session.commit()
 
-            if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant):
+            if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
                 submit_background(
                     _background_bant_extraction,
                     session_id,
@@ -761,7 +803,7 @@ async def rag_pipeline_stream(
         history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
         is_bant_enabled = getattr(client, "bant_enabled", True)
-        bant_config = get_bant_config(bot) if is_bant_enabled else None
+        bant_config = get_framework_config(bot) if is_bant_enabled else None
 
         prompt = build_hybrid_prompt(
             client,
@@ -805,7 +847,7 @@ async def rag_pipeline_stream(
 
         session.commit()
 
-        if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant):
+        if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
             submit_background(
                 _background_bant_extraction,
                 session_id,
