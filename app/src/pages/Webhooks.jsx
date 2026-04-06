@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, CheckCircle2, Copy, Loader2, Pencil, Plus, Send, Trash2, Webhook as WebhookIcon } from 'lucide-react';
+import { Activity, CheckCircle2, ChevronDown, ChevronUp, Copy, Loader2, Pencil, Plus, Send, Trash2, Webhook as WebhookIcon } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
@@ -25,6 +25,46 @@ const EVENT_OPTIONS = [
 const tabs = [
     { id: 'webhooks', label: 'Webhooks', icon: WebhookIcon },
     { id: 'delivery-log', label: 'Delivery Log', icon: Activity },
+    { id: 'crm-integration', label: 'CRM Integration', icon: WebhookIcon },
+];
+
+const PAYLOAD_SCHEMA = `{
+  "event": "tier_transition",
+  "bot_id": 1,
+  "timestamp": "2026-04-06T12:00:00Z",
+  "data": {
+    "session_id": "session_abc123",
+    "old_tier": "mql",
+    "new_tier": "sql",
+    "score": 80,
+    "behavioral_score": 15,
+    "contact": { "name": "Jane", "email": "jane@acme.com", "phone": "+1234", "company": "Acme" },
+    "dimensions": { "need": 25, "budget": 20, "authority": 15, "timeline": 20 }
+  }
+}`;
+
+const CRM_TEMPLATES = [
+    {
+        id: 'hubspot',
+        title: 'HubSpot via Zapier',
+        description: 'Automatically create HubSpot contacts when leads qualify',
+        buttonLabel: 'Copy Zapier Setup Guide',
+        guide: "1. Create a Zap in Zapier. 2. Trigger: Webhooks by Zapier > Catch Hook. 3. Copy the Zapier webhook URL. 4. Create a webhook in OyeChats with event 'tier_transition'. 5. Action: HubSpot > Create Contact. 6. Map fields: email → data.contact.email, etc.",
+    },
+    {
+        id: 'salesforce',
+        title: 'Salesforce via Make',
+        description: 'Push qualified leads to Salesforce as new leads',
+        buttonLabel: 'Copy Make Setup Guide',
+        guide: "1. Create a scenario in Make.com. 2. Trigger: Webhooks > Custom webhook. 3. Copy the Make webhook URL. 4. Create a webhook in OyeChats with event 'tier_transition'. 5. Add Salesforce module: Create a Lead. 6. Map fields from payload: data.contact.email, data.contact.name, score, and dimensions.",
+    },
+    {
+        id: 'custom',
+        title: 'Custom Webhook',
+        description: 'Send webhook events to any URL',
+        buttonLabel: 'Create Webhook',
+        guide: 'Send OyeChats events to your own endpoint and transform payloads in your backend, Zapier, or Make before writing to your CRM.',
+    },
 ];
 
 const truncate = (value, max = 64) => (value.length > max ? `${value.slice(0, max)}...` : value);
@@ -77,6 +117,8 @@ export default function Webhooks() {
     const [deliveryTotal, setDeliveryTotal] = useState(0);
     const [deliveryPage, setDeliveryPage] = useState(1);
     const [loadingDeliveries, setLoadingDeliveries] = useState(false);
+    const [openSchema, setOpenSchema] = useState({});
+    const [openGuide, setOpenGuide] = useState({});
 
     useEffect(() => {
         const load = async () => {
@@ -403,6 +445,72 @@ export default function Webhooks() {
                             </div>
                         </>
                     )}
+                </div>
+            )}
+
+            {activeTab === 'crm-integration' && (
+                <div className="space-y-4">
+                    <div className="bg-white border border-secondary-200 rounded-2xl p-5">
+                        <h2 className="text-lg font-bold text-secondary-900">Connect to Your CRM</h2>
+                        <p className="text-sm text-secondary-500 mt-1">
+                            Use webhooks to push qualified leads to HubSpot, Salesforce, or any CRM via Zapier/Make
+                        </p>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-4">
+                        {CRM_TEMPLATES.map((template) => (
+                            <div key={template.id} className="bg-white border border-secondary-200 rounded-2xl p-5 space-y-3">
+                                <h3 className="text-sm font-bold text-secondary-900">{template.title}</h3>
+                                <p className="text-sm text-secondary-500">{template.description}</p>
+
+                                <button
+                                    onClick={async () => {
+                                        if (template.id === 'custom') {
+                                            setActiveTab('webhooks');
+                                            return;
+                                        }
+                                        try {
+                                            await navigator.clipboard.writeText(template.guide);
+                                            showToast('success', `${template.title} guide copied`);
+                                        } catch {
+                                            showToast('error', 'Failed to copy setup guide');
+                                        }
+                                    }}
+                                    className="w-full px-3 py-2 text-xs font-medium rounded-lg border border-primary-200 text-primary-700 hover:bg-primary-50"
+                                >
+                                    {template.buttonLabel}
+                                </button>
+
+                                <div className="border border-secondary-100 rounded-xl overflow-hidden">
+                                    <button
+                                        onClick={() => setOpenSchema((prev) => ({ ...prev, [template.id]: !prev[template.id] }))}
+                                        className="w-full px-3 py-2 text-xs font-semibold text-secondary-700 bg-secondary-50 flex items-center justify-between"
+                                    >
+                                        Payload Schema
+                                        {openSchema[template.id] ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                    </button>
+                                    {openSchema[template.id] && (
+                                        <pre className="p-3 text-[11px] leading-relaxed text-secondary-700 overflow-x-auto bg-white">
+                                            {PAYLOAD_SCHEMA}
+                                        </pre>
+                                    )}
+                                </div>
+
+                                <div className="border border-secondary-100 rounded-xl overflow-hidden">
+                                    <button
+                                        onClick={() => setOpenGuide((prev) => ({ ...prev, [template.id]: !prev[template.id] }))}
+                                        className="w-full px-3 py-2 text-xs font-semibold text-secondary-700 bg-secondary-50 flex items-center justify-between"
+                                    >
+                                        Setup Guide
+                                        {openGuide[template.id] ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                    </button>
+                                    {openGuide[template.id] && (
+                                        <p className="p-3 text-[12px] text-secondary-600 leading-relaxed">{template.guide}</p>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
