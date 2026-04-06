@@ -621,6 +621,16 @@ export const getLeadStats = async (botId) => {
     }
 };
 
+export const getQualificationFunnel = async (botId, period = '30d') => {
+    try {
+        const response = await api.get(`/analytics/qualification-funnel?bot_id=${botId}&period=${period}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching qualification funnel:', error);
+        throw buildApiError(error, 'Failed to load qualification funnel');
+    }
+};
+
 export const exportLeadsCsv = async (botId) => {
     try {
         const query = botId ? `?bot_id=${botId}` : '';

@@ -1,16 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ClipboardList, Sliders, Loader2, Save, Plus, Trash2, GripVertical, Info } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useSearchParams } from 'react-router-dom';
 import Tabs from '../components/ui/Tabs';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
+import { SkeletonChart } from '../components/ui/SkeletonLoader';
+import StatCard from '../components/ui/StatCard';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
-import { getBot, getFrameworkPresets, getLeadStats, updateBot } from '../services/api';
+import { getBot, getFrameworkPresets, getLeadStats, getQualificationFunnel, updateBot } from '../services/api';
 
 const tabs = [
     { id: 'scorecard', label: 'Scorecard', icon: ClipboardList },
     { id: 'configuration', label: 'Configuration', icon: Sliders },
+    { id: 'funnel', label: 'Funnel', icon: ClipboardList },
 ];
 
 const STATUS_CARDS = [
@@ -37,6 +41,15 @@ const FRAMEWORK_OPTIONS = [
 ];
 
 const META_KEYS = new Set(['framework', 'thresholds', 'conversation_order', 'decay', 'behavioral_config']);
+const FUNNEL_STAGE_LABELS = {
+    total_visitors: 'Visitors',
+    engaged: 'Engaged',
+    mql: 'MQL',
+    sal: 'SAL',
+    sql: 'SQL',
+    meetings_booked: 'Meetings',
+};
+const FUNNEL_COLORS = ['#94a3b8', '#3b82f6', '#4f46e5', '#6366f1', '#16a34a', '#15803d'];
 
 const cloneConfig = (value) => JSON.parse(JSON.stringify(value));
 const normalizeDimensionKey = (value) => value.toLowerCase().trim().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
@@ -655,6 +668,115 @@ function ConfigurationTab() {
     );
 }
 
+function FunnelTab() {
+    const { selectedBot, bots, loading: botsLoading } = useBotContext();
+    const { showToast } = useToast();
+    const [period, setPeriod] = useState('30d');
+    const [funnel, setFunnel] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    const loadFunnel = useCallback(async () => {
+        if (!selectedBot?.id) return;
+        setIsLoading(true);
+        try {
+            const data = await getQualificationFunnel(selectedBot.id, period);
+            setFunnel(data.funnel || []);
+        } catch (err) {
+            showToast('error', err.message || 'Failed to load qualification funnel');
+            setFunnel([]);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [period, selectedBot?.id, showToast]);
+
+    useEffect(() => {
+        loadFunnel();
+    }, [loadFunnel]);
+
+    if (!botsLoading && bots.length === 0) {
+        return <EmptyState title="Qualification Funnel" description="Create a chatbot first to view funnel analytics." actionLabel="Create Chatbot" actionTo="/chatbot" />;
+    }
+
+    const chartData = funnel.map((item, idx) => ({
+        ...item,
+        stageLabel: FUNNEL_STAGE_LABELS[item.stage] || item.stage,
+        fill: FUNNEL_COLORS[idx] || '#94a3b8',
+    }));
+
+    const visitors = chartData[0]?.count || 0;
+    const sql = chartData.find((s) => s.stage === 'sql')?.count || 0;
+    const meetings = chartData.find((s) => s.stage === 'meetings_booked')?.count || 0;
+    const sqlConversionRate = visitors > 0 ? ((sql / visitors) * 100).toFixed(1) : '0.0';
+    const meetingConversionRate = sql > 0 ? ((meetings / sql) * 100).toFixed(1) : '0.0';
+    const avgTimeToQualify = 'N/A';
+
+    return (
+        <div className="space-y-6">
+            <div className="flex flex-wrap gap-2">
+                {[
+                    { key: '7d', label: '7 days' },
+                    { key: '30d', label: '30 days' },
+                    { key: '90d', label: '90 days' },
+                    { key: 'all', label: 'All time' },
+                ].map((opt) => (
+                    <button
+                        key={opt.key}
+                        onClick={() => setPeriod(opt.key)}
+                        className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                            period === opt.key
+                                ? 'bg-primary-50 border-primary-300 text-primary-700'
+                                : 'bg-white border-secondary-200 text-secondary-600 hover:bg-secondary-50'
+                        }`}
+                    >
+                        {opt.label}
+                    </button>
+                ))}
+            </div>
+
+            {isLoading ? (
+                <SkeletonChart />
+            ) : (
+                <div className="bg-white rounded-xl border border-secondary-200 p-5">
+                    <div className="h-[340px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                                data={chartData}
+                                layout="vertical"
+                                margin={{ top: 8, right: 28, left: 16, bottom: 8 }}
+                            >
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                                <XAxis type="number" />
+                                <YAxis dataKey="stageLabel" type="category" width={90} />
+                                <Tooltip
+                                    formatter={(value, _name, payload) => {
+                                        const conv = payload?.payload?.conversion_rate_from_previous ?? 0;
+                                        return [`${value}`, `Count (${conv}% from previous)`];
+                                    }}
+                                />
+                                <Bar dataKey="count">
+                                    {chartData.map((entry, index) => (
+                                        <Cell key={`bar-${entry.stage}-${index}`} fill={entry.fill} />
+                                    ))}
+                                    <LabelList dataKey="count" position="right" />
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <StatCard label="Total Visitors" value={visitors} />
+                <StatCard label="SQL Conversion Rate" value={`${sqlConversionRate}%`} />
+                <StatCard label="Avg Time to Qualify" value={avgTimeToQualify} />
+            </div>
+            <div className="text-xs text-secondary-500">
+                SQL to meeting conversion: <span className="font-semibold">{meetingConversionRate}%</span>
+            </div>
+        </div>
+    );
+}
+
 export default function Qualification() {
     const [searchParams] = useSearchParams();
     const initialTab = searchParams.get('tab') || 'scorecard';
@@ -666,6 +788,7 @@ export default function Qualification() {
             <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
             {activeTab === 'scorecard' && <ScorecardTab />}
             {activeTab === 'configuration' && <ConfigurationTab />}
+            {activeTab === 'funnel' && <FunnelTab />}
         </div>
     );
 }

@@ -1,8 +1,11 @@
 import logging
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator
+from app.db.models import Bot, ChatMessage, ChatSession, MeetingBooking
 from app.db.repository import (
     get_dashboard_stats,
     get_feedback_data,
@@ -16,6 +19,88 @@ from app.db.session import get_session
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+
+@router.get("/qualification-funnel")
+def get_qualification_funnel(
+    bot_id: int = Query(...),
+    period: str = Query("30d", description="7d|30d|90d|all"),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    try:
+        if period not in {"7d", "30d", "90d", "all"}:
+            raise HTTPException(status_code=422, detail="Invalid period. Use one of: 7d, 30d, 90d, all.")
+
+        with get_session() as session:
+            owned = session.execute(
+                select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+            ).scalar_one_or_none()
+            if not owned:
+                raise HTTPException(status_code=404, detail="Bot not found.")
+
+            base_stmt = select(ChatSession.id, ChatSession.behavioral_score, ChatSession.bant_tier).where(
+                ChatSession.bot_id == bot_id
+            )
+
+            if period != "all":
+                days = {"7d": 7, "30d": 30, "90d": 90}[period]
+                since = datetime.now(UTC) - timedelta(days=days)
+                base_stmt = base_stmt.where(ChatSession.created_at >= since)
+
+            sessions = session.execute(base_stmt).all()
+            session_ids = [row.id for row in sessions]
+
+            message_counts = {}
+            if session_ids:
+                msg_rows = session.execute(
+                    select(ChatMessage.session_id, func.count(ChatMessage.id))
+                    .where(ChatMessage.session_id.in_(session_ids))
+                    .group_by(ChatMessage.session_id)
+                ).all()
+                message_counts = {sid: count for sid, count in msg_rows}
+
+            total_visitors = len(sessions)
+            engaged = sum(
+                1
+                for row in sessions
+                if (int(row.behavioral_score or 0) > 0) or (int(message_counts.get(row.id, 0)) > 1)
+            )
+            mql = sum(1 for row in sessions if (row.bant_tier or "unqualified") in {"mql", "sal", "sql"})
+            sal = sum(1 for row in sessions if (row.bant_tier or "unqualified") in {"sal", "sql"})
+            sql = sum(1 for row in sessions if (row.bant_tier or "unqualified") == "sql")
+
+            meeting_stmt = select(func.count(MeetingBooking.id)).where(MeetingBooking.bot_id == bot_id)
+            if period != "all":
+                meeting_stmt = meeting_stmt.where(MeetingBooking.created_at >= since)
+            meetings_booked = int(session.execute(meeting_stmt).scalar_one() or 0)
+
+            stages = [
+                ("total_visitors", total_visitors),
+                ("engaged", engaged),
+                ("mql", mql),
+                ("sal", sal),
+                ("sql", sql),
+                ("meetings_booked", meetings_booked),
+            ]
+
+            funnel = []
+            previous = None
+            for stage, count in stages:
+                if previous is None:
+                    rate = 100.0 if count > 0 else 0.0
+                elif previous <= 0:
+                    rate = 0.0
+                else:
+                    rate = round((count / previous) * 100, 2)
+                funnel.append({"stage": stage, "count": count, "conversion_rate_from_previous": rate})
+                previous = count
+
+            return {"funnel": funnel, "period": period, "bot_id": bot_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch qualification funnel: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load qualification funnel.") from e
 
 
 @router.get("/dashboard")
