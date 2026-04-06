@@ -165,6 +165,13 @@ async def shutdown_services():
 
     await manager.shutdown()
 
+    try:
+        from app.services.webhook_service import stop_retry_worker
+
+        stop_retry_worker()
+    except Exception as e:
+        logger.warning(f"Webhook retry worker shutdown skipped: {e}")
+
     from app.core.langfuse_client import flush_langfuse
     from app.core.thread_pool import shutdown_pool
 
@@ -191,13 +198,11 @@ def backfill_session_client_ids():
         logger.warning(f"Session client_id backfill skipped: {e}")
 
     try:
-        from app.services.webhook_service import process_pending_retries
+        from app.services.webhook_service import start_retry_worker
 
-        queued = process_pending_retries()
-        if queued:
-            logger.info(f"Queued {queued} pending webhook retries on startup.")
+        start_retry_worker()
     except Exception as e:
-        logger.warning(f"Webhook retry bootstrap skipped: {e}")
+        logger.warning(f"Webhook retry worker startup skipped: {e}")
 
 
 # --- Root & File Serving ---

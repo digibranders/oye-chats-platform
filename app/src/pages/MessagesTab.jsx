@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+
+const DEFAULT_SUGGESTIONS = ['Our Services', 'About us', 'Contact us'];
 
 /**
  * MessagesTab - Admin UI for customizing all widget user-facing messages
@@ -9,8 +11,18 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
 
     // Suggestion array management
     const [suggestions, setSuggestions] = useState(
-        messages.welcome_suggestions || ['Our Services', 'About us', 'Contact us']
+        Array.isArray(messages.welcome_suggestions) && messages.welcome_suggestions.length > 0
+            ? messages.welcome_suggestions
+            : DEFAULT_SUGGESTIONS
     );
+
+    useEffect(() => {
+        setSuggestions(
+            Array.isArray(messages.welcome_suggestions) && messages.welcome_suggestions.length > 0
+                ? messages.welcome_suggestions
+                : DEFAULT_SUGGESTIONS
+        );
+    }, [messages.welcome_suggestions]);
 
     const handleMessageChange = (key, value) => {
         onSettingsChange({

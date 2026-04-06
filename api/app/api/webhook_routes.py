@@ -5,7 +5,7 @@ from sqlalchemy import desc, func, select
 from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, Webhook, WebhookDelivery
 from app.db.session import get_session
-from app.services.webhook_service import SUPPORTED_EVENTS, fire_webhook, generate_webhook_secret
+from app.services.webhook_service import SUPPORTED_EVENTS, generate_webhook_secret, queue_webhook_delivery
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -182,8 +182,8 @@ def get_webhook_deliveries(
 def test_webhook(webhook_id: int, auth: dict = Depends(get_current_client_or_operator)):
     with get_session() as session:
         webhook = _get_owned_webhook(session, webhook_id, auth["client_id"])
-        fire_webhook(
-            webhook.bot_id,
+        queue_webhook_delivery(
+            webhook.id,
             "tier_transition",
             {
                 "session_id": "test_session",

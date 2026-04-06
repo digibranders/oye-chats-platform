@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision = "0018_custom_frameworks"
-down_revision = "0017_webhook_system"
+down_revision = ("0017_webhook_system", "0017_bot_growth_events")
 branch_labels = None
 depends_on = None
 

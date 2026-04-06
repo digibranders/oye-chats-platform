@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import secrets
+import threading
 import time
 import urllib.request
 from datetime import UTC, datetime
@@ -19,6 +20,10 @@ SUPPORTED_EVENTS = ["tier_transition", "lead_captured", "handoff_requested", "ch
 _MAX_RETRIES = 4
 _RETRY_DELAYS = [30, 120, 600, 3600]
 _DELIVERY_TIMEOUT = 10
+_RETRY_POLL_INTERVAL_SECONDS = 30
+
+_retry_worker_thread: threading.Thread | None = None
+_retry_worker_stop_event = threading.Event()
 
 
 def generate_webhook_secret() -> str:
@@ -27,6 +32,14 @@ def generate_webhook_secret() -> str:
 
 def sign_payload(payload_bytes: bytes, secret: str) -> str:
     return hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
+
+
+def queue_webhook_delivery(webhook_id: int, event_type: str, data: dict, attempt: int = 1) -> None:
+    """Queue a delivery attempt for exactly one webhook."""
+    if event_type not in SUPPORTED_EVENTS:
+        logger.warning(f"Ignoring unsupported webhook event: {event_type}")
+        return
+    submit_background(_deliver_webhook, webhook_id, event_type, data, attempt)
 
 
 def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
@@ -49,7 +62,7 @@ def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
         )
 
         for webhook in webhooks:
-            submit_background(_deliver_webhook, webhook.id, event_type, data)
+            queue_webhook_delivery(webhook.id, event_type, data)
 
 
 def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int = 1) -> None:
@@ -119,7 +132,7 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
 
 
 def process_pending_retries() -> int:
-    """Process any pending webhook retries. Called on app startup."""
+    """Process pending webhook retries that are due now."""
     now = datetime.now(UTC)
     with get_session() as session:
         pending = (
@@ -136,15 +149,44 @@ def process_pending_retries() -> int:
         )
 
         for delivery in pending:
-            submit_background(
-                _deliver_webhook,
-                delivery.webhook_id,
-                delivery.event_type,
-                delivery.payload,
-                delivery.attempt + 1,
-            )
+            queue_webhook_delivery(delivery.webhook_id, delivery.event_type, delivery.payload, attempt=delivery.attempt + 1)
             delivery.next_retry_at = None
 
         if pending:
             session.commit()
         return len(pending)
+
+
+def _retry_worker_loop() -> None:
+    while not _retry_worker_stop_event.is_set():
+        try:
+            queued = process_pending_retries()
+            if queued:
+                logger.info(f"Queued {queued} pending webhook retries.")
+        except Exception as exc:
+            logger.warning(f"Webhook retry poll failed: {exc}")
+        _retry_worker_stop_event.wait(_RETRY_POLL_INTERVAL_SECONDS)
+
+
+def start_retry_worker() -> None:
+    """Start a background poller so retries continue while the app is running."""
+    global _retry_worker_thread
+    if _retry_worker_thread and _retry_worker_thread.is_alive():
+        return
+
+    _retry_worker_stop_event.clear()
+    _retry_worker_thread = threading.Thread(target=_retry_worker_loop, name="webhook-retry-worker", daemon=True)
+    _retry_worker_thread.start()
+    logger.info(f"Webhook retry worker started (poll interval: {_RETRY_POLL_INTERVAL_SECONDS}s).")
+
+
+def stop_retry_worker(join_timeout_seconds: float = 2.0) -> None:
+    """Stop the retry poller on app shutdown."""
+    global _retry_worker_thread
+    if not _retry_worker_thread:
+        return
+
+    _retry_worker_stop_event.set()
+    _retry_worker_thread.join(timeout=join_timeout_seconds)
+    _retry_worker_thread = None
+    logger.info("Webhook retry worker stopped.")
