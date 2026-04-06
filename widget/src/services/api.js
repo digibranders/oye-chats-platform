@@ -117,9 +117,11 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
     }
 };
 
-export const getChatHistory = async (sessionId) => {
+export const getChatHistory = async (sessionId, { before, limit = 50 } = {}) => {
     try {
-        const response = await fetch(`${API_URL}/chat/history/${sessionId}`, {
+        const params = new URLSearchParams({ limit });
+        if (before != null) params.set('before', before);
+        const response = await fetch(`${API_URL}/chat/history/${sessionId}?${params}`, {
             headers: getHeaders()
         });
         if (!response.ok) {
