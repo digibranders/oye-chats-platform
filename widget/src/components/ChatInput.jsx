@@ -16,6 +16,7 @@ const ChatInput = ({
     currentTheme,
     inputRef,
     placeholder,
+    settings = {},
     primaryColor,
     showBranding = false,
     // Bot mode
@@ -33,6 +34,10 @@ const ChatInput = ({
     isReconnecting = false,
     uploadProgress = null,
 }) => {
+    const messages = settings?.widget_messages || {};
+    const inputPlaceholder = messages.input_placeholder || placeholder || 'Write a message...';
+    const liveChatLabel = messages.live_chat_label || 'Live chat';
+
     const isWaiting = chatMode === 'waiting';
     const isLive = chatMode === 'live';
 
@@ -116,7 +121,7 @@ const ChatInput = ({
                             value={inputText}
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
-                            placeholder={isWaiting ? 'Connecting you with support...' : (placeholder || 'Write a message...')}
+                            placeholder={isWaiting ? 'Connecting you with support...' : inputPlaceholder}
                             aria-label="Chat message input"
                             className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"
                             style={{ border: 'none', margin: 0, scrollbarWidth: 'none' }}
@@ -150,7 +155,7 @@ const ChatInput = ({
                                 onClick={onHandoff}
                                 title="Live chat"
                                 aria-label="Live chat"
-                                className="flex items-center gap-1 text-[11px] transition-colors"
+                                className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
                                 style={{ color: showProminentHandoff ? (primaryColor || '#3A0CA3') : '#9ca3af' }}
                             >
                                 <span className="relative flex-shrink-0">
@@ -163,7 +168,7 @@ const ChatInput = ({
                                     )}
                                 </span>
                                 <span className={showProminentHandoff ? 'font-semibold' : 'font-normal'}>
-                                    Live chat
+                                    {liveChatLabel}
                                 </span>
                             </button>
                         )}

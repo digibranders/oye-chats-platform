@@ -7,6 +7,9 @@ import { getClientSettings, updateClientSettings, uploadLogo } from '../services
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import EmptyState from '../components/ui/EmptyState';
+import MessagesTab from './MessagesTab';
+import AdvancedSettingsTab from './AdvancedSettingsTab';
+import BrandingTab from './BrandingTab';
 
 // Helper: create cropped image from canvas (supports rotation)
 const getCroppedImg = (imageSrc, pixelCrop, rotation = 0) => {
@@ -136,6 +139,10 @@ export default function Interface({ embedded = false }) {
     const [waitingMessage, setWaitingMessage] = useState('Connecting you to support...');
     const [offlineMessage, setOfflineMessage] = useState('Our team is currently unavailable.');
     const [handoffDelaySeconds, setHandoffDelaySeconds] = useState(0);
+    const [widgetMessages, setWidgetMessages] = useState({});
+    const [widgetConfig, setWidgetConfig] = useState({});
+    const [brandingText, setBrandingText] = useState('Powered by OyeChats');
+    const [brandingUrl, setBrandingUrl] = useState('https://oyechats.com');
     const [activeTab, setActiveTab] = useState('General');
     const [previewState, setPreviewState] = useState('chat');
     const inputRef = useRef(null);
@@ -176,6 +183,10 @@ export default function Interface({ embedded = false }) {
                 setWaitingMessage(settings.waiting_message || 'Connecting you to support...');
                 setOfflineMessage(settings.offline_message || 'Our team is currently unavailable.');
                 setHandoffDelaySeconds(settings.handoff_delay_seconds ?? 0);
+                setWidgetMessages(settings.widget_messages || {});
+                setWidgetConfig(settings.widget_config || {});
+                setBrandingText(settings.branding_text || 'Powered by OyeChats');
+                setBrandingUrl(settings.branding_url || 'https://oyechats.com');
                 if (settings.bot_logo) {
                     setLogo(settings.bot_logo);
                 } else {
@@ -198,7 +209,7 @@ export default function Interface({ embedded = false }) {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
-    const tabs = ['General', 'Avatar', 'Leads Form', 'Live Chat', 'Custom Brand'];
+    const tabs = ['General', 'Avatar', 'Leads Form', 'Live Chat', 'Messages', 'Advanced Settings', 'Branding', 'Custom Brand'];
 
     const handleFile = (file) => {
         if (!isBotManager) return;
@@ -269,6 +280,10 @@ export default function Interface({ embedded = false }) {
                 waiting_message: waitingMessage,
                 offline_message: offlineMessage,
                 handoff_delay_seconds: handoffDelaySeconds,
+                widget_messages: widgetMessages,
+                widget_config: widgetConfig,
+                branding_text: brandingText,
+                branding_url: brandingUrl,
             };
             console.log('[Interface] Saving settings:', payload, 'botId:', selectedBot?.id);
             await updateClientSettings(payload, selectedBot?.id);
@@ -1022,6 +1037,34 @@ export default function Interface({ embedded = false }) {
                                     />
                                 </div>
                             </div>
+                        </div>
+                    ) : activeTab === 'Messages' ? (
+                        <div className="animate-fade-in">
+                            <MessagesTab
+                                settings={{ widget_messages: widgetMessages }}
+                                onSettingsChange={(updates) => setWidgetMessages(updates.widget_messages || {})}
+                                isSaving={isSaving}
+                            />
+                        </div>
+                    ) : activeTab === 'Advanced Settings' ? (
+                        <div className="animate-fade-in">
+                            <AdvancedSettingsTab
+                                settings={{ widget_config: widgetConfig }}
+                                onSettingsChange={(updates) => setWidgetConfig(updates.widget_config || {})}
+                            />
+                        </div>
+                    ) : activeTab === 'Branding' ? (
+                        <div className="animate-fade-in">
+                            <BrandingTab
+                                settings={{
+                                    branding_text: brandingText,
+                                    branding_url: brandingUrl,
+                                }}
+                                onSettingsChange={(updates) => {
+                                    if (updates.branding_text) setBrandingText(updates.branding_text);
+                                    if (updates.branding_url) setBrandingUrl(updates.branding_url);
+                                }}
+                            />
                         </div>
                     ) : activeTab === 'Custom Brand' ? (
                         <div className="space-y-6 animate-fade-in">

@@ -123,6 +123,24 @@ class Bot(Base):
         server_default='{"file_sharing": false, "post_chat_rating": true, "show_branding": true, "queue_position": false, "typing_preview": true, "email_transcript": false}',
     )
 
+    # Widget messages — all customizable user-facing strings (welcome, chat input, error messages, etc.)
+    widget_messages = Column(
+        JSONB,
+        nullable=False,
+        server_default='{"welcome_greeting": "Hi There, How can I help you today?", "welcome_suggestions": ["Our Services", "About us", "Contact us"], "input_placeholder": "Write a message...", "live_chat_label": "Live chat", "greeting_message": "Hi! Let us know if you have any questions.", "offline_message": "Team is currently unavailable", "rating_prompt": "How was your experience?", "end_chat_label": "End chat and return to AI"}',
+    )
+
+    # Widget configuration — timing, thresholds, and advanced settings
+    widget_config = Column(
+        JSONB,
+        nullable=False,
+        server_default='{"welcome_exit_duration_ms": 350, "greeting_delay_ms": 3000, "typing_timeout_ms": 2000, "frustration_window_ms": 30000, "frustration_threshold_messages": 3, "max_reconnect_attempts": 15, "max_reconnect_delay_ms": 30000, "heartbeat_visible_ms": 25000, "heartbeat_hidden_ms": 50000, "handoff_auto_submit_delay_ms": 300}',
+    )
+
+    # Widget branding — customizable branding text and URL
+    branding_text = Column(String, default="Powered by OyeChats", server_default="Powered by OyeChats", nullable=False)
+    branding_url = Column(String, default="https://oyechats.com", server_default="https://oyechats.com", nullable=False)
+
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

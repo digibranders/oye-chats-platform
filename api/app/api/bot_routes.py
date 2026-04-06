@@ -80,6 +80,13 @@ class UpdateBotRequest(BaseModel):
     business_hours: dict | None = None
     # Feature flags — partial merge applied on PATCH (existing flags are preserved)
     feature_flags: dict | None = None
+    # Widget messages — all customizable user-facing strings
+    widget_messages: dict | None = None
+    # Widget configuration — timing, thresholds, advanced settings
+    widget_config: dict | None = None
+    # Branding customization
+    branding_text: str | None = None
+    branding_url: str | None = None
     # Configurable visitor-facing messages
     welcome_title: str | None = None
     welcome_subtitle: str | None = None
@@ -117,6 +124,10 @@ class BotResponse(BaseModel):
     operator_timeout_seconds: int = 120
     business_hours: dict | None = None
     feature_flags: dict = {}
+    widget_messages: dict = {}
+    widget_config: dict = {}
+    branding_text: str = "Powered by OyeChats"
+    branding_url: str = "https://oyechats.com"
     # Configurable visitor-facing messages
     welcome_title: str = "Hi there 👋"
     welcome_subtitle: str = "How can we help you today?"
@@ -171,6 +182,10 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "live_chat_enabled": bot.live_chat_enabled,
         "business_hours": bot.business_hours,
         "feature_flags": bot.feature_flags or {},
+        "widget_messages": bot.widget_messages or {},
+        "widget_config": bot.widget_config or {},
+        "branding_text": bot.branding_text or "Powered by OyeChats",
+        "branding_url": bot.branding_url or "https://oyechats.com",
         "welcome_title": bot.welcome_title or "Hi there 👋",
         "welcome_subtitle": bot.welcome_subtitle or "How can we help you today?",
         "waiting_message": bot.waiting_message or "Connecting you to support...",
@@ -554,6 +569,18 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 current_flags = dict(bot.feature_flags or {})
                 current_flags.update(update_data.pop("feature_flags"))
                 bot.feature_flags = current_flags
+
+            # Merge widget_messages — partial updates must not wipe existing messages
+            if "widget_messages" in update_data and update_data["widget_messages"] is not None:
+                current_messages = dict(bot.widget_messages or {})
+                current_messages.update(update_data.pop("widget_messages"))
+                bot.widget_messages = current_messages
+
+            # Merge widget_config — partial updates must not wipe existing config
+            if "widget_config" in update_data and update_data["widget_config"] is not None:
+                current_config = dict(bot.widget_config or {})
+                current_config.update(update_data.pop("widget_config"))
+                bot.widget_config = current_config
 
             # Framework selection is stored under bant_config.framework for backward compatibility
             selected_framework = update_data.pop("qualification_framework", None)

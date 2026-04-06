@@ -1359,6 +1359,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     isTyping={isTyping}
                     currentTheme={currentTheme}
                     inputRef={inputRef}
+                    settings={settings}
                     onHandoff={!isInitializing && chatMode === 'bot' && settings.live_chat_enabled !== false ? triggerHandoff : undefined}
                     showProminentHandoff={showProminentHandoff}
                     primaryColor={settings.primary_color}
