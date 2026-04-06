@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, Volume2, CheckCircle2, AlertCircle, User, Phone, MessageSquare } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage } from '../services/api';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -97,6 +97,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
     const [activeCTA, setActiveCTA] = useState(null);
     const ctaShownRef = useRef(false);
+    const ctaDimensionsShownRef = useRef(new Set());
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
     const [existingLeadInfo, setExistingLeadInfo] = useState(null);
 
@@ -144,6 +145,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const consecutiveFallbacks = useRef(0);
     const handoffTriggeredRef = useRef(false);
     const prevOperatorNameRef = useRef(null);
+    const pageContextRef = useRef(null);
+    const behavioralSentRef = useRef(false);
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
     const isLiveMode = ['waiting', 'live', 'unavailable'].includes(chatMode);
@@ -227,6 +230,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         initChat();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // ── Collect page context on mount, send time-on-page on unload ──────────────
+    useEffect(() => {
+        pageContextRef.current = collectPageContext();
+
+        const handleUnload = () => {
+            const sid = sessionId || localStorage.getItem('chat_session_id');
+            if (sid && pageContextRef.current) {
+                sendTimeOnPage(sid, pageContextRef.current._load_time);
+            }
+        };
+        window.addEventListener('beforeunload', handleUnload);
+        return () => window.removeEventListener('beforeunload', handleUnload);
+    }, [sessionId]);
 
     // Scroll when messages or live messages change
     useEffect(() => {
@@ -351,6 +368,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setShowWelcome(true);
         handoffTriggeredRef.current = false;
         handoffFormInjectedRef.current = false;
+        behavioralSentRef.current = false;
+        pageContextRef.current = collectPageContext();
+        ctaShownRef.current = false;
+        ctaDimensionsShownRef.current = new Set();
         consecutiveFallbacks.current = 0;
         setExistingLeadInfo(null);
         setLiveMessages([]);
@@ -413,6 +434,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setSessionId(metadata.session_id);
                         localStorage.setItem('chat_session_id', metadata.session_id);
                     }
+                    // Send behavioral signals once per conversation
+                    const resolvedSid = metadata.session_id || sessionId;
+                    if (resolvedSid && !behavioralSentRef.current && pageContextRef.current) {
+                        behavioralSentRef.current = true;
+                        sendBehavioralSignals(resolvedSid, pageContextRef.current);
+                    }
                 },
                 onChunk: (chunk) => {
                     if (placeholderId === null) {
@@ -451,10 +478,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         ));
                         setStreamingId(finalMeta.message_id);
                     }
-                    // Show CTA quick-reply chips (max 1 per conversation)
-                    if (finalMeta.cta && !ctaShownRef.current) {
-                        ctaShownRef.current = true;
-                        setActiveCTA(finalMeta.cta);
+                    if (finalMeta.cta) {
+                        const dim = finalMeta.cta.dimension;
+                        if (!dim || !ctaDimensionsShownRef.current.has(dim)) {
+                            if (dim) ctaDimensionsShownRef.current.add(dim);
+                            ctaShownRef.current = true;
+                            setActiveCTA(finalMeta.cta);
+                        }
                     }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;

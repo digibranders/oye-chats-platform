@@ -351,7 +351,7 @@ def build_hybrid_prompt(
             score = bs.get(f"{dim}_score", 0)
             value = bs.get(dim) or "Not yet identified"
             state_lines.append(f"- {dim_labels.get(dim, dim)}: {value} (score: {score}/25)")
-            if score == 0:
+            if score < 15:
                 missing_dims.append(dim)
 
         state_text = "\n".join(state_lines)
@@ -371,8 +371,8 @@ def build_hybrid_prompt(
 CTA MARKER (INTERNAL — invisible to user):
 If you ask a qualifying question, append the marker [CTA:dimension_name] at the very end
 of your response (e.g., [CTA:timeline]). This marker will be stripped before showing to
-the visitor. Only include ONE [CTA:] marker per response, only for a dimension with
-score 0, and only for these CTA-enabled dimensions:
+the visitor. Only include ONE [CTA:] marker per response, only for CTA-enabled dimensions
+that have not been fully assessed yet (score below 15). These are the eligible dimensions:
 {cta_lines}
 """
 

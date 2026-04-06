@@ -1,6 +1,6 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -129,6 +129,7 @@ class Bot(Base):
     documents = relationship("Document", back_populates="bot", cascade="all, delete-orphan")
     chat_sessions = relationship("ChatSession", back_populates="bot", cascade="all, delete-orphan")
     lead_infos = relationship("LeadInfo", back_populates="bot", cascade="all, delete-orphan")
+    growth_events = relationship("BotGrowthEvent", back_populates="bot", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -184,6 +185,13 @@ class ChatSession(Base):
     location = Column(String, nullable=True)
     device = Column(String, nullable=True)
 
+    # Behavioral scoring
+    behavioral_score = Column(Integer, default=0, server_default="0", nullable=False)
+    page_url = Column(String, nullable=True)
+    referrer = Column(String, nullable=True)
+    utm_params = Column(JSONB, nullable=True)
+    visit_count = Column(Integer, default=1, server_default="1", nullable=False)
+
     # BANT Qualification State
     bant_need = Column(Text, nullable=True)
     bant_timeline = Column(String, nullable=True)
@@ -215,6 +223,7 @@ class ChatSession(Base):
     lead_info = relationship("LeadInfo", back_populates="session", uselist=False, cascade="all, delete-orphan")
     assigned_operator = relationship("Operator", back_populates="active_sessions")
     bant_signals = relationship("BANTSignal", back_populates="session", cascade="all, delete-orphan")
+    visitor_events = relationship("VisitorEvent", back_populates="session", cascade="all, delete-orphan")
 
 
 class BANTSignal(Base):
@@ -229,9 +238,46 @@ class BANTSignal(Base):
     confidence = Column(String, default="medium", server_default="medium", nullable=False)
     score_before = Column(Integer, default=0, server_default="0", nullable=False)
     score_after = Column(Integer, default=0, server_default="0", nullable=False)
+    source = Column(String, default="llm", server_default="llm", nullable=False)  # llm|cta_click
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="bant_signals")
+
+
+class VisitorEvent(Base):
+    """Behavioral events tracked from the widget (page views, UTM captures, return visits, etc.)."""
+
+    __tablename__ = "visitor_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(String, nullable=False)  # page_view|return_visit|utm_captured|time_on_site
+    event_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("ChatSession", back_populates="visitor_events")
+    bot = relationship("Bot")
+
+
+class BotGrowthEvent(Base):
+    """Minimal growth event log for tracking public demo-link distribution."""
+
+    __tablename__ = "bot_growth_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bot = relationship("Bot", back_populates="growth_events")
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('demo_share_clicked', 'demo_link_opened')",
+            name="ck_bot_growth_events_event_type",
+        ),
+    )
 
 
 class Department(Base):

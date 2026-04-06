@@ -33,6 +33,16 @@ class LeadCaptureRequest(PydanticBaseModel):
     company: str | None = None
 
 
+class BehavioralSignalsRequest(PydanticBaseModel):
+    session_id: str
+    page_url: str | None = None
+    referrer: str | None = None
+    utm_params: dict | None = None
+    time_on_page: float | None = None  # seconds
+    pages_viewed: int | None = None
+    is_return_visit: bool = False
+
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
@@ -225,6 +235,96 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to capture lead information.") from e
+
+
+@router.post("/chat/behavioral-signals")
+def behavioral_signals_endpoint(body: BehavioralSignalsRequest, bot: Bot = Depends(get_current_bot)):
+    """Receive behavioral signals from the widget and compute a behavioral score.
+
+    Called on session init with page context, and on beforeunload with time-on-page.
+    Auth: X-Bot-Key.
+    """
+    from app.db.models import VisitorEvent
+    from app.services.behavioral_service import score_behavioral_signals
+
+    try:
+        with get_session() as session:
+            ensure_chat_session(session, body.session_id, bot_id=bot.id)
+            chat_session = session.execute(
+                select(ChatSession).where(ChatSession.id == body.session_id, ChatSession.bot_id == bot.id)
+            ).scalar_one()
+
+            # Store page context on the session (first call wins for URL/referrer)
+            if body.page_url and not chat_session.page_url:
+                chat_session.page_url = body.page_url[:2000]
+            if body.referrer and not chat_session.referrer:
+                chat_session.referrer = body.referrer[:2000]
+            if body.utm_params and not chat_session.utm_params:
+                chat_session.utm_params = body.utm_params
+
+            # Update visit count from widget
+            if body.is_return_visit and chat_session.visit_count <= 1:
+                chat_session.visit_count = max(chat_session.visit_count, 2)
+
+            # Record visitor events
+            if body.page_url:
+                session.add(
+                    VisitorEvent(
+                        session_id=body.session_id,
+                        bot_id=bot.id,
+                        event_type="page_view",
+                        event_data={"url": body.page_url[:2000]},
+                    )
+                )
+            if body.utm_params and any(body.utm_params.values()):
+                session.add(
+                    VisitorEvent(
+                        session_id=body.session_id,
+                        bot_id=bot.id,
+                        event_type="utm_captured",
+                        event_data=body.utm_params,
+                    )
+                )
+            if body.is_return_visit:
+                session.add(
+                    VisitorEvent(
+                        session_id=body.session_id,
+                        bot_id=bot.id,
+                        event_type="return_visit",
+                        event_data={"visit_count": chat_session.visit_count},
+                    )
+                )
+            if body.time_on_page and body.time_on_page > 0:
+                session.add(
+                    VisitorEvent(
+                        session_id=body.session_id,
+                        bot_id=bot.id,
+                        event_type="time_on_site",
+                        event_data={"seconds": round(body.time_on_page, 1)},
+                    )
+                )
+
+            # Compute and store behavioral score
+            new_score = score_behavioral_signals(
+                {
+                    "is_return_visit": body.is_return_visit,
+                    "utm_params": body.utm_params,
+                    "time_on_page": body.time_on_page or 0,
+                    "pages_viewed": body.pages_viewed or 0,
+                    "referrer": body.referrer or "",
+                },
+                bot=bot,
+            )
+            # Only upgrade behavioral score (never downgrade)
+            if new_score > chat_session.behavioral_score:
+                chat_session.behavioral_score = new_score
+
+            session.commit()
+            logger.info(f"Behavioral signals recorded | bot={bot.id} session={body.session_id} score={new_score}")
+            return {"success": True, "behavioral_score": chat_session.behavioral_score}
+    except Exception as e:
+        logger.error(f"Behavioral signals failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to record behavioral signals.") from e
 
 
 @router.get("/chat/lead-info/{session_id}")

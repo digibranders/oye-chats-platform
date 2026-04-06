@@ -99,8 +99,10 @@ def get_bant_config(bot: Bot | None) -> dict:
 
 
 def calculate_lead_score(session: ChatSession) -> int:
-    """Return the stored composite BANT score."""
-    return _score_value(session.bant_score)
+    """Return the composite score: BANT + behavioral (capped at 100)."""
+    bant = _score_value(session.bant_score)
+    behavioral = _score_value(getattr(session, "behavioral_score", 0))
+    return min(bant + behavioral, 100)
 
 
 def get_lead_tier(score: int, thresholds: dict | None = None) -> str:
@@ -184,7 +186,9 @@ def build_lead_response(
     """Build a standardized lead payload using decayed display scores."""
     config = get_bant_config(bot)
     adjusted_scores = apply_display_decay(session, decay_config=config.get("decay"))
-    score = adjusted_scores["total"]
+    bant_score = adjusted_scores["total"]
+    behavioral = _score_value(getattr(session, "behavioral_score", 0))
+    score = min(bant_score + behavioral, 100)
 
     contact = None
     if lead_info is not None:
@@ -199,6 +203,8 @@ def build_lead_response(
     return {
         "session_id": session.id,
         "score": score,
+        "bant_score": bant_score,
+        "behavioral_score": behavioral,
         "tier": tier,
         "status": tier,  # backward-compat alias for frontend
         "dimensions_assessed": count_dimensions_assessed(session),
@@ -207,6 +213,12 @@ def build_lead_response(
             "budget": {"value": session.bant_budget, "score": adjusted_scores["budget_score"]},
             "authority": {"value": session.bant_authority, "score": adjusted_scores["authority_score"]},
             "timeline": {"value": session.bant_timeline, "score": adjusted_scores["timeline_score"]},
+        },
+        "behavioral": {
+            "page_url": getattr(session, "page_url", None),
+            "referrer": getattr(session, "referrer", None),
+            "utm_params": getattr(session, "utm_params", None),
+            "visit_count": getattr(session, "visit_count", 1),
         },
         "contact": contact,
         "location": session.location or "Unknown",
