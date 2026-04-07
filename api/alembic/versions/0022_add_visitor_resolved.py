@@ -12,7 +12,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "0022_add_visitor_resolved"
-down_revision = "0021_add_widget_config_and_branding"
+down_revision = "0021_widget_config_branding"
 branch_labels = None
 depends_on = None
 
