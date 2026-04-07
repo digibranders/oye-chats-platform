@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastProvider } from './context/ToastContext';
 import { getAuthState } from './utils/auth';
@@ -19,6 +20,7 @@ import Insights from './pages/Insights';
 import Support from './pages/Support';
 import TeamManagement from './pages/TeamManagement';
 import Email from './pages/integrations/Email';
+const Webhooks = lazy(() => import('./pages/Webhooks'));
 
 // Superadmin
 import SuperadminLayout from './layouts/SuperadminLayout';
@@ -79,6 +81,16 @@ function App() {
                         <Route path="insights" element={<ClientOnlyPage pageName="Insights"><Insights /></ClientOnlyPage>} />
                         <Route path="leads" element={<ClientOnlyPage pageName="Leads"><Leads /></ClientOnlyPage>} />
                         <Route path="qualification" element={<ClientOnlyPage pageName="Qualification"><Qualification /></ClientOnlyPage>} />
+                        <Route
+                            path="webhooks"
+                            element={
+                                <ClientOnlyPage pageName="Webhooks">
+                                    <Suspense fallback={<div className="text-sm text-secondary-500">Loading...</div>}>
+                                        <Webhooks />
+                                    </Suspense>
+                                </ClientOnlyPage>
+                            }
+                        />
                         <Route path="integrations/email" element={<ClientOnlyPage pageName="Integrations"><Email /></ClientOnlyPage>} />
 
                         {/* Accessible to all authenticated users */}

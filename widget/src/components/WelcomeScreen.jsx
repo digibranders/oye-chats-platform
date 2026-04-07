@@ -1,13 +1,20 @@
 import React from 'react';
 
 const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration = 350 }) => {
-    const suggestions = settings?.welcome_suggestions || ['Our Services', 'About us', 'Contact us'];
+    const messages = settings?.widget_messages || {};
+    const suggestions = messages.welcome_suggestions || settings?.welcome_suggestions || ['Our Services', 'About us', 'Contact us'];
 
     const getGreeting = () => {
         const hour = new Date().getHours();
         if (hour < 12) return 'Good morning';
         if (hour < 18) return 'Good afternoon';
         return 'Good evening';
+    };
+
+    const removeEmoji = (text) => {
+        if (!text) return text;
+        // Remove emoji and extra whitespace
+        return text.replace(/[\p{Emoji}]/gu, '').trim();
     };
 
     const contentExitStyle = welcomeExiting ? {
@@ -21,7 +28,7 @@ const WelcomeScreen = ({ settings, onSend, welcomeExiting = false, exitDuration 
             className="flex flex-col items-start text-left w-full"
             style={contentExitStyle || { animation: 'fadeUp 0.4s ease-out' }}
         >
-            <h2 className="text-2xl font-bold text-[#16202C]">{settings?.welcome_title || getGreeting()}</h2>
+            <h2 className="text-2xl font-bold text-[#16202C]">{removeEmoji(settings?.welcome_title || getGreeting())}</h2>
             <p className="text-[15px] text-gray-500 mt-1">{settings?.welcome_subtitle || 'How can I help you today?'}</p>
 
             <div className="flex flex-wrap gap-2 mt-5 justify-start">

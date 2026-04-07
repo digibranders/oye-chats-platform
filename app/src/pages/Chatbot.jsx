@@ -7,7 +7,7 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
-import { createBot, deleteBot, crawlWebsite, updateBot } from '../services/api';
+import { createBot, deleteBot, crawlWebsite, getBotDemoUrl, trackDemoShareClick, updateBot } from '../services/api';
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from '../components/PlatformSelector';
 import IntegrationGuide from '../components/IntegrationGuide';
@@ -53,10 +53,26 @@ export default function Chatbot() {
         }
     }, [searchParams, setSearchParams]);
 
-    const handleCopy = (text, field) => {
-        navigator.clipboard.writeText(text);
-        setCopiedField(field);
-        setTimeout(() => setCopiedField(null), 2000);
+    const handleCopy = async (text, field, onCopied) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopiedField(field);
+            setTimeout(() => setCopiedField(null), 2000);
+            await onCopied?.();
+        } catch (err) {
+            console.error('Failed to copy text:', err);
+            showToast('error', 'Failed to copy to clipboard');
+        }
+    };
+
+    const handleDemoCopy = async (bot) => {
+        await handleCopy(getBotDemoUrl(bot.bot_key), `demo-${bot.id}`, async () => {
+            try {
+                await trackDemoShareClick(bot.id);
+            } catch (err) {
+                console.error('Failed to track demo share click:', err);
+            }
+        });
     };
 
     const handleCreate = async (e) => {
@@ -270,6 +286,34 @@ export default function Chatbot() {
                                                 <code className="text-xs text-secondary-700 font-mono break-all">{showKeys[bot.id] ? bot.bot_key : maskKey(bot.bot_key)}</code>
                                             </div>
                                         </div>
+
+                                        {isBotManager && (
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2 gap-3">
+                                                    <div>
+                                                        <label className="text-[10px] font-bold uppercase tracking-wider text-secondary-400">Share Demo Link</label>
+                                                        <p className="text-xs text-secondary-500 mt-1">
+                                                            Send a live preview page to teammates or prospects before you embed this bot.
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleDemoCopy(bot)}
+                                                        className="flex items-center gap-1 text-primary-600 hover:text-primary-700 transition-colors flex-shrink-0"
+                                                    >
+                                                        {copiedField === `demo-${bot.id}` ? <Check size={11} /> : <Copy size={11} />}
+                                                        <span className="text-[9px] font-bold uppercase">{copiedField === `demo-${bot.id}` ? 'Copied' : 'Copy'}</span>
+                                                    </button>
+                                                </div>
+                                                <div className="flex items-center bg-white border border-secondary-200 rounded-lg px-3 py-2">
+                                                    <input
+                                                        type="text"
+                                                        readOnly
+                                                        value={getBotDemoUrl(bot.bot_key)}
+                                                        className="w-full bg-transparent text-xs text-secondary-700 font-mono outline-none"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
 
                                         {/* Platform Integration Guide */}
                                         <div>

@@ -1,6 +1,6 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -113,6 +113,8 @@ class Bot(Base):
     # Delay (seconds) before handoff form auto-appears after the bot suggests a handoff.
     # 0 = show immediately; useful to give the visitor time to read the bot's last response.
     handoff_delay_seconds = Column(Integer, default=0, server_default="0", nullable=False)
+    calendly_url = Column(String, nullable=True)
+    meeting_booking_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Feature flags — controls per-bot widget/operator behavior toggles
     feature_flags = Column(
@@ -120,6 +122,24 @@ class Bot(Base):
         nullable=False,
         server_default='{"file_sharing": false, "post_chat_rating": true, "show_branding": true, "queue_position": false, "typing_preview": true, "email_transcript": false}',
     )
+
+    # Widget messages — all customizable user-facing strings (welcome, chat input, error messages, etc.)
+    widget_messages = Column(
+        JSONB,
+        nullable=False,
+        server_default='{"welcome_greeting": "Hi There, How can I help you today?", "welcome_suggestions": ["Our Services", "About us", "Contact us"], "input_placeholder": "Write a message...", "live_chat_label": "Live chat", "greeting_message": "Hi! Let us know if you have any questions.", "offline_message": "Team is currently unavailable", "rating_prompt": "How was your experience?", "end_chat_label": "End chat and return to AI"}',
+    )
+
+    # Widget configuration — timing, thresholds, and advanced settings
+    widget_config = Column(
+        JSONB,
+        nullable=False,
+        server_default='{"welcome_exit_duration_ms": 350, "greeting_delay_ms": 3000, "typing_timeout_ms": 2000, "frustration_window_ms": 30000, "frustration_threshold_messages": 3, "max_reconnect_attempts": 15, "max_reconnect_delay_ms": 30000, "heartbeat_visible_ms": 25000, "heartbeat_hidden_ms": 50000, "handoff_auto_submit_delay_ms": 300}',
+    )
+
+    # Widget branding — customizable branding text and URL
+    branding_text = Column(String, default="Powered by OyeChats", server_default="Powered by OyeChats", nullable=False)
+    branding_url = Column(String, default="https://oyechats.com", server_default="https://oyechats.com", nullable=False)
 
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -129,6 +149,9 @@ class Bot(Base):
     documents = relationship("Document", back_populates="bot", cascade="all, delete-orphan")
     chat_sessions = relationship("ChatSession", back_populates="bot", cascade="all, delete-orphan")
     lead_infos = relationship("LeadInfo", back_populates="bot", cascade="all, delete-orphan")
+    growth_events = relationship("BotGrowthEvent", back_populates="bot", cascade="all, delete-orphan")
+    webhooks = relationship("Webhook", back_populates="bot", cascade="all, delete-orphan")
+    meeting_bookings = relationship("MeetingBooking", back_populates="bot", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -184,6 +207,13 @@ class ChatSession(Base):
     location = Column(String, nullable=True)
     device = Column(String, nullable=True)
 
+    # Behavioral scoring
+    behavioral_score = Column(Integer, default=0, server_default="0", nullable=False)
+    page_url = Column(String, nullable=True)
+    referrer = Column(String, nullable=True)
+    utm_params = Column(JSONB, nullable=True)
+    visit_count = Column(Integer, default=1, server_default="1", nullable=False)
+
     # BANT Qualification State
     bant_need = Column(Text, nullable=True)
     bant_timeline = Column(String, nullable=True)
@@ -197,6 +227,8 @@ class ChatSession(Base):
     bant_tier = Column(String, default="unqualified", server_default="unqualified", nullable=False)
     dimensions_assessed = Column(Integer, default=0, server_default="0", nullable=False)
     bant_last_updated = Column(DateTime(timezone=True), nullable=True)
+    dimension_scores = Column(JSONB, nullable=True)
+    qualification_framework = Column(String, default="bant", server_default="bant", nullable=False)
 
     # Live chat state
     status = Column(String, default="bot", server_default="bot", nullable=False)  # bot|waiting|live|closed
@@ -215,6 +247,7 @@ class ChatSession(Base):
     lead_info = relationship("LeadInfo", back_populates="session", uselist=False, cascade="all, delete-orphan")
     assigned_operator = relationship("Operator", back_populates="active_sessions")
     bant_signals = relationship("BANTSignal", back_populates="session", cascade="all, delete-orphan")
+    visitor_events = relationship("VisitorEvent", back_populates="session", cascade="all, delete-orphan")
 
 
 class BANTSignal(Base):
@@ -229,9 +262,95 @@ class BANTSignal(Base):
     confidence = Column(String, default="medium", server_default="medium", nullable=False)
     score_before = Column(Integer, default=0, server_default="0", nullable=False)
     score_after = Column(Integer, default=0, server_default="0", nullable=False)
+    source = Column(String, default="llm", server_default="llm", nullable=False)  # llm|cta_click
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="bant_signals")
+
+
+class VisitorEvent(Base):
+    """Behavioral events tracked from the widget (page views, UTM captures, return visits, etc.)."""
+
+    __tablename__ = "visitor_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(String, nullable=False)  # page_view|return_visit|utm_captured|time_on_site
+    event_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("ChatSession", back_populates="visitor_events")
+    bot = relationship("Bot")
+
+
+class BotGrowthEvent(Base):
+    """Minimal growth event log for tracking public demo-link distribution."""
+
+    __tablename__ = "bot_growth_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bot = relationship("Bot", back_populates="growth_events")
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('demo_share_clicked', 'demo_link_opened')",
+            name="ck_bot_growth_events_event_type",
+        ),
+    )
+
+
+class Webhook(Base):
+    __tablename__ = "webhooks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False, index=True)
+    url = Column(String, nullable=False)
+    secret = Column(String, nullable=False)
+    events = Column(JSONB, default=list, server_default="[]", nullable=False)
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    bot = relationship("Bot", back_populates="webhooks")
+    deliveries = relationship("WebhookDelivery", back_populates="webhook", cascade="all, delete-orphan")
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    webhook_id = Column(Integer, ForeignKey("webhooks.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String, nullable=False)
+    payload = Column(JSONB, nullable=False)
+    status_code = Column(Integer, nullable=True)
+    response_body = Column(Text, nullable=True)
+    attempt = Column(Integer, default=1, server_default="1", nullable=False)
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+
+    webhook = relationship("Webhook", back_populates="deliveries")
+
+
+class MeetingBooking(Base):
+    __tablename__ = "meeting_bookings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=False)
+    booking_url = Column(String, nullable=True)
+    meeting_time = Column(DateTime(timezone=True), nullable=True)
+    attendee_email = Column(String, nullable=True)
+    status = Column(String, default="scheduled", server_default="scheduled", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    session = relationship("ChatSession")
+    bot = relationship("Bot", back_populates="meeting_bookings")
 
 
 class Department(Base):

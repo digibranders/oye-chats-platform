@@ -173,6 +173,26 @@ export const submitLeadCapture = async (sessionId, formData) => {
     }
 };
 
+export const submitMeetingBooked = async (sessionId, data = {}) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/meeting-booked`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+                session_id: sessionId,
+                booking_url: data.booking_url || null,
+                meeting_time: data.meeting_time || null,
+                attendee_email: data.attendee_email || null,
+            }),
+        });
+        if (!response.ok) throw new Error('Failed to submit meeting booking');
+        return await response.json();
+    } catch (error) {
+        console.error('[OyeChats] Error submitting meeting booking:', error);
+        throw error;
+    }
+};
+
 export const requestHandoff = async (sessionId, formData) => {
     try {
         const response = await fetch(`${API_URL}/operators/handoff`, {
@@ -248,6 +268,107 @@ export const submitOfflineMessage = async (formData) => {
     } catch (error) {
         console.error("Error submitting offline message:", error);
         throw error;
+    }
+};
+
+/**
+ * Collect page context from the host page (URL, referrer, UTM params).
+ * Called once on widget load — reads from window.location and document.referrer.
+ */
+export const collectPageContext = () => {
+    const url = window.location.href;
+    const referrer = document.referrer || '';
+    const params = new URLSearchParams(window.location.search);
+
+    const utm_params = {};
+    for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']) {
+        const val = params.get(key);
+        if (val) utm_params[key] = val;
+    }
+
+    // Detect return visit via localStorage fingerprint
+    const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
+    const visitorKey = `oyechats_visitor_${botKey}`;
+    const existingVisitor = localStorage.getItem(visitorKey);
+    const is_return_visit = !!existingVisitor;
+    if (!existingVisitor) {
+        localStorage.setItem(visitorKey, Date.now().toString());
+    }
+
+    // Track page view count in sessionStorage
+    const pageCountKey = `oyechats_pages_${botKey}`;
+    const currentCount = parseInt(sessionStorage.getItem(pageCountKey) || '0', 10) + 1;
+    sessionStorage.setItem(pageCountKey, currentCount.toString());
+
+    return {
+        page_url: url,
+        referrer,
+        utm_params: Object.keys(utm_params).length > 0 ? utm_params : null,
+        is_return_visit,
+        pages_viewed: currentCount,
+        _load_time: performance.now(),
+    };
+};
+
+/**
+ * Send behavioral signals to the backend. Non-blocking, fire-and-forget.
+ */
+export const sendBehavioralSignals = async (sessionId, signals) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/behavioral-signals`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+                session_id: sessionId,
+                page_url: signals.page_url || null,
+                referrer: signals.referrer || null,
+                utm_params: signals.utm_params || null,
+                time_on_page: signals.time_on_page || null,
+                pages_viewed: signals.pages_viewed || null,
+                is_return_visit: signals.is_return_visit || false,
+            }),
+        });
+        if (!response.ok) {
+            console.warn('[OyeChats] Behavioral signals request failed:', response.status);
+        }
+    } catch (error) {
+        // Non-critical — never block the chat experience
+        console.warn('[OyeChats] Behavioral signals error:', error);
+    }
+};
+
+/**
+ * Send time-on-page via sendBeacon on page unload. Fire-and-forget, non-blocking.
+ */
+export const sendTimeOnPage = (sessionId, loadTime) => {
+    if (!sessionId || !loadTime) return;
+    const timeOnPage = (performance.now() - loadTime) / 1000; // Convert to seconds
+    if (timeOnPage < 1) return; // Ignore sub-second visits
+
+    const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
+    const pageCountKey = `oyechats_pages_${botKey}`;
+    const pagesViewed = parseInt(sessionStorage.getItem(pageCountKey) || '1', 10);
+
+    const payload = JSON.stringify({
+        session_id: sessionId,
+        time_on_page: Math.round(timeOnPage),
+        pages_viewed: pagesViewed,
+    });
+
+    const headers = getHeaders();
+    const blob = new Blob([payload], { type: 'application/json' });
+
+    // sendBeacon doesn't support custom headers, so fall back to fetch with keepalive
+    try {
+        fetch(`${API_URL}/chat/behavioral-signals`, {
+            method: 'POST',
+            headers,
+            body: payload,
+            keepalive: true,
+        });
+    } catch {
+        // Last resort: sendBeacon (no auth headers, but backend may handle gracefully)
+        navigator.sendBeacon?.(`${API_URL}/chat/behavioral-signals`, blob);
     }
 };
 

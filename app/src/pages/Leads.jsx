@@ -200,7 +200,12 @@ export default function Leads() {
                                                         }}
                                                     />
                                                 </div>
-                                                <span className="text-[12px] font-bold text-secondary-700">{lead.score}</span>
+                                                <span
+                                                    className="text-[12px] font-bold text-secondary-700"
+                                                    title={`BANT: ${lead.bant_score ?? lead.score}${lead.behavioral_score ? ` + Behavioral: ${lead.behavioral_score}` : ''}`}
+                                                >
+                                                    {lead.score}
+                                                </span>
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
@@ -344,6 +349,68 @@ export default function Leads() {
                                         </div>
                                     )}
                                 </div>
+
+                                {(leadDetail.behavioral_score > 0 || leadDetail.behavioral?.page_url) && (
+                                    <div className="space-y-3">
+                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-secondary-500">Behavioral Signals</h3>
+                                        <div className="bg-secondary-50 rounded-xl p-4 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[12px] font-medium text-secondary-600">Engagement Score</span>
+                                                <span className="text-[12px] font-bold">{leadDetail.behavioral_score || 0}/20</span>
+                                            </div>
+                                            <div className="w-full bg-secondary-200 rounded-full h-1.5">
+                                                <div
+                                                    className={`h-1.5 rounded-full transition-all ${
+                                                        (leadDetail.behavioral_score || 0) >= 15
+                                                            ? 'bg-green-500'
+                                                            : (leadDetail.behavioral_score || 0) >= 8
+                                                              ? 'bg-blue-500'
+                                                              : 'bg-amber-400'
+                                                    }`}
+                                                    style={{ width: `${Math.min(((leadDetail.behavioral_score || 0) / 20) * 100, 100)}%` }}
+                                                />
+                                            </div>
+                                            {leadDetail.behavioral?.page_url && (
+                                                <div className="flex items-start gap-2 text-[12px]">
+                                                    <span className="text-secondary-400 shrink-0">Page:</span>
+                                                    <span className="text-secondary-700 break-all">
+                                                        {leadDetail.behavioral.page_url.length > 80
+                                                            ? leadDetail.behavioral.page_url.substring(0, 80) + '...'
+                                                            : leadDetail.behavioral.page_url}
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {leadDetail.behavioral?.referrer && (
+                                                <div className="flex items-start gap-2 text-[12px]">
+                                                    <span className="text-secondary-400 shrink-0">Referrer:</span>
+                                                    <span className="text-secondary-700 break-all">
+                                                        {leadDetail.behavioral.referrer.length > 80
+                                                            ? leadDetail.behavioral.referrer.substring(0, 80) + '...'
+                                                            : leadDetail.behavioral.referrer}
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {leadDetail.behavioral?.utm_params && Object.keys(leadDetail.behavioral.utm_params).length > 0 && (
+                                                <div className="text-[12px]">
+                                                    <span className="text-secondary-400">UTM:</span>
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {Object.entries(leadDetail.behavioral.utm_params).map(([k, v]) => (
+                                                            <span key={k} className="px-2 py-0.5 bg-white border border-secondary-200 rounded text-[10px] text-secondary-600">
+                                                                {k}: {v}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {(leadDetail.behavioral?.visit_count || 0) > 1 && (
+                                                <div className="flex items-center gap-2 text-[12px]">
+                                                    <span className="text-secondary-400">Return visitor:</span>
+                                                    <span className="text-secondary-700">{leadDetail.behavioral.visit_count} visits</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Meta */}
                                 <div className="flex gap-4 text-[12px] text-secondary-500">

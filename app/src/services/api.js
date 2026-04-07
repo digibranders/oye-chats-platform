@@ -529,6 +529,16 @@ export const getBot = async (botId) => {
     }
 };
 
+export const getFrameworkPresets = async (botId) => {
+    try {
+        const response = await api.get(`/bots/${botId}/framework-presets`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching framework presets:', error);
+        throw buildApiError(error, 'Failed to load framework presets');
+    }
+};
+
 /**
  * Updates a bot's settings.
  * @param {number} botId
@@ -557,6 +567,18 @@ export const deleteBot = async (botId) => {
     } catch (error) {
         console.error('API Error deleting bot:', error);
         throw buildApiError(error, 'Failed to delete bot');
+    }
+};
+
+export const getBotDemoUrl = (botKey) => `${API_BASE_URL}/demo/${botKey}`;
+
+export const trackDemoShareClick = async (botId) => {
+    try {
+        const response = await api.post(`/bots/${botId}/demo-share-click`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error tracking demo share click:', error);
+        throw buildApiError(error, 'Failed to track demo share');
     }
 };
 
@@ -599,6 +621,16 @@ export const getLeadStats = async (botId) => {
     }
 };
 
+export const getQualificationFunnel = async (botId, period = '30d') => {
+    try {
+        const response = await api.get(`/analytics/qualification-funnel?bot_id=${botId}&period=${period}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching qualification funnel:', error);
+        throw buildApiError(error, 'Failed to load qualification funnel');
+    }
+};
+
 export const exportLeadsCsv = async (botId) => {
     try {
         const query = botId ? `?bot_id=${botId}` : '';
@@ -614,6 +646,68 @@ export const exportLeadsCsv = async (botId) => {
     } catch (error) {
         console.error('API Error exporting leads:', error);
         throw buildApiError(error, 'Failed to export leads');
+    }
+};
+
+// ── Webhooks ──
+
+export const getWebhooks = async (botId) => {
+    try {
+        const response = await api.get(`/webhooks?bot_id=${botId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching webhooks:', error);
+        throw buildApiError(error, 'Failed to load webhooks');
+    }
+};
+
+export const createWebhook = async (botId, data) => {
+    try {
+        const response = await api.post(`/webhooks?bot_id=${botId}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error creating webhook:', error);
+        throw buildApiError(error, 'Failed to create webhook');
+    }
+};
+
+export const updateWebhook = async (webhookId, data) => {
+    try {
+        const response = await api.patch(`/webhooks/${webhookId}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('API Error updating webhook:', error);
+        throw buildApiError(error, 'Failed to update webhook');
+    }
+};
+
+export const deleteWebhook = async (webhookId) => {
+    try {
+        const response = await api.delete(`/webhooks/${webhookId}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error deleting webhook:', error);
+        throw buildApiError(error, 'Failed to delete webhook');
+    }
+};
+
+export const getWebhookDeliveries = async (webhookId, page = 1) => {
+    try {
+        const response = await api.get(`/webhooks/${webhookId}/deliveries?page=${page}&limit=50`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching webhook deliveries:', error);
+        throw buildApiError(error, 'Failed to load webhook deliveries');
+    }
+};
+
+export const testWebhook = async (webhookId) => {
+    try {
+        const response = await api.post(`/webhooks/${webhookId}/test`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error sending test webhook:', error);
+        throw buildApiError(error, 'Failed to send test event');
     }
 };
 
