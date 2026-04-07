@@ -334,9 +334,11 @@ def _background_bant_extraction(
             # Check tier transition → send notification
             new_tier = chat_session.bant_tier
             if new_tier == "sql" and old_tier != "sql" and bot:
-                notification_email = getattr(bot, "notification_email", None)
+                from app.services.email_service import get_notification_recipients
+
                 email_on_qualified = getattr(bot, "email_on_qualified", False)
-                if notification_email and email_on_qualified:
+                recipients = get_notification_recipients(bot, "qualified_lead") if email_on_qualified else []
+                if recipients:
                     lead_info = get_lead_info_by_session(session, session_id)
                     contact = None
                     if lead_info:
@@ -352,7 +354,9 @@ def _background_bant_extraction(
                         "bant_authority": chat_session.bant_authority,
                         "bant_timeline": chat_session.bant_timeline,
                     }
-                    send_qualified_lead_email(notification_email, bot.name, bant_updates, contact)
+                    reply_to = getattr(bot, "reply_to_email", None)
+                    for recipient in recipients:
+                        send_qualified_lead_email(recipient, bot.name, bant_updates, contact, reply_to=reply_to)
                 try:
                     from app.services.webhook_service import fire_webhook
 
@@ -388,6 +392,7 @@ def build_hybrid_prompt(
     bant_state: dict = None,
     bant_enabled: bool = True,
     bant_config: dict = None,
+    live_chat_enabled: bool = True,
 ) -> str:
     """Construct the Hybrid RAG system prompt with BANT qualification support."""
 
@@ -457,13 +462,26 @@ CURRENT QUALIFICATION STATE:
 {state_text}
 {cta_instruction}"""
 
-    handoff_section = """
+    if live_chat_enabled:
+        handoff_section = """
 6. HUMAN HANDOFF REQUESTS:
 If the user explicitly asks to speak with a human, agent, support team, or representative:
 - Respond warmly and briefly — 1-2 sentences only.
 - Example: "Of course! Let me connect you with our team right away — they'll be happy to help."
 - Do NOT continue trying to answer their original question or ask a follow-up question.
 - Do NOT say you cannot help. Just acknowledge warmly and confirm they are being connected.
+"""
+    else:
+        handoff_section = """
+6. HUMAN SUPPORT REQUESTS:
+Live chat with a human agent is currently not available.
+If the user asks to speak with a human, agent, support team, or representative:
+- Acknowledge their request warmly.
+- Let them know that they can leave a message using the contact form (available in the menu at the top of the chat).
+- Assure them the team will follow up via email as soon as possible.
+- Example: "I understand you'd like to speak with our team. While live chat isn't available right now, you can leave a message using the contact form in the menu above — our team will get back to you by email shortly!"
+- Do NOT say the team is unavailable in a negative way. Keep it helpful and reassuring.
+- Do NOT try to handle the issue yourself if the visitor specifically insists on human support.
 """
 
     hybrid_system_prompt = f"""
@@ -658,6 +676,7 @@ def rag_pipeline(
                 bant_state=current_bant,
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
+                live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
             )
 
             answer = generate_response(
@@ -813,6 +832,7 @@ async def rag_pipeline_stream(
             bant_state=current_bant,
             bant_enabled=is_bant_enabled,
             bant_config=bant_config,
+            live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
