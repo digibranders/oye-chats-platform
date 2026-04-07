@@ -137,6 +137,10 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 if last_read_id is not None:
                     await manager.send_read_receipt_to_operator(session_id, last_read_id)
 
+            elif msg_type == "status_check":
+                # Widget polls for current status — recovers from lost WS messages
+                await manager._restore_visitor_state(session_id)
+
             elif msg_type == "visitor_end_chat":
                 # Visitor deliberately ended the chat (clicked "End chat and return to AI").
                 # Close the session immediately in DB and notify the operator — do NOT

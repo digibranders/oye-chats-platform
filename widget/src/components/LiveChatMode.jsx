@@ -20,6 +20,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 const LiveChatMode = ({
     sessionId,
     settings,
+    chatMode,
     setChatMode,
     setOperatorName,
     setOperatorDepartment,
@@ -31,6 +32,7 @@ const LiveChatMode = ({
     onReconnectingChange,   // (bool) => void
     onWsReady,              // ({ send, typing, triggerFilePick, endChat }) => void
     onChatEnded,            // () => void — called when chat ends (show rating or return to bot)
+    onUploadProgressChange, // (number|null) => void — syncs upload progress to parent
 }) => {
     const [ws, setWs] = useState(null);
     const reconnectAttempt = useRef(0);
@@ -45,13 +47,36 @@ const LiveChatMode = ({
     const heartbeatRef = useRef(null);
     const pongTimeoutRef = useRef(null);
 
-    const [uploadProgress, setUploadProgress] = useState(null);
+    const statusCheckRef = useRef(null);
+
+    const [uploadProgress, setUploadProgressLocal] = useState(null);
     // Pre-send preview: { file, previewUrl, caption, isImage }
     const [pendingFile, setPendingFile] = useState(null);
     // Full-screen image lightbox
     const [lightboxSrc, setLightboxSrc] = useState(null);
     // Pending messages that failed to send — retried on reconnect
     const [pendingMessages, setPendingMessages] = useState([]);
+    const [fileError, setFileError] = useState(null);
+
+    // Sync upload progress to both local state and parent
+    const setUploadProgress = (val) => {
+        setUploadProgressLocal(val);
+        onUploadProgressChange?.(val);
+    };
+
+    // ─── Periodic status check — recovers from lost "connected" messages ────────
+    useEffect(() => {
+        if (chatMode === 'waiting' && ws && ws.readyState === WebSocket.OPEN) {
+            statusCheckRef.current = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'status_check' }));
+                }
+            }, 8000);
+        } else {
+            clearInterval(statusCheckRef.current);
+        }
+        return () => clearInterval(statusCheckRef.current);
+    }, [chatMode, ws]);
 
     // ─── WebSocket connection ───────────────────────────────────────────────────
 
@@ -343,6 +368,7 @@ const LiveChatMode = ({
         const { file, previewUrl, caption } = pendingFile;
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPendingFile(null);
+        setFileError(null);
         setUploadProgress(0);
         try {
             const res = await fetch(`${API_URL}/chat/upload-url`, {
@@ -350,7 +376,10 @@ const LiveChatMode = ({
                 headers: { 'Content-Type': 'application/json', 'X-Bot-Key': settings.bot_key || '' },
                 body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size }),
             });
-            if (!res.ok) throw new Error('Failed to get upload URL');
+            if (!res.ok) {
+                const detail = await res.text().catch(() => '');
+                throw new Error(`Upload URL failed (${res.status}): ${detail}`);
+            }
             const { upload_url, file_url } = await res.json();
 
             const putRes = await fetch(upload_url, {
@@ -358,7 +387,7 @@ const LiveChatMode = ({
                 headers: { 'Content-Type': file.type },
                 body: file,
             });
-            if (!putRes.ok) throw new Error(`B2 upload failed: ${putRes.status}`);
+            if (!putRes.ok) throw new Error(`File upload failed (${putRes.status})`);
             setUploadProgress(100);
 
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -383,9 +412,12 @@ const LiveChatMode = ({
                         timestamp: new Date().toISOString(),
                     }]);
                 }
+            } else {
+                setFileError('Connection lost — please try again.');
             }
-        } catch {
-            /* silent — user can retry by re-selecting */
+        } catch (err) {
+            console.error('[OyeChats] File upload error:', err);
+            setFileError('Failed to send file. Please try again.');
         } finally {
             setUploadProgress(null);
         }
@@ -476,6 +508,20 @@ const LiveChatMode = ({
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* ── File upload error toast ── */}
+            {fileError && (
+                <div className="absolute bottom-20 left-4 right-4 z-30 rounded-xl bg-red-50 border border-red-200 px-4 py-2.5 flex items-center justify-between gap-2">
+                    <span className="text-[12px] text-red-600">{fileError}</span>
+                    <button
+                        onClick={() => setFileError(null)}
+                        className="shrink-0 text-red-400 hover:text-red-600 transition-colors"
+                        aria-label="Dismiss"
+                    >
+                        <X className="w-3.5 h-3.5" />
+                    </button>
                 </div>
             )}
 

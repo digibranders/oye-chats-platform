@@ -443,6 +443,22 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         lead_info = get_lead_info_by_session(session, request.session_id)
         visitor_name = lead_info.name if lead_info else None
 
+        # Fire webhook for handoff_requested event
+        from app.services.webhook_service import fire_webhook
+
+        webhook_data = {
+            "session_id": request.session_id,
+            "reason": request.reason,
+            "department_id": request.department_id,
+        }
+        if lead_info:
+            webhook_data["contact"] = {
+                "name": lead_info.name,
+                "email": lead_info.email,
+                "phone": lead_info.phone,
+            }
+        fire_webhook(bot.id, "handoff_requested", webhook_data)
+
         # Trigger email notification (multi-recipient)
         if bot and bot.email_on_handoff:
             from app.services.email_service import get_notification_recipients
@@ -623,7 +639,20 @@ async def close_chat(session_id: str, auth=Depends(get_current_client_or_operato
         )
         chat_session.status = "bot"
         chat_session.assigned_operator_id = None
+        bot_id = bot.id
         session.commit()
+
+    # Fire webhook for chat_closed event
+    from app.services.webhook_service import fire_webhook
+
+    fire_webhook(
+        bot_id,
+        "chat_closed",
+        {
+            "session_id": session_id,
+            "operator_id": operator_id,
+        },
+    )
 
     asyncio.create_task(manager.close_chat(session_id, bot_name))
 

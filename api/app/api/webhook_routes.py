@@ -39,6 +39,8 @@ def _get_owned_webhook(session, webhook_id: int, client_id: int) -> Webhook:
 
 
 def _validate_events(events: list[str]) -> None:
+    if not events:
+        raise HTTPException(status_code=422, detail="At least one event must be selected.")
     invalid = [event for event in events if event not in SUPPORTED_EVENTS]
     if invalid:
         raise HTTPException(

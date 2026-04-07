@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Mail, Webhook as WebhookIcon, Loader2, Info, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
+import { Mail, Webhook as WebhookIcon, Calendar, Loader2, Info, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
@@ -387,11 +387,137 @@ function EmailSettings() {
     );
 }
 
+// ─── Calendly Settings Tab ─────────────────────────────────────────────────
+
+function CalendlySettings() {
+    const { showToast } = useToast();
+    const [bot, setBot] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [meetingBookingEnabled, setMeetingBookingEnabled] = useState(false);
+    const [calendlyUrl, setCalendlyUrl] = useState('');
+    const [justSaved, setJustSaved] = useState(false);
+
+    const fetchBot = useCallback(async () => {
+        setLoading(true);
+        try {
+            const bots = await getBots();
+            if (bots?.length > 0) {
+                const b = bots[0];
+                setBot(b);
+                setMeetingBookingEnabled(!!b.meeting_booking_enabled);
+                setCalendlyUrl(b.calendly_url || '');
+            }
+        } catch {
+            showToast('error', 'Failed to load meeting booking settings');
+        } finally {
+            setLoading(false);
+        }
+    }, [showToast]);
+
+    useEffect(() => { fetchBot(); }, [fetchBot]);
+
+    const handleSave = async () => {
+        if (!bot) return;
+        setSaving(true);
+        try {
+            await updateBot(bot.id, {
+                meeting_booking_enabled: meetingBookingEnabled,
+                calendly_url: meetingBookingEnabled ? calendlyUrl : null,
+            });
+            showToast('success', 'Meeting booking settings saved');
+            setJustSaved(true);
+            await fetchBot();
+            setTimeout(() => setJustSaved(false), 3000);
+        } catch (error) {
+            showToast('error', error.message || 'Failed to save meeting booking settings');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const inputClass = "w-full px-3.5 py-2.5 bg-white border border-secondary-200 rounded-xl text-sm text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                <Loader2 className="w-6 h-6 animate-spin text-secondary-400" />
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6 max-w-3xl">
+            {/* Calendly Configuration */}
+            <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
+                <div className="flex items-center gap-3 mb-5">
+                    <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center">
+                        <Calendar size={20} className="text-primary-600" />
+                    </div>
+                    <div>
+                        <h3 className="text-sm font-semibold text-secondary-900">Meeting Booking</h3>
+                        <p className="text-xs text-secondary-500">Show a Calendly booking widget when leads qualify as SQL</p>
+                    </div>
+                </div>
+
+                <div className="space-y-4">
+                    <div className="flex items-start gap-2 px-3.5 py-3 bg-secondary-50 rounded-xl">
+                        <Info size={14} className="text-secondary-400 mt-0.5 shrink-0" />
+                        <p className="text-xs text-secondary-600 leading-relaxed">
+                            When enabled, visitors who qualify as a Sales Qualified Lead (SQL) will see an embedded Calendly widget to book a meeting directly in the chat.
+                        </p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-sm font-medium text-secondary-800">Enable meeting booking</p>
+                            <p className="text-xs text-secondary-500">Automatically offer meeting scheduling to qualified leads</p>
+                        </div>
+                        <Toggle checked={meetingBookingEnabled} onChange={setMeetingBookingEnabled} />
+                    </div>
+
+                    {meetingBookingEnabled && (
+                        <div>
+                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">Calendly URL</label>
+                            <input
+                                type="url"
+                                value={calendlyUrl}
+                                onChange={(e) => setCalendlyUrl(e.target.value)}
+                                placeholder="https://calendly.com/your-name/30min"
+                                className={inputClass}
+                            />
+                            <p className="text-xs text-secondary-400 mt-1">Paste your Calendly scheduling link here</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Save Button */}
+            <div className="flex justify-end">
+                <button
+                    onClick={handleSave}
+                    disabled={saving || (meetingBookingEnabled && !calendlyUrl.trim())}
+                    className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50 ${
+                        justSaved
+                            ? 'bg-success-600 hover:bg-success-700 text-white'
+                            : 'bg-primary-600 hover:bg-primary-700 text-white'
+                    }`}
+                >
+                    {saving && <Loader2 size={14} className="animate-spin" />}
+                    {justSaved && <Check size={14} />}
+                    {saving ? 'Saving...' : justSaved ? 'Saved' : 'Save Meeting Settings'}
+                </button>
+            </div>
+        </div>
+    );
+}
+
 // ─── Unified Integrations Page ──────────────────────────────────────────────
 
 const integrationTabs = [
     { id: 'email', label: 'Email', icon: Mail },
     { id: 'webhooks', label: 'Webhooks', icon: WebhookIcon },
+    { id: 'calendly', label: 'Calendly', icon: Calendar },
 ];
 
 export default function Integrations() {
@@ -409,6 +535,7 @@ export default function Integrations() {
 
             {activeTab === 'email' && <EmailSettings />}
             {activeTab === 'webhooks' && <Webhooks embedded />}
+            {activeTab === 'calendly' && <CalendlySettings />}
         </div>
     );
 }

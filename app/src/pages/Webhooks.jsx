@@ -229,6 +229,7 @@ export default function Webhooks({ embedded = false }) {
     };
 
     const handleDelete = async (webhookId) => {
+        if (!window.confirm('Are you sure you want to delete this webhook? This action cannot be undone.')) return;
         try {
             await deleteWebhook(webhookId);
             showToast('success', 'Webhook deleted');
@@ -377,10 +378,19 @@ export default function Webhooks({ embedded = false }) {
                             ))}
                         </select>
                         <button
-                            onClick={() => selectedWebhookId && getWebhookDeliveries(selectedWebhookId, deliveryPage).then((data) => {
-                                setDeliveries(data.deliveries || []);
-                                setDeliveryTotal(data.total || 0);
-                            }).catch((error) => showToast('error', error.message || 'Failed to refresh log'))}
+                            onClick={async () => {
+                                if (!selectedWebhookId) return;
+                                setLoadingDeliveries(true);
+                                try {
+                                    const data = await getWebhookDeliveries(selectedWebhookId, deliveryPage);
+                                    setDeliveries(data.deliveries || []);
+                                    setDeliveryTotal(data.total || 0);
+                                } catch (error) {
+                                    showToast('error', error.message || 'Failed to refresh log');
+                                } finally {
+                                    setLoadingDeliveries(false);
+                                }
+                            }}
                             disabled={!selectedWebhookId || loadingDeliveries}
                             className="px-3 py-2 text-sm rounded-lg border border-secondary-200 text-secondary-700 hover:bg-secondary-50 disabled:opacity-50"
                         >

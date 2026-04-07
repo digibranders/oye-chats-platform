@@ -17,7 +17,7 @@ from app.db.session import get_session
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EVENTS = ["tier_transition", "lead_captured", "handoff_requested", "chat_closed", "meeting_booked"]
-_MAX_RETRIES = 4
+_MAX_RETRIES = 5
 _RETRY_DELAYS = [30, 120, 600, 3600]
 _DELIVERY_TIMEOUT = 10
 _RETRY_POLL_INTERVAL_SECONDS = 30
