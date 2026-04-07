@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, Webhook as WebhookIcon, Loader2, Info, ChevronDown, ChevronRight } from 'lucide-react';
+import { Mail, Webhook as WebhookIcon, Loader2, Info, ChevronDown, ChevronRight, Check } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
-import { getAuthState } from '../utils/auth';
 import { getBots, updateBot } from '../services/api';
 import Webhooks from './Webhooks';
 
@@ -42,6 +41,7 @@ function EmailSettings() {
     const [handoffRecipients, setHandoffRecipients] = useState('');
     const [offlineRecipients, setOfflineRecipients] = useState('');
     const [showPerEvent, setShowPerEvent] = useState(false);
+    const [justSaved, setJustSaved] = useState(false);
 
     // Toggles
     const [emailOnQualified, setEmailOnQualified] = useState(true);
@@ -53,8 +53,7 @@ function EmailSettings() {
     const fetchBot = useCallback(async () => {
         setLoading(true);
         try {
-            const { apiKey } = getAuthState();
-            const bots = await getBots(apiKey);
+            const bots = await getBots();
             if (bots?.length > 0) {
                 const b = bots[0];
                 setBot(b);
@@ -78,7 +77,7 @@ function EmailSettings() {
                 }
             }
         } catch {
-            showToast('Failed to load email settings', 'error');
+            showToast('error', 'Failed to load email settings');
         } finally {
             setLoading(false);
         }
@@ -95,7 +94,6 @@ function EmailSettings() {
         if (!bot) return;
         setSaving(true);
         try {
-            const { apiKey } = getAuthState();
             const notificationEmails = { default: parseEmails(defaultRecipients) };
             const qlr = parseEmails(qualifiedLeadRecipients);
             const hr = parseEmails(handoffRecipients);
@@ -112,11 +110,14 @@ function EmailSettings() {
                 email_on_offline: emailOnOffline,
                 email_visitor_confirmation: emailVisitorConfirmation,
                 feature_flags: { email_transcript: emailTranscript },
-            }, apiKey);
+            });
 
-            showToast('Email settings saved', 'success');
+            showToast('success', 'Email settings saved');
+            setJustSaved(true);
+            await fetchBot();
+            setTimeout(() => setJustSaved(false), 3000);
         } catch {
-            showToast('Failed to save email settings', 'error');
+            showToast('error', 'Failed to save email settings');
         } finally {
             setSaving(false);
         }
@@ -155,6 +156,16 @@ function EmailSettings() {
                         </p>
                     </div>
 
+                    {bot?.reply_to_email && (
+                        <div className="flex items-center gap-2 px-3.5 py-2.5 bg-success-50 border border-success-200 rounded-xl">
+                            <Check size={14} className="text-success-600 shrink-0" />
+                            <p className="text-xs text-success-700">
+                                <span className="font-medium">Reply-To configured:</span>{' '}
+                                <span className="font-mono">{bot.reply_to_email}</span>
+                            </p>
+                        </div>
+                    )}
+
                     <div>
                         <label className="block text-sm font-medium text-secondary-700 mb-1.5">Reply-To Email</label>
                         <input
@@ -172,6 +183,18 @@ function EmailSettings() {
             {/* Section 2: Notification Recipients */}
             <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
                 <h3 className="text-sm font-semibold text-secondary-900 mb-4">Notification Recipients</h3>
+
+                {(bot?.notification_emails?.default || []).length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 mb-4 px-3.5 py-2.5 bg-success-50 border border-success-200 rounded-xl">
+                        <Check size={14} className="text-success-600 shrink-0" />
+                        <span className="text-xs font-medium text-success-700">Active:</span>
+                        {bot.notification_emails.default.map((email) => (
+                            <span key={email} className="inline-flex items-center px-2 py-0.5 rounded-md bg-success-100 text-xs font-mono text-success-700">
+                                {email}
+                            </span>
+                        ))}
+                    </div>
+                )}
 
                 <div className="space-y-4">
                     <div>
@@ -286,10 +309,15 @@ function EmailSettings() {
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50"
+                    className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50 ${
+                        justSaved
+                            ? 'bg-success-600 hover:bg-success-700 text-white'
+                            : 'bg-primary-600 hover:bg-primary-700 text-white'
+                    }`}
                 >
                     {saving && <Loader2 size={14} className="animate-spin" />}
-                    {saving ? 'Saving...' : 'Save Email Settings'}
+                    {justSaved && <Check size={14} />}
+                    {saving ? 'Saving...' : justSaved ? 'Saved' : 'Save Email Settings'}
                 </button>
             </div>
         </div>
