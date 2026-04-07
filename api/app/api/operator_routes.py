@@ -443,12 +443,18 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         lead_info = get_lead_info_by_session(session, request.session_id)
         visitor_name = lead_info.name if lead_info else None
 
-        # Trigger email notification
-        if bot and bot.notification_email and bot.email_on_handoff:
-            contact = None
-            if lead_info:
-                contact = {"name": lead_info.name, "email": lead_info.email, "phone": lead_info.phone}
-            send_handoff_request_email(bot.notification_email, bot.name, request.reason, contact)
+        # Trigger email notification (multi-recipient)
+        if bot and bot.email_on_handoff:
+            from app.services.email_service import get_notification_recipients
+
+            recipients = get_notification_recipients(bot, "handoff_request")
+            if recipients:
+                contact = None
+                if lead_info:
+                    contact = {"name": lead_info.name, "email": lead_info.email, "phone": lead_info.phone}
+                reply_to = getattr(bot, "reply_to_email", None)
+                for recipient in recipients:
+                    send_handoff_request_email(recipient, bot.name, request.reason, contact, reply_to=reply_to)
 
     # Schedule in-memory queue update as a background task so the REST response
     # is not held up by WebSocket sends. asyncio.create_task() is safe here
@@ -882,12 +888,13 @@ async def upload_chat_file_route(
 
 
 class VisitorRatingRequest(BaseModel):
-    rating: int
+    rating: int | None = None
+    resolved: bool | None = None
 
     @field_validator("rating")
     @classmethod
-    def validate_rating(cls, v: int) -> int:
-        if v < 1 or v > 5:
+    def validate_rating(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 5):
             raise ValueError("Rating must be between 1 and 5")
         return v
 
@@ -898,17 +905,22 @@ async def submit_visitor_rating(
     body: VisitorRatingRequest,
     bot: Bot = Depends(get_current_bot),
 ):
-    """Record a visitor's post-chat satisfaction rating (1–5 stars).
+    """Record a visitor's post-chat satisfaction rating and resolution status.
 
-    Auth: X-Bot-Key header (widget). One submission per session — subsequent
-    calls silently overwrite the previous rating.
+    Auth: X-Bot-Key header (widget). Both fields are optional — subsequent
+    calls silently overwrite previous values.
     """
+    if body.rating is None and body.resolved is None:
+        raise HTTPException(status_code=422, detail="At least one of rating or resolved is required")
     with get_session() as session:
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if not chat_session:
             raise HTTPException(status_code=404, detail="Session not found")
         if chat_session.bot_id != bot.id:
             raise HTTPException(status_code=403, detail="Access denied")
-        chat_session.visitor_rating = body.rating
+        if body.rating is not None:
+            chat_session.visitor_rating = body.rating
+        if body.resolved is not None:
+            chat_session.visitor_resolved = body.resolved
         session.commit()
     return {"ok": True}
