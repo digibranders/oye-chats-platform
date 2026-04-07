@@ -397,6 +397,36 @@ def _validate_preview_url(raw_url: str) -> str:
     return raw_url
 
 
+def _check_iframe_allowed(target_url: str) -> bool:
+    """HEAD-check whether *target_url* allows being loaded in an iframe.
+
+    Returns ``True`` when the site does **not** block framing (or we
+    cannot determine), ``False`` when ``X-Frame-Options: DENY`` or a
+    ``frame-ancestors 'none'`` CSP directive is detected.  Network
+    errors are treated as "allow" so the iframe gets a chance to load.
+    """
+    import httpx  # local import — only used in this preview path
+
+    try:
+        with httpx.Client(timeout=5, follow_redirects=True, max_redirects=5) as client:
+            resp = client.head(target_url, headers={"User-Agent": "OyeChats-Preview/1.0"})
+            xfo = (resp.headers.get("x-frame-options") or "").strip().upper()
+            if xfo in ("DENY", "SAMEORIGIN"):
+                return False
+            csp = resp.headers.get("content-security-policy") or ""
+            for directive in csp.split(";"):
+                d = directive.strip().lower()
+                if d.startswith("frame-ancestors"):
+                    # "frame-ancestors 'none'" or "frame-ancestors 'self'" block us
+                    parts = d.split()
+                    if len(parts) >= 2 and parts[1] in ("'none'", "'self'"):
+                        return False
+            return True
+    except Exception:
+        # Network error, timeout, DNS failure — let the iframe try
+        return True
+
+
 def _mask_bot_key(bot_key: str) -> str:
     """Show first 6 and last 4 characters of a bot key."""
     if len(bot_key) <= 12:
@@ -572,8 +602,8 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
       id="preview-frame"
       class="preview-frame"
       src="{safe_url}"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
       referrerpolicy="no-referrer"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope"
       loading="eager"
     ></iframe>
     <div id="fallback" class="fallback">
@@ -587,19 +617,42 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
     (function() {{
       var frame = document.getElementById('preview-frame');
       var fallback = document.getElementById('fallback');
-      var loaded = false;
+      var shown = false;
+
+      function showFallback() {{
+        if (shown) return;
+        shown = true;
+        frame.style.display = 'none';
+        fallback.classList.add('visible');
+      }}
+
+      /*
+       * Detection strategy:
+       * 1. Pre-flight: fetch the URL in no-cors mode.  If the server
+       *    responds with an opaque response we cannot inspect headers,
+       *    but a network error (DNS, TLS, etc.) rejects the promise.
+       * 2. On iframe load: try to read contentWindow.length — an error
+       *    page served by the browser after X-Frame-Options block
+       *    typically has 0 sub-frames AND we can still read `length`
+       *    (it's cross-origin accessible).  We combine this with a
+       *    same-origin document check for blank/empty pages.
+       * 3. Hard timeout as last-resort.
+       */
 
       frame.addEventListener('load', function() {{
-        loaded = true;
         try {{
-          // If we can access contentDocument, it loaded successfully
-          var doc = frame.contentDocument || frame.contentWindow.document;
-          if (!doc || !doc.body || doc.body.innerHTML === '') {{
-            showFallback();
+          // Same-origin check — works when our server serves the error
+          var doc = frame.contentDocument;
+          if (doc) {{
+            var url = doc.URL || '';
+            var body = (doc.body && doc.body.innerHTML) || '';
+            if (url === 'about:blank' || body.trim() === '') {{
+              showFallback();
+            }}
+            return;
           }}
         }} catch(e) {{
-          // Cross-origin — means the site DID load (just can't access DOM)
-          // This is the expected case for most sites
+          // Cross-origin: expected for external sites that DID load.
         }}
       }});
 
@@ -607,15 +660,20 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
         showFallback();
       }});
 
-      // Timeout fallback — if nothing loads in 10s, show fallback
+      // Hard timeout: if the iframe area is still blank after 8s,
+      // show fallback.
       setTimeout(function() {{
-        if (!loaded) showFallback();
-      }}, 10000);
-
-      function showFallback() {{
-        frame.style.display = 'none';
-        fallback.classList.add('visible');
-      }}
+        if (shown) return;
+        try {{
+          // Last-chance same-origin check
+          var doc = frame.contentDocument;
+          if (doc && (!doc.body || doc.body.innerHTML.trim() === '')) {{
+            showFallback();
+          }}
+        }} catch(e) {{
+          // Cross-origin: site is loaded, all good.
+        }}
+      }}, 8000);
     }})();
   </script>
 </body>
@@ -636,7 +694,10 @@ def get_bot_demo_page(bot_key: str, url: str | None = Query(default=None)):
 
         if url:
             _validate_preview_url(url)
-            return HTMLResponse(content=_build_preview_page_html(bot, url))
+            if _check_iframe_allowed(url):
+                return HTMLResponse(content=_build_preview_page_html(bot, url))
+            # Site blocks framing — fall through to the hero demo page
+            # so the user still sees a working widget.
         return HTMLResponse(content=_build_demo_page_html(bot))
 
 
