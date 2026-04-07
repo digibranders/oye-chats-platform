@@ -115,3 +115,94 @@ class TestBotDemoRoutes:
         assert added[0].event_type == "demo_share_clicked"
         assert added[0].bot_id == 7
         session.commit.assert_called_once()
+
+    def test_preview_with_url_returns_iframe_html(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=7,
+            bot_key="bot-demo123",
+            name="Sales Assistant",
+            website="https://example.com",
+            is_active=True,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        added = []
+        session.add.side_effect = added.append
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+
+        client = TestClient(_build_test_client())
+        response = client.get("/demo/bot-demo123?url=https://example.com")
+
+        assert response.status_code == 200
+        assert "<iframe" in response.text
+        assert 'data-bot-key="bot-demo123"' in response.text
+        assert "Sales Assistant" in response.text
+        assert "Preview" in response.text
+        assert len(added) == 1
+        assert added[0].event_type == "demo_link_opened"
+
+    def test_preview_without_url_returns_hero(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=7,
+            bot_key="bot-demo123",
+            name="Sales Assistant",
+            website="https://example.com",
+            is_active=True,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        session.add.side_effect = lambda x: None
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+
+        client = TestClient(_build_test_client())
+        response = client.get("/demo/bot-demo123")
+
+        assert response.status_code == 200
+        assert "Interactive Demo" in response.text
+        assert "<iframe" not in response.text
+
+    def test_preview_rejects_javascript_url(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=7,
+            bot_key="bot-demo123",
+            name="Sales Assistant",
+            website="",
+            is_active=True,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        session.add.side_effect = lambda x: None
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+
+        client = TestClient(_build_test_client())
+        response = client.get("/demo/bot-demo123?url=javascript:alert(1)")
+
+        assert response.status_code == 400
+        assert "http or https" in response.json()["detail"]
+
+    def test_preview_rejects_empty_netloc(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=7,
+            bot_key="bot-demo123",
+            name="Sales Assistant",
+            website="",
+            is_active=True,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        session.add.side_effect = lambda x: None
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+
+        client = TestClient(_build_test_client())
+        response = client.get("/demo/bot-demo123?url=http://")
+
+        assert response.status_code == 400
+        assert "Invalid URL" in response.json()["detail"]

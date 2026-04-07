@@ -1,8 +1,9 @@
 import html
 import logging
 import uuid
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -386,9 +387,220 @@ def _build_demo_page_html(bot: Bot) -> str:
 """
 
 
+def _validate_preview_url(raw_url: str) -> str:
+    """Validate that a preview URL uses http/https and has a valid host."""
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="URL must use http or https scheme.")
+    if not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid URL.")
+    return raw_url
+
+
+def _mask_bot_key(bot_key: str) -> str:
+    """Show first 6 and last 4 characters of a bot key."""
+    if len(bot_key) <= 12:
+        return bot_key
+    return f"{bot_key[:6]}{'•' * (len(bot_key) - 10)}{bot_key[-4:]}"
+
+
+def _build_preview_page_html(bot: Bot, target_url: str) -> str:
+    """Build an iframe-based preview page that overlays the widget on a real website."""
+    bot_name = html.escape(bot.name or "OyeChats")
+    bot_key = html.escape(bot.bot_key)
+    masked_key = html.escape(_mask_bot_key(bot.bot_key))
+    safe_url = html.escape(target_url)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{bot_name} Preview | OyeChats</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    html, body {{ height: 100%; overflow: hidden; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }}
+    .toolbar {{
+      height: 52px;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+      font-size: 14px;
+      z-index: 10;
+    }}
+    .toolbar-bot {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }}
+    .toolbar-bot-icon {{
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #3b82f6, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: white;
+    }}
+    .toolbar-name {{
+      font-weight: 600;
+      color: #f8fafc;
+    }}
+    .toolbar-key {{
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 12px;
+      color: #64748b;
+      background: rgba(255,255,255,0.06);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }}
+    .toolbar-spacer {{ flex: 1; }}
+    .toolbar-brand {{
+      font-size: 12px;
+      color: #64748b;
+      text-decoration: none;
+      transition: color 0.15s;
+    }}
+    .toolbar-brand:hover {{ color: #94a3b8; }}
+    .toolbar-badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(34,197,94,0.12);
+      color: #4ade80;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }}
+    .toolbar-badge::before {{
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4ade80;
+    }}
+    .preview-frame {{
+      width: 100%;
+      height: calc(100vh - 52px);
+      border: none;
+      display: block;
+    }}
+    .fallback {{
+      display: none;
+      width: 100%;
+      height: calc(100vh - 52px);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: #f8fafc;
+      color: #334155;
+      text-align: center;
+      padding: 40px;
+    }}
+    .fallback.visible {{
+      display: flex;
+    }}
+    .fallback h2 {{
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+    }}
+    .fallback p {{
+      max-width: 480px;
+      font-size: 15px;
+      line-height: 1.6;
+      color: #64748b;
+    }}
+    .fallback-icon {{
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      background: #eff6ff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-bot">
+      <div class="toolbar-bot-icon">{bot_name[0].upper()}</div>
+      <span class="toolbar-name">{bot_name}</span>
+    </div>
+    <span class="toolbar-key">{masked_key}</span>
+    <span class="toolbar-badge">Preview</span>
+    <div class="toolbar-spacer"></div>
+    <a class="toolbar-brand" href="https://oyechats.com" target="_blank" rel="noopener">Powered by OyeChats</a>
+  </div>
+  <iframe
+    id="preview-frame"
+    class="preview-frame"
+    src="{safe_url}"
+    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+    referrerpolicy="no-referrer"
+    loading="eager"
+  ></iframe>
+  <div id="fallback" class="fallback">
+    <div class="fallback-icon">&#x1f6e1;</div>
+    <h2>Website blocked embedding</h2>
+    <p>This website doesn&rsquo;t allow being loaded inside a preview frame. The chat widget is still active &mdash; try it using the launcher in the bottom-right corner.</p>
+  </div>
+  <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{bot_key}"></script>
+  <script>
+    (function() {{
+      var frame = document.getElementById('preview-frame');
+      var fallback = document.getElementById('fallback');
+      var loaded = false;
+
+      frame.addEventListener('load', function() {{
+        loaded = true;
+        try {{
+          // If we can access contentDocument, it loaded successfully
+          var doc = frame.contentDocument || frame.contentWindow.document;
+          if (!doc || !doc.body || doc.body.innerHTML === '') {{
+            showFallback();
+          }}
+        }} catch(e) {{
+          // Cross-origin — means the site DID load (just can't access DOM)
+          // This is the expected case for most sites
+        }}
+      }});
+
+      frame.addEventListener('error', function() {{
+        showFallback();
+      }});
+
+      // Timeout fallback — if nothing loads in 10s, show fallback
+      setTimeout(function() {{
+        if (!loaded) showFallback();
+      }}, 10000);
+
+      function showFallback() {{
+        frame.style.display = 'none';
+        fallback.classList.add('visible');
+      }}
+    }})();
+  </script>
+</body>
+</html>
+"""
+
+
 @public_router.get("/demo/{bot_key}", response_class=HTMLResponse)
-def get_bot_demo_page(bot_key: str):
-    """Render a shareable public demo page for an active bot."""
+def get_bot_demo_page(bot_key: str, url: str | None = Query(default=None)):
+    """Render a shareable demo page, or an iframe-based preview when *url* is supplied."""
     with get_session() as session:
         bot = session.execute(select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))).scalars().first()
         if not bot:
@@ -396,6 +608,10 @@ def get_bot_demo_page(bot_key: str):
 
         _record_growth_event(session, bot.id, "demo_link_opened")
         session.commit()
+
+        if url:
+            _validate_preview_url(url)
+            return HTMLResponse(content=_build_preview_page_html(bot, url))
         return HTMLResponse(content=_build_demo_page_html(bot))
 
 

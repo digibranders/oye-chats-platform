@@ -583,6 +583,11 @@ export const deleteBot = async (botId) => {
 
 export const getBotDemoUrl = (botKey) => `${API_BASE_URL}/demo/${botKey}`;
 
+export const getBotPreviewUrl = (botKey, websiteUrl) => {
+    const base = `${API_BASE_URL}/demo/${botKey}`;
+    return websiteUrl ? `${base}?url=${encodeURIComponent(websiteUrl)}` : base;
+};
+
 export const trackDemoShareClick = async (botId) => {
     try {
         const response = await api.post(`/bots/${botId}/demo-share-click`);

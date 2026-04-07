@@ -2,12 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { getAuthState } from '../utils/auth';
 import {
     Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2,
-    X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, Palette
+    X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, Palette, ExternalLink, Link2
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
-import { createBot, deleteBot, crawlWebsite, getBotDemoUrl, trackDemoShareClick, updateBot } from '../services/api';
+import { createBot, deleteBot, crawlWebsite, getBotDemoUrl, getBotPreviewUrl, trackDemoShareClick, updateBot } from '../services/api';
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from '../components/PlatformSelector';
 import IntegrationGuide from '../components/IntegrationGuide';
@@ -289,28 +289,29 @@ export default function Chatbot() {
 
                                         {isBotManager && (
                                             <div>
-                                                <div className="flex items-center justify-between mb-2 gap-3">
-                                                    <div>
-                                                        <label className="text-[10px] font-bold uppercase tracking-wider text-secondary-400">Share Demo Link</label>
-                                                        <p className="text-xs text-secondary-500 mt-1">
-                                                            Send a live preview page to teammates or prospects before you embed this bot.
-                                                        </p>
-                                                    </div>
+                                                <label className="text-[10px] font-bold uppercase tracking-wider text-secondary-400">Preview &amp; Share</label>
+                                                <p className="text-xs text-secondary-500 mt-1 mb-3">
+                                                    {bot.website
+                                                        ? 'Preview the widget on your website, or share a demo link with teammates.'
+                                                        : 'Share a live preview page to test the widget before embedding.'}
+                                                </p>
+                                                <div className="flex items-center gap-2">
+                                                    <a
+                                                        href={getBotPreviewUrl(bot.bot_key, bot.website)}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                                                    >
+                                                        <ExternalLink size={13} />
+                                                        View Demo
+                                                    </a>
                                                     <button
                                                         onClick={() => handleDemoCopy(bot)}
-                                                        className="flex items-center gap-1 text-primary-600 hover:text-primary-700 transition-colors flex-shrink-0"
+                                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-secondary-200 hover:border-secondary-300 text-secondary-600 hover:text-secondary-700 text-xs font-semibold rounded-lg transition-colors bg-white"
                                                     >
-                                                        {copiedField === `demo-${bot.id}` ? <Check size={11} /> : <Copy size={11} />}
-                                                        <span className="text-[9px] font-bold uppercase">{copiedField === `demo-${bot.id}` ? 'Copied' : 'Copy'}</span>
+                                                        {copiedField === `demo-${bot.id}` ? <Check size={13} /> : <Link2 size={13} />}
+                                                        {copiedField === `demo-${bot.id}` ? 'Copied!' : 'Copy Link'}
                                                     </button>
-                                                </div>
-                                                <div className="flex items-center bg-white border border-secondary-200 rounded-lg px-3 py-2">
-                                                    <input
-                                                        type="text"
-                                                        readOnly
-                                                        value={getBotDemoUrl(bot.bot_key)}
-                                                        className="w-full bg-transparent text-xs text-secondary-700 font-mono outline-none"
-                                                    />
                                                 </div>
                                             </div>
                                         )}
