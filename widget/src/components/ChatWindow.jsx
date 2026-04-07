@@ -825,16 +825,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </div>
             );
         }
-        if (chatMode === 'unavailable') {
-            return (
-                <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0">
-                        <Clock className="w-4 h-4" />
-                    </div>
-                    <h3 className="font-semibold text-sm text-gray-500">Support Unavailable</h3>
-                </div>
-            );
-        }
         return (
             <span className="text-[11px] text-gray-400 font-medium tracking-wide">
                 {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
@@ -1010,6 +1000,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <button
                                     onClick={() => {
                                         setShowHeaderMenu(false);
+                                        if (showWelcome) exitWelcome();
                                         setChatMode('unavailable');
                                     }}
                                     className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
@@ -1076,110 +1067,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Handoff form overlay — centered over messages area */}
-                {hasActiveHandoffForm && (() => {
-                    const msg = messages.find(m => m.type === 'handoff_form' && m.status !== 'submitted');
-                    if (!msg) return null;
-                    return (
-                        <div
-                            className="absolute inset-0 z-20 flex items-center justify-center p-4 pointer-events-auto"
-                            style={{ backgroundColor: 'rgba(248,248,248,0.88)', animation: 'fadeIn 0.2s ease-out' }}
-                        >
-                            <HandoffForm
-                                key={msg.id}
-                                settings={settings}
-                                onSubmit={handleHandoffSubmit}
-                                onCancel={handleHandoffCancel}
-                                existingLeadInfo={existingLeadInfo}
-                                status={msg.status}
-                            />
-                        </div>
-                    );
-                })()}
 
-                {/* Offline message form overlay — centered over messages area */}
-                {chatMode === 'unavailable' && !isInitializing && (
-                    <div
-                        className="absolute inset-0 z-20 flex items-center justify-center p-4 pointer-events-auto"
-                        style={{ backgroundColor: 'rgba(248,248,248,0.88)', animation: 'fadeIn 0.2s ease-out' }}
-                    >
-                        <div
-                            className="w-full max-w-xs rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
-                            style={{ animation: 'fadeUp 0.3s ease-out' }}
-                        >
-                            {offlineError ? (
-                                <div className="text-center py-2">
-                                    <AlertCircle className="w-7 h-7 text-red-400 mx-auto mb-2" />
-                                    <p className="text-[13px] text-gray-600 mb-3">We couldn't send your message. Please try again.</p>
-                                    <button
-                                        onClick={() => setOfflineError(false)}
-                                        className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
-                                    >
-                                        Try Again
-                                    </button>
-                                </div>
-                            ) : offlineSubmitted ? (
-                                <div className="text-center py-2">
-                                    <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
-                                    <p className="text-[13px] font-semibold text-[#16202C] mb-1">Message sent!</p>
-                                    <p className="text-[12px] text-gray-500 mb-3">
-                                        We'll get back to you at <strong>{offlineForm.email}</strong>
-                                        {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
-                                    </p>
-                                    <button
-                                        onClick={handleReturnToBot}
-                                        className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
-                                    >
-                                        Continue chatting with AI
-                                    </button>
-                                </div>
-                            ) : (
-                                <>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                                        <p className="text-[13px] font-semibold text-[#16202C]">{settings.offline_message || 'Team is currently unavailable'}</p>
-                                    </div>
-                                    <p className="text-[12px] text-gray-500 mb-3">Leave us a message and we'll get back to you.</p>
-                                    <form onSubmit={handleOfflineSubmit} className="space-y-2">
-                                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                            <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                            <input type="text" placeholder="Your name" required value={offlineForm.name}
-                                                onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
-                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
-                                        </div>
-                                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                            <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                            <input type="email" placeholder="Email address" required value={offlineForm.email}
-                                                onChange={(e) => setOfflineForm(p => ({ ...p, email: e.target.value }))}
-                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
-                                        </div>
-                                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                            <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                            <input type="tel" placeholder="Phone number (optional)" value={offlineForm.phone}
-                                                onChange={(e) => setOfflineForm(p => ({ ...p, phone: e.target.value }))}
-                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
-                                        </div>
-                                        <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                            <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
-                                            <textarea placeholder="How can we help you?" required rows={2} value={offlineForm.message}
-                                                onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
-                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
-                                        </div>
-                                        <button type="submit" disabled={offlineSubmitting}
-                                            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
-                                            style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}>
-                                            {offlineSubmitting
-                                                ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                : 'Send Message'}
-                                        </button>
-                                    </form>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                )}
 
                 {/* Loading spinner */}
                 {isInitializing && (
@@ -1221,8 +1109,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         }
                         if (msg.type === 'system') {
                             items.push(<SystemMessage key={msg.id} text={msg.text} />);
+                        } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
+                            items.push(
+                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
+                                    <HandoffForm
+                                        settings={settings}
+                                        onSubmit={handleHandoffSubmit}
+                                        onCancel={handleHandoffCancel}
+                                        existingLeadInfo={existingLeadInfo}
+                                        status={msg.status}
+                                    />
+                                </div>
+                            );
                         } else if (msg.type === 'handoff_form') {
-                            // Rendered as a centered overlay below — skip inline
+                            // Already submitted — skip
                         } else {
                             items.push(
                                 <MessageBubble
@@ -1353,7 +1253,84 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Unavailable offline form rendered as centered overlay above */}
+                {/* Offline message form — inline in stream */}
+                {chatMode === 'unavailable' && !isInitializing && (
+                    <div
+                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
+                        style={{ animation: 'fadeUp 0.3s ease-out' }}
+                    >
+                        {offlineError ? (
+                            <div className="text-center py-2">
+                                <AlertCircle className="w-7 h-7 text-red-400 mx-auto mb-2" />
+                                <p className="text-[13px] text-gray-600 mb-3">We couldn&apos;t send your message. Please try again.</p>
+                                <button
+                                    onClick={() => setOfflineError(false)}
+                                    className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
+                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                >
+                                    Try Again
+                                </button>
+                            </div>
+                        ) : offlineSubmitted ? (
+                            <div className="text-center py-2">
+                                <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
+                                <p className="text-[13px] font-semibold text-[#16202C] mb-1">Message sent!</p>
+                                <p className="text-[12px] text-gray-500 mb-3">
+                                    We&apos;ll get back to you at <strong>{offlineForm.email}</strong>
+                                    {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
+                                </p>
+                                <button
+                                    onClick={handleReturnToBot}
+                                    className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
+                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                >
+                                    Continue chatting with AI
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                    <p className="text-[13px] font-semibold text-[#16202C]">{settings.offline_message || 'Our team is currently unavailable'}</p>
+                                </div>
+                                <p className="text-[12px] text-gray-500 mb-3">Leave us a message and we&apos;ll get back to you.</p>
+                                <form onSubmit={handleOfflineSubmit} className="space-y-2">
+                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                        <input type="text" placeholder="Your name" required value={offlineForm.name}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                    </div>
+                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                        <input type="email" placeholder="Email address" required value={offlineForm.email}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, email: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                    </div>
+                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                        <input type="tel" placeholder="Phone number (optional)" value={offlineForm.phone}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, phone: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                    </div>
+                                    <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                        <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+                                        <textarea placeholder="How can we help you?" required rows={2} value={offlineForm.message}
+                                            onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
+                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
+                                    </div>
+                                    <button type="submit" disabled={offlineSubmitting}
+                                        className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
+                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}>
+                                        {offlineSubmitting
+                                            ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                            : 'Send Message'}
+                                    </button>
+                                </form>
+                            </>
+                        )}
+                    </div>
+                )}
 
                 {/* 2-step post-chat survey — inline in stream after live chat ends */}
                 {showRating && settings?.feature_flags?.post_chat_rating !== false && (
