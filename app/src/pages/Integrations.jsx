@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Mail, Webhook as WebhookIcon, Loader2, Info, ChevronDown, ChevronRight, Check } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Mail, Webhook as WebhookIcon, Loader2, Info, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
@@ -26,6 +26,108 @@ function Toggle({ checked, onChange, disabled = false }) {
     );
 }
 
+// ─── Email Chip Input ───────────────────────────────────────────────────────
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function EmailChipInput({ emails, onChange, placeholder = 'Type email and press Enter' }) {
+    const [inputValue, setInputValue] = useState('');
+    const [error, setError] = useState('');
+    const inputRef = useRef(null);
+
+    const addEmail = (raw) => {
+        const email = raw.trim().toLowerCase();
+        if (!email) return;
+        if (!EMAIL_RE.test(email)) {
+            setError(`"${email}" is not a valid email`);
+            return;
+        }
+        if (emails.includes(email)) {
+            setError(`"${email}" is already added`);
+            return;
+        }
+        setError('');
+        onChange([...emails, email]);
+        setInputValue('');
+    };
+
+    const removeEmail = (emailToRemove) => {
+        onChange(emails.filter((e) => e !== emailToRemove));
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
+            e.preventDefault();
+            addEmail(inputValue);
+        }
+        if (e.key === 'Backspace' && !inputValue && emails.length > 0) {
+            removeEmail(emails[emails.length - 1]);
+        }
+    };
+
+    const handlePaste = (e) => {
+        e.preventDefault();
+        const pasted = e.clipboardData.getData('text');
+        const parts = pasted.split(/[,;\s]+/).filter(Boolean);
+        const valid = [];
+        for (const part of parts) {
+            const email = part.trim().toLowerCase();
+            if (EMAIL_RE.test(email) && !emails.includes(email) && !valid.includes(email)) {
+                valid.push(email);
+            }
+        }
+        if (valid.length > 0) {
+            setError('');
+            onChange([...emails, ...valid]);
+            setInputValue('');
+        }
+    };
+
+    const handleBlur = () => {
+        if (inputValue.trim()) {
+            addEmail(inputValue);
+        }
+    };
+
+    return (
+        <div>
+            <div
+                className="flex flex-wrap items-center gap-1.5 min-h-[42px] px-3 py-2 bg-white border border-secondary-200 rounded-xl text-sm cursor-text focus-within:ring-2 focus-within:ring-primary-500/20 focus-within:border-primary-500 transition-all"
+                onClick={() => inputRef.current?.focus()}
+            >
+                {emails.map((email) => (
+                    <span
+                        key={email}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary-50 border border-primary-200 text-xs font-medium text-primary-700 animate-fade-in"
+                    >
+                        <span className="font-mono">{email}</span>
+                        <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); removeEmail(email); }}
+                            className="p-0.5 rounded hover:bg-primary-100 text-primary-400 hover:text-primary-600 transition-colors"
+                            aria-label={`Remove ${email}`}
+                        >
+                            <X size={12} />
+                        </button>
+                    </span>
+                ))}
+                <input
+                    ref={inputRef}
+                    type="text"
+                    className="flex-1 min-w-[180px] bg-transparent outline-none text-sm text-secondary-900 placeholder:text-secondary-400"
+                    placeholder={emails.length === 0 ? placeholder : 'Add another...'}
+                    value={inputValue}
+                    onChange={(e) => { setInputValue(e.target.value); setError(''); }}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    onBlur={handleBlur}
+                />
+            </div>
+            {error && <p className="text-xs text-error-600 mt-1">{error}</p>}
+        </div>
+    );
+}
+
 // ─── Email Settings Tab ─────────────────────────────────────────────────────
 
 function EmailSettings() {
@@ -34,12 +136,12 @@ function EmailSettings() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
-    // Form state
+    // Form state — reply-to is a single string; recipients are arrays
     const [replyToEmail, setReplyToEmail] = useState('');
-    const [defaultRecipients, setDefaultRecipients] = useState('');
-    const [qualifiedLeadRecipients, setQualifiedLeadRecipients] = useState('');
-    const [handoffRecipients, setHandoffRecipients] = useState('');
-    const [offlineRecipients, setOfflineRecipients] = useState('');
+    const [defaultRecipients, setDefaultRecipients] = useState([]);
+    const [qualifiedLeadRecipients, setQualifiedLeadRecipients] = useState([]);
+    const [handoffRecipients, setHandoffRecipients] = useState([]);
+    const [offlineRecipients, setOfflineRecipients] = useState([]);
     const [showPerEvent, setShowPerEvent] = useState(false);
     const [justSaved, setJustSaved] = useState(false);
 
@@ -64,14 +166,13 @@ function EmailSettings() {
                 setEmailVisitorConfirmation(b.email_visitor_confirmation ?? true);
                 setEmailTranscript(b.feature_flags?.email_transcript ?? false);
 
-                // Parse notification_emails JSONB
+                // Parse notification_emails JSONB → arrays
                 const ne = b.notification_emails || {};
-                setDefaultRecipients((ne.default || []).join(', '));
-                setQualifiedLeadRecipients((ne.qualified_lead || []).join(', '));
-                setHandoffRecipients((ne.handoff_request || []).join(', '));
-                setOfflineRecipients((ne.offline_message || []).join(', '));
+                setDefaultRecipients(ne.default || []);
+                setQualifiedLeadRecipients(ne.qualified_lead || []);
+                setHandoffRecipients(ne.handoff_request || []);
+                setOfflineRecipients(ne.offline_message || []);
 
-                // Show per-event section if any are set
                 if (ne.qualified_lead?.length || ne.handoff_request?.length || ne.offline_message?.length) {
                     setShowPerEvent(true);
                 }
@@ -85,22 +186,14 @@ function EmailSettings() {
 
     useEffect(() => { fetchBot(); }, [fetchBot]);
 
-    const parseEmails = (str) => {
-        if (!str.trim()) return [];
-        return str.split(',').map(e => e.trim()).filter(Boolean);
-    };
-
     const handleSave = async () => {
         if (!bot) return;
         setSaving(true);
         try {
-            const notificationEmails = { default: parseEmails(defaultRecipients) };
-            const qlr = parseEmails(qualifiedLeadRecipients);
-            const hr = parseEmails(handoffRecipients);
-            const or_ = parseEmails(offlineRecipients);
-            if (qlr.length) notificationEmails.qualified_lead = qlr;
-            if (hr.length) notificationEmails.handoff_request = hr;
-            if (or_.length) notificationEmails.offline_message = or_;
+            const notificationEmails = { default: defaultRecipients };
+            if (qualifiedLeadRecipients.length) notificationEmails.qualified_lead = qualifiedLeadRecipients;
+            if (handoffRecipients.length) notificationEmails.handoff_request = handoffRecipients;
+            if (offlineRecipients.length) notificationEmails.offline_message = offlineRecipients;
 
             await updateBot(bot.id, {
                 reply_to_email: replyToEmail.trim() || null,
@@ -156,16 +249,6 @@ function EmailSettings() {
                         </p>
                     </div>
 
-                    {bot?.reply_to_email && (
-                        <div className="flex items-center gap-2 px-3.5 py-2.5 bg-success-50 border border-success-200 rounded-xl">
-                            <Check size={14} className="text-success-600 shrink-0" />
-                            <p className="text-xs text-success-700">
-                                <span className="font-medium">Reply-To configured:</span>{' '}
-                                <span className="font-mono">{bot.reply_to_email}</span>
-                            </p>
-                        </div>
-                    )}
-
                     <div>
                         <label className="block text-sm font-medium text-secondary-700 mb-1.5">Reply-To Email</label>
                         <input
@@ -184,29 +267,15 @@ function EmailSettings() {
             <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
                 <h3 className="text-sm font-semibold text-secondary-900 mb-4">Notification Recipients</h3>
 
-                {(bot?.notification_emails?.default || []).length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2 mb-4 px-3.5 py-2.5 bg-success-50 border border-success-200 rounded-xl">
-                        <Check size={14} className="text-success-600 shrink-0" />
-                        <span className="text-xs font-medium text-success-700">Active:</span>
-                        {bot.notification_emails.default.map((email) => (
-                            <span key={email} className="inline-flex items-center px-2 py-0.5 rounded-md bg-success-100 text-xs font-mono text-success-700">
-                                {email}
-                            </span>
-                        ))}
-                    </div>
-                )}
-
                 <div className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-secondary-700 mb-1.5">Default Recipients</label>
-                        <input
-                            type="text"
-                            className={inputClass}
-                            placeholder="team@yourdomain.com, manager@yourdomain.com"
-                            value={defaultRecipients}
-                            onChange={(e) => setDefaultRecipients(e.target.value)}
+                        <EmailChipInput
+                            emails={defaultRecipients}
+                            onChange={setDefaultRecipients}
+                            placeholder="team@yourdomain.com"
                         />
-                        <p className="text-xs text-secondary-400 mt-1">Comma-separated. Used for all events unless overridden below.</p>
+                        <p className="text-xs text-secondary-400 mt-1">Press Enter or comma to add. Used for all events unless overridden below.</p>
                     </div>
 
                     <button
@@ -222,32 +291,26 @@ function EmailSettings() {
                         <div className="space-y-3 pl-4 border-l-2 border-secondary-100">
                             <div>
                                 <label className="block text-xs font-medium text-secondary-600 mb-1">Qualified Leads</label>
-                                <input
-                                    type="text"
-                                    className={inputClass}
+                                <EmailChipInput
+                                    emails={qualifiedLeadRecipients}
+                                    onChange={setQualifiedLeadRecipients}
                                     placeholder="Using default recipients"
-                                    value={qualifiedLeadRecipients}
-                                    onChange={(e) => setQualifiedLeadRecipients(e.target.value)}
                                 />
                             </div>
                             <div>
                                 <label className="block text-xs font-medium text-secondary-600 mb-1">Handoff Requests</label>
-                                <input
-                                    type="text"
-                                    className={inputClass}
+                                <EmailChipInput
+                                    emails={handoffRecipients}
+                                    onChange={setHandoffRecipients}
                                     placeholder="Using default recipients"
-                                    value={handoffRecipients}
-                                    onChange={(e) => setHandoffRecipients(e.target.value)}
                                 />
                             </div>
                             <div>
                                 <label className="block text-xs font-medium text-secondary-600 mb-1">Offline Messages</label>
-                                <input
-                                    type="text"
-                                    className={inputClass}
+                                <EmailChipInput
+                                    emails={offlineRecipients}
+                                    onChange={setOfflineRecipients}
                                     placeholder="Using default recipients"
-                                    value={offlineRecipients}
-                                    onChange={(e) => setOfflineRecipients(e.target.value)}
                                 />
                             </div>
                         </div>
