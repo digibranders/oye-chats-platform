@@ -149,7 +149,9 @@ def process_pending_retries() -> int:
         )
 
         for delivery in pending:
-            queue_webhook_delivery(delivery.webhook_id, delivery.event_type, delivery.payload, attempt=delivery.attempt + 1)
+            queue_webhook_delivery(
+                delivery.webhook_id, delivery.event_type, delivery.payload, attempt=delivery.attempt + 1
+            )
             delivery.next_retry_at = None
 
         if pending:

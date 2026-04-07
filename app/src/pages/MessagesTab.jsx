@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 
 const DEFAULT_SUGGESTIONS = ['Our Services', 'About us', 'Contact us'];
 
@@ -9,20 +9,10 @@ const DEFAULT_SUGGESTIONS = ['Our Services', 'About us', 'Contact us'];
 const MessagesTab = ({ settings, onSettingsChange }) => {
     const messages = settings?.widget_messages || {};
 
-    // Suggestion array management
-    const [suggestions, setSuggestions] = useState(
+    const suggestions =
         Array.isArray(messages.welcome_suggestions) && messages.welcome_suggestions.length > 0
             ? messages.welcome_suggestions
-            : DEFAULT_SUGGESTIONS
-    );
-
-    useEffect(() => {
-        setSuggestions(
-            Array.isArray(messages.welcome_suggestions) && messages.welcome_suggestions.length > 0
-                ? messages.welcome_suggestions
-                : DEFAULT_SUGGESTIONS
-        );
-    }, [messages.welcome_suggestions]);
+            : DEFAULT_SUGGESTIONS;
 
     const handleMessageChange = (key, value) => {
         onSettingsChange({
@@ -36,20 +26,15 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
     const handleSuggestionChange = (index, value) => {
         const newSuggestions = [...suggestions];
         newSuggestions[index] = value;
-        setSuggestions(newSuggestions);
         handleMessageChange('welcome_suggestions', newSuggestions);
     };
 
     const addSuggestion = () => {
-        const newSuggestions = [...suggestions, ''];
-        setSuggestions(newSuggestions);
-        handleMessageChange('welcome_suggestions', newSuggestions);
+        handleMessageChange('welcome_suggestions', [...suggestions, '']);
     };
 
     const removeSuggestion = (index) => {
-        const newSuggestions = suggestions.filter((_, i) => i !== index);
-        setSuggestions(newSuggestions);
-        handleMessageChange('welcome_suggestions', newSuggestions);
+        handleMessageChange('welcome_suggestions', suggestions.filter((_, i) => i !== index));
     };
 
     return (
