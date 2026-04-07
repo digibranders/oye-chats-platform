@@ -255,7 +255,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     useEffect(() => {
         if (operatorName && !prevOperatorNameRef.current) {
             setMessages(prev => [
-                ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with a support agent...')),
+                ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with the support team...')),
                 {
                     id: `sys-joined-${Date.now()}`,
                     type: 'system',
@@ -604,7 +604,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {
                     id: `sys-connecting-${Date.now()}`,
                     type: 'system',
-                    text: 'Connecting you with a support agent...',
+                    text: 'Connecting you with the support team...',
                     timestamp: new Date().toISOString(),
                 }
             ]);

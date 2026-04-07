@@ -9,7 +9,6 @@ import { useToast } from '../context/ToastContext';
 import EmptyState from '../components/ui/EmptyState';
 import MessagesTab from './MessagesTab';
 import AdvancedSettingsTab from './AdvancedSettingsTab';
-import BrandingTab from './BrandingTab';
 
 // Helper: create cropped image from canvas (supports rotation)
 const getCroppedImg = (imageSrc, pixelCrop, rotation = 0) => {
@@ -209,7 +208,7 @@ export default function Interface({ embedded = false }) {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
-    const tabs = ['General', 'Avatar', 'Leads Form', 'Live Chat', 'Messages', 'Advanced Settings', 'Branding', 'Custom Brand'];
+    const tabs = ['General', 'Avatar', 'Leads Form', 'Live Chat', 'Messages', 'Advanced Settings', 'Custom Brand'];
 
     const handleFile = (file) => {
         if (!isBotManager) return;
@@ -1053,19 +1052,6 @@ export default function Interface({ embedded = false }) {
                                 onSettingsChange={(updates) => setWidgetConfig(updates.widget_config || {})}
                             />
                         </div>
-                    ) : activeTab === 'Branding' ? (
-                        <div className="animate-fade-in">
-                            <BrandingTab
-                                settings={{
-                                    branding_text: brandingText,
-                                    branding_url: brandingUrl,
-                                }}
-                                onSettingsChange={(updates) => {
-                                    if (updates.branding_text) setBrandingText(updates.branding_text);
-                                    if (updates.branding_url) setBrandingUrl(updates.branding_url);
-                                }}
-                            />
-                        </div>
                     ) : activeTab === 'Custom Brand' ? (
                         <div className="space-y-6 animate-fade-in">
                             <div className="bg-gradient-to-br from-primary-50 to-indigo-50 p-8 rounded-2xl border border-primary-200 shadow-sm">
@@ -1105,7 +1091,7 @@ export default function Interface({ embedded = false }) {
                 </div>
 
                 {/* Right Side: 40% Live Preview Column (Sticky) */}
-                <div className="lg:w-[40%] flex flex-col items-center sticky top-8 animate-fade-in" style={{ animationDelay: '0.15s' }}>
+                <div className="lg:w-[40%] flex flex-col items-center sticky top-8 self-start animate-fade-in" style={{ animationDelay: '0.15s' }}>
                     <div className="flex items-center justify-between w-full max-w-[360px] mb-3 px-2">
                         <span className="text-[11px] font-black uppercase tracking-widest text-secondary-400">Live Preview</span>
                         <div className="flex gap-1.5">
@@ -1188,41 +1174,26 @@ export default function Interface({ embedded = false }) {
 
                             {previewState === 'chat' && (
                                 <>
-                                    {/* Timestamp pill */}
-                                    <div className="text-center">
-                                        <span className="inline-block px-3 rounded-full text-[11px]" style={{ backgroundColor: 'rgba(0,0,0,0.05)', color: '#999' }}>
-                                            Today &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                                        </span>
-                                    </div>
-
-                                    {/* Bot Message 1 */}
-                                    <div className="flex flex-col items-start w-full">
-                                        <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C]">
+                                    {/* Welcome Screen */}
+                                    <div className="flex flex-col items-start text-left w-full pt-2">
+                                        <h2 className="text-2xl font-bold text-[#16202C]">
+                                            {(welcomeTitle || 'Hi there 👋').replace(/[\p{Emoji}]/gu, '').trim() || 'Hi there'}
+                                        </h2>
+                                        <p className="text-[15px] text-gray-500 mt-1">
                                             {welcomeSubtitle || 'How can we help you today?'}
-                                        </div>
-                                        <div className="flex items-center gap-1.5 mt-2">
-                                            <Copy className="w-3.5 h-3.5 text-gray-400" />
-                                            <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
-                                            <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
-                                        </div>
-                                    </div>
-
-                                    {/* User Message */}
-                                    <div className="flex flex-col items-end">
-                                        <div className="max-w-[85%] text-[#16202C] rounded-2xl px-4 py-3 text-[14px] leading-relaxed" style={{ backgroundColor: userBubbleColor }}>
-                                            Tell me about your services.
-                                        </div>
-                                    </div>
-
-                                    {/* Bot Message 2 */}
-                                    <div className="flex flex-col items-start w-full">
-                                        <div className="max-w-[85%] text-[14px] leading-relaxed text-[#16202C]">
-                                            I&apos;m here to help! Ask me anything about our offerings.
-                                        </div>
-                                        <div className="flex items-center gap-1.5 mt-2">
-                                            <Copy className="w-3.5 h-3.5 text-gray-400" />
-                                            <ThumbsUp className="w-3.5 h-3.5 text-gray-400" />
-                                            <ThumbsDown className="w-3.5 h-3.5 text-gray-400" />
+                                        </p>
+                                        <div className="flex flex-wrap gap-2 mt-5 justify-start">
+                                            {(Array.isArray(widgetMessages.welcome_suggestions) && widgetMessages.welcome_suggestions.length > 0
+                                                ? widgetMessages.welcome_suggestions
+                                                : ['Our Services', 'About us', 'Contact us']
+                                            ).filter(Boolean).map((s) => (
+                                                <span
+                                                    key={s}
+                                                    className="px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200"
+                                                >
+                                                    {s}
+                                                </span>
+                                            ))}
                                         </div>
                                     </div>
                                 </>
