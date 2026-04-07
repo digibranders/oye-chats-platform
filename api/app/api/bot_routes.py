@@ -418,10 +418,33 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{bot_name} Preview | OyeChats</title>
   <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    html, body {{ height: 100%; overflow: hidden; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }}
+    /*
+     * Scope resets to preview-shell only — never touch #oyechats-widget-root
+     * or its children, as the widget ships its own self-contained styles.
+     */
+    .preview-shell,
+    .preview-shell *,
+    .preview-shell *::before,
+    .preview-shell *::after {{
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }}
+    html, body {{
+      height: 100%;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }}
+    .preview-shell {{
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }}
     .toolbar {{
       height: 52px;
+      flex-shrink: 0;
       background: #0f172a;
       color: #e2e8f0;
       display: flex;
@@ -490,14 +513,14 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
     }}
     .preview-frame {{
       width: 100%;
-      height: calc(100vh - 52px);
+      flex: 1;
       border: none;
       display: block;
     }}
     .fallback {{
       display: none;
       width: 100%;
-      height: calc(100vh - 52px);
+      flex: 1;
       flex-direction: column;
       align-items: center;
       justify-content: center;
@@ -534,28 +557,30 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
   </style>
 </head>
 <body>
-  <div class="toolbar">
-    <div class="toolbar-bot">
-      <div class="toolbar-bot-icon">{bot_name[0].upper()}</div>
-      <span class="toolbar-name">{bot_name}</span>
+  <div class="preview-shell">
+    <div class="toolbar">
+      <div class="toolbar-bot">
+        <div class="toolbar-bot-icon">{bot_name[0].upper()}</div>
+        <span class="toolbar-name">{bot_name}</span>
+      </div>
+      <span class="toolbar-key">{masked_key}</span>
+      <span class="toolbar-badge">Preview</span>
+      <div class="toolbar-spacer"></div>
+      <a class="toolbar-brand" href="https://oyechats.com" target="_blank" rel="noopener">Powered by OyeChats</a>
     </div>
-    <span class="toolbar-key">{masked_key}</span>
-    <span class="toolbar-badge">Preview</span>
-    <div class="toolbar-spacer"></div>
-    <a class="toolbar-brand" href="https://oyechats.com" target="_blank" rel="noopener">Powered by OyeChats</a>
-  </div>
-  <iframe
-    id="preview-frame"
-    class="preview-frame"
-    src="{safe_url}"
-    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-    referrerpolicy="no-referrer"
-    loading="eager"
-  ></iframe>
-  <div id="fallback" class="fallback">
-    <div class="fallback-icon">&#x1f6e1;</div>
-    <h2>Website blocked embedding</h2>
-    <p>This website doesn&rsquo;t allow being loaded inside a preview frame. The chat widget is still active &mdash; try it using the launcher in the bottom-right corner.</p>
+    <iframe
+      id="preview-frame"
+      class="preview-frame"
+      src="{safe_url}"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+      referrerpolicy="no-referrer"
+      loading="eager"
+    ></iframe>
+    <div id="fallback" class="fallback">
+      <div class="fallback-icon">&#x1f6e1;</div>
+      <h2>Website blocked embedding</h2>
+      <p>This website doesn&rsquo;t allow being loaded inside a preview frame. The chat widget is still active &mdash; try it using the launcher in the bottom-right corner.</p>
+    </div>
   </div>
   <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{bot_key}"></script>
   <script>
