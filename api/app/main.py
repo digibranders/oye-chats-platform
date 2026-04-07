@@ -213,11 +213,16 @@ def read_root():
     return {"message": "RAG Backend is running", "docs_url": "/docs"}
 
 
+_ALLOWED_FILE_PREFIXES = ("logos/", "chat-files/")
+
+
 @app.get("/files/{file_path:path}")
 def serve_b2_file(file_path: str):
     """Serve a file from private B2 by proxying the content."""
     if ".." in file_path or file_path.startswith("/"):
         raise HTTPException(status_code=400, detail="Invalid file path")
+    if not file_path.startswith(_ALLOWED_FILE_PREFIXES):
+        raise HTTPException(status_code=403, detail="Access denied")
     from botocore.exceptions import ClientError
     from fastapi.responses import StreamingResponse
 
