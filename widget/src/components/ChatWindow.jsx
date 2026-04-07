@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked } from '../services/api';
+import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle } from 'lucide-react';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -109,6 +109,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showHeaderMenu, setShowHeaderMenu] = useState(false);
     const headerMenuRef = useRef(null);
 
+    // Transcript email modal
+    const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+    const [transcriptEmail, setTranscriptEmail] = useState('');
+    const [transcriptSending, setTranscriptSending] = useState(false);
+    const [transcriptSent, setTranscriptSent] = useState(false);
+    const [transcriptError, setTranscriptError] = useState(null);
+
     // ── Live chat lifted state ───────────────────────────────────────────────────
     const [liveMessages, setLiveMessages] = useState([]);
     const [isOperatorTyping, setIsOperatorTyping] = useState(false);
@@ -117,6 +124,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showRating, setShowRating] = useState(false);
     const [ratingSubmitting, setRatingSubmitting] = useState(false);
     const [showEndConfirm, setShowEndConfirm] = useState(false);
+    const [surveyStep, setSurveyStep] = useState(1);        // 1 = resolved?, 2 = stars
+    const [resolvedAnswer, setResolvedAnswer] = useState(null); // true | false | null
+    const [hoveredStar, setHoveredStar] = useState(0);
     const [uploadProgress] = useState(null); // controlled by LiveChatMode file upload
     // Waiting screen timer
     const [waitingSeconds, setWaitingSeconds] = useState(0);
@@ -315,12 +325,28 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     const handleSendTranscript = () => {
         setShowHeaderMenu(false);
-        const transcript = messages
-            .map(m => `[${m.sender === 'user' ? 'You' : settings.bot_name || 'Bot'}] ${m.text}`)
-            .join('\n\n');
-        const subject = encodeURIComponent(`Chat transcript — ${settings.bot_name || 'OyeChats'}`);
-        const body = encodeURIComponent(transcript);
-        window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+        setTranscriptSent(false);
+        setTranscriptError(null);
+        // Pre-fill email if we have it from lead capture
+        if (existingLeadInfo?.email) {
+            setTranscriptEmail(existingLeadInfo.email);
+        }
+        setShowTranscriptModal(true);
+    };
+
+    const handleTranscriptSubmit = async (e) => {
+        e.preventDefault();
+        if (!transcriptEmail.trim() || transcriptSending) return;
+        setTranscriptSending(true);
+        setTranscriptError(null);
+        try {
+            await sendTranscriptEmail(sessionId, transcriptEmail.trim());
+            setTranscriptSent(true);
+        } catch (err) {
+            setTranscriptError(err.message || 'Failed to send transcript');
+        } finally {
+            setTranscriptSending(false);
+        }
     };
 
     // ── Load earlier messages (cursor-based pagination) ──────────────────────────
@@ -659,6 +685,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const handleReturnToBot = useCallback(() => {
         setShowRating(false);
         setShowEndConfirm(false);
+        setSurveyStep(1);
+        setResolvedAnswer(null);
+        setHoveredStar(0);
         setLiveMessages([]);
         setIsOperatorTyping(false);
         setLastReadAt(null);
@@ -688,6 +717,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     const handleSubmitRating = async (stars) => {
         setRatingSubmitting(true);
+        const payload = { rating: stars };
+        if (resolvedAnswer !== null) payload.resolved = resolvedAnswer;
         try {
             await fetch(`${API_URL}/operators/sessions/${sessionId}/rating`, {
                 method: 'POST',
@@ -695,10 +726,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     'Content-Type': 'application/json',
                     'X-Bot-Key': settings.bot_key || window.OYECHATS_BOT_KEY || '',
                 },
-                body: JSON.stringify({ rating: stars }),
+                body: JSON.stringify(payload),
             });
         } catch { /* non-fatal */ } finally {
             setRatingSubmitting(false);
+            setSurveyStep(1);
+            setResolvedAnswer(null);
+            setHoveredStar(0);
             handleReturnToBot();
         }
     };
@@ -952,13 +986,29 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                     {showHeaderMenu && (
                         <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
-                            <button
-                                onClick={handleSendTranscript}
-                                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
-                            >
-                                <Mail className="w-4 h-4 text-gray-400" />
-                                Send transcript
-                            </button>
+                            {settings.feature_flags?.email_transcript !== false && messages.length > 0 && (
+                                <button
+                                    onClick={handleSendTranscript}
+                                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                >
+                                    <Mail className="w-4 h-4 text-gray-400" />
+                                    Send transcript
+                                </button>
+                            )}
+                            {!settings.live_chat_enabled && chatMode === 'bot' && (
+                                <button
+                                    onClick={() => {
+                                        setShowHeaderMenu(false);
+                                        setChatMode('unavailable');
+                                    }}
+                                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                >
+                                    <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                                    </svg>
+                                    Leave a message
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1015,6 +1065,111 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
+                {/* Handoff form overlay — centered over messages area */}
+                {hasActiveHandoffForm && (() => {
+                    const msg = messages.find(m => m.type === 'handoff_form' && m.status !== 'submitted');
+                    if (!msg) return null;
+                    return (
+                        <div
+                            className="absolute inset-0 z-20 flex items-center justify-center p-4 pointer-events-auto"
+                            style={{ backgroundColor: 'rgba(248,248,248,0.88)', animation: 'fadeIn 0.2s ease-out' }}
+                        >
+                            <HandoffForm
+                                key={msg.id}
+                                settings={settings}
+                                onSubmit={handleHandoffSubmit}
+                                onCancel={handleHandoffCancel}
+                                existingLeadInfo={existingLeadInfo}
+                                status={msg.status}
+                            />
+                        </div>
+                    );
+                })()}
+
+                {/* Offline message form overlay — centered over messages area */}
+                {chatMode === 'unavailable' && !isInitializing && (
+                    <div
+                        className="absolute inset-0 z-20 flex items-center justify-center p-4 pointer-events-auto"
+                        style={{ backgroundColor: 'rgba(248,248,248,0.88)', animation: 'fadeIn 0.2s ease-out' }}
+                    >
+                        <div
+                            className="w-full max-w-xs rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
+                            style={{ animation: 'fadeUp 0.3s ease-out' }}
+                        >
+                            {offlineError ? (
+                                <div className="text-center py-2">
+                                    <AlertCircle className="w-7 h-7 text-red-400 mx-auto mb-2" />
+                                    <p className="text-[13px] text-gray-600 mb-3">We couldn't send your message. Please try again.</p>
+                                    <button
+                                        onClick={() => setOfflineError(false)}
+                                        className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
+                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                    >
+                                        Try Again
+                                    </button>
+                                </div>
+                            ) : offlineSubmitted ? (
+                                <div className="text-center py-2">
+                                    <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
+                                    <p className="text-[13px] font-semibold text-[#16202C] mb-1">Message sent!</p>
+                                    <p className="text-[12px] text-gray-500 mb-3">
+                                        We'll get back to you at <strong>{offlineForm.email}</strong>
+                                        {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
+                                    </p>
+                                    <button
+                                        onClick={handleReturnToBot}
+                                        className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
+                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                    >
+                                        Continue chatting with AI
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                        <p className="text-[13px] font-semibold text-[#16202C]">{settings.offline_message || 'Team is currently unavailable'}</p>
+                                    </div>
+                                    <p className="text-[12px] text-gray-500 mb-3">Leave us a message and we'll get back to you.</p>
+                                    <form onSubmit={handleOfflineSubmit} className="space-y-2">
+                                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                            <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                            <input type="text" placeholder="Your name" required value={offlineForm.name}
+                                                onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
+                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                        </div>
+                                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                            <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                            <input type="email" placeholder="Email address" required value={offlineForm.email}
+                                                onChange={(e) => setOfflineForm(p => ({ ...p, email: e.target.value }))}
+                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                        </div>
+                                        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                            <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                            <input type="tel" placeholder="Phone number (optional)" value={offlineForm.phone}
+                                                onChange={(e) => setOfflineForm(p => ({ ...p, phone: e.target.value }))}
+                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
+                                        </div>
+                                        <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                            <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+                                            <textarea placeholder="How can we help you?" required rows={2} value={offlineForm.message}
+                                                onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
+                                                className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
+                                        </div>
+                                        <button type="submit" disabled={offlineSubmitting}
+                                            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
+                                            style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}>
+                                            {offlineSubmitting
+                                                ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                : 'Send Message'}
+                                        </button>
+                                    </form>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* Loading spinner */}
                 {isInitializing && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-3">
@@ -1056,16 +1211,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         if (msg.type === 'system') {
                             items.push(<SystemMessage key={msg.id} text={msg.text} />);
                         } else if (msg.type === 'handoff_form') {
-                            items.push(
-                                <HandoffForm
-                                    key={msg.id}
-                                    settings={settings}
-                                    onSubmit={handleHandoffSubmit}
-                                    onCancel={handleHandoffCancel}
-                                    existingLeadInfo={existingLeadInfo}
-                                    status={msg.status}
-                                />
-                            );
+                            // Rendered as a centered overlay below — skip inline
                         } else {
                             items.push(
                                 <MessageBubble
@@ -1196,131 +1342,147 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Unavailable — offline message form as inline card */}
-                {chatMode === 'unavailable' && !isInitializing && (
-                    <div className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
-                        {offlineError ? (
-                            <div className="text-center py-2">
-                                <AlertCircle className="w-7 h-7 text-red-400 mx-auto mb-2" />
-                                <p className="text-[13px] text-gray-600 mb-3">We couldn't send your message. Please try again.</p>
-                                <button
-                                    onClick={() => setOfflineError(false)}
-                                    className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
-                                >
-                                    Try Again
-                                </button>
-                            </div>
-                        ) : offlineSubmitted ? (
-                            <div className="text-center py-2">
-                                <CheckCircle2 className="w-7 h-7 text-green-500 mx-auto mb-2" />
-                                <p className="text-[13px] font-semibold text-[#16202C] mb-1">Message sent!</p>
-                                <p className="text-[12px] text-gray-500 mb-3">
-                                    We'll get back to you at <strong>{offlineForm.email}</strong>
-                                    {offlineForm.phone ? ' or give you a callback' : ''} as soon as possible.
-                                </p>
-                                <button
-                                    onClick={handleReturnToBot}
-                                    className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
-                                >
-                                    Continue chatting with AI
-                                </button>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="flex items-center gap-2 mb-2">
-                                    <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                                    <p className="text-[13px] font-semibold text-[#16202C]">{settings.offline_message || 'Team is currently unavailable'}</p>
-                                </div>
-                                <p className="text-[12px] text-gray-500 mb-3">Leave us a message and we'll get back to you.</p>
-                                <form onSubmit={handleOfflineSubmit} className="space-y-2">
-                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                        <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="text" placeholder="Your name" required value={offlineForm.name}
-                                            onChange={(e) => setOfflineForm(p => ({ ...p, name: e.target.value }))}
-                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
-                                    </div>
-                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                        <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="email" placeholder="Email address" required value={offlineForm.email}
-                                            onChange={(e) => setOfflineForm(p => ({ ...p, email: e.target.value }))}
-                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
-                                    </div>
-                                    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                        <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                                        <input type="tel" placeholder="Phone number (optional)" value={offlineForm.phone}
-                                            onChange={(e) => setOfflineForm(p => ({ ...p, phone: e.target.value }))}
-                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400" />
-                                    </div>
-                                    <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
-                                        <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
-                                        <textarea placeholder="How can we help you?" required rows={2} value={offlineForm.message}
-                                            onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
-                                            className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none" />
-                                    </div>
-                                    <button type="submit" disabled={offlineSubmitting}
-                                        className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
-                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}>
-                                        {offlineSubmitting
-                                            ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                            : 'Send Message'}
-                                    </button>
-                                </form>
-                            </>
-                        )}
-                    </div>
-                )}
+                {/* Unavailable offline form rendered as centered overlay above */}
 
-                {/* Rating card — inline in stream after live chat ends */}
+                {/* 2-step post-chat survey — inline in stream after live chat ends */}
                 {showRating && settings?.feature_flags?.post_chat_rating !== false && (
-                    <div className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                    <div
+                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center"
+                        style={{ animation: 'fadeUp 0.4s ease-out' }}
+                    >
                         <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: settings.primary_color || '#3A0CA3' }} />
                         <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">Chat ended</p>
-                        <p className="text-[12px] text-gray-500 mb-3">How was your experience?</p>
-                        <div className="flex justify-center gap-2 mb-2">
-                            {[1, 2, 3, 4, 5].map((star) => (
-                                <button
-                                    key={star}
-                                    onClick={() => !ratingSubmitting && handleSubmitRating(star)}
-                                    disabled={ratingSubmitting}
-                                    aria-label={`Rate ${star} star${star !== 1 ? 's' : ''}`}
-                                    className="text-2xl transition-transform hover:scale-125 disabled:opacity-50 focus-visible:outline-none"
+
+                        {/* Step 1: Was your issue resolved? */}
+                        {surveyStep === 1 && (
+                            <div style={{ animation: 'fadeUp 0.25s ease-out' }}>
+                                <p className="text-[12px] text-gray-500 mb-3">Was your issue resolved?</p>
+                                <div className="flex justify-center gap-3 mb-3">
+                                    <button
+                                        onClick={() => { setResolvedAnswer(true); setSurveyStep(2); }}
+                                        disabled={ratingSubmitting}
+                                        aria-label="Yes, issue was resolved"
+                                        className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-green-200 bg-green-50 text-green-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-green-100 hover:border-green-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400 disabled:opacity-50"
+                                    >
+                                        <CheckCircle2 className="w-4 h-4" />
+                                        Yes
+                                    </button>
+                                    <button
+                                        onClick={() => { setResolvedAnswer(false); setSurveyStep(2); }}
+                                        disabled={ratingSubmitting}
+                                        aria-label="No, issue was not resolved"
+                                        className="flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-xl border border-red-200 bg-red-50 text-red-700 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-100 hover:border-red-300 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:opacity-50"
+                                    >
+                                        <XCircle className="w-4 h-4" />
+                                        No
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Step 2: Star rating */}
+                        {surveyStep === 2 && (
+                            <div style={{ animation: 'fadeUp 0.25s ease-out' }}>
+                                <p className="text-[12px] text-gray-500 mb-3">
+                                    {settings?.widget_messages?.rating_prompt || 'How would you rate this experience?'}
+                                </p>
+                                <div
+                                    className="flex justify-center gap-2 mb-3"
+                                    onMouseLeave={() => setHoveredStar(0)}
                                 >
-                                    ⭐
-                                </button>
-                            ))}
+                                    {[1, 2, 3, 4, 5].map((star) => (
+                                        <button
+                                            key={star}
+                                            onClick={() => !ratingSubmitting && handleSubmitRating(star)}
+                                            onMouseEnter={() => setHoveredStar(star)}
+                                            disabled={ratingSubmitting}
+                                            aria-label={`Rate ${star} star${star !== 1 ? 's' : ''}`}
+                                            className="p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer transition-all duration-200 hover:scale-110 active:scale-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded-lg"
+                                        >
+                                            <Star
+                                                className="w-7 h-7 transition-colors duration-150"
+                                                fill={star <= hoveredStar ? '#F59E0B' : 'none'}
+                                                stroke={star <= hoveredStar ? '#F59E0B' : '#D1D5DB'}
+                                                strokeWidth={1.5}
+                                            />
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Step dots + skip */}
+                        <div className="flex items-center justify-center gap-3">
+                            <div className="flex gap-1.5" aria-label={`Step ${surveyStep} of 2`}>
+                                <span className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${surveyStep === 1 ? 'bg-gray-600' : 'bg-gray-300'}`} />
+                                <span className={`w-1.5 h-1.5 rounded-full transition-colors duration-200 ${surveyStep === 2 ? 'bg-gray-600' : 'bg-gray-300'}`} />
+                            </div>
+                            <button
+                                onClick={() => { setSurveyStep(1); setResolvedAnswer(null); setHoveredStar(0); handleReturnToBot(); }}
+                                disabled={ratingSubmitting}
+                                className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 rounded px-1"
+                            >
+                                Skip
+                            </button>
                         </div>
-                        <button
-                            onClick={() => !ratingSubmitting && handleReturnToBot()}
-                            disabled={ratingSubmitting}
-                            className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
-                        >
-                            Skip
-                        </button>
                     </div>
                 )}
 
-                {/* End-chat confirmation */}
+                {/* End-chat confirmation modal overlay */}
                 {showEndConfirm && (
-                    <div className="mx-3 my-1 px-3 py-3 bg-red-50 border border-red-200 rounded-2xl">
-                        <p className="text-xs text-red-700 font-medium mb-2">End this conversation and return to AI?</p>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => {
-                                    if (wsEndChatRef.current) wsEndChatRef.current();
-                                    setShowEndConfirm(false);
-                                }}
-                                className="flex-1 py-1.5 rounded-lg bg-red-500 text-white text-xs font-medium"
+                    <div
+                        className="absolute inset-0 z-50 flex items-center justify-center"
+                        style={{ animation: 'fadeIn 0.2s ease-out' }}
+                    >
+                        {/* Backdrop */}
+                        <div
+                            className="absolute inset-0 bg-black/40"
+                            onClick={() => setShowEndConfirm(false)}
+                            aria-hidden="true"
+                        />
+                        {/* Modal card */}
+                        <div
+                            role="alertdialog"
+                            aria-modal="true"
+                            aria-labelledby="end-chat-title"
+                            aria-describedby="end-chat-desc"
+                            className="relative bg-white rounded-2xl shadow-xl p-5 mx-4 max-w-[280px] w-full text-center"
+                            style={{ animation: 'scaleIn 0.2s ease-out' }}
+                            onKeyDown={(e) => { if (e.key === 'Escape') setShowEndConfirm(false); }}
+                        >
+                            <div
+                                className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center"
+                                style={{ backgroundColor: `${settings.primary_color || '#3A0CA3'}15` }}
                             >
-                                Yes, end chat
-                            </button>
-                            <button
-                                onClick={() => setShowEndConfirm(false)}
-                                className="flex-1 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 text-xs font-medium"
-                            >
-                                Cancel
-                            </button>
+                                <LogOut className="w-5 h-5" style={{ color: settings.primary_color || '#3A0CA3' }} />
+                            </div>
+                            <p id="end-chat-title" className="text-[14px] font-semibold text-[#16202C] mb-0.5">
+                                End conversation?
+                            </p>
+                            {operatorName && (
+                                <p className="text-[12px] text-gray-500 mb-1">with {operatorName}</p>
+                            )}
+                            <p id="end-chat-desc" className="text-[12px] text-gray-400 mb-4">
+                                You'll be returned to the AI assistant.
+                            </p>
+                            <div className="flex flex-col gap-2">
+                                <button
+                                    onClick={() => {
+                                        if (wsEndChatRef.current) wsEndChatRef.current();
+                                        setShowEndConfirm(false);
+                                    }}
+                                    className="w-full py-2.5 min-h-[44px] rounded-xl bg-red-500 text-white text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-600 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                                >
+                                    End chat
+                                </button>
+                                <button
+                                    onClick={() => setShowEndConfirm(false)}
+                                    autoFocus
+                                    className="w-full py-2.5 min-h-[44px] rounded-xl bg-white border border-gray-200 text-gray-600 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                                >
+                                    Keep chatting
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -1396,6 +1558,69 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onWsReady={handleWsReady}
                     onChatEnded={handleChatEnded}
                 />
+            )}
+
+            {/* ── Transcript Email Modal ── */}
+            {showTranscriptModal && (
+                <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/30" onClick={() => setShowTranscriptModal(false)}>
+                    <div className="bg-white rounded-2xl shadow-xl mx-4 w-full max-w-[320px] p-6" onClick={(e) => e.stopPropagation()}>
+                        <button
+                            onClick={() => setShowTranscriptModal(false)}
+                            className="absolute top-4 right-4 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+
+                        {transcriptSent ? (
+                            <div className="text-center py-4">
+                                <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-3">
+                                    <svg className="w-6 h-6 text-green-500" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                    </svg>
+                                </div>
+                                <p className="text-sm font-medium text-gray-800 mb-1">Transcript sent!</p>
+                                <p className="text-xs text-gray-500">Check your inbox at {transcriptEmail}</p>
+                                <button
+                                    onClick={() => setShowTranscriptModal(false)}
+                                    className="mt-4 w-full py-2.5 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        ) : (
+                            <form onSubmit={handleTranscriptSubmit}>
+                                <div className="flex justify-center mb-4">
+                                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
+                                        <Mail className="w-5 h-5 text-gray-500" />
+                                    </div>
+                                </div>
+                                <p className="text-sm font-medium text-gray-800 text-center mb-4">
+                                    Send the chat transcript to your e-mail.
+                                </p>
+                                <input
+                                    type="email"
+                                    value={transcriptEmail}
+                                    onChange={(e) => setTranscriptEmail(e.target.value)}
+                                    placeholder="your@email.com"
+                                    required
+                                    autoFocus
+                                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-3"
+                                />
+                                {transcriptError && (
+                                    <p className="text-xs text-red-500 mb-3">{transcriptError}</p>
+                                )}
+                                <button
+                                    type="submit"
+                                    disabled={transcriptSending || !transcriptEmail.trim()}
+                                    className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-colors disabled:opacity-50"
+                                    style={{ backgroundColor: settings.primary_color || '#2563eb' }}
+                                >
+                                    {transcriptSending ? 'Sending...' : 'Send'}
+                                </button>
+                            </form>
+                        )}
+                    </div>
+                </div>
             )}
         </div>
     );
