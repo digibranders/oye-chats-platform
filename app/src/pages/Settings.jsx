@@ -67,14 +67,11 @@ export default function Settings() {
     const [botId, setBotId] = useState(null);
     const [flags, setFlags] = useState(DEFAULT_FLAGS);
     const [businessHours, setBusinessHours] = useState(DEFAULT_BUSINESS_HOURS);
-    const [meetingBookingEnabled, setMeetingBookingEnabled] = useState(false);
-    const [calendlyUrl, setCalendlyUrl] = useState('');
     const [loadingBot, setLoadingBot] = useState(true);
 
     // Saving state: key → true while in-flight
     const [saving, setSaving] = useState({});
     const [savingHours, setSavingHours] = useState(false);
-    const [savingMeeting, setSavingMeeting] = useState(false);
 
     // Fetch current bot on mount
     useEffect(() => {
@@ -88,8 +85,6 @@ export default function Settings() {
                 if (bot.business_hours) {
                     setBusinessHours({ ...DEFAULT_BUSINESS_HOURS, ...bot.business_hours });
                 }
-                setMeetingBookingEnabled(!!bot.meeting_booking_enabled);
-                setCalendlyUrl(bot.calendly_url || '');
             } catch {
                 showToast('error', 'Failed to load bot settings.');
             } finally {
@@ -142,22 +137,6 @@ export default function Settings() {
             return next;
         });
     }, [saveBusinessHours]);
-
-    const saveMeetingBooking = useCallback(async () => {
-        if (!botId) return;
-        setSavingMeeting(true);
-        try {
-            await updateBot(botId, {
-                meeting_booking_enabled: meetingBookingEnabled,
-                calendly_url: meetingBookingEnabled ? calendlyUrl : null,
-            });
-            showToast('success', 'Meeting booking settings saved');
-        } catch (error) {
-            showToast('error', error.message || 'Failed to save meeting booking settings.');
-        } finally {
-            setSavingMeeting(false);
-        }
-    }, [botId, calendlyUrl, meetingBookingEnabled, showToast]);
 
     const handleSendFeedback = (e) => {
         e.preventDefault();
@@ -236,58 +215,6 @@ export default function Settings() {
                                 saving={saving.email_transcript}
                                 onChange={(v) => toggleFlag('email_transcript', v)}
                             />
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* ── Meeting Booking ─────────────────────────────────────────── */}
-            {showBotConfig && (
-                <div className="bg-white p-6 rounded-2xl border border-secondary-200 shadow-sm">
-                    <div className="flex items-start justify-between gap-4 mb-1">
-                        <div>
-                            <h2 className="text-base font-semibold text-secondary-900">Meeting Booking</h2>
-                            <p className="text-sm text-secondary-500 mt-1">
-                                Show a Calendly booking widget when leads qualify as SQL.
-                            </p>
-                        </div>
-                        {savingMeeting && <Loader2 size={14} className="animate-spin text-secondary-400 flex-shrink-0 mt-1" />}
-                    </div>
-
-                    {loadingBot ? (
-                        <div className="flex items-center gap-2 text-secondary-400 text-sm py-2 mt-4">
-                            <Loader2 size={14} className="animate-spin" />
-                            Loading settings…
-                        </div>
-                    ) : (
-                        <div className="mt-5 space-y-4">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium text-secondary-800">Enable meeting booking</span>
-                                <Toggle checked={meetingBookingEnabled} onChange={setMeetingBookingEnabled} />
-                            </div>
-
-                            {meetingBookingEnabled && (
-                                <div>
-                                    <label className="block text-sm text-secondary-700 mb-2">Calendly URL</label>
-                                    <input
-                                        type="url"
-                                        value={calendlyUrl}
-                                        onChange={(e) => setCalendlyUrl(e.target.value)}
-                                        placeholder="https://calendly.com/your-name/30min"
-                                        className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white text-secondary-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                                    />
-                                </div>
-                            )}
-
-                            <div className="flex justify-end">
-                                <button
-                                    onClick={saveMeetingBooking}
-                                    disabled={savingMeeting || (meetingBookingEnabled && !calendlyUrl.trim())}
-                                    className="py-2.5 px-5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    Save
-                                </button>
-                            </div>
                         </div>
                     )}
                 </div>

@@ -127,7 +127,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [surveyStep, setSurveyStep] = useState(1);        // 1 = resolved?, 2 = stars
     const [resolvedAnswer, setResolvedAnswer] = useState(null); // true | false | null
     const [hoveredStar, setHoveredStar] = useState(0);
-    const [uploadProgress] = useState(null); // controlled by LiveChatMode file upload
+    const [uploadProgress, setUploadProgress] = useState(null);
     // Waiting screen timer
     const [waitingSeconds, setWaitingSeconds] = useState(0);
     const waitingTimerRef = useRef(null);
@@ -430,6 +430,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (!text.trim()) return;
 
         if (showWelcome) exitWelcome(); else setShowWelcome(false);
+        setShowWelcomeBackBanner(false);
         setActiveCTA(null);
 
         const userMsg = {
@@ -668,6 +669,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // ── Live chat send (via WS) ──────────────────────────────────────────────────
     const handleLiveSend = useCallback((text) => {
         if (!wsSendRef.current || !text.trim()) return;
+        setShowWelcomeBackBanner(false);
 
         const msgId = `live-${Date.now()}`;
         const timestamp = new Date().toISOString();
@@ -680,6 +682,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         setLiveMessages(prev => [...prev, newMsg]);
     }, []);
+
+    // ── Header close — ask for confirmation during live/waiting chat ───────────
+    const handleHeaderClose = useCallback(() => {
+        if (chatMode === 'live' || chatMode === 'waiting') {
+            setShowEndConfirm(true);
+        } else {
+            onClose();
+        }
+    }, [chatMode, onClose]);
 
     // ── Return to bot after live chat ends ───────────────────────────────────────
     const handleReturnToBot = useCallback(() => {
@@ -977,7 +988,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         <MoreHorizontal className="w-4 h-4" />
                     </button>
                     <button
-                        onClick={onClose}
+                        onClick={handleHeaderClose}
                         className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
                         title="Close"
                     >
@@ -1557,6 +1568,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onReconnectingChange={setIsLiveReconnecting}
                     onWsReady={handleWsReady}
                     onChatEnded={handleChatEnded}
+                    onUploadProgressChange={setUploadProgress}
                 />
             )}
 

@@ -154,7 +154,7 @@ def _base_template(title: str, content: str) -> str:
             {content}
         </div>
         <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 24px;">
-            Sent by OyeChats &middot; <a href="https://admin.oyechats.com" style="color: #6366f1;">View Dashboard</a>
+            Sent by OyeChats &middot; <a href="https://app.oyechats.com" style="color: #6366f1;">View Dashboard</a>
         </p>
     </div>
     """
@@ -239,7 +239,7 @@ def send_qualified_lead_email(
     </p>
     {bant_section}
     {contact_section}
-    <a href="https://admin.oyechats.com/leads"
+    <a href="https://app.oyechats.com/leads"
         style="display: inline-block; background: #6366f1; color: #ffffff;
                padding: 10px 24px; border-radius: 8px; text-decoration: none;
                font-weight: 600; font-size: 14px; margin-top: 8px;">
@@ -289,7 +289,7 @@ def send_handoff_request_email(
         if reason
         else ""
     }
-    <a href="https://admin.oyechats.com/live-chat"
+    <a href="https://app.oyechats.com/live-chat"
         style="display: inline-block; background: #6366f1; color: #ffffff;
                padding: 10px 24px; border-radius: 8px; text-decoration: none;
                font-weight: 600; font-size: 14px;">
@@ -322,7 +322,7 @@ def send_unavailable_callback_email(
             {(f"<li><strong>Phone:</strong> {_esc(contact.get('phone'))}</li>") if contact.get("phone") else ""}
         </ul>
     </div>
-    <a href="https://admin.oyechats.com/leads"
+    <a href="https://app.oyechats.com/leads"
         style="display: inline-block; background: #6366f1; color: #ffffff;
                padding: 10px 24px; border-radius: 8px; text-decoration: none;
                font-weight: 600; font-size: 14px;">
@@ -360,7 +360,7 @@ def send_offline_message_email(
         <p style="color: #1e3a5f; margin: 0; line-height: 1.6;
            white-space: pre-wrap;">{_esc(message_preview)}</p>
     </div>
-    <a href="https://admin.oyechats.com/messages"
+    <a href="https://app.oyechats.com/messages"
         style="display: inline-block; background: #6366f1; color: #ffffff;
                padding: 10px 24px; border-radius: 8px; text-decoration: none;
                font-weight: 600; font-size: 14px;">

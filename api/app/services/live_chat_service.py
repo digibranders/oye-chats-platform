@@ -919,6 +919,8 @@ class ConnectionManager:
             except Exception as e:
                 logger.warning(f"Failed to send to visitor {session_id}: {e}")
                 self.disconnect_visitor(session_id)
+        else:
+            logger.info(f"No WS for visitor {session_id}, message dropped: {data.get('type', 'unknown')}")
 
     async def _send_to_operator(self, operator_id: int, data: dict):
         ws = self.operator_connections.get(operator_id)
