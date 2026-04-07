@@ -464,24 +464,26 @@ CURRENT QUALIFICATION STATE:
 
     if live_chat_enabled:
         handoff_section = """
-6. HUMAN HANDOFF REQUESTS:
-If the user explicitly asks to speak with a human, agent, support team, or representative:
+6. LIVE SUPPORT REQUESTS:
+If the user explicitly asks to speak with a person, agent, support team, or representative:
 - Respond warmly and briefly — 1-2 sentences only.
 - Example: "Of course! Let me connect you with our team right away — they'll be happy to help."
 - Do NOT continue trying to answer their original question or ask a follow-up question.
 - Do NOT say you cannot help. Just acknowledge warmly and confirm they are being connected.
+- IMPORTANT: Never use the phrase "human team" — say "our team", "a team member", or "our support team" instead.
 """
     else:
         handoff_section = """
-6. HUMAN SUPPORT REQUESTS:
-Live chat with a human agent is currently not available.
-If the user asks to speak with a human, agent, support team, or representative:
+6. SUPPORT REQUESTS:
+Live support is currently not available.
+If the user asks to speak with a person, agent, support team, or representative:
 - Acknowledge their request warmly.
 - Let them know that they can leave a message using the contact form (available in the menu at the top of the chat).
 - Assure them the team will follow up via email as soon as possible.
-- Example: "I understand you'd like to speak with our team. While live chat isn't available right now, you can leave a message using the contact form in the menu above — our team will get back to you by email shortly!"
+- Example: "I understand you'd like to speak with our team. While live support isn't available right now, you can leave a message using the contact form in the menu above — our team will get back to you by email shortly!"
 - Do NOT say the team is unavailable in a negative way. Keep it helpful and reassuring.
-- Do NOT try to handle the issue yourself if the visitor specifically insists on human support.
+- Do NOT try to handle the issue yourself if the visitor specifically insists on speaking with a person.
+- IMPORTANT: Never use the phrase "human team" — say "our team", "a team member", or "our support team" instead.
 """
 
     hybrid_system_prompt = f"""
@@ -511,7 +513,8 @@ Please adhere strictly to the following rules:
 
 3. HANDLING KNOWLEDGE & CONTEXT:
 - You will be provided with specific context or retrieved document chunks. Base your answers strictly on this provided information.
-- If the answer to the user's question is not contained in the provided context, gracefully admit that you don't have that specific information and offer to connect them with a human team member. Do not hallucinate or guess.
+- If the answer to the user's question is not contained in the provided context, gracefully admit that you don't have that specific information. Do not hallucinate or guess.
+- {"If you cannot answer from the provided context, offer to connect the visitor with a team member." if live_chat_enabled else "If you cannot answer from the provided context, let the visitor know they can leave a message via the contact form in the menu above, and the team will follow up by email."}
 
 4. CONVERSATION FLOW:
 - Conclude your responses with a single, simple, and low-pressure follow-up question to keep the conversation natural (e.g., "Would you like to hear more about [Specific Service]?" or "Does that answer your question?").
@@ -882,8 +885,9 @@ async def rag_pipeline_stream(
                 bot_msg.id,
             )
 
+        live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
         final_meta: dict = {"message_id": bot_msg.id}
-        if suggest_handoff:
+        if suggest_handoff and live_chat_on:
             final_meta["suggest_handoff"] = True
         if cta_data:
             final_meta["cta"] = cta_data
