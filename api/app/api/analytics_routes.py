@@ -11,6 +11,7 @@ from app.db.repository import (
     get_feedback_data,
     get_message_activity,
     get_ratings_summary,
+    get_resolution_summary,
     get_top_questions,
     get_visitor_data,
 )
@@ -214,6 +215,20 @@ def get_ratings_summary_endpoint(
     except Exception as e:
         logger.error(f"Failed to fetch ratings summary: {e}")
         raise HTTPException(status_code=500, detail="Failed to load ratings summary.") from e
+
+
+@router.get("/resolution-summary")
+def get_resolution_summary_endpoint(
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Retrieve post-chat visitor resolution summary (resolved, unresolved, rate)."""
+    try:
+        with get_session() as session:
+            return get_resolution_summary(session, client_id=auth["client_id"], bot_id=bot_id)
+    except Exception as e:
+        logger.error(f"Failed to fetch resolution summary: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load resolution summary.") from e
 
 
 @router.get("/feedback")

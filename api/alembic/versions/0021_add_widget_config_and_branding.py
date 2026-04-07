@@ -1,6 +1,6 @@
 """Add widget_config and branding customization columns.
 
-Revision ID: 0021_add_widget_config_and_branding
+Revision ID: 0021_widget_config_branding
 Revises: 0020_add_widget_messages
 Create Date: 2026-04-06 15:15:00.000000
 
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "0021_add_widget_config_and_branding"
+revision = "0021_widget_config_branding"
 down_revision = "0020_add_widget_messages"
 branch_labels = None
 depends_on = None

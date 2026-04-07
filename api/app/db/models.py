@@ -84,9 +84,15 @@ class Bot(Base):
     lead_form_fields = Column(JSONB, nullable=True)  # e.g. [{"field":"name","required":true}]
 
     # Email notification settings
-    notification_email = Column(String, nullable=True)
+    notification_email = Column(String, nullable=True)  # Legacy single recipient (kept for backward compat)
+    notification_emails = Column(
+        JSONB, nullable=True
+    )  # Per-event routing: {"default": [...], "qualified_lead": [...], ...}
+    reply_to_email = Column(String, nullable=True)  # Reply-To header for branded "via OyeChats" emails
     email_on_qualified = Column(Boolean, default=True, server_default="true", nullable=False)
     email_on_handoff = Column(Boolean, default=True, server_default="true", nullable=False)
+    email_on_offline = Column(Boolean, default=True, server_default="true", nullable=False)
+    email_visitor_confirmation = Column(Boolean, default=True, server_default="true", nullable=False)
 
     # Live chat settings
     live_chat_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
@@ -237,6 +243,7 @@ class ChatSession(Base):
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
     visitor_rating = Column(Integer, nullable=True)  # Post-chat satisfaction: 1–5, null = not rated
+    visitor_resolved = Column(Boolean, nullable=True)  # Post-chat: was the issue resolved? null = not answered
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_active_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

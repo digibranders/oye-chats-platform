@@ -71,8 +71,12 @@ class UpdateBotRequest(BaseModel):
     lead_form_fields: list[dict] | None = None
     # Email notification settings
     notification_email: str | None = None
+    notification_emails: dict | None = None
+    reply_to_email: str | None = None
     email_on_qualified: bool | None = None
     email_on_handoff: bool | None = None
+    email_on_offline: bool | None = None
+    email_visitor_confirmation: bool | None = None
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = None
@@ -118,8 +122,12 @@ class BotResponse(BaseModel):
     lead_form_enabled: bool = False
     lead_form_fields: list[dict] | None = None
     notification_email: str | None = None
+    notification_emails: dict | None = None
+    reply_to_email: str | None = None
     email_on_qualified: bool = True
     email_on_handoff: bool = True
+    email_on_offline: bool = True
+    email_visitor_confirmation: bool = True
     live_chat_enabled: bool = True
     operator_timeout_seconds: int = 120
     business_hours: dict | None = None

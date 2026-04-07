@@ -52,7 +52,7 @@ jobs:
             r2 object put oyechats-cdn/oyechats-widget.js
             --file widget/dist/oyechats-widget.js
             --content-type "text/javascript"
-            --cache-control "public, max-age=3600, s-maxage=60"
+            --cache-control "public, max-age=60, s-maxage=60"
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
 
@@ -63,7 +63,7 @@ jobs:
             r2 object put oyechats-cdn/oyechats-widget.css
             --file widget/dist/oyechats-widget.css
             --content-type "text/css"
-            --cache-control "public, max-age=3600, s-maxage=60"
+            --cache-control "public, max-age=60, s-maxage=60"
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
 

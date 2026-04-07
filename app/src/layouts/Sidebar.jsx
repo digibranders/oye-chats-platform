@@ -14,7 +14,6 @@ import {
     Settings,
     Plug,
     UsersRound,
-    Webhook,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { getAuthState } from '../utils/auth';
@@ -60,7 +59,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
             { path: '/support', name: 'Support', icon: Headphones },
             { path: '/leads', name: 'Leads', icon: Target },
             { path: '/qualification', name: 'Qualification', icon: Crosshair },
-            { path: '/webhooks', name: 'Webhooks', icon: Webhook },
+            { path: '/integrations', name: 'Integrations', icon: Plug },
         ];
 
     const configItems = isOperatorRole
@@ -70,7 +69,6 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         : [
             { path: '/chatbot', name: 'My Bots', icon: Bot },
             { path: '/team', name: 'Team', icon: UsersRound },
-            { path: '/integrations/email', name: 'Integrations', icon: Plug },
         ];
 
     const isActive = (item) =>

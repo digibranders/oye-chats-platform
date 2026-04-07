@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
+from pydantic import field_validator
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
@@ -634,3 +635,79 @@ async def get_visitor_upload_url(
     upload_url = generate_presigned_put(key, body.content_type)
     file_url = _build_public_url(key)
     return {"upload_url": upload_url, "file_url": file_url, "key": key}
+
+
+# ── Transcript Email ──
+
+
+class TranscriptEmailRequest(PydanticBaseModel):
+    session_id: str
+    recipient_email: str
+
+    @field_validator("recipient_email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        import re
+
+        v = v.strip().lower()
+        if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", v):
+            raise ValueError("Please enter a valid email address.")
+        return v
+
+
+@router.post("/chat/transcript")
+@limiter.limit("3/minute", key_func=key_from_bot_key)
+def send_chat_transcript(
+    body: TranscriptEmailRequest,
+    request: Request,
+    bot: Bot = Depends(get_current_bot),
+):
+    """Send the chat transcript for a session to the visitor's email.
+
+    Auth: X-Bot-Key header (widget).
+    Rate limit: 3 per minute per bot key to prevent abuse.
+    """
+    from app.db.models import ChatMessage
+    from app.services.email_service import send_transcript_email
+
+    with get_session() as session:
+        # Verify session belongs to this bot
+        chat_session = session.execute(
+            select(ChatSession).where(
+                ChatSession.id == body.session_id,
+                ChatSession.bot_id == bot.id,
+            )
+        ).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Chat session not found.")
+
+        # Fetch all messages in chronological order
+        messages = (
+            session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == body.session_id)
+                .order_by(ChatMessage.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+        if not messages:
+            raise HTTPException(status_code=404, detail="No messages found for this session.")
+
+        message_dicts = [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            }
+            for msg in messages
+        ]
+
+    send_transcript_email(
+        to_email=body.recipient_email,
+        bot_name=bot.name,
+        messages=message_dicts,
+        reply_to=bot.reply_to_email,
+    )
+
+    return {"success": True, "message": f"Transcript sent to {body.recipient_email}"}

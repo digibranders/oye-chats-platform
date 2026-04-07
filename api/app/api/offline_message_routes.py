@@ -11,7 +11,12 @@ from sqlalchemy.sql import func
 from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, OfflineMessage
 from app.db.session import get_session
-from app.services.email_service import send_offline_message_email, send_unavailable_callback_email
+from app.services.email_service import (
+    get_notification_recipients,
+    send_offline_message_email,
+    send_unavailable_callback_email,
+    send_visitor_confirmation_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,26 +76,41 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
         session.add(msg)
         session.commit()
 
-        # Send email notification — callback email if phone provided, otherwise generic
-        if bot.notification_email:
-            if request.phone and request.phone.strip():
-                send_unavailable_callback_email(
-                    notification_email=bot.notification_email,
-                    bot_name=bot.name,
-                    contact={
-                        "name": request.name.strip(),
-                        "email": request.email.strip(),
-                        "phone": request.phone.strip(),
-                    },
-                )
-            else:
-                send_offline_message_email(
-                    notification_email=bot.notification_email,
-                    bot_name=bot.name,
-                    visitor_name=request.name.strip(),
-                    visitor_email=request.email.strip(),
-                    message_preview=request.message.strip()[:200],
-                )
+        # Send team notification emails (multi-recipient)
+        reply_to = bot.reply_to_email
+        email_on_offline = getattr(bot, "email_on_offline", True)
+        if email_on_offline:
+            recipients = get_notification_recipients(bot, "offline_message")
+            for recipient in recipients:
+                if request.phone and request.phone.strip():
+                    send_unavailable_callback_email(
+                        notification_email=recipient,
+                        bot_name=bot.name,
+                        contact={
+                            "name": request.name.strip(),
+                            "email": request.email.strip(),
+                            "phone": request.phone.strip(),
+                        },
+                        reply_to=reply_to,
+                    )
+                else:
+                    send_offline_message_email(
+                        notification_email=recipient,
+                        bot_name=bot.name,
+                        visitor_name=request.name.strip(),
+                        visitor_email=request.email.strip(),
+                        message_preview=request.message.strip()[:200],
+                        reply_to=reply_to,
+                    )
+
+        # Send visitor confirmation email
+        if getattr(bot, "email_visitor_confirmation", True):
+            send_visitor_confirmation_email(
+                to_email=request.email.strip(),
+                bot_name=bot.name,
+                visitor_name=request.name.strip(),
+                reply_to=reply_to,
+            )
 
         logger.info(f"Offline message saved: {msg.id} from {request.email} for bot {bot.id}")
 

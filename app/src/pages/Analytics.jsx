@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Activity, BarChart3, Zap, MessageSquare, Star } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Zap, MessageSquare, Star, CheckCircle2, XCircle } from 'lucide-react';
 import {
     AreaChart,
     Area,
@@ -9,7 +9,7 @@ import {
     Tooltip,
     ResponsiveContainer,
 } from 'recharts';
-import { getActivityStats, getTopQuestions, getRatingsSummary } from '../services/api';
+import { getActivityStats, getTopQuestions, getRatingsSummary, getResolutionSummary } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import StatCard from '../components/ui/StatCard';
@@ -23,6 +23,7 @@ export default function Analytics({ embedded = false }) {
     const [activityData, setActivityData] = useState([]);
     const [topQuestions, setTopQuestions] = useState([]);
     const [ratingsSummary, setRatingsSummary] = useState(null);
+    const [resolutionSummary, setResolutionSummary] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [timeRange, setTimeRange] = useState('all');
 
@@ -30,10 +31,11 @@ export default function Analytics({ embedded = false }) {
         const fetchData = async () => {
             setIsLoading(true);
             try {
-                const [activity, questions, ratings] = await Promise.all([
+                const [activity, questions, ratings, resolution] = await Promise.all([
                     getActivityStats(selectedBot?.id),
                     getTopQuestions(selectedBot?.id),
                     getRatingsSummary(selectedBot?.id),
+                    getResolutionSummary(selectedBot?.id),
                 ]);
 
                 const activityMap = {};
@@ -77,6 +79,7 @@ export default function Analytics({ embedded = false }) {
                 setActivityData(filled);
                 setTopQuestions(questions);
                 setRatingsSummary(ratings);
+                setResolutionSummary(resolution);
             } catch (error) {
                 console.error('Failed to load analytics data', error);
                 showToast('error', error.message || 'Failed to load analytics data');
@@ -295,6 +298,61 @@ export default function Analytics({ embedded = false }) {
                                     </div>
                                 );
                             })}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Resolution Rate (post-chat survey) */}
+            {(isLoading || (resolutionSummary && resolutionSummary.total > 0)) && (
+                <div className="bg-white p-6 rounded-2xl border border-secondary-200 shadow-sm">
+                    <div className="flex items-center gap-2 mb-5">
+                        <div className="w-9 h-9 rounded-lg bg-green-50 flex items-center justify-center">
+                            <CheckCircle2 size={18} className="text-green-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-secondary-900">Resolution Rate</h2>
+                            <p className="text-sm text-secondary-500">Were visitor issues resolved during live chat?</p>
+                        </div>
+                        {!isLoading && resolutionSummary?.rate != null && (
+                            <div className="ml-auto flex items-baseline gap-1">
+                                <span className="text-3xl font-bold text-secondary-900">{resolutionSummary.rate}%</span>
+                                <span className="ml-2 text-xs text-secondary-400">({resolutionSummary.total} response{resolutionSummary.total !== 1 ? 's' : ''})</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {isLoading ? (
+                        <div className="animate-pulse flex gap-4">
+                            <div className="flex-1 h-16 bg-secondary-100 rounded-xl" />
+                            <div className="flex-1 h-16 bg-secondary-100 rounded-xl" />
+                        </div>
+                    ) : (
+                        <div className="flex gap-4">
+                            <div className="flex-1 p-4 bg-green-50 rounded-xl border border-green-100">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <CheckCircle2 size={14} className="text-green-500" />
+                                    <span className="text-xs font-medium text-green-700">Resolved</span>
+                                </div>
+                                <span className="text-2xl font-bold text-green-700">{resolutionSummary?.resolved ?? 0}</span>
+                                {resolutionSummary?.total > 0 && (
+                                    <span className="text-xs text-green-500 ml-1.5">
+                                        ({Math.round((resolutionSummary.resolved / resolutionSummary.total) * 100)}%)
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex-1 p-4 bg-red-50 rounded-xl border border-red-100">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <XCircle size={14} className="text-red-500" />
+                                    <span className="text-xs font-medium text-red-700">Unresolved</span>
+                                </div>
+                                <span className="text-2xl font-bold text-red-700">{resolutionSummary?.unresolved ?? 0}</span>
+                                {resolutionSummary?.total > 0 && (
+                                    <span className="text-xs text-red-500 ml-1.5">
+                                        ({Math.round((resolutionSummary.unresolved / resolutionSummary.total) * 100)}%)
+                                    </span>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>

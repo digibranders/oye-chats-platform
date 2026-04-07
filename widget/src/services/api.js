@@ -272,6 +272,27 @@ export const submitOfflineMessage = async (formData) => {
 };
 
 /**
+ * Send a chat transcript to the visitor's email via the backend.
+ * @param {string} sessionId - The chat session ID.
+ * @param {string} recipientEmail - The email address to send the transcript to.
+ */
+export const sendTranscriptEmail = async (sessionId, recipientEmail) => {
+    const response = await fetch(`${API_URL}/chat/transcript`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+            session_id: sessionId,
+            recipient_email: recipientEmail,
+        }),
+    });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to send transcript');
+    }
+    return response.json();
+};
+
+/**
  * Collect page context from the host page (URL, referrer, UTM params).
  * Called once on widget load — reads from window.location and document.referrer.
  */
