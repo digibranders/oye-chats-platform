@@ -1,0 +1,2238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OyeChats — Email Integration &amp; Lead Qualification Documentation</title>
+  <style>
+    :root {
+      --brand: #6366f1;
+      --brand-light: #eef2ff;
+      --brand-dark: #4338ca;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --gray-50: #f9fafb;
+      --gray-100: #f3f4f6;
+      --gray-200: #e5e7eb;
+      --gray-300: #d1d5db;
+      --gray-400: #9ca3af;
+      --gray-500: #6b7280;
+      --gray-600: #4b5563;
+      --gray-700: #374151;
+      --gray-800: #1f2937;
+      --gray-900: #111827;
+      --radius: 10px;
+      --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+      --shadow-md: 0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+      --shadow-lg: 0 10px 15px rgba(0,0,0,.08), 0 4px 6px rgba(0,0,0,.05);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--gray-50);
+      color: var(--gray-800);
+      line-height: 1.6;
+    }
+
+    /* ─── Layout ─────────────────────────────────────────────────────── */
+    .layout { display: flex; min-height: 100vh; }
+
+    .sidebar {
+      width: 260px;
+      background: #fff;
+      border-right: 1px solid var(--gray-200);
+      padding: 28px 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    .sidebar-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 20px 24px;
+      border-bottom: 1px solid var(--gray-100);
+      margin-bottom: 16px;
+    }
+
+    .sidebar-logo .logo-icon {
+      width: 32px; height: 32px;
+      background: var(--brand);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 16px; font-weight: 700;
+    }
+
+    .sidebar-logo span { font-weight: 700; font-size: 15px; color: var(--gray-900); }
+    .sidebar-logo small { display: block; font-size: 11px; color: var(--gray-400); font-weight: 400; }
+
+    .nav-group { margin-bottom: 4px; }
+    .nav-group-label {
+      font-size: 10px; font-weight: 700; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--gray-400);
+      padding: 8px 20px 4px;
+    }
+
+    .nav-link {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 20px;
+      font-size: 13px; color: var(--gray-600);
+      text-decoration: none;
+      border-radius: 0;
+      transition: background .15s, color .15s;
+    }
+
+    .nav-link:hover { background: var(--gray-50); color: var(--gray-900); }
+    .nav-link.active { background: var(--brand-light); color: var(--brand-dark); font-weight: 600; }
+    .nav-link .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gray-300); flex-shrink: 0; }
+    .nav-link.active .dot { background: var(--brand); }
+
+    /* ─── Main ───────────────────────────────────────────────────────── */
+    .main { flex: 1; min-width: 0; padding: 48px 52px 80px; max-width: 960px; }
+
+    /* ─── Page header ────────────────────────────────────────────────── */
+    .page-header {
+      margin-bottom: 40px;
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--gray-200);
+    }
+
+    .page-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--brand-light); color: var(--brand-dark);
+      font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+      padding: 3px 10px; border-radius: 20px; margin-bottom: 12px;
+    }
+
+    .page-header h1 { font-size: 28px; font-weight: 800; color: var(--gray-900); margin-bottom: 8px; }
+    .page-header p { font-size: 15px; color: var(--gray-500); max-width: 600px; }
+
+    .meta-row {
+      display: flex; gap: 20px; margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .meta-pill {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--gray-500);
+    }
+
+    .meta-pill strong { color: var(--gray-700); }
+
+    /* ─── Sections ───────────────────────────────────────────────────── */
+    .section { margin-bottom: 52px; }
+    .section-anchor { display: block; position: relative; top: -80px; visibility: hidden; }
+
+    .section-header {
+      display: flex; align-items: flex-start; gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .section-icon {
+      width: 38px; height: 38px; flex-shrink: 0;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+
+    .section-icon.purple { background: #ede9fe; }
+    .section-icon.blue   { background: #dbeafe; }
+    .section-icon.green  { background: #d1fae5; }
+    .section-icon.amber  { background: #fef3c7; }
+    .section-icon.rose   { background: #ffe4e6; }
+    .section-icon.slate  { background: var(--gray-100); }
+    .section-icon.teal   { background: #ccfbf1; }
+
+    .section-header h2 { font-size: 18px; font-weight: 700; color: var(--gray-900); margin-bottom: 2px; }
+    .section-header p  { font-size: 13px; color: var(--gray-500); }
+
+    /* ─── Cards ──────────────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card + .card { margin-top: 12px; }
+
+    .card-header {
+      padding: 14px 18px;
+      background: var(--gray-50);
+      border-bottom: 1px solid var(--gray-200);
+      font-size: 12px; font-weight: 700;
+      letter-spacing: .04em; text-transform: uppercase;
+      color: var(--gray-500);
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    .card-body { padding: 18px; }
+
+    /* ─── Grid ───────────────────────────────────────────────────────── */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+    @media (max-width: 740px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .main { padding: 28px 20px 60px; }
+      .sidebar { display: none; }
+    }
+
+    /* ─── Flow diagram ───────────────────────────────────────────────── */
+    .flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .flow-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      position: relative;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      left: 15px;
+      top: 34px;
+      width: 2px;
+      height: calc(100% - 10px);
+      background: var(--gray-200);
+    }
+
+    .flow-num {
+      width: 32px; height: 32px; flex-shrink: 0;
+      border-radius: 50%;
+      background: var(--brand); color: #fff;
+      font-size: 13px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      position: relative; z-index: 1;
+    }
+
+    .flow-num.green { background: var(--success); }
+    .flow-num.amber { background: var(--warning); }
+
+    .flow-content { padding-bottom: 20px; flex: 1; }
+    .flow-content h4 { font-size: 14px; font-weight: 600; color: var(--gray-800); margin-bottom: 3px; margin-top: 4px; }
+    .flow-content p  { font-size: 13px; color: var(--gray-500); }
+
+    /* ─── Code blocks ────────────────────────────────────────────────── */
+    pre {
+      background: var(--gray-900);
+      color: #e5e7eb;
+      padding: 16px 18px;
+      border-radius: var(--radius);
+      font-size: 12.5px;
+      line-height: 1.7;
+      overflow-x: auto;
+      margin: 12px 0;
+    }
+
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+    }
+
+    pre code { font-size: inherit; }
+
+    .inline-code {
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      font-size: 12px;
+      background: var(--gray-100);
+      color: var(--brand-dark);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    /* ─── Tables ─────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--gray-200); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+    thead th {
+      background: var(--gray-50);
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      color: var(--gray-500);
+      border-bottom: 1px solid var(--gray-200);
+    }
+
+    tbody td {
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--gray-100);
+      color: var(--gray-700);
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: var(--gray-50); }
+
+    /* ─── Callouts ───────────────────────────────────────────────────── */
+    .callout {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      margin: 14px 0;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .callout-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+    .callout.info    { background: #eff6ff; border-left: 3px solid #3b82f6; color: #1d4ed8; }
+    .callout.success { background: #f0fdf4; border-left: 3px solid var(--success); color: #15803d; }
+    .callout.warning { background: #fffbeb; border-left: 3px solid var(--warning); color: #b45309; }
+    .callout.danger  { background: #fff1f2; border-left: 3px solid var(--danger); color: #be123c; }
+
+    /* ─── Tags ───────────────────────────────────────────────────────── */
+    .tag {
+      display: inline-flex; align-items: center;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px; font-weight: 600;
+    }
+
+    .tag.green  { background: #d1fae5; color: #065f46; }
+    .tag.blue   { background: #dbeafe; color: #1e40af; }
+    .tag.purple { background: #ede9fe; color: #5b21b6; }
+    .tag.amber  { background: #fef3c7; color: #92400e; }
+    .tag.gray   { background: var(--gray-100); color: var(--gray-600); }
+    .tag.red    { background: #fee2e2; color: #991b1b; }
+
+    /* ─── Recipient resolution ───────────────────────────────────────── */
+    .resolution-chain {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .chain-step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border: 1px solid var(--gray-200);
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .chain-step:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+    .chain-step:last-child  { border-radius: 0 0 var(--radius) var(--radius); }
+    .chain-step + .chain-step { border-top: none; }
+
+    .chain-rank {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: var(--brand);
+      color: #fff;
+      font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .chain-rank.gray { background: var(--gray-300); }
+
+    .chain-step .label { font-weight: 600; color: var(--gray-800); min-width: 200px; }
+    .chain-step .desc  { color: var(--gray-500); font-size: 12px; }
+
+    /* ─── Email type cards ───────────────────────────────────────────── */
+    .email-types { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+    .email-card {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .email-card .email-icon {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; margin-bottom: 10px;
+    }
+
+    .email-card h4 { font-size: 14px; font-weight: 700; color: var(--gray-900); margin-bottom: 5px; }
+    .email-card p  { font-size: 12.5px; color: var(--gray-500); margin-bottom: 10px; }
+
+    .email-card dl { font-size: 12px; }
+    .email-card dt { color: var(--gray-400); margin-top: 6px; }
+    .email-card dd { color: var(--gray-700); font-weight: 500; }
+
+    /* ─── Sender identity ────────────────────────────────────────────── */
+    .sender-demo {
+      background: var(--gray-900);
+      color: #e5e7eb;
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      font-size: 13px;
+    }
+
+    .sender-demo .label { color: var(--gray-400); margin-right: 6px; }
+    .sender-demo .val   { color: #86efac; font-family: monospace; }
+    .sender-demo .row   { margin-bottom: 8px; }
+    .sender-demo .row:last-child { margin-bottom: 0; }
+
+    /* ─── DB columns ─────────────────────────────────────────────────── */
+    .col-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: monospace; font-size: 12px;
+    }
+
+    /* ─── Section divider ────────────────────────────────────────────── */
+    .divider { border: none; border-top: 1px solid var(--gray-200); margin: 44px 0; }
+
+    /* ─── File path ──────────────────────────────────────────────────── */
+    .filepath {
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--gray-500);
+      background: var(--gray-100);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    /* ─── TOC progress bar (decorative) ─────────────────────────────── */
+    .progress-bar {
+      height: 3px;
+      background: linear-gradient(90deg, var(--brand), #8b5cf6);
+      border-radius: 2px;
+      margin-bottom: 24px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- ─── Sidebar ──────────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">O</div>
+      <div>
+        <span>OyeChats</span>
+        <small>Email Integration Docs</small>
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Overview</div>
+      <a class="nav-link active" href="#overview"><span class="dot"></span>Introduction</a>
+      <a class="nav-link" href="#email-types"><span class="dot"></span>Email Types</a>
+      <a class="nav-link" href="#sender-identity"><span class="dot"></span>Sender Identity</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Email Flows</div>
+      <a class="nav-link" href="#transcript-flow"><span class="dot"></span>Chat Transcript</a>
+      <a class="nav-link" href="#offline-flow"><span class="dot"></span>Offline Messages</a>
+      <a class="nav-link" href="#qualified-lead-flow"><span class="dot"></span>Qualified Leads</a>
+      <a class="nav-link" href="#handoff-flow"><span class="dot"></span>Handoff Requests</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Live Chat Disabled</div>
+      <a class="nav-link" href="#livechat-disabled"><span class="dot"></span>Leave a Message Flow</a>
+      <a class="nav-link" href="#ai-system-prompt"><span class="dot"></span>AI System Prompt</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Configuration</div>
+      <a class="nav-link" href="#recipients"><span class="dot"></span>Recipient Routing</a>
+      <a class="nav-link" href="#admin-ui"><span class="dot"></span>Admin — Integrations Page</a>
+      <a class="nav-link" href="#feature-flags"><span class="dot"></span>Feature Flags</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Reference</div>
+      <a class="nav-link" href="#database"><span class="dot"></span>Database Schema</a>
+      <a class="nav-link" href="#api-reference"><span class="dot"></span>API Reference</a>
+      <a class="nav-link" href="#migration"><span class="dot"></span>DB Migration</a>
+      <a class="nav-link" href="#files"><span class="dot"></span>Files Changed</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Lead Qualification</div>
+      <a class="nav-link" href="#qual-overview"><span class="dot"></span>Overview</a>
+      <a class="nav-link" href="#qual-tiers"><span class="dot"></span>Tiers &amp; Scoring</a>
+      <a class="nav-link" href="#qual-frameworks"><span class="dot"></span>4 Frameworks</a>
+      <a class="nav-link" href="#qual-bant"><span class="dot"></span>BANT</a>
+      <a class="nav-link" href="#qual-meddic"><span class="dot"></span>MEDDIC</a>
+      <a class="nav-link" href="#qual-champ"><span class="dot"></span>CHAMP</a>
+      <a class="nav-link" href="#qual-gpctba"><span class="dot"></span>GPCTBA/CI</a>
+      <a class="nav-link" href="#qual-modes"><span class="dot"></span>Qualification Modes</a>
+      <a class="nav-link" href="#qual-decay"><span class="dot"></span>Score Decay</a>
+      <a class="nav-link" href="#qual-triggers"><span class="dot"></span>Downstream Triggers</a>
+    </div>
+  </aside>
+
+  <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <div class="progress-bar"></div>
+
+    <!-- ─── Page Header ──────────────────────────────────────────────────── -->
+    <div id="overview" class="page-header">
+      <div class="page-badge">📧 Feature Docs</div>
+      <h1>Email Integration</h1>
+      <p>
+        Complete reference for how OyeChats sends transactional emails — chat transcripts,
+        visitor confirmations, and team notifications — including configuration, routing logic,
+        and the live-chat-disabled fallback flow.
+      </p>
+      <div class="meta-row">
+        <div class="meta-pill">📅 <strong>Last updated:</strong>&nbsp;April 2026</div>
+        <div class="meta-pill">🧱 <strong>Migration:</strong>&nbsp;0023_email_integration</div>
+        <div class="meta-pill">📤 <strong>Provider:</strong>&nbsp;Brevo (Sendinblue)</div>
+        <div class="meta-pill">⚡ <strong>Backend:</strong>&nbsp;FastAPI · Alembic</div>
+      </div>
+    </div>
+
+    <!-- ─── 1 · Email Types ─────────────────────────────────────────────── -->
+    <span class="section-anchor" id="email-types"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon purple">📬</div>
+        <div>
+          <h2>Email Types</h2>
+          <p>Six distinct transactional emails, covering both visitor-facing and team-facing needs</p>
+        </div>
+      </div>
+
+      <div class="email-types">
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#ede9fe">📄</div>
+          <h4>Chat Transcript</h4>
+          <p>Full conversation history sent to the visitor's inbox in a styled HTML email.</p>
+          <dl>
+            <dt>Recipient</dt><dd>Visitor (their email)</dd>
+            <dt>Trigger</dt><dd>"Send transcript" button in widget menu</dd>
+            <dt>Subject</dt><dd>Chat Transcript — {bot_name}</dd>
+            <dt>Gate</dt><dd><span class="tag blue">feature_flags.email_transcript = true</span></dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#d1fae5">✅</div>
+          <h4>Visitor Confirmation</h4>
+          <p>"We received your message" email sent to the visitor after they submit an offline message.</p>
+          <dl>
+            <dt>Recipient</dt><dd>Visitor (email they provided)</dd>
+            <dt>Trigger</dt><dd>Offline message form submitted</dd>
+            <dt>Subject</dt><dd>We received your message — {bot_name}</dd>
+            <dt>Gate</dt><dd><span class="tag green">email_visitor_confirmation = true</span></dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#fef3c7">📥</div>
+          <h4>Offline Message (Team)</h4>
+          <p>Notifies the team when a visitor leaves a message while no operator is online.</p>
+          <dl>
+            <dt>Recipient</dt><dd>Team (notification_emails)</dd>
+            <dt>Trigger</dt><dd>Offline message form submitted</dd>
+            <dt>Subject</dt><dd>[OyeChats] New Offline Message — {bot_name}</dd>
+            <dt>Gate</dt><dd><span class="tag amber">email_on_offline = true</span></dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#dbeafe">🏆</div>
+          <h4>Qualified Lead (Team)</h4>
+          <p>Alerts the team when a visitor reaches SQL/MQL status via the BANT qualification flow.</p>
+          <dl>
+            <dt>Recipient</dt><dd>Team (notification_emails)</dd>
+            <dt>Trigger</dt><dd>BANT qualification threshold crossed</dd>
+            <dt>Subject</dt><dd>[OyeChats] New SQL Lead — {bot_name}</dd>
+            <dt>Gate</dt><dd><span class="tag blue">email_on_qualified = true</span></dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#ffe4e6">🤝</div>
+          <h4>Handoff Request (Team)</h4>
+          <p>Notifies operators when a visitor requests to be connected to a live support agent.</p>
+          <dl>
+            <dt>Recipient</dt><dd>Team (notification_emails)</dd>
+            <dt>Trigger</dt><dd>Visitor clicks "Talk to Human" / operator form submitted</dd>
+            <dt>Subject</dt><dd>[OyeChats] Live Chat Request — {bot_name}</dd>
+            <dt>Gate</dt><dd><span class="tag red">email_on_handoff = true</span></dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#ccfbf1">📞</div>
+          <h4>Callback Request (Team)</h4>
+          <p>Additional variant of the offline notification when the visitor provides a phone number for callback.</p>
+          <dl>
+            <dt>Recipient</dt><dd>Team (notification_emails)</dd>
+            <dt>Trigger</dt><dd>Offline message submitted with phone field filled</dd>
+            <dt>Subject</dt><dd>[OyeChats] Missed Chat — Callback Requested — {bot_name}</dd>
+            <dt>Gate</dt><dd><span class="tag green">email_on_offline = true</span></dd>
+          </dl>
+        </div>
+
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 2 · Sender Identity ─────────────────────────────────────────── -->
+    <span class="section-anchor" id="sender-identity"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon blue">🪪</div>
+        <div>
+          <h2>Sender Identity</h2>
+          <p>Hybrid branding — no DNS setup required for customers</p>
+        </div>
+      </div>
+
+      <p style="font-size:14px;color:var(--gray-600);margin-bottom:16px;">
+        All emails are sent from OyeChats infrastructure (<span class="inline-code">notifications@oyechats.com</span>)
+        but displayed to recipients as coming from the customer's bot. Replies automatically route to the customer's
+        <span class="inline-code">Reply-To</span> address.
+      </p>
+
+      <div class="sender-demo">
+        <div class="row"><span class="label">From:</span> <span class="val">"Acme Support via OyeChats" &lt;notifications@oyechats.com&gt;</span></div>
+        <div class="row"><span class="label">Reply-To:</span> <span class="val">support@acme.com</span></div>
+        <div class="row"><span class="label">To:</span> <span class="val">visitor@example.com</span></div>
+        <div class="row"><span class="label">Subject:</span> <span class="val">Chat Transcript — Acme Support</span></div>
+      </div>
+
+      <div class="callout info" style="margin-top:16px;">
+        <span class="callout-icon">ℹ️</span>
+        <div>
+          <strong>Why this approach?</strong> Customers don't need to verify a custom domain or configure DKIM/SPF records.
+          The hybrid sender pattern (used by Intercom, Zendesk, Mailchimp) lets replies land in the customer's inbox while
+          ensuring emails pass spam filters from OyeChats' verified sending domain.
+        </div>
+      </div>
+
+      <div class="callout success" style="margin-top:8px;">
+        <span class="callout-icon">✅</span>
+        <div>
+          <strong>Reply-To</strong> is set to <span class="inline-code">bot.reply_to_email</span> (configured by the customer
+          in Admin → Integrations → Email). If not configured, the Reply-To header is omitted and replies go to
+          <span class="inline-code">notifications@oyechats.com</span>.
+        </div>
+      </div>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">How the sender name is built (backend)</h4>
+      <pre><code><span style="color:#86efac">def</span> <span style="color:#67e8f9">_branded_sender_name</span>(bot_name: str) -> str:
+    <span style="color:#6ee7b7">"""Returns '{bot_name} via OyeChats'"""</span>
+    name = (bot_name or <span style="color:#fcd34d">"OyeChats"</span>).strip()
+    <span style="color:#86efac">return</span> f<span style="color:#fcd34d">"{name} via OyeChats"</span>
+
+<span style="color:#94a3b8"># Passed to _send_brevo_email() which sets:</span>
+payload[<span style="color:#fcd34d">"sender"</span>] = {<span style="color:#fcd34d">"email"</span>: <span style="color:#fcd34d">"notifications@oyechats.com"</span>, <span style="color:#fcd34d">"name"</span>: sender_name}
+<span style="color:#86efac">if</span> reply_to:
+    payload[<span style="color:#fcd34d">"replyTo"</span>] = {<span style="color:#fcd34d">"email"</span>: reply_to}</code></pre>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 3 · Transcript Flow ─────────────────────────────────────────── -->
+    <span class="section-anchor" id="transcript-flow"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon purple">📄</div>
+        <div>
+          <h2>Chat Transcript Flow</h2>
+          <p>End-to-end: from visitor clicking "Send transcript" to receiving a styled email</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">📱 Step-by-step Flow</div>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-num">1</div>
+              <div class="flow-content">
+                <h4>Visitor opens widget menu</h4>
+                <p>The "Send transcript" item appears in the ChatWindow header menu <em>only</em> when <span class="inline-code">feature_flags.email_transcript !== false</span> AND at least one message exists in the conversation.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">2</div>
+              <div class="flow-content">
+                <h4>Modal appears</h4>
+                <p>A centered overlay modal with a mail icon and email input field. If the visitor already provided their email during lead capture (<span class="inline-code">existingLeadInfo.email</span>), it is pre-filled.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">3</div>
+              <div class="flow-content">
+                <h4>Visitor enters email and clicks Send</h4>
+                <p>The widget calls <span class="inline-code">sendTranscriptEmail(sessionId, recipientEmail)</span> from <span class="filepath">platform/widget/src/services/api.js</span>.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">4</div>
+              <div class="flow-content">
+                <h4>POST /chat/transcript</h4>
+                <p>Widget sends <span class="inline-code">{ session_id, recipient_email }</span> with <span class="inline-code">X-Bot-Key</span> header. Rate limited to <strong>3 requests/minute per bot key</strong> (SlowAPI).</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">5</div>
+              <div class="flow-content">
+                <h4>Backend validates and fetches messages</h4>
+                <p>Confirms the <span class="inline-code">session_id</span> belongs to this bot. Fetches all <span class="inline-code">ChatMessage</span> rows for the session in chronological order.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">6</div>
+              <div class="flow-content">
+                <h4>send_transcript_email() called</h4>
+                <p>Renders a chat-bubble HTML template: user messages right-aligned (blue), bot messages left-aligned (gray). Timestamps and role labels included. Calls Brevo API asynchronously.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num green">✓</div>
+              <div class="flow-content">
+                <h4>Success / Error shown in modal</h4>
+                <p>On success: checkmark icon + "Transcript sent to {email}". On error: message with retry option. Modal dismisses automatically after 3 seconds on success.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">API Request</h4>
+      <pre><code><span style="color:#86efac">POST</span> <span style="color:#67e8f9">/chat/transcript</span>
+<span style="color:#94a3b8">X-Bot-Key: bot-xxxxxxxxxxxxxxxx</span>
+<span style="color:#94a3b8">Content-Type: application/json</span>
+
+{
+  <span style="color:#fcd34d">"session_id"</span>: <span style="color:#86efac">"abc-123-def-456"</span>,
+  <span style="color:#fcd34d">"recipient_email"</span>: <span style="color:#86efac">"visitor@example.com"</span>
+}</code></pre>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">Email HTML Template</h4>
+      <div class="callout info">
+        <span class="callout-icon">💬</span>
+        <div>The transcript email renders each message as a chat bubble:
+          <ul style="margin-top:6px;padding-left:18px;line-height:1.9">
+            <li><strong>User messages</strong>: right-aligned, blue/indigo background</li>
+            <li><strong>Bot messages</strong>: left-aligned, gray background</li>
+            <li><strong>Operator messages</strong>: left-aligned, teal background with "Support Agent" label</li>
+            <li>ISO timestamp shown below each bubble</li>
+            <li>Footer: "This transcript was sent from {bot_name} via OyeChats"</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 4 · Offline Message Flow ───────────────────────────────────── -->
+    <span class="section-anchor" id="offline-flow"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon amber">📥</div>
+        <div>
+          <h2>Offline Message Flow</h2>
+          <p>Two simultaneous emails when a visitor leaves a message while operators are unavailable</p>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:16px;">
+        <div class="card">
+          <div class="card-header">👤 Email 1 — Visitor Confirmation</div>
+          <div class="card-body">
+            <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">Sent immediately to the visitor after they submit the offline message form.</p>
+            <dl style="font-size:13px;">
+              <dt style="color:var(--gray-400);margin-top:8px;">Subject</dt>
+              <dd>We received your message — {bot_name}</dd>
+              <dt style="color:var(--gray-400);margin-top:8px;">From</dt>
+              <dd>"{bot_name} via OyeChats" &lt;notifications@oyechats.com&gt;</dd>
+              <dt style="color:var(--gray-400);margin-top:8px;">Reply-To</dt>
+              <dd>bot.reply_to_email (if configured)</dd>
+              <dt style="color:var(--gray-400);margin-top:8px;">Gate</dt>
+              <dd><span class="tag green">email_visitor_confirmation = true</span></dd>
+            </dl>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">🏢 Email 2 — Team Notification</div>
+          <div class="card-body">
+            <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">Sent to all configured team recipients. Includes visitor name, email, phone, and message.</p>
+            <dl style="font-size:13px;">
+              <dt style="color:var(--gray-400);margin-top:8px;">Subject</dt>
+              <dd>[OyeChats] New Offline Message — {bot_name}</dd>
+              <dt style="color:var(--gray-400);margin-top:8px;">To</dt>
+              <dd>get_notification_recipients(bot, "offline_message")</dd>
+              <dt style="color:var(--gray-400);margin-top:8px;">Gate</dt>
+              <dd><span class="tag amber">email_on_offline = true</span></dd>
+              <dt style="color:var(--gray-400);margin-top:8px;">Phone?</dt>
+              <dd>If provided → subject becomes "Callback Requested"</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">🔀 Flow in offline_message_routes.py</div>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-num">1</div>
+              <div class="flow-content">
+                <h4>POST /offline-messages</h4>
+                <p>Widget or form submits <span class="inline-code">{ name, email, phone?, message }</span>. Saved to <span class="inline-code">offline_messages</span> table.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">2</div>
+              <div class="flow-content">
+                <h4>Team notification loop</h4>
+                <p>If <span class="inline-code">bot.email_on_offline</span>: resolve recipients via <span class="inline-code">get_notification_recipients(bot, "offline_message")</span>. Fires one email per address asynchronously.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num green">✓</div>
+              <div class="flow-content">
+                <h4>Visitor confirmation</h4>
+                <p>If <span class="inline-code">bot.email_visitor_confirmation</span> AND visitor provided an email: calls <span class="inline-code">send_visitor_confirmation_email()</span>. Failure is caught and logged — does not block the main response.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 5 · Qualified Lead & Handoff ───────────────────────────────── -->
+    <span class="section-anchor" id="qualified-lead-flow"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon blue">🏆</div>
+        <div>
+          <h2>Qualified Lead &amp; Handoff Notifications</h2>
+          <p>Team notifications routed through the new multi-recipient system</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">🏆 Qualified Lead</div>
+          <div class="card-body">
+            <div class="flow">
+              <div class="flow-step">
+                <div class="flow-num">1</div>
+                <div class="flow-content">
+                  <h4>BANT threshold crossed</h4>
+                  <p>SDR service in <span class="filepath">rag_service.py</span> evaluates visitor answers.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num">2</div>
+                <div class="flow-content">
+                  <h4>Check email_on_qualified</h4>
+                  <p>Gate flag read from bot settings.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num green">✓</div>
+                <div class="flow-content">
+                  <h4>Multi-recipient send</h4>
+                  <p><span class="inline-code">get_notification_recipients(bot, "qualified_lead")</span> → email loop.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="handoff-flow">
+          <div class="card-header">🤝 Handoff Request</div>
+          <div class="card-body">
+            <div class="flow">
+              <div class="flow-step">
+                <div class="flow-num">1</div>
+                <div class="flow-content">
+                  <h4>Visitor requests live chat</h4>
+                  <p>HandoffForm submitted in widget. Hits <span class="filepath">operator_routes.py</span>.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num">2</div>
+                <div class="flow-content">
+                  <h4>Check email_on_handoff</h4>
+                  <p>Gate flag read from bot settings.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num green">✓</div>
+                <div class="flow-content">
+                  <h4>Multi-recipient send with Reply-To</h4>
+                  <p>Passes <span class="inline-code">reply_to=bot.reply_to_email</span> so team can reply directly to the visitor.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 6 · Live Chat Disabled ──────────────────────────────────────── -->
+    <span class="section-anchor" id="livechat-disabled"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon rose">🔕</div>
+        <div>
+          <h2>Live Chat Disabled — Leave a Message Flow</h2>
+          <p>Graceful fallback when <span class="inline-code">live_chat_enabled = false</span> in bot settings</p>
+        </div>
+      </div>
+
+      <div class="callout warning">
+        <span class="callout-icon">⚠️</span>
+        <div>
+          When <strong>Live Chat is turned off</strong> in Admin → Settings, the following changes activate automatically — no code change needed per bot.
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px;">
+        <div class="card-header">📱 Widget Behavior Changes</div>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-num">1</div>
+              <div class="flow-content">
+                <h4>"Talk to Human" button hidden</h4>
+                <p>No handoff CTA anywhere in the widget when live chat is off — avoids dead-end UI.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">2</div>
+              <div class="flow-content">
+                <h4>"Leave a message" appears in menu</h4>
+                <p>A new item in the header menu (alongside "Send transcript"). Visible only when <span class="inline-code">!settings.live_chat_enabled &amp;&amp; chatMode === 'bot'</span>.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">3</div>
+              <div class="flow-content">
+                <h4>Visitor fills the form</h4>
+                <p>Name (required), Email (required), Phone (optional — labeled "For callback"), Message (required). Same form used for offline messages.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num green">✓</div>
+              <div class="flow-content">
+                <h4>Both emails fire on submit</h4>
+                <p>Visitor confirmation + team notification. Success message: "Thank you! We've received your message and will get back to you at {email}."</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── 7 · AI System Prompt ────────────────────────────────────────── -->
+    <span class="section-anchor" id="ai-system-prompt"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon teal">🤖</div>
+        <div>
+          <h2>AI System Prompt — Live Chat Awareness</h2>
+          <p>The bot's LLM instructions differ based on whether live chat is available</p>
+        </div>
+      </div>
+
+      <p style="font-size:14px;color:var(--gray-600);margin-bottom:16px;">
+        <span class="filepath">platform/api/app/services/rag_service.py</span> — <span class="inline-code">build_hybrid_prompt()</span>
+        injects a different <em>Human Support Requests</em> section into the system prompt depending on the
+        <span class="inline-code">live_chat_enabled</span> flag.
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header" style="color:var(--success)">✅ Live Chat ENABLED</div>
+          <div class="card-body">
+            <pre style="margin:0;font-size:11.5px;background:var(--gray-900);padding:12px;"><code>6. HUMAN SUPPORT REQUESTS:
+If the user wants to speak with
+a human, call the tool
+'trigger_handoff' OR clearly
+indicate you are transferring
+them to a live agent.</code></pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header" style="color:var(--danger)">🔕 Live Chat DISABLED</div>
+          <div class="card-body">
+            <pre style="margin:0;font-size:11.5px;background:var(--gray-900);padding:12px;"><code>6. HUMAN SUPPORT REQUESTS:
+Live chat is currently not
+available. If the user asks
+to speak with a human, let
+them know they can leave a
+message using the contact
+form in the menu — the team
+will follow up via email.</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout success" style="margin-top:14px;">
+        <span class="callout-icon">💡</span>
+        <div>
+          This prevents the AI from offering a dead-end "I'll connect you with a human" response when no operator
+          is available. Instead, it proactively guides the visitor to the "Leave a message" form in the widget menu.
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 8 · Recipient Routing ──────────────────────────────────────── -->
+    <span class="section-anchor" id="recipients"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon green">📋</div>
+        <div>
+          <h2>Recipient Routing</h2>
+          <p>Four-step fallback chain: <span class="inline-code">get_notification_recipients(bot, event_type)</span></p>
+        </div>
+      </div>
+
+      <p style="font-size:14px;color:var(--gray-600);margin-bottom:16px;">
+        Every team notification uses this resolver. It allows per-event overrides (e.g., route qualified leads
+        to sales, handoff requests to support) while maintaining a global default as fallback.
+      </p>
+
+      <div class="resolution-chain">
+        <div class="chain-step">
+          <div class="chain-rank">1</div>
+          <div class="label">notification_emails[event_type]</div>
+          <div class="desc">E.g. <span class="inline-code">notification_emails["qualified_lead"]</span> → dedicated sales recipients</div>
+        </div>
+        <div class="chain-step">
+          <div class="chain-rank">2</div>
+          <div class="label">notification_emails["default"]</div>
+          <div class="desc">Global recipients for all events with no override configured</div>
+        </div>
+        <div class="chain-step">
+          <div class="chain-rank">3</div>
+          <div class="label">notification_email (legacy, comma-split)</div>
+          <div class="desc">Old single-email field. Comma-split for backward compatibility with pre-migration bots.</div>
+        </div>
+        <div class="chain-step">
+          <div class="chain-rank gray">∅</div>
+          <div class="label">Empty list — no email sent</div>
+          <div class="desc">No recipients configured for this bot. Notification silently skipped.</div>
+        </div>
+      </div>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">JSONB Schema — notification_emails</h4>
+      <pre><code>{
+  <span style="color:#fcd34d">"default"</span>: [<span style="color:#86efac">"team@acme.com"</span>, <span style="color:#86efac">"manager@acme.com"</span>],
+  <span style="color:#fcd34d">"qualified_lead"</span>: [<span style="color:#86efac">"sales@acme.com"</span>],         <span style="color:#94a3b8">// optional override</span>
+  <span style="color:#fcd34d">"handoff_request"</span>: [<span style="color:#86efac">"support@acme.com"</span>],       <span style="color:#94a3b8">// optional override</span>
+  <span style="color:#fcd34d">"offline_message"</span>: []                            <span style="color:#94a3b8">// empty = falls back to default</span>
+}</code></pre>
+
+      <div class="callout info" style="margin-top:12px;">
+        <span class="callout-icon">ℹ️</span>
+        <div>
+          Supported event type keys: <span class="inline-code">qualified_lead</span>, <span class="inline-code">handoff_request</span>,
+          <span class="inline-code">offline_message</span>. The <span class="inline-code">default</span> key is always the global fallback.
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 9 · Admin UI ────────────────────────────────────────────────── -->
+    <span class="section-anchor" id="admin-ui"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon slate">⚙️</div>
+        <div>
+          <h2>Admin Dashboard — Integrations Page</h2>
+          <p>Unified <span class="inline-code">/integrations</span> page with Email and Webhooks tabs</p>
+        </div>
+      </div>
+
+      <div class="callout info">
+        <span class="callout-icon">🔗</span>
+        <div>
+          <strong>URL:</strong> <span class="inline-code">/integrations</span> (Email tab default) or
+          <span class="inline-code">/integrations?tab=webhooks</span> for Webhooks tab.
+          Old URLs <span class="inline-code">/webhooks</span> and <span class="inline-code">/integrations/email</span> redirect here automatically.
+        </div>
+      </div>
+
+      <div style="margin-top:16px;">
+        <div class="card">
+          <div class="card-header">📧 Email Tab — Three Sections</div>
+          <div class="card-body">
+            <div class="flow">
+              <div class="flow-step">
+                <div class="flow-num">A</div>
+                <div class="flow-content">
+                  <h4>Sender Identity</h4>
+                  <p>Read-only display of the send-from address. Editable <strong>Reply-To Email</strong> field — replies from visitors/team land here.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num">B</div>
+                <div class="flow-content">
+                  <h4>Notification Recipients</h4>
+                  <p><strong>Default Recipients</strong> (comma-separated). Expandable <strong>Per-event overrides</strong> for Qualified Leads, Handoff Requests, and Offline Messages.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num green">C</div>
+                <div class="flow-content">
+                  <h4>Email Toggles</h4>
+                  <p>Five on/off switches: notify team on qualified leads, handoff requests, offline messages; send confirmation to visitors; allow visitors to email transcript.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="card-header">🔗 Webhooks Tab</div>
+          <div class="card-body">
+            <p style="font-size:13px;color:var(--gray-600);">
+              The existing Webhooks page is embedded here via the <span class="inline-code">embedded={true}</span> prop.
+              No functional changes — same 3 sub-tabs (Webhooks, Delivery Log, CRM Integration), just re-parented
+              under the unified Integrations page.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 10 · Feature Flags ──────────────────────────────────────────── -->
+    <span class="section-anchor" id="feature-flags"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon amber">🚩</div>
+        <div>
+          <h2>Feature Flags &amp; Toggles</h2>
+          <p>All email behaviors are individually gated and configurable per bot</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Flag / Column</th>
+              <th>Default</th>
+              <th>Controls</th>
+              <th>Configured In</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="inline-code">email_on_qualified</span></td>
+              <td><span class="tag green">true</span></td>
+              <td>Team notification on qualified lead events</td>
+              <td>Admin → Integrations → Email Toggles</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">email_on_handoff</span></td>
+              <td><span class="tag green">true</span></td>
+              <td>Team notification on handoff requests</td>
+              <td>Admin → Integrations → Email Toggles</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">email_on_offline</span></td>
+              <td><span class="tag green">true</span></td>
+              <td>Team notification on offline messages</td>
+              <td>Admin → Integrations → Email Toggles</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">email_visitor_confirmation</span></td>
+              <td><span class="tag green">true</span></td>
+              <td>Visitor confirmation email on offline messages</td>
+              <td>Admin → Integrations → Email Toggles</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">feature_flags.email_transcript</span></td>
+              <td><span class="tag gray">false</span></td>
+              <td>Enables "Send transcript" in widget menu</td>
+              <td>Admin → Integrations → Email Toggles</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">reply_to_email</span></td>
+              <td><span class="tag gray">null</span></td>
+              <td>Reply-To header on all outbound emails</td>
+              <td>Admin → Integrations → Sender Identity</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">notification_emails</span></td>
+              <td><span class="tag gray">null</span></td>
+              <td>Per-event recipient routing JSONB</td>
+              <td>Admin → Integrations → Recipients</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 11 · Database ───────────────────────────────────────────────── -->
+    <span class="section-anchor" id="database"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon slate">🗄️</div>
+        <div>
+          <h2>Database Schema Changes</h2>
+          <p>New columns added to the <span class="inline-code">bots</span> table</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Column</th>
+              <th>Type</th>
+              <th>Default</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="inline-code">notification_emails</span></td>
+              <td><span class="tag blue">JSONB</span></td>
+              <td>NULL</td>
+              <td>Per-event recipient routing object</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">reply_to_email</span></td>
+              <td><span class="tag gray">String</span></td>
+              <td>NULL</td>
+              <td>Reply-To header on all outbound emails</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">email_on_offline</span></td>
+              <td><span class="tag green">Boolean</span></td>
+              <td>true</td>
+              <td>Toggle: team notification on offline messages</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">email_visitor_confirmation</span></td>
+              <td><span class="tag green">Boolean</span></td>
+              <td>true</td>
+              <td>Toggle: visitor confirmation email</td>
+            </tr>
+            <tr>
+              <td><span class="inline-code">notification_email</span> (legacy)</td>
+              <td><span class="tag amber">String</span></td>
+              <td>NULL</td>
+              <td>Old single-address field — kept for backward compat</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warning" style="margin-top:14px;">
+        <span class="callout-icon">⚠️</span>
+        <div>
+          <strong>email_on_qualified</strong> and <strong>email_on_handoff</strong> were already present on the Bot model
+          before this migration. The migration adds the 4 new columns above.
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 12 · API Reference ──────────────────────────────────────────── -->
+    <span class="section-anchor" id="api-reference"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon purple">🔌</div>
+        <div>
+          <h2>API Reference</h2>
+          <p>New and modified endpoints</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="tag green">POST</span>&nbsp; /chat/transcript — Send Chat Transcript Email
+        </div>
+        <div class="card-body">
+          <div class="grid-2" style="margin-bottom:16px;">
+            <div>
+              <p style="font-size:12px;color:var(--gray-400);margin-bottom:4px;">AUTH</p>
+              <p style="font-size:13px;"><span class="inline-code">X-Bot-Key</span> (widget auth)</p>
+            </div>
+            <div>
+              <p style="font-size:12px;color:var(--gray-400);margin-bottom:4px;">RATE LIMIT</p>
+              <p style="font-size:13px;">3 requests / minute per bot key</p>
+            </div>
+          </div>
+
+          <p style="font-size:12px;color:var(--gray-400);margin-bottom:4px;">REQUEST BODY</p>
+          <pre style="margin:0 0 16px;"><code>{
+  <span style="color:#fcd34d">"session_id"</span>: <span style="color:#86efac">"string (UUID)"</span>,         <span style="color:#94a3b8">// required</span>
+  <span style="color:#fcd34d">"recipient_email"</span>: <span style="color:#86efac">"string (email)"</span>  <span style="color:#94a3b8">// required, validated by regex</span>
+}</code></pre>
+
+          <p style="font-size:12px;color:var(--gray-400);margin-bottom:4px;">SUCCESS RESPONSE — 200</p>
+          <pre style="margin:0 0 16px;"><code>{ <span style="color:#fcd34d">"success"</span>: <span style="color:#86efac">true</span> }</code></pre>
+
+          <p style="font-size:12px;color:var(--gray-400);margin-bottom:4px;">ERROR RESPONSES</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Status</th><th>Reason</th></tr></thead>
+              <tbody>
+                <tr><td>400</td><td>Invalid email format / session not found for this bot</td></tr>
+                <tr><td>404</td><td>No messages found for session</td></tr>
+                <tr><td>422</td><td>Request body validation error</td></tr>
+                <tr><td>429</td><td>Rate limit exceeded (3/min)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px;">
+        <div class="card-header">
+          <span class="tag blue">PATCH</span>&nbsp; /bots/{bot_id} — Updated Fields
+        </div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
+            The <span class="inline-code">UpdateBotRequest</span> and <span class="inline-code">BotResponse</span> schemas
+            now include the following new fields:
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Field</th><th>Type</th><th>Direction</th></tr></thead>
+              <tbody>
+                <tr><td><span class="inline-code">notification_emails</span></td><td>object | null</td><td>Read + Write</td></tr>
+                <tr><td><span class="inline-code">reply_to_email</span></td><td>string | null</td><td>Read + Write</td></tr>
+                <tr><td><span class="inline-code">email_on_offline</span></td><td>boolean</td><td>Read + Write</td></tr>
+                <tr><td><span class="inline-code">email_visitor_confirmation</span></td><td>boolean</td><td>Read + Write</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 13 · Migration ──────────────────────────────────────────────── -->
+    <span class="section-anchor" id="migration"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon teal">🔄</div>
+        <div>
+          <h2>Database Migration</h2>
+          <p>Run once to activate all email integration features</p>
+        </div>
+      </div>
+
+      <div class="callout danger">
+        <span class="callout-icon">🚨</span>
+        <div><strong>Required before deploying.</strong> The new API fields and email toggles will 500 without this migration.</div>
+      </div>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:16px;margin-bottom:8px;">Run the migration</h4>
+      <pre><code>conda activate oye
+cd platform/api
+uv run alembic upgrade head</code></pre>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">What migration 0023 does</h4>
+
+      <div class="flow">
+        <div class="flow-step">
+          <div class="flow-num">1</div>
+          <div class="flow-content">
+            <h4>Adds 4 columns to bots table</h4>
+            <p><span class="inline-code">notification_emails</span> (JSONB), <span class="inline-code">reply_to_email</span> (String),
+               <span class="inline-code">email_on_offline</span> (Boolean, default true), <span class="inline-code">email_visitor_confirmation</span> (Boolean, default true).</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">2</div>
+          <div class="flow-content">
+            <h4>Data migration — legacy field</h4>
+            <p>For all bots with a non-empty <span class="inline-code">notification_email</span> string, copies the value into
+               <span class="inline-code">notification_emails.default</span> as a JSON array. Existing bots continue working immediately.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num green">✓</div>
+          <div class="flow-content">
+            <h4>Rollback safe</h4>
+            <p>The <span class="inline-code">downgrade()</span> function drops only the 4 new columns. The legacy <span class="inline-code">notification_email</span>
+               column is untouched. Rollback is safe.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 14 · Files Changed ──────────────────────────────────────────── -->
+    <span class="section-anchor" id="files"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon slate">📁</div>
+        <div>
+          <h2>Files Changed</h2>
+          <p>Full list of modified and new files across all four sub-projects</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>File</th><th>Status</th><th>Changes</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="filepath">platform/api/alembic/versions/0023_email_integration.py</span></td>
+              <td><span class="tag green">NEW</span></td>
+              <td>Alembic migration — 4 new columns + data migration</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/api/app/db/models.py</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>4 new Bot columns, JSONB import</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/api/app/services/email_service.py</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>reply_to/sender_name support, multi-recipient helper, 2 new email templates</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/api/app/api/chat_routes.py</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>POST /chat/transcript endpoint + TranscriptEmailRequest model</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/api/app/api/bot_routes.py</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>UpdateBotRequest + BotResponse — 4 new fields</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/api/app/api/offline_message_routes.py</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>Visitor confirmation email, multi-recipient team notification</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/api/app/services/rag_service.py</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>Conditional system prompt for live_chat_enabled, multi-recipient qualified lead</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/api/app/api/operator_routes.py</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>Multi-recipient handoff notification with Reply-To</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/widget/src/services/api.js</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>sendTranscriptEmail() function</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/widget/src/components/ChatWindow.jsx</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>Transcript modal, "Leave a message" menu item, live-chat-disabled flow</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/app/src/pages/Integrations.jsx</span></td>
+              <td><span class="tag green">NEW</span></td>
+              <td>Unified Email + Webhooks page with tab navigation</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/app/src/pages/Webhooks.jsx</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>Added embedded prop for use inside Integrations page</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/app/src/App.jsx</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>/integrations route, backward-compat redirects from /webhooks and /integrations/email</td>
+            </tr>
+            <tr>
+              <td><span class="filepath">platform/app/src/layouts/Sidebar.jsx</span></td>
+              <td><span class="tag blue">MODIFIED</span></td>
+              <td>Replaced separate Webhooks + Email Integration nav items with single "Integrations"</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         LEAD QUALIFICATION SYSTEM
+    ════════════════════════════════════════════════════════════════════════ -->
+
+    <div style="margin-top:60px;padding:24px 0 24px;border-top:3px solid var(--brand);border-bottom:1px solid var(--gray-200);margin-bottom:40px;">
+      <div class="page-badge">🏆 Lead Qualification</div>
+      <h1 style="font-size:26px;font-weight:800;color:var(--gray-900);margin:8px 0 6px;">Lead Qualification System</h1>
+      <p style="font-size:15px;color:var(--gray-500);max-width:600px;">
+        How OyeChats scores, tiers, and qualifies visitors through conversational AI — covering all four frameworks,
+        scoring math, tier thresholds, decay, and downstream actions.
+      </p>
+    </div>
+
+    <!-- ─── Qual Overview ────────────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-overview"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon purple">🧠</div>
+        <div>
+          <h2>How It Works — Overview</h2>
+          <p>Each visitor conversation is silently scored across multiple dimensions as they chat</p>
+        </div>
+      </div>
+
+      <p style="font-size:14px;color:var(--gray-600);margin-bottom:16px;">
+        OyeChats embeds an LLM-powered qualification engine inside every chatbot. As the visitor talks,
+        the system extracts signals for each dimension (e.g., Budget, Need, Timeline), assigns rubric scores,
+        computes a composite 0–100 score, and classifies the visitor into a tier. This happens in two modes:
+        inline (background signals during normal chat) and SDR (a dedicated qualification conversation).
+      </p>
+
+      <div class="card">
+        <div class="card-header">🔀 End-to-End Qualification Flow</div>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-num">1</div>
+              <div class="flow-content">
+                <h4>Visitor sends a message</h4>
+                <p>Widget sends to either <span class="inline-code">POST /chat</span> (RAG mode) or <span class="inline-code">POST /chat/sdr</span> (SDR mode).</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">2</div>
+              <div class="flow-content">
+                <h4>LLM extracts dimension signals</h4>
+                <p>Background extraction call after each response. Parses free-text to identify which BANT/framework dimensions are present and at what level.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">3</div>
+              <div class="flow-content">
+                <h4>Rubric score assigned per dimension</h4>
+                <p>Each dimension has 4–5 labeled options with discrete point values. E.g., "Urgent need" = 20 pts, "Just browsing" = 5 pts.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">4</div>
+              <div class="flow-content">
+                <h4>Composite score computed (0–100)</h4>
+                <p>Weighted average across all enabled dimensions, normalized by each dimension's max possible score.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">5</div>
+              <div class="flow-content">
+                <h4>Tier classified</h4>
+                <p>Score → <span class="tag gray">unqualified</span> / <span class="tag blue">MQL</span> / <span class="tag amber">SAL</span> / <span class="tag green">SQL</span> based on configurable thresholds.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num green">✓</div>
+              <div class="flow-content">
+                <h4>Downstream actions fire on tier upgrade</h4>
+                <p>SQL tier: team notification email, Calendly booking CTA in widget. All tiers: visible in Admin → Leads with full dimension breakdown.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── Tiers & Scoring ──────────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-tiers"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon green">📊</div>
+        <div>
+          <h2>Tiers &amp; Scoring</h2>
+          <p>Composite 0–100 score → 4 tiers with configurable thresholds</p>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:16px;">
+        <div class="card">
+          <div class="card-header">🎯 Tier Thresholds (default)</div>
+          <div class="card-body">
+            <div class="resolution-chain">
+              <div class="chain-step">
+                <div class="chain-rank" style="background:#94a3b8">∅</div>
+                <div class="label"><span class="tag gray">unqualified</span></div>
+                <div class="desc">Score 0–29 — no meaningful signals yet</div>
+              </div>
+              <div class="chain-step">
+                <div class="chain-rank" style="background:#3b82f6">M</div>
+                <div class="label"><span class="tag blue">MQL</span> — Marketing Qualified</div>
+                <div class="desc">Score ≥ 30 — shows intent, needs nurturing</div>
+              </div>
+              <div class="chain-step">
+                <div class="chain-rank" style="background:#f59e0b">S</div>
+                <div class="label"><span class="tag amber">SAL</span> — Sales Accepted</div>
+                <div class="desc">Score ≥ 55 — sales-ready, assign to rep</div>
+              </div>
+              <div class="chain-step">
+                <div class="chain-rank" style="background:#10b981">★</div>
+                <div class="label"><span class="tag green">SQL</span> — Sales Qualified</div>
+                <div class="desc">Score ≥ 75 — hot lead, triggers email + Calendly CTA</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">🔢 Composite Score Formula</div>
+          <div class="card-body" style="font-size:13px;color:var(--gray-600);line-height:1.7;">
+            <p style="margin-bottom:10px;">For each <strong>enabled</strong> dimension:</p>
+            <pre style="font-size:12px;margin-bottom:12px;"><code>normalized = (raw_score / max_possible) * 100
+weighted   = normalized × (dim_weight / total_weight)
+composite  = Σ weighted   (capped 0–100)</code></pre>
+            <p style="margin-bottom:6px;"><strong>Example (BANT, all 4 dims equal weight):</strong></p>
+            <ul style="padding-left:18px;line-height:1.9;">
+              <li>Need: 20/25 → 80 × 0.25 = 20</li>
+              <li>Timeline: 15/25 → 60 × 0.25 = 15</li>
+              <li>Authority: 10/25 → 40 × 0.25 = 10</li>
+              <li>Budget: 5/25 → 20 × 0.25 = 5</li>
+              <li><strong>Composite = 50 → SAL tier</strong></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout info">
+        <span class="callout-icon">ℹ️</span>
+        <div>
+          Thresholds are <strong>per-bot configurable</strong> via <span class="inline-code">bant_config.thresholds</span>
+          (stored as JSONB on the Bot model). The default <span class="inline-code">{"mql": 30, "sal": 55, "sql": 75}</span>
+          applies when no override is set. Admins can tune them in the Qualification settings page.
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── 4 Frameworks ────────────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-frameworks"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon blue">🏗️</div>
+        <div>
+          <h2>The 4 Qualification Frameworks</h2>
+          <p>Each is a preset in <span class="filepath">qualification_service.py → PRESET_FRAMEWORKS</span>, selectable per bot</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="email-card">
+          <div class="email-icon" style="background:#ede9fe">B</div>
+          <h4>BANT</h4>
+          <p>Classic sales framework. Best for SMB / transactional SaaS where budget and timeline are clear-cut.</p>
+          <dl>
+            <dt>Dimensions (4)</dt><dd>Budget · Authority · Need · Timeline</dd>
+            <dt>Weights</dt><dd>25% each (equal)</dd>
+            <dt>Probing order</dt><dd>Need → Timeline → Authority → Budget</dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#dbeafe">M</div>
+          <h4>MEDDIC</h4>
+          <p>Enterprise-grade framework for complex sales with multiple stakeholders and long cycles.</p>
+          <dl>
+            <dt>Dimensions (6)</dt><dd>Metrics · Economic Buyer · Decision Criteria · Decision Process · Identify Pain · Champion</dd>
+            <dt>Weights</dt><dd>17% · 17% · 17% · 17% · 16% · 16%</dd>
+            <dt>Probing order</dt><dd>Pain → Metrics → Economic Buyer → Criteria → Process → Champion</dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#d1fae5">C</div>
+          <h4>CHAMP</h4>
+          <p>Challenge-first framework. Leads with the prospect's pain before discussing money or authority.</p>
+          <dl>
+            <dt>Dimensions (4)</dt><dd>Challenges · Authority · Money · Prioritization</dd>
+            <dt>Weights</dt><dd>25% each (equal)</dd>
+            <dt>Probing order</dt><dd>Challenges → Authority → Money → Prioritization</dd>
+          </dl>
+        </div>
+
+        <div class="email-card">
+          <div class="email-icon" style="background:#fef3c7">G</div>
+          <h4>GPCTBA/CI</h4>
+          <p>HubSpot's modern inbound framework — goals and consequences-focused, 7 dimensions.</p>
+          <dl>
+            <dt>Dimensions (7)</dt><dd>Goals · Plans · Challenges · Timeline · Budget · Authority · Consequences/Implications</dd>
+            <dt>Weights</dt><dd>14% each × 5 + 15% × 2</dd>
+            <dt>Probing order</dt><dd>Goals → Plans → Challenges → Timeline → Budget → Authority → Consequences</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="callout success" style="margin-top:16px;">
+        <span class="callout-icon">💡</span>
+        <div>
+          All frameworks share the same <strong>3-tier threshold defaults</strong> (MQL 30 / SAL 55 / SQL 75)
+          and the same scoring pipeline. The framework only changes which dimensions are assessed and what the
+          probing order is — not how scores are aggregated.
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── BANT Deep Dive ──────────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-bant"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon purple">B</div>
+        <div>
+          <h2>BANT — Deep Dive</h2>
+          <p>The default framework. All 4 dimensions, their rubric options, and scoring</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">💡 Need (25 pts max)</div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Label</th><th>Score</th></tr></thead>
+                <tbody>
+                  <tr><td>Just browsing</td><td>5</td></tr>
+                  <tr><td>Exploring solutions</td><td>10</td></tr>
+                  <tr><td>Active pain point</td><td>15</td></tr>
+                  <tr><td>Urgent need</td><td>20</td></tr>
+                  <tr><td>Critical / blocking</td><td>25</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">CTA prompt: "What best describes your situation?"</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">⏱️ Timeline (25 pts max)</div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Label</th><th>Score</th></tr></thead>
+                <tbody>
+                  <tr><td>No timeline</td><td>5</td></tr>
+                  <tr><td>6–12 months</td><td>10</td></tr>
+                  <tr><td>3–6 months</td><td>15</td></tr>
+                  <tr><td>1–3 months</td><td>20</td></tr>
+                  <tr><td>This month</td><td>25</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">CTA prompt: "When are you looking to get started?"</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">👤 Authority (25 pts max)</div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Label</th><th>Score</th></tr></thead>
+                <tbody>
+                  <tr><td>Researching for someone</td><td>5</td></tr>
+                  <tr><td>Team member / influencer</td><td>10</td></tr>
+                  <tr><td>Manager / champion</td><td>15</td></tr>
+                  <tr><td>Decision maker</td><td>20</td></tr>
+                  <tr><td>Budget owner</td><td>25</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">CTA disabled. Probed conversationally.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">💰 Budget (25 pts max)</div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Label</th><th>Score</th></tr></thead>
+                <tbody>
+                  <tr><td>No budget yet</td><td>5</td></tr>
+                  <tr><td>Under $1K/mo</td><td>10</td></tr>
+                  <tr><td>$1K–5K/mo</td><td>15</td></tr>
+                  <tr><td>$5K–20K/mo</td><td>20</td></tr>
+                  <tr><td>$20K+/mo</td><td>25</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:11px;color:var(--gray-400);margin-top:8px;">CTA disabled. Probed conversationally.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── MEDDIC Deep Dive ─────────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-meddic"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon blue">M</div>
+        <div>
+          <h2>MEDDIC — Deep Dive</h2>
+          <p>6-dimension enterprise framework — max score per dim is 21 pts (weighted to 100)</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Dimension</th><th>Weight</th><th>Bottom (4pts)</th><th>Top (21pts)</th><th>CTA</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Metrics</strong></td><td>17%</td>
+              <td>No measurable impact defined</td><td>Board-level quantified outcomes</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Economic Buyer</strong></td><td>17%</td>
+              <td>Unknown buyer</td><td>Economic buyer actively driving deal</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Decision Criteria</strong></td><td>17%</td>
+              <td>Criteria unknown</td><td>Your strengths map to top criteria</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+            <tr>
+              <td><strong>Decision Process</strong></td><td>17%</td>
+              <td>Process unknown</td><td>Procurement path and approvals confirmed</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+            <tr>
+              <td><strong>Identify Pain</strong></td><td>16%</td>
+              <td>Pain unclear</td><td>Critical pain tied to executive goals</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Champion</strong></td><td>16%</td>
+              <td>No internal champion</td><td>Executive champion actively selling internally</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── CHAMP Deep Dive ──────────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-champ"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon green">C</div>
+        <div>
+          <h2>CHAMP — Deep Dive</h2>
+          <p>4-dimension challenge-first framework — max 25 pts per dimension</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Dimension</th><th>Weight</th><th>Bottom (5pts)</th><th>Top (25pts)</th><th>CTA</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Challenges</strong></td><td>25%</td>
+              <td>No clear challenge</td><td>Critical challenge requiring urgent change</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Authority</strong></td><td>25%</td>
+              <td>No buying authority</td><td>Final decision authority</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+            <tr>
+              <td><strong>Money</strong></td><td>25%</td>
+              <td>No budget allocated</td><td>Budget allocated and available</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+            <tr>
+              <td><strong>Prioritization</strong></td><td>25%</td>
+              <td>Not prioritized</td><td>Top priority initiative</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── GPCTBA/CI Deep Dive ──────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-gpctba"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon amber">G</div>
+        <div>
+          <h2>GPCTBA/CI — Deep Dive</h2>
+          <p>7-dimension inbound framework — max 14 pts per dimension (weighted to 100)</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Dimension</th><th>Weight</th><th>Bottom (4pts)</th><th>Top (14pts)</th><th>CTA</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Goals</strong></td><td>14%</td>
+              <td>No defined goals</td><td>Strategic measurable goals</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Plans</strong></td><td>14%</td>
+              <td>No clear plan</td><td>Resourced plan with owners</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+            <tr>
+              <td><strong>Challenges</strong></td><td>14%</td>
+              <td>Challenges unclear</td><td>Critical blockers with urgency</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Timeline</strong></td><td>14%</td>
+              <td>No timeline</td><td>Committed launch timeline</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+            <tr>
+              <td><strong>Budget</strong></td><td>14%</td>
+              <td>No budget</td><td>Budget approved</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+            <tr>
+              <td><strong>Authority</strong></td><td>15%</td>
+              <td>Authority unknown</td><td>Decision authority confirmed</td>
+              <td><span class="tag gray">No</span></td>
+            </tr>
+            <tr>
+              <td><strong>Consequences / Implications</strong></td><td>15%</td>
+              <td>Low impact if delayed</td><td>Severe consequences if unresolved</td>
+              <td><span class="tag green">Yes</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── Qualification Modes ──────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-modes"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon rose">⚡</div>
+        <div>
+          <h2>Qualification Modes</h2>
+          <p>Two ways qualification happens — inline background extraction vs. dedicated SDR conversation</p>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">🤖 Mode 1 — Inline RAG (Background)</div>
+          <div class="card-body">
+            <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
+              The default. Qualification runs silently alongside every normal chat message.
+              The visitor thinks they're chatting with a product bot — BANT signals are extracted in the background.
+            </p>
+            <div class="flow">
+              <div class="flow-step">
+                <div class="flow-num">1</div>
+                <div class="flow-content">
+                  <h4>Widget → POST /chat</h4>
+                  <p>Normal RAG chat endpoint. Bot answers with knowledge base context.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num">2</div>
+                <div class="flow-content">
+                  <h4>Post-response extraction call</h4>
+                  <p>After streaming the answer, a second LLM call extracts BANT signals from the conversation history. JSON schema output enforced.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num green">✓</div>
+                <div class="flow-content">
+                  <h4>Scores updated, tier recalculated</h4>
+                  <p>Dimension scores and composite score saved to <span class="inline-code">chat_sessions</span>. Tier promoted if threshold crossed.</p>
+                </div>
+              </div>
+            </div>
+            <div class="callout info" style="margin-top:12px;">
+              <span class="callout-icon">📍</span>
+              <div style="font-size:12px;">File: <span class="filepath">rag_service.py</span> · <span class="inline-code">process_bant_signals()</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">🎯 Mode 2 — SDR Qualification (Dedicated)</div>
+          <div class="card-body">
+            <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px;">
+              When <span class="inline-code">bant_enabled=true</span> on the bot, the widget can switch into SDR mode.
+              The AI persona becomes an elite Sales Development Representative that probes BANT through natural conversation.
+            </p>
+            <div class="flow">
+              <div class="flow-step">
+                <div class="flow-num">1</div>
+                <div class="flow-content">
+                  <h4>Widget → POST /chat/sdr</h4>
+                  <p>Dedicated endpoint. No RAG retrieval — pure SDR conversation.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num">2</div>
+                <div class="flow-content">
+                  <h4>SDR system prompt injected</h4>
+                  <p>Current BANT state shown to the LLM. AI asks <strong>ONE probe per message</strong> for a missing dimension. Never interrogates.</p>
+                </div>
+              </div>
+              <div class="flow-step">
+                <div class="flow-num green">✓</div>
+                <div class="flow-content">
+                  <h4>When all 4 fields filled → "The Close"</h4>
+                  <p>AI stops asking qualification questions and proposes next steps (demo, call with AE).</p>
+                </div>
+              </div>
+            </div>
+            <div class="callout info" style="margin-top:12px;">
+              <span class="callout-icon">📍</span>
+              <div style="font-size:12px;">File: <span class="filepath">sdr_service.py</span> · <span class="inline-code">generate_sdr_stream()</span> + <span class="inline-code">run_sdr_qualification()</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">SDR System Prompt Directives</h4>
+      <pre><code>YOUR DIRECTIVES:
+1. ANALYZE & UPDATE   — extract new BANT info from each message, carry forward existing
+2. CONVERSATIONAL     — identify null fields, ask ONE question to uncover ONE field
+3. NO INTERROGATION   — never ask multiple questions, acknowledge before asking
+4. TACTFUL PROBING:
+   - Authority: frame around "team involvement" not "are you the boss?"
+   - Budget: frame around "tiers" not "how much money do you have?"
+5. HANDLING PUSHBACK  — if evasive, pivot to value statement, don't press hard
+6. OFF-TOPIC RECOVERY — answer briefly, steer back to business goals
+7. THE CLOSE          — all 4 fields populated? Stop probing, propose next steps</code></pre>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── Score Decay ──────────────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-decay"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon slate">⌛</div>
+        <div>
+          <h2>Score Decay</h2>
+          <p>Lead scores degrade over time for time-sensitive dimensions</p>
+        </div>
+      </div>
+
+      <p style="font-size:14px;color:var(--gray-600);margin-bottom:16px;">
+        A visitor who said "I need this this month" 6 months ago is no longer an SQL. Decay prevents stale
+        leads from permanently clogging the top of your pipeline. It is <strong>display-only</strong> — the
+        raw scores in the database are never mutated; decay is computed at read time.
+      </p>
+
+      <div class="card">
+        <div class="card-header">📉 Default Decay Rates</div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Dimension</th><th>Decay per 30 days</th><th>Rationale</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><strong>Timeline</strong></td>
+                  <td><span class="tag red">−5 pts / 30 days</span></td>
+                  <td>Most time-sensitive — "this month" becomes "no timeline" quickly</td>
+                </tr>
+                <tr>
+                  <td><strong>Need</strong></td>
+                  <td><span class="tag amber">−3 pts / 30 days</span></td>
+                  <td>Urgency fades — "critical blocking" may be solved without you</td>
+                </tr>
+                <tr>
+                  <td><strong>Authority</strong></td>
+                  <td><span class="tag green">No decay</span></td>
+                  <td>Role/authority doesn't change over time</td>
+                </tr>
+                <tr>
+                  <td><strong>Budget</strong></td>
+                  <td><span class="tag green">No decay</span></td>
+                  <td>Budget cycles are long — stays stable unless re-assessed</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout warning" style="margin-top:14px;">
+        <span class="callout-icon">⚠️</span>
+        <div>
+          Decay starts <strong>after the first full 30-day period</strong> since <span class="inline-code">bant_last_updated</span>.
+          It is applied in whole 30-day increments. A visitor updated 45 days ago gets 1 period of decay.
+          One updated 89 days ago also gets 1 period (not 2, since the second period hasn't completed).
+          Configured via <span class="inline-code">bant_config.decay</span> (JSONB per bot).
+        </div>
+      </div>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">Decay Logic (lead_service.py)</h4>
+      <pre><code><span style="color:#86efac">def</span> <span style="color:#67e8f9">apply_display_decay</span>(session, decay_config):
+    elapsed = (now_utc - session.bant_last_updated).total_seconds()
+    <span style="color:#86efac">if</span> elapsed &lt;= SECONDS_PER_30_DAYS:
+        <span style="color:#86efac">return</span> raw_scores  <span style="color:#94a3b8"># no decay yet</span>
+    periods = elapsed // SECONDS_PER_30_DAYS
+    need_score     -= periods × need_decay_per_30d
+    timeline_score -= periods × timeline_decay_per_30d
+    <span style="color:#86efac">return</span> adjusted_scores  <span style="color:#94a3b8"># never below 0</span></code></pre>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ─── Downstream Triggers ──────────────────────────────────────────── -->
+    <span class="section-anchor" id="qual-triggers"></span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-icon teal">🚀</div>
+        <div>
+          <h2>Downstream Triggers</h2>
+          <p>What happens automatically when a lead is promoted to SQL</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">🔔 Tier Upgrade Actions (SQL)</div>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-num">1</div>
+              <div class="flow-content">
+                <h4>Team Notification Email</h4>
+                <p>Fires only once per session (on <span class="inline-code">old_tier != "sql"</span> → <span class="inline-code">new_tier == "sql"</span>).
+                   Uses <span class="inline-code">get_notification_recipients(bot, "qualified_lead")</span> + recipient loop.
+                   Gated by <span class="inline-code">email_on_qualified = true</span>.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">2</div>
+              <div class="flow-content">
+                <h4>Calendly Booking CTA in Widget</h4>
+                <p>If <span class="inline-code">meeting_booking_enabled = true</span> AND <span class="inline-code">calendly_url</span> is set on the bot,
+                   the widget receives a <span class="inline-code">cta</span> payload in the chat response metadata,
+                   showing a "Book a Meeting" button inline in the chat.</p>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num green">✓</div>
+              <div class="flow-content">
+                <h4>Lead visible in Admin → Leads page</h4>
+                <p>All sessions with any tier above unqualified appear in the Leads table with score, tier badge,
+                   BANT breakdown, and contact info (if captured).</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout info" style="margin-top:14px;">
+        <span class="callout-icon">📬</span>
+        <div>
+          The email sent on SQL promotion uses the full BANT detail in the body:
+          visitor's need summary, budget range, authority level, and timeline — giving the sales rep
+          everything they need before reaching out. Subject: <span class="inline-code">[OyeChats] New SQL Lead — {bot_name}</span>.
+        </div>
+      </div>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">Tier transition guard (rag_service.py)</h4>
+      <pre><code><span style="color:#86efac">if</span> new_tier == <span style="color:#fcd34d">"sql"</span> <span style="color:#86efac">and</span> old_tier != <span style="color:#fcd34d">"sql"</span> <span style="color:#86efac">and</span> bot:
+    recipients = get_notification_recipients(bot, <span style="color:#fcd34d">"qualified_lead"</span>)
+    <span style="color:#86efac">for</span> recipient <span style="color:#86efac">in</span> recipients:
+        send_lead_qualification_email(
+            to_email=recipient,
+            bot_name=bot.name,
+            tier=<span style="color:#fcd34d">"sql"</span>,
+            bant_data=bant_snapshot,
+            contact=lead_info_contact,
+            reply_to=bot.reply_to_email,
+        )</code></pre>
+
+      <h4 style="font-size:13px;font-weight:700;color:var(--gray-700);margin-top:20px;margin-bottom:8px;">Summary — All Qualification Storage Fields</h4>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Field (chat_sessions)</th><th>Type</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="inline-code">bant_need</span></td><td>Text</td><td>Raw extracted need description</td></tr>
+            <tr><td><span class="inline-code">bant_timeline</span></td><td>String</td><td>Raw extracted timeline string</td></tr>
+            <tr><td><span class="inline-code">bant_authority</span></td><td>String</td><td>Raw extracted authority/role</td></tr>
+            <tr><td><span class="inline-code">bant_budget</span></td><td>String</td><td>Raw extracted budget range</td></tr>
+            <tr><td><span class="inline-code">bant_need_score</span></td><td>Integer (0–25)</td><td>Rubric score for need dimension</td></tr>
+            <tr><td><span class="inline-code">bant_timeline_score</span></td><td>Integer (0–25)</td><td>Rubric score for timeline dimension</td></tr>
+            <tr><td><span class="inline-code">bant_authority_score</span></td><td>Integer (0–25)</td><td>Rubric score for authority dimension</td></tr>
+            <tr><td><span class="inline-code">bant_budget_score</span></td><td>Integer (0–25)</td><td>Rubric score for budget dimension</td></tr>
+            <tr><td><span class="inline-code">bant_score</span></td><td>Integer (0–100)</td><td>Composite score (sum of 4 scores)</td></tr>
+            <tr><td><span class="inline-code">bant_tier</span></td><td>String</td><td>unqualified / mql / sal / sql</td></tr>
+            <tr><td><span class="inline-code">dimension_scores</span></td><td>JSONB</td><td>Full scored dimension payloads for multi-framework support</td></tr>
+            <tr><td><span class="inline-code">dimensions_assessed</span></td><td>Integer</td><td>Count of dimensions with non-zero score</td></tr>
+            <tr><td><span class="inline-code">bant_last_updated</span></td><td>DateTime</td><td>Timestamp for decay calculation anchor</td></tr>
+            <tr><td><span class="inline-code">qualification_framework</span></td><td>String</td><td>bant / meddic / champ / gpctba_ci</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ─── Footer ─────────────────────────────────────────────────────────── -->
+    <div style="margin-top:60px;padding-top:20px;border-top:1px solid var(--gray-200);text-align:center;font-size:12px;color:var(--gray-400);">
+      OyeChats Platform · Email Integration &amp; Lead Qualification · Internal Documentation · April 2026
+    </div>
+
+  </main>
+</div>
+
+</body>
+</html>
