@@ -446,6 +446,35 @@ def get_ratings_summary(session, client_id: int = None, bot_id: int = None):
     }
 
 
+def get_resolution_summary(session, client_id: int = None, bot_id: int = None):
+    """Fetch post-chat visitor resolution summary (resolved, unresolved, rate)."""
+    sf = _session_owner_filter(bot_id, client_id)
+
+    rows = session.execute(
+        select(ChatSession.visitor_resolved, func.count(ChatSession.id).label("cnt"))
+        .where(sf, ChatSession.visitor_resolved.isnot(None))
+        .group_by(ChatSession.visitor_resolved)
+    ).all()
+
+    resolved = 0
+    unresolved = 0
+    for row in rows:
+        if row.visitor_resolved:
+            resolved = row.cnt
+        else:
+            unresolved = row.cnt
+
+    total = resolved + unresolved
+    rate = round(resolved / total * 100, 1) if total > 0 else None
+
+    return {
+        "resolved": resolved,
+        "unresolved": unresolved,
+        "total": total,
+        "rate": rate,
+    }
+
+
 def get_top_questions(session, client_id: int = None, limit: int = 5, bot_id: int = None):
     """Retrieve the most common user questions."""
     sf = _session_owner_filter(bot_id, client_id)

@@ -96,7 +96,7 @@ function Toggle({ checked, onChange, disabled = false }) {
     );
 }
 
-export default function Webhooks() {
+export default function Webhooks({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
 
@@ -270,15 +270,29 @@ export default function Webhooks() {
 
     return (
         <div className="space-y-4 animate-fade-in">
-            <PageHeader title="Webhooks" subtitle="Push lead and qualification events to your CRM or backend">
-                <button
-                    onClick={openCreateModal}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors"
-                >
-                    <Plus className="w-4 h-4" />
-                    Add Webhook
-                </button>
-            </PageHeader>
+            {!embedded && (
+                <PageHeader title="Webhooks" subtitle="Push lead and qualification events to your CRM or backend">
+                    <button
+                        onClick={openCreateModal}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors"
+                    >
+                        <Plus className="w-4 h-4" />
+                        Add Webhook
+                    </button>
+                </PageHeader>
+            )}
+            {embedded && (
+                <div className="flex items-center justify-between">
+                    <div />
+                    <button
+                        onClick={openCreateModal}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors"
+                    >
+                        <Plus className="w-4 h-4" />
+                        Add Webhook
+                    </button>
+                </div>
+            )}
 
             <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 

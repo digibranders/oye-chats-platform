@@ -256,6 +256,17 @@ export const getRatingsSummary = async (botId) => {
     }
 };
 
+export const getResolutionSummary = async (botId) => {
+    try {
+        const url = botId ? `/analytics/resolution-summary?bot_id=${botId}` : '/analytics/resolution-summary';
+        const response = await api.get(url);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching resolution summary:', error);
+        throw buildApiError(error, 'Failed to load resolution summary');
+    }
+};
+
 /**
  * Fetches the list of visitors/sessions for the admin dashboard.
  * @returns {Promise<Array>} List of visitor session objects

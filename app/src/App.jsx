@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastProvider } from './context/ToastContext';
 import { getAuthState } from './utils/auth';
@@ -19,8 +19,7 @@ import Qualification from './pages/Qualification';
 import Insights from './pages/Insights';
 import Support from './pages/Support';
 import TeamManagement from './pages/TeamManagement';
-import Email from './pages/integrations/Email';
-const Webhooks = lazy(() => import('./pages/Webhooks'));
+import Integrations from './pages/Integrations';
 
 // Superadmin
 import SuperadminLayout from './layouts/SuperadminLayout';
@@ -81,17 +80,10 @@ function App() {
                         <Route path="insights" element={<ClientOnlyPage pageName="Insights"><Insights /></ClientOnlyPage>} />
                         <Route path="leads" element={<ClientOnlyPage pageName="Leads"><Leads /></ClientOnlyPage>} />
                         <Route path="qualification" element={<ClientOnlyPage pageName="Qualification"><Qualification /></ClientOnlyPage>} />
-                        <Route
-                            path="webhooks"
-                            element={
-                                <ClientOnlyPage pageName="Webhooks">
-                                    <Suspense fallback={<div className="text-sm text-secondary-500">Loading...</div>}>
-                                        <Webhooks />
-                                    </Suspense>
-                                </ClientOnlyPage>
-                            }
-                        />
-                        <Route path="integrations/email" element={<ClientOnlyPage pageName="Integrations"><Email /></ClientOnlyPage>} />
+                        <Route path="integrations" element={<ClientOnlyPage pageName="Integrations"><Integrations /></ClientOnlyPage>} />
+                        {/* Backward-compat redirects for old routes */}
+                        <Route path="webhooks" element={<Navigate to="/integrations?tab=webhooks" replace />} />
+                        <Route path="integrations/email" element={<Navigate to="/integrations?tab=email" replace />} />
 
                         {/* Accessible to all authenticated users */}
                         <Route path="chatbot" element={<Chatbot />} />
