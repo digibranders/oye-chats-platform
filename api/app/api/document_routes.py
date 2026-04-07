@@ -54,9 +54,22 @@ def _require_knowledge_management_access(auth: dict) -> None:
         raise HTTPException(status_code=403, detail="You do not have permission to manage knowledge sources.")
 
 
+def _verify_bot_ownership(bot_id: int | None, client_id: int) -> None:
+    """Verify that bot_id belongs to client_id. Prevents cross-workspace access (IDOR)."""
+    if bot_id is None:
+        return
+    from sqlalchemy import select as sa_select
+
+    with get_session() as session:
+        bot = session.execute(sa_select(Bot).where(Bot.id == bot_id, Bot.client_id == client_id)).scalar_one_or_none()
+        if not bot:
+            raise HTTPException(status_code=403, detail="Bot not found or access denied.")
+
+
 @router.get("/documents")
 def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_operator)):
     """Retrieve a list of all ingested documents for the authenticated client."""
+    _verify_bot_ownership(bot_id, auth["client_id"])
     try:
         with get_session() as session:
             docs = get_ingested_documents(session, client_id=auth["client_id"], bot_id=bot_id)
@@ -75,6 +88,7 @@ def delete_document_endpoint(
     """Delete all documents associated with a document name for the authenticated client."""
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
+    _verify_bot_ownership(bot_id, client_id)
     logger.info(f"Deletion request for client {client_id}, bot_id={bot_id}, source: {document_name}")
     try:
         from sqlalchemy import func
@@ -145,6 +159,7 @@ def ingest_documents(
     """Ingest multiple files (PDF, DOCX, TXT, MD) for a client."""
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
+    _verify_bot_ownership(bot_id, client_id)
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
@@ -216,6 +231,7 @@ async def crawl_endpoint(
     """Crawl a URL recursively and ingest content for a client."""
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
+    _verify_bot_ownership(bot_id, client_id)
     _check_memory()
 
     # Per-client lock: each customer can run one crawl at a time.

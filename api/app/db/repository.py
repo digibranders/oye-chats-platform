@@ -177,7 +177,16 @@ def get_lead_info_by_session(session, session_id: str) -> LeadInfo | None:
 
 
 def _owner_filter(model, bot_id=None, client_id=None):
-    """Return a filter clause for bot_id or client_id on the given model."""
+    """Return a filter clause scoped to bot_id AND client_id when both are provided.
+
+    Defense-in-depth: always include client_id when available so that a bot_id
+    belonging to a different client can never match, even if the caller forgets
+    to validate bot ownership beforehand.
+    """
+    from sqlalchemy import and_
+
+    if bot_id and client_id:
+        return and_(model.bot_id == bot_id, model.client_id == client_id)
     if bot_id:
         return model.bot_id == bot_id
     return model.client_id == client_id
@@ -347,14 +356,28 @@ def search_similar_documents(
 
 
 def _session_owner_filter(bot_id=None, client_id=None):
-    """Return filter for ChatSession based on bot_id or client_id."""
+    """Return filter for ChatSession based on bot_id or client_id.
+
+    Defense-in-depth: always include client_id when available.
+    """
+    from sqlalchemy import and_
+
+    if bot_id and client_id:
+        return and_(ChatSession.bot_id == bot_id, ChatSession.client_id == client_id)
     if bot_id:
         return ChatSession.bot_id == bot_id
     return ChatSession.client_id == client_id
 
 
 def _doc_owner_filter(bot_id=None, client_id=None):
-    """Return filter for Document based on bot_id or client_id."""
+    """Return filter for Document based on bot_id or client_id.
+
+    Defense-in-depth: always include client_id when available.
+    """
+    from sqlalchemy import and_
+
+    if bot_id and client_id:
+        return and_(Document.bot_id == bot_id, Document.client_id == client_id)
     if bot_id:
         return Document.bot_id == bot_id
     return Document.client_id == client_id
