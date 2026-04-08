@@ -41,7 +41,7 @@ export default function SuperadminOverview() {
                         Total Clients
                     </h3>
                     {isLoading ? (
-                        <Loader2 className="animate-spin text-surface-300 dark:text-surface-600 mt-4" size={24} />
+                        <Loader2 className="animate-spin text-surface-600 dark:text-surface-300 mt-4" size={24} />
                     ) : (
                         <div className="mt-4 flex items-baseline gap-2">
                             <p className="text-3xl font-bold text-surface-900 dark:text-surface-100">{stats?.total_clients || 0}</p>
@@ -58,7 +58,7 @@ export default function SuperadminOverview() {
                         Global Messages (API)
                     </h3>
                     {isLoading ? (
-                        <Loader2 className="animate-spin text-surface-300 dark:text-surface-600 mt-4" size={24} />
+                        <Loader2 className="animate-spin text-surface-600 dark:text-surface-300 mt-4" size={24} />
                     ) : (
                         <div className="mt-4">
                             <p className="text-3xl font-bold text-surface-900 dark:text-surface-100">{stats?.total_messages?.toLocaleString() || 0}</p>
@@ -74,7 +74,7 @@ export default function SuperadminOverview() {
                         Global Sessions
                     </h3>
                     {isLoading ? (
-                        <Loader2 className="animate-spin text-surface-300 dark:text-surface-600 mt-4" size={24} />
+                        <Loader2 className="animate-spin text-surface-600 dark:text-surface-300 mt-4" size={24} />
                     ) : (
                         <p className="text-3xl font-bold text-surface-900 dark:text-surface-100 mt-4">{stats?.total_sessions?.toLocaleString() || 0}</p>
                     )}

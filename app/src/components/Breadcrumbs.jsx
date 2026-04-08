@@ -44,7 +44,7 @@ export default function Breadcrumbs() {
 
         return (
           <span key={path} className="flex items-center gap-1.5">
-            <ChevronRight size={14} className="text-surface-300 dark:text-surface-600 hidden sm:inline" />
+            <ChevronRight size={14} className="text-surface-600 dark:text-surface-300 hidden sm:inline" />
             {isLast ? (
               <span className="font-medium text-surface-900 dark:text-surface-100">{label}</span>
             ) : (

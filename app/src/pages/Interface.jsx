@@ -329,10 +329,10 @@ export default function Interface({ embedded = false }) {
             {/* Page Header */}
             {!embedded && (
                 <div>
-                    <h1 className="text-2xl font-bold text-surface-900 tracking-tight">Appearance</h1>
-                    <p className="text-surface-500 mt-1 text-sm">Customize how your chatbot looks</p>
+                    <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">Appearance</h1>
+                    <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm">Customize how your chatbot looks</p>
                     {!isBotManager && (
-                        <p className="mt-2 text-sm text-surface-500">
+                        <p className="mt-2 text-sm text-surface-500 dark:text-surface-400">
                             You have read-only access to this bot configuration.
                         </p>
                     )}
@@ -392,7 +392,7 @@ export default function Interface({ embedded = false }) {
                             {/* Chatbot Display Name Section */}
                             <div className="space-y-3 animate-fade-in">
                                 <div>
-                                    <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                    <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                         <Bot className="w-4 h-4 text-primary-500" />
                                         Chatbot Display Name
                                     </h3>
@@ -476,16 +476,16 @@ export default function Interface({ embedded = false }) {
                             {/* Chatbot Colors */}
                             <div className="space-y-6 animate-fade-in" style={{ animationDelay: '0.1s' }}>
                                 <div>
-                                    <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                    <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                         <Palette className="w-4 h-4 text-primary-500" />
                                         Chatbot Colors
                                     </h3>
-                                    <p className="text-[13px] text-surface-500 mt-0.5">
+                                    <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                         Customize your chatbot interface colors. Match them with your brand.
                                     </p>
                                 </div>
 
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x gap-y-10 bg-surface-50/50 dark:bg-surface-800/50 p-8 rounded-2xl border border-surface-200 dark:border-surface-700 animate-fade-in" style={{ animationDelay: '0.1s' }}>
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x gap-y-10 bg-surface-100/50 dark:bg-surface-800/50 p-8 rounded-2xl border border-surface-200 dark:border-surface-700 animate-fade-in" style={{ animationDelay: '0.1s' }}>
                                     {/* Left Column: Manual Controls */}
                                     <div className="space-y-8">
                                         <div>
@@ -512,7 +512,7 @@ export default function Interface({ embedded = false }) {
                                             <div className="space-y-4">
                                                 <div className="flex items-center gap-2 mb-1">
                                                     <Sparkles className="w-4 h-4 text-primary-500 animate-pulse" />
-                                                    <label className="text-[13px] font-bold text-surface-700">Extracted from your Website</label>
+                                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Extracted from your Website</label>
                                                 </div>
                                                 <div className="space-y-2.5">
                                                     {recommendedColors.slice(0, 6).map((color) => (
@@ -531,11 +531,11 @@ export default function Interface({ embedded = false }) {
                                                             <div className="flex gap-1 ml-auto">
                                                                 <button
                                                                     onClick={() => setPrimaryColor(color)}
-                                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 text-surface-500 rounded hover:bg-primary-500 hover:text-white transition-all uppercase tracking-wider leading-none"
+                                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded hover:bg-primary-500 hover:text-white transition-all uppercase tracking-wider leading-none"
                                                                 >Brand</button>
                                                                 <button
                                                                     onClick={() => setUserBubbleColor(color)}
-                                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 text-surface-500 rounded hover:bg-blue-500 hover:text-white transition-all uppercase tracking-wider leading-none"
+                                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded hover:bg-blue-500 hover:text-white transition-all uppercase tracking-wider leading-none"
                                                                 >Bubble</button>
                                                             </div>
                                                         </div>
@@ -544,8 +544,8 @@ export default function Interface({ embedded = false }) {
                                             </div>
                                         ) : (
                                             <div className="flex flex-col items-center justify-center h-full text-center py-10 opacity-50">
-                                                <Sparkles className="w-8 h-8 mb-2 text-surface-300" />
-                                                <p className="text-[10px] font-bold text-surface-500 uppercase tracking-widest">No brand colors detected</p>
+                                                <Sparkles className="w-8 h-8 mb-2 text-surface-600 dark:text-surface-300" />
+                                                <p className="text-[10px] font-bold text-surface-500 dark:text-surface-400 uppercase tracking-widest">No brand colors detected</p>
                                             </div>
                                         )}
                                     </div>
@@ -555,11 +555,11 @@ export default function Interface({ embedded = false }) {
                     ) : activeTab === 'Avatar' ? (
                         <div className="space-y-6 animate-fade-in">
                             <div>
-                                <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <ImageIcon className="w-4 h-4 text-primary-500" />
                                     Chatbot Avatar Style
                                 </h3>
-                                <p className="text-[13px] text-surface-500 mt-0.5">Choose how your chatbot avatar appears to visitors.</p>
+                                <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">Choose how your chatbot avatar appears to visitors.</p>
                             </div>
 
                             {/* Avatar Type Selection Cards */}
@@ -598,7 +598,7 @@ export default function Interface({ embedded = false }) {
                                             )}
                                             <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors overflow-hidden ${isSelected
                                                     ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
-                                                    : 'bg-surface-100 text-surface-500'
+                                                    : 'bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400'
                                                 }`}>
                                                 {/* Show thumbnail on Upload card if image exists */}
                                                 {opt.key === 'upload' && logo ? (
@@ -607,7 +607,7 @@ export default function Interface({ embedded = false }) {
                                             </div>
                                             <span className={`text-[13px] font-bold ${isSelected
                                                     ? 'text-emerald-700 dark:text-emerald-400'
-                                                    : 'text-surface-700'
+                                                    : 'text-surface-700 dark:text-surface-300'
                                                 }`}>{opt.label}</span>
                                             <span className="text-[11px] text-surface-400">{opt.desc}</span>
                                         </button>
@@ -618,7 +618,7 @@ export default function Interface({ embedded = false }) {
                             {/* Conditional content based on avatar type */}
                             {avatarType === 'upload' && (
                                 <div className="space-y-3 animate-fade-in">
-                                    <label className="text-[13px] font-bold text-surface-700">Upload Avatar Image</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Upload Avatar Image</label>
                                     <input
                                         ref={inputRef}
                                         type="file"
@@ -654,7 +654,7 @@ export default function Interface({ embedded = false }) {
                                                         <Upload className="w-5 h-5 text-surface-400 group-hover:text-primary-500 transition-colors" />
                                                     </div>
                                                     <div className="text-center">
-                                                        <p className="text-[13px] font-semibold text-surface-700">
+                                                        <p className="text-[13px] font-semibold text-surface-700 dark:text-surface-300">
                                                             <span className="text-primary-500">Click to upload</span> or drag and drop
                                                         </p>
                                                         <p className="text-[11px] text-surface-400 mt-0.5">PNG, JPG, SVG up to 2MB</p>
@@ -669,7 +669,7 @@ export default function Interface({ embedded = false }) {
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 mb-0.5">
-                                                    <span className="text-[13px] font-semibold text-surface-900 truncate">Avatar Active</span>
+                                                    <span className="text-[13px] font-semibold text-surface-900 dark:text-surface-100 truncate">Avatar Active</span>
                                                     <span className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/20 rounded-full uppercase">
                                                         <Check className="w-2.5 h-2.5" /> Uploaded
                                                     </span>
@@ -702,7 +702,7 @@ export default function Interface({ embedded = false }) {
                                 return (
                                     <div className="space-y-5 animate-fade-in">
                                         {/* Orb Preview */}
-                                        <label className="text-[13px] font-bold text-surface-700">Orb Preview</label>
+                                        <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Orb Preview</label>
                                         <div className="flex items-center gap-6 p-6 bg-surface-50/50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-xl">
                                             <div
                                                 className="w-20 h-20 rounded-full flex-shrink-0"
@@ -713,15 +713,15 @@ export default function Interface({ embedded = false }) {
                                                 }}
                                             />
                                             <div>
-                                                <p className="text-[13px] font-semibold text-surface-900">Animated Orb</p>
-                                                <p className="text-[11px] text-surface-400 mt-1">A pulsing gradient orb. Pick a color below or use your primary color.</p>
+                                                <p className="text-[13px] font-semibold text-surface-900 dark:text-surface-100">Animated Orb</p>
+                                                <p className="text-[11px] text-surface-400 dark:text-surface-500 mt-1">A pulsing gradient orb. Pick a color below or use your primary color.</p>
                                             </div>
                                         </div>
 
                                         {/* Orb Color Picker */}
                                         <div>
-                                            <label className="text-[13px] font-bold text-surface-700">Orb Color</label>
-                                            <p className="text-[11px] text-surface-400 mt-0.5 mb-3">Pick any color for the orb using the picker, or use your primary color.</p>
+                                            <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Orb Color</label>
+                                            <p className="text-[11px] text-surface-400 dark:text-surface-500 mt-0.5 mb-3">Pick any color for the orb using the picker, or use your primary color.</p>
 
                                             {/* Use Primary toggle */}
                                             <button
@@ -774,7 +774,7 @@ export default function Interface({ embedded = false }) {
 
                             {avatarType === 'mascot' && (
                                 <div className="space-y-4 animate-fade-in">
-                                    <label className="text-[13px] font-bold text-surface-700">Mascot Preview</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Mascot Preview</label>
                                     <div className="flex items-center gap-6 p-6 bg-surface-50/50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-xl">
                                         <div
                                             className="w-20 h-20 rounded-full flex-shrink-0 flex items-center justify-center"
@@ -783,8 +783,8 @@ export default function Interface({ embedded = false }) {
                                             <Bot className="w-10 h-10 text-white" />
                                         </div>
                                         <div>
-                                            <p className="text-[13px] font-semibold text-surface-900">Robot Mascot</p>
-                                            <p className="text-[11px] text-surface-400 mt-1">A friendly robot icon on your primary color background. Change the color in the General tab.</p>
+                                            <p className="text-[13px] font-semibold text-surface-900 dark:text-surface-100">Robot Mascot</p>
+                                            <p className="text-[11px] text-surface-400 dark:text-surface-500 mt-1">A friendly robot icon on your primary color background. Change the color in the General tab.</p>
                                         </div>
                                     </div>
                                 </div>
@@ -794,11 +794,11 @@ export default function Interface({ embedded = false }) {
                         <div className="space-y-6 animate-fade-in">
                             {/* BANT Qualification Toggle */}
                             <div>
-                                <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <Bot className="w-4 h-4 text-primary-500" />
                                     <span>BANT</span> Lead Qualification
                                 </h3>
-                                <p className="text-[13px] text-surface-500 mt-0.5">
+                                <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                     AI will subtly ask qualifying questions (Budget, Authority, Need, Timeline) when the user shows buying intent.
                                 </p>
                             </div>
@@ -815,11 +815,11 @@ export default function Interface({ embedded = false }) {
 
                             {/* Pre-Chat Lead Capture Form */}
                             <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
-                                <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <Sparkles className="w-4 h-4 text-primary-500" />
                                     Pre-Chat Lead Capture
                                 </h3>
-                                <p className="text-[13px] text-surface-500 mt-0.5">
+                                <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                     Show a form before chat starts to capture visitor contact details.
                                 </p>
                             </div>
@@ -846,7 +846,7 @@ export default function Interface({ embedded = false }) {
                                         const labels = { name: 'Name', email: 'Email', phone: 'Phone', company: 'Company' };
 
                                         return (
-                                            <div key={fieldName} className="flex items-center justify-between py-2 border-b border-surface-100 last:border-0">
+                                            <div key={fieldName} className="flex items-center justify-between py-2 border-b border-surface-100 dark:border-surface-800 last:border-0">
                                                 <div className="flex items-center gap-3">
                                                     <label className="relative inline-flex items-center cursor-pointer">
                                                         <input
@@ -863,7 +863,7 @@ export default function Interface({ embedded = false }) {
                                                         />
                                                         <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
                                                     </label>
-                                                    <span className="text-[13px] font-medium text-surface-700">{labels[fieldName]}</span>
+                                                    <span className="text-[13px] font-medium text-surface-700 dark:text-surface-300">{labels[fieldName]}</span>
                                                 </div>
                                                 {isEnabled && (
                                                     <label className="flex items-center gap-2 cursor-pointer">
@@ -888,11 +888,11 @@ export default function Interface({ embedded = false }) {
 
                             {/* Email Notifications */}
                             <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
-                                <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <Settings2 className="w-4 h-4 text-primary-500" />
                                     Email Notifications
                                 </h3>
-                                <p className="text-[13px] text-surface-500 mt-0.5">
+                                <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                     Get notified when leads are qualified or request live support.
                                 </p>
                             </div>
@@ -959,14 +959,14 @@ export default function Interface({ embedded = false }) {
                                     </p>
                                 </div>
                                 <div className="flex items-center justify-between py-2">
-                                    <span className="text-[13px] text-surface-700">Email on qualified lead</span>
+                                    <span className="text-[13px] text-surface-700 dark:text-surface-300">Email on qualified lead</span>
                                     <label className="relative inline-flex items-center cursor-pointer">
                                         <input type="checkbox" className="sr-only peer" checked={emailOnQualified} onChange={(e) => setEmailOnQualified(e.target.checked)} />
                                         <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
                                     </label>
                                 </div>
                                 <div className="flex items-center justify-between py-2">
-                                    <span className="text-[13px] text-surface-700">Email on live chat request</span>
+                                    <span className="text-[13px] text-surface-700 dark:text-surface-300">Email on live chat request</span>
                                     <label className="relative inline-flex items-center cursor-pointer">
                                         <input type="checkbox" className="sr-only peer" checked={emailOnHandoff} onChange={(e) => setEmailOnHandoff(e.target.checked)} />
                                         <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
@@ -978,11 +978,11 @@ export default function Interface({ embedded = false }) {
                         <div className="space-y-6 animate-fade-in">
                             {/* Master Toggle */}
                             <div>
-                                <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <Settings2 className="w-4 h-4 text-primary-500" />
                                     Live Chat
                                 </h3>
-                                <p className="text-[13px] text-surface-500 mt-0.5">
+                                <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                     Allow visitors to request a live operator during a chat session.
                                 </p>
                             </div>
@@ -999,11 +999,11 @@ export default function Interface({ embedded = false }) {
 
                             {/* Widget Messages */}
                             <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
-                                <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <Bot className="w-4 h-4 text-primary-500" />
                                     Widget Messages
                                 </h3>
-                                <p className="text-[13px] text-surface-500 mt-0.5">
+                                <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                     Customize the text visitors see when they open the chat.
                                 </p>
                             </div>
@@ -1036,11 +1036,11 @@ export default function Interface({ embedded = false }) {
 
                             {/* What happens when... */}
                             <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
-                                <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
+                                <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <Sparkles className="w-4 h-4 text-primary-500" />
                                     What happens when…
                                 </h3>
-                                <p className="text-[13px] text-surface-500 mt-0.5">
+                                <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                     Configure what visitors see in each availability state.
                                 </p>
                             </div>
@@ -1120,11 +1120,11 @@ export default function Interface({ embedded = false }) {
                                         <Settings2 className="w-6 h-6 text-primary-600" />
                                     </div>
                                     <div>
-                                        <h3 className="text-[16px] font-bold text-surface-900 mb-1">
+                                        <h3 className="text-[16px] font-bold text-surface-900 dark:text-surface-50 mb-1">
                                             Need <span className="font-bold">Personalized</span> Customization?
                                         </h3>
-                                        <p className="text-[13px] text-surface-600 leading-relaxed mb-4">
-                                            If you'd like to add <span className="font-semibold text-surface-700">custom branding</span>, <span className="font-semibold text-surface-700">unique themes</span>, or any <span className="font-semibold text-surface-700">personalized features</span> to your chatbot, our development team is here to help!
+                                        <p className="text-[13px] text-surface-600 dark:text-surface-400 leading-relaxed mb-4">
+                                            If you'd like to add <span className="font-semibold text-surface-700 dark:text-surface-300">custom branding</span>, <span className="font-semibold text-surface-700 dark:text-surface-300">unique themes</span>, or any <span className="font-semibold text-surface-700 dark:text-surface-300">personalized features</span> to your chatbot, our development team is here to help!
                                         </p>
                                         <div className="bg-white dark:bg-surface-900 px-5 py-4 rounded-xl border border-surface-200 dark:border-surface-700 inline-flex items-center gap-3">
                                             <span className="text-[13px] text-surface-500">Email us at:</span>
@@ -1141,9 +1141,9 @@ export default function Interface({ embedded = false }) {
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center p-12 text-center border-2 border-dashed border-surface-200 dark:border-surface-700 rounded-2xl bg-surface-50/50 dark:bg-surface-800/50 animate-fade-in">
-                            <Settings2 className="w-10 h-10 text-surface-300 mb-4" />
-                            <h3 className="text-surface-900 font-bold mb-2">Content for {activeTab}</h3>
-                            <p className="text-sm text-surface-500 max-w-sm">
+                            <Settings2 className="w-10 h-10 text-surface-600 dark:text-surface-300 mb-4" />
+                            <h3 className="text-surface-900 dark:text-surface-100 font-bold mb-2">Content for {activeTab}</h3>
+                            <p className="text-sm text-surface-500 dark:text-surface-400 max-w-sm">
                                 This section is currently under construction. Settings for "{activeTab}" will appear here when ready.
                             </p>
                         </div>
@@ -1319,8 +1319,8 @@ export default function Interface({ embedded = false }) {
                         {/* Header */}
                         <div className="px-5 py-4 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between">
                             <div>
-                                <h3 className="text-base font-bold text-surface-900">Crop Avatar</h3>
-                                <p className="text-[11px] text-surface-400 mt-0.5">Drag to reposition, scroll to zoom</p>
+                                <h3 className="text-base font-bold text-surface-900 dark:text-surface-100">Crop Avatar</h3>
+                                <p className="text-[11px] text-surface-400 dark:text-surface-500 mt-0.5">Drag to reposition, scroll to zoom</p>
                             </div>
                             <button
                                 onClick={() => { setShowCropModal(false); setCropImage(null); }}
@@ -1358,7 +1358,7 @@ export default function Interface({ embedded = false }) {
                                     step={0.05}
                                     value={zoom}
                                     onChange={(e) => setZoom(Number(e.target.value))}
-                                    className="flex-1 h-1.5 bg-surface-200 rounded-full appearance-none cursor-pointer accent-primary-500"
+                                    className="flex-1 h-1.5 bg-surface-200 dark:bg-surface-700 rounded-full appearance-none cursor-pointer accent-primary-500"
                                 />
                                 <ZoomIn size={14} className="text-surface-400 flex-shrink-0" />
                             </div>
@@ -1373,7 +1373,7 @@ export default function Interface({ embedded = false }) {
                                     step={1}
                                     value={rotation}
                                     onChange={(e) => setRotation(Number(e.target.value))}
-                                    className="flex-1 h-1.5 bg-surface-200 rounded-full appearance-none cursor-pointer accent-primary-500"
+                                    className="flex-1 h-1.5 bg-surface-200 dark:bg-surface-700 rounded-full appearance-none cursor-pointer accent-primary-500"
                                 />
                                 <span className="text-[11px] font-mono text-surface-400 w-8 text-right">{rotation}°</span>
                             </div>

@@ -146,7 +146,7 @@ export default function CannedResponses({ embedded = false }) {
                 <div className="text-center py-12 text-surface-400 dark:text-surface-500">Loading...</div>
             ) : filteredResponses.length === 0 ? (
                 <div className="text-center py-12">
-                    <MessageSquareText className="w-10 h-10 text-surface-300 dark:text-surface-600 mx-auto mb-3" />
+                    <MessageSquareText className="w-10 h-10 text-surface-600 dark:text-surface-300 mx-auto mb-3" />
                     <p className="text-surface-500 dark:text-surface-400 text-sm">
                         {responses.length === 0
                             ? 'No canned responses yet. Create your first one!'

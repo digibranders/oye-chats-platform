@@ -348,7 +348,7 @@ export default function KnowledgeBase() {
               <SkeletonTable rows={4} cols={3} />
             ) : documents.length === 0 ? (
               <div className="text-center py-12 border-2 border-dashed border-surface-200 dark:border-surface-800 rounded-xl">
-                <FileText className="mx-auto text-surface-300 dark:text-surface-600 mb-3" size={28} />
+                <FileText className="mx-auto text-surface-600 dark:text-surface-300 mb-3" size={28} />
                 <p className="text-surface-500 font-medium text-sm">No documents ingested yet</p>
                 <p className="text-xs text-surface-400 mt-1">Upload documents or crawl a website</p>
                 {localStorage.getItem('company_website') && (

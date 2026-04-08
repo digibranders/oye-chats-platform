@@ -902,8 +902,7 @@ export default function LiveChat({ embedded = false }) {
 
     return (
         <div
-            className={`flex flex-col ${embedded ? '' : 'animate-fade-in'}`}
-            style={{ height: embedded ? 'calc(100vh - 180px)' : 'calc(100vh - 120px)' }}
+            className={`flex flex-col h-full ${embedded ? '' : 'animate-fade-in'}`}
         >
             {/* Top bar: agent name + status toggle */}
             <div className="flex items-center justify-between mb-4 flex-shrink-0">

@@ -49,13 +49,13 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit }) => {
                 value={feedback}
                 onChange={(e) => setFeedback(e.target.value)}
                 placeholder="Tell us what prompted this feedback..."
-                className="w-full h-48 bg-surface-800 border border-surface-700 rounded-lg p-4 text-white placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all resize-none text-sm"
+                className="w-full h-48 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg p-4 text-surface-900 dark:text-white placeholder-surface-400 dark:placeholder-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all resize-none text-sm"
                 autoFocus
               />
             </div>
           </div>
 
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-surface-800/50 border border-surface-700">
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-surface-50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700">
             <Info size={18} className="text-surface-400 mt-0.5" />
             <p className="text-xs text-surface-400 leading-relaxed">
               Please don&apos;t include any sensitive information. We use this feedback to improve our services and features.
@@ -63,10 +63,10 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit }) => {
           </div>
         </div>
 
-        <div className="px-6 py-4 bg-surface-800/50 border-t border-surface-800 flex items-center justify-end gap-3">
+        <div className="px-6 py-4 bg-surface-50 dark:bg-surface-800/50 border-t border-surface-200 dark:border-surface-800 flex items-center justify-end gap-3">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-surface-400 hover:text-white transition-colors"
+            className="px-4 py-2 text-sm font-medium text-surface-500 dark:text-surface-400 hover:text-surface-800 dark:hover:text-white transition-colors"
           >
             Cancel
           </button>

@@ -123,9 +123,9 @@ export default function Analytics({ embedded = false }) {
     const CustomTooltip = ({ active, payload, label }) => {
         if (active && payload && payload.length) {
             return (
-                <div className="bg-surface-900 dark:bg-surface-800 p-3 border border-surface-700 shadow-xl rounded-xl">
-                    <p className="text-surface-400 font-medium text-xs mb-1">{label}</p>
-                    <p className="font-bold text-lg text-white">{payload[0].value} <span className="text-sm font-normal text-surface-400">messages</span></p>
+                <div className="bg-white dark:bg-surface-800 p-3 border border-surface-200 dark:border-surface-700 shadow-xl rounded-xl">
+                    <p className="text-surface-500 dark:text-surface-400 font-medium text-xs mb-1">{label}</p>
+                    <p className="font-bold text-lg text-surface-900 dark:text-white">{payload[0].value} <span className="text-sm font-normal text-surface-500 dark:text-surface-400">messages</span></p>
                 </div>
             );
         }
@@ -192,7 +192,7 @@ export default function Analytics({ embedded = false }) {
                     </div>
                 ) : filteredData.length === 0 ? (
                     <div className="h-72 flex flex-col items-center justify-center border-2 border-dashed border-surface-200 dark:border-surface-800 rounded-xl">
-                        <TrendingUp className="text-surface-300 dark:text-surface-600 mb-3" size={32} />
+                        <TrendingUp className="text-surface-600 dark:text-surface-300 mb-3" size={32} />
                         <p className="text-surface-500 text-sm">No activity data yet</p>
                     </div>
                 ) : (

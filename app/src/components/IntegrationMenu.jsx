@@ -36,10 +36,10 @@ const IntegrationMenu = ({ isOpen: sidebarOpen }) => {
                   onClick={() => setIsOpen(false)}
                   className={({ isActive }) => cn(
                     'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-left text-sm font-medium',
-                    isActive ? 'bg-surface-800 text-white' : 'text-surface-400 hover:bg-surface-800 hover:text-white'
+                    isActive ? 'bg-surface-100 dark:bg-surface-800 text-surface-900 dark:text-white' : 'text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white'
                   )}
                 >
-                  <div className="p-1.5 rounded-md bg-surface-800">
+                  <div className="p-1.5 rounded-md bg-surface-100 dark:bg-surface-800">
                     <Icon className="w-[18px] h-[18px]" />
                   </div>
                   <span className="flex-1">{item.name}</span>
