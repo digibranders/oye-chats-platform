@@ -30,7 +30,9 @@ jobs:
           test -f widget/dist/oyechats-widget.js || { echo "❌ Build output missing: oyechats-widget.js"; exit 1; }
           test -f widget/dist/oyechats-widget.css || { echo "❌ Build output missing: oyechats-widget.css"; exit 1; }
           JS_SIZE=$(stat -c%s widget/dist/oyechats-widget.js 2>/dev/null || stat -f%z widget/dist/oyechats-widget.js)
+          CSS_SIZE=$(stat -c%s widget/dist/oyechats-widget.css 2>/dev/null || stat -f%z widget/dist/oyechats-widget.css)
           echo "✅ Widget JS size: ${JS_SIZE} bytes"
+          echo "✅ Widget CSS size: ${CSS_SIZE} bytes"
           if [ "$JS_SIZE" -lt 10000 ]; then echo "❌ Widget JS suspiciously small"; exit 1; fi
 
       # Upload versioned backup first (rollback safety), then overwrite latest

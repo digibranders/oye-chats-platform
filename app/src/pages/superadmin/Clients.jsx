@@ -219,7 +219,7 @@ export default function SuperadminClients() {
 
             {/* Client Details Modal */}
             {selectedClient && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-surface-900/60 dark:bg-black/70 backdrop-blur-sm animate-fade-in">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 dark:bg-black/70 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl w-full max-w-lg border border-surface-200 dark:border-surface-700 overflow-hidden transform transition-all">
                         <div className="p-6">
                             <div className="flex justify-between items-start mb-6">

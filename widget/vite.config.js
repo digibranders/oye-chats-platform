@@ -8,12 +8,12 @@ export default defineConfig({
     cors: true,
   },
   build: {
-    cssCodeSplit: false,
     rollupOptions: {
       output: {
         manualChunks: undefined,
         entryFileNames: 'oyechats-widget.js',
         chunkFileNames: 'oyechats-widget.js',
+        // Emit sibling assets with predictable names for script+css embedding.
         assetFileNames: 'oyechats-widget.[ext]',
       }
     }

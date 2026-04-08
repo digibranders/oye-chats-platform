@@ -1,6 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
+/* Switch dark mode to class strategy so ThemeContext controls it via .dark on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* ── Primary — Indigo (richer, more premium than flat blue) ── */
   --color-primary-50: #eef2ff;

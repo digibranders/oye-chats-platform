@@ -80,7 +80,7 @@ export default function Register() {
   const strengthColor = strengthScore === 3 ? 'bg-emerald-500' : strengthScore === 2 ? 'bg-amber-500' : strengthScore === 1 ? 'bg-rose-500' : 'bg-surface-200';
 
   return (
-    <div className="min-h-screen flex bg-surface-950">
+    <div className="min-h-screen flex bg-white dark:bg-surface-950">
       {/* Left Panel — Branding */}
       <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden">
         <div className="absolute inset-0 gradient-mesh" />
@@ -300,7 +300,7 @@ export default function Register() {
                       { met: hasNumber, label: 'Has number' },
                     ].map((check) => (
                       <div key={check.label} className={cn('flex items-center gap-1.5 text-xs transition-colors', check.met ? 'text-emerald-600 dark:text-emerald-400' : 'text-surface-400')}>
-                        <CheckCircle2 size={12} className={check.met ? 'text-emerald-500' : 'text-surface-300 dark:text-surface-600'} />
+                        <CheckCircle2 size={12} className={check.met ? 'text-emerald-500' : 'text-surface-600 dark:text-surface-300'} />
                         {check.label}
                       </div>
                     ))}

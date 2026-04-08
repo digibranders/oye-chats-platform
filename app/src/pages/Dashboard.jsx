@@ -179,7 +179,7 @@ export default function Dashboard() {
               <p className="text-sm font-semibold text-surface-900 dark:text-white">{action.label}</p>
               <p className="text-xs text-surface-500">{action.desc}</p>
             </div>
-            <ArrowRight size={14} className="text-surface-300 dark:text-surface-600 group-hover:text-primary-500 group-hover:translate-x-0.5 transition-all" />
+            <ArrowRight size={14} className="text-surface-600 dark:text-surface-300 group-hover:text-primary-500 group-hover:translate-x-0.5 transition-all" />
           </button>
         ))}
       </motion.div>
@@ -209,7 +209,7 @@ export default function Dashboard() {
             </div>
           ) : topQuestions.length === 0 ? (
             <div className="py-10 text-center border-2 border-dashed border-surface-200 dark:border-surface-800 rounded-xl">
-              <MessageSquare className="mx-auto text-surface-300 dark:text-surface-600 mb-3" size={28} />
+              <MessageSquare className="mx-auto text-surface-600 dark:text-surface-300 mb-3" size={28} />
               <p className="text-surface-500 text-sm">No queries yet. Interactions will appear here.</p>
             </div>
           ) : (

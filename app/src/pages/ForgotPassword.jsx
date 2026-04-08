@@ -73,7 +73,7 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen flex bg-surface-950">
+    <div className="min-h-screen flex bg-white dark:bg-surface-950">
       {/* Left Panel */}
       <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden">
         <div className="absolute inset-0 gradient-mesh" />

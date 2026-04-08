@@ -125,7 +125,7 @@ function KpiInfoButton({ text, label }) {
         <div className="relative group">
             <button
                 type="button"
-                className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-surface-300 text-surface-500 hover:text-surface-700 hover:border-surface-400 focus:outline-none focus:ring-2 focus:ring-primary-400/60"
+                className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-surface-300 dark:border-surface-600 text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:border-surface-400 dark:hover:border-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-400/60"
                 title={text}
                 aria-label={label}
             >
@@ -422,7 +422,7 @@ function ConfigurationTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm font-semibold text-surface-700 mb-2">Qualification Framework</label>
+                    <label className="block text-sm font-semibold text-surface-700 dark:text-surface-300 mb-2">Qualification Framework</label>
                     <div className="flex flex-wrap items-center gap-3">
                         <select
                             value={selectedFramework}
@@ -499,7 +499,7 @@ function ConfigurationTab() {
                                             role="switch"
                                             aria-checked={d.enabled}
                                             onClick={() => updateDimension(dim, 'enabled', !d.enabled)}
-                                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.enabled ? 'bg-primary-500' : 'bg-surface-300'}`}
+                                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.enabled ? 'bg-primary-500' : 'bg-surface-300 dark:bg-surface-600'}`}
                                         >
                                             <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                                         </button>
@@ -561,13 +561,13 @@ function ConfigurationTab() {
                                         <div className="border-t border-surface-100 dark:border-surface-700 pt-4 space-y-3">
                                             <div className="flex items-center gap-3">
                                                 <label className="flex items-center gap-2 cursor-pointer">
-                                                    <span className="text-sm font-medium text-surface-700">CTA Enabled</span>
+                                                    <span className="text-sm font-medium text-surface-700 dark:text-surface-300">CTA Enabled</span>
                                                     <button
                                                         type="button"
                                                         role="switch"
                                                         aria-checked={d.cta_enabled}
                                                         onClick={() => updateDimension(dim, 'cta_enabled', !d.cta_enabled)}
-                                                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.cta_enabled ? 'bg-primary-500' : 'bg-surface-300'}`}
+                                                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.cta_enabled ? 'bg-primary-500' : 'bg-surface-300 dark:bg-surface-600'}`}
                                                     >
                                                         <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${d.cta_enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                                                     </button>
@@ -620,7 +620,7 @@ function ConfigurationTab() {
                                 role="switch"
                                 aria-checked={config.decay?.enabled ?? false}
                                 onClick={() => updateDecay('enabled', !(config.decay?.enabled ?? false))}
-                                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${config.decay?.enabled ? 'bg-primary-500' : 'bg-surface-300'}`}
+                                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${config.decay?.enabled ? 'bg-primary-500' : 'bg-surface-300 dark:bg-surface-600'}`}
                             >
                                 <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${config.decay?.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                             </button>

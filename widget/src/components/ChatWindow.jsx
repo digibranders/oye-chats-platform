@@ -315,7 +315,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     useEffect(() => {
         if (!showHeaderMenu) return;
         const handler = (e) => {
-            if (headerMenuRef.current && !headerMenuRef.current.contains(e.target)) {
+            // Use composedPath() instead of e.target because the widget renders inside
+            // a Shadow DOM — e.target at the document level is retargeted to the shadow
+            // host, making contains() always return false for elements inside the shadow.
+            if (headerMenuRef.current && !e.composedPath().includes(headerMenuRef.current)) {
                 setShowHeaderMenu(false);
             }
         };

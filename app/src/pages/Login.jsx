@@ -87,7 +87,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex bg-surface-950">
+    <div className="min-h-screen flex bg-white dark:bg-surface-950">
       {/* Left Panel — Branding */}
       <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden">
         {/* Animated gradient mesh background */}

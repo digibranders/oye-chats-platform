@@ -18,41 +18,6 @@ if (SENTRY_DSN) {
 
 console.log(`[OyeChats] Widget v2.1.0 — build ${import.meta.env.VITE_BUILD_TIMESTAMP || 'dev'}`);
 
-// ── CSS Auto-Injection ──────────────────────────────────────────────
-// In production the build outputs oyechats-widget.js + oyechats-widget.css as
-// separate files.  Third-party sites only embed the JS via <script>, so
-// the CSS never loads and the widget is invisible.
-// Fix: detect the script's own URL and load the sibling CSS file.
-// Skip in dev mode — Vite HMR already handles CSS injection.
-if (import.meta.env.PROD) {
-  try {
-    const selfScript =
-      document.currentScript ||
-      (() => {
-        const all = document.getElementsByTagName('script');
-        for (let i = all.length - 1; i >= 0; i--) {
-          if (all[i].src && all[i].src.includes('oyechats-widget')) return all[i];
-        }
-        return null;
-      })();
-
-    if (selfScript && selfScript.src) {
-      const cssUrl = selfScript.src.replace(/\.js(\?.*)?$/, '.css');
-      if (!document.querySelector(`link[href="${cssUrl}"]`)) {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = cssUrl;
-        document.head.appendChild(link);
-        console.log('[OyeChats] CSS auto-injected:', cssUrl);
-      }
-    } else {
-      console.warn('[OyeChats] Could not determine script URL for CSS injection');
-    }
-  } catch (e) {
-    console.warn('[OyeChats] CSS auto-injection failed:', e);
-  }
-}
-
 // Extract Bot Key or API Key from the script tag
 // Priority: data-bot-key > data-api-key (backward compat)
 let scriptTag = document.currentScript;
@@ -88,6 +53,30 @@ if (scriptTag) {
 
 // Find or create the root container for the widget
 const CONTAINER_ID = 'oyechats-widget-root';
+const RENDER_TARGET_ID = 'oyechats-shadow-inner';
+const STYLE_LINK_SELECTOR = 'link[data-oyechats-style="1"]';
+
+const getWidgetCssUrl = () => {
+  if (import.meta.env.DEV) {
+    const devBaseUrl = scriptTag?.src || window.location.href;
+    return new URL('/src/index.css', devBaseUrl).href;
+  }
+
+  const scriptSrc = scriptTag?.src;
+  if (scriptSrc && /\.js(\?.*)?$/.test(scriptSrc)) {
+    return scriptSrc.replace(/\.js(\?.*)?$/, '.css$1');
+  }
+
+  const scripts = document.getElementsByTagName('script');
+  for (let i = scripts.length - 1; i >= 0; i--) {
+    const src = scripts[i].src || '';
+    if (src.includes('oyechats-widget') && /\.js(\?.*)?$/.test(src)) {
+      return src.replace(/\.js(\?.*)?$/, '.css$1');
+    }
+  }
+
+  return null;
+};
 
 const initWidget = () => {
   console.log('[OyeChats] Attempting to initialize widget container...');
@@ -108,8 +97,42 @@ const initWidget = () => {
   }
 
   if (container) {
-    console.log('[OyeChats] Starting React render on container:', container);
-    createRoot(container).render(
+    // Reuse existing shadow root when re-initialized to avoid attachShadow crashes.
+    const shadow = container.shadowRoot || container.attachShadow({ mode: 'open' });
+
+    // Inject widget CSS as a sibling stylesheet (CSP compatible).
+    if (!shadow.querySelector(STYLE_LINK_SELECTOR)) {
+      const cssUrl = getWidgetCssUrl();
+      if (cssUrl) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = cssUrl;
+        link.setAttribute('data-oyechats-style', '1');
+        shadow.appendChild(link);
+        console.log('[OyeChats] Shadow DOM stylesheet attached:', cssUrl);
+      } else {
+        console.warn('[OyeChats] Could not determine stylesheet URL for shadow root');
+      }
+    }
+
+    // Create render target inside shadow root only once.
+    let renderTarget = shadow.querySelector(`#${RENDER_TARGET_ID}`);
+    if (!renderTarget) {
+      renderTarget = document.createElement('div');
+      renderTarget.id = RENDER_TARGET_ID;
+      shadow.appendChild(renderTarget);
+    }
+
+    // Skip duplicate mounts when script executes more than once.
+    if (renderTarget.dataset.oyechatsMounted === 'true' || renderTarget.hasChildNodes()) {
+      renderTarget.dataset.oyechatsMounted = 'true';
+      console.log('[OyeChats] Widget already mounted, skipping duplicate initialization');
+      return;
+    }
+
+    renderTarget.dataset.oyechatsMounted = 'true';
+    console.log('[OyeChats] Shadow DOM ready, starting React render');
+    createRoot(renderTarget).render(
       <StrictMode>
         <App />
       </StrictMode>,
@@ -125,6 +148,3 @@ if (document.readyState === 'loading') {
 } else {
   initWidget();
 }
-
-
-

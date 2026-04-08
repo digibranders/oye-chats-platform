@@ -64,7 +64,7 @@ export default function DataTable({
                     <div className="flex items-center gap-1.5">
                       {flexRender(header.column.columnDef.header, header.getContext())}
                       {header.column.getCanSort() && (
-                        <span className="text-surface-300 dark:text-surface-400">
+                        <span className="text-surface-400 dark:text-surface-500">
                           {header.column.getIsSorted() === 'asc' ? (
                             <ChevronUp size={12} />
                           ) : header.column.getIsSorted() === 'desc' ? (

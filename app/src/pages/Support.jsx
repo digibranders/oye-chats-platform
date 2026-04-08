@@ -23,11 +23,15 @@ export default function Support() {
   };
 
   return (
-    <div className="space-y-4">
-      <PageHeader title="Support" subtitle="Manage live conversations and offline messages" />
-      <Tabs tabs={tabs} activeTab={activeTab} onChange={handleTabChange} />
+    <div className="flex flex-col h-full gap-4">
+      <div className="flex-shrink-0">
+        <PageHeader title="Support" subtitle="Manage live conversations and offline messages" />
+        <div className="mt-4">
+          <Tabs tabs={tabs} activeTab={activeTab} onChange={handleTabChange} />
+        </div>
+      </div>
 
-      <div className={activeTab !== 'live-chat' ? 'hidden' : ''}>
+      <div className={`flex-1 min-h-0 ${activeTab !== 'live-chat' ? 'hidden' : ''}`}>
         <LiveChat embedded />
       </div>
 

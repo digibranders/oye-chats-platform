@@ -34,10 +34,10 @@ const SettingsDropup = ({ isOpen: sidebarOpen }) => {
                   setIsFeedbackModalOpen(true);
                   setIsOpen(false);
                 }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-800 transition-colors text-left text-sm font-medium"
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors text-left text-sm font-medium text-surface-700 dark:text-surface-300"
               >
-                <div className="p-1.5 rounded-md bg-surface-800">
-                  <MessageCircle size={16} className="text-surface-400" />
+                <div className="p-1.5 rounded-md bg-surface-100 dark:bg-surface-800">
+                  <MessageCircle size={16} className="text-surface-500 dark:text-surface-400" />
                 </div>
                 <span className="flex-1">Send feedback</span>
               </button>

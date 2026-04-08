@@ -80,7 +80,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
         <AnimatePresence>
             <div className="fixed inset-0 z-[200] flex items-center justify-center">
                 <motion.div
-                    className="absolute inset-0 bg-surface-950/80 dark:bg-black/80 backdrop-blur-md"
+                    className="absolute inset-0 bg-black/50 dark:bg-black/80 backdrop-blur-md"
                     variants={overlayVariants}
                     initial="hidden"
                     animate="visible"
