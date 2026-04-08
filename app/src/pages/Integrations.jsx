@@ -38,7 +38,7 @@ function Toggle({ checked, onChange, disabled = false }) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function EmailChipInput({ emails, onChange, placeholder = 'Type email and press Enter' }) {
+function EmailChipInput({ emails, onChange, placeholder = 'Type email and press Enter', maxEmails }) {
     const [inputValue, setInputValue] = useState('');
     const [error, setError] = useState('');
     const inputRef = useRef(null);
@@ -46,6 +46,10 @@ function EmailChipInput({ emails, onChange, placeholder = 'Type email and press 
     const addEmail = (raw) => {
         const email = raw.trim().toLowerCase();
         if (!email) return;
+        if (maxEmails && emails.length >= maxEmails) {
+            setError(`Only ${maxEmails} email${maxEmails > 1 ? 's' : ''} allowed here`);
+            return;
+        }
         if (!EMAIL_RE.test(email)) {
             setError(`"${email}" is not a valid email`);
             return;
@@ -119,17 +123,19 @@ function EmailChipInput({ emails, onChange, placeholder = 'Type email and press 
                         </button>
                     </span>
                 ))}
-                <input
-                    ref={inputRef}
-                    type="text"
-                    className="flex-1 min-w-[180px] bg-transparent outline-none text-sm text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
-                    placeholder={emails.length === 0 ? placeholder : 'Add another...'}
-                    value={inputValue}
-                    onChange={(e) => { setInputValue(e.target.value); setError(''); }}
-                    onKeyDown={handleKeyDown}
-                    onPaste={handlePaste}
-                    onBlur={handleBlur}
-                />
+                {(!maxEmails || emails.length < maxEmails) && (
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        className="flex-1 min-w-[180px] bg-transparent outline-none text-sm text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        placeholder={emails.length === 0 ? placeholder : 'Add another...'}
+                        value={inputValue}
+                        onChange={(e) => { setInputValue(e.target.value); setError(''); }}
+                        onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
+                        onBlur={handleBlur}
+                    />
+                )}
             </div>
             {error && <p className="text-xs text-rose-600 dark:text-rose-400 mt-1">{error}</p>}
         </div>
@@ -144,8 +150,8 @@ function EmailSettings() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
-    // Form state — reply-to is a single string; recipients are arrays
-    const [replyToEmail, setReplyToEmail] = useState('');
+    // Form state — reply-to is a single email (stored as array for chip input); recipients are arrays
+    const [replyToEmail, setReplyToEmail] = useState([]);
     const [defaultRecipients, setDefaultRecipients] = useState([]);
     const [qualifiedLeadRecipients, setQualifiedLeadRecipients] = useState([]);
     const [handoffRecipients, setHandoffRecipients] = useState([]);
@@ -167,7 +173,7 @@ function EmailSettings() {
             if (bots?.length > 0) {
                 const b = bots[0];
                 setBot(b);
-                setReplyToEmail(b.reply_to_email || '');
+                setReplyToEmail(b.reply_to_email ? [b.reply_to_email] : []);
                 setEmailOnQualified(b.email_on_qualified ?? true);
                 setEmailOnHandoff(b.email_on_handoff ?? true);
                 setEmailOnOffline(b.email_on_offline ?? true);
@@ -204,7 +210,7 @@ function EmailSettings() {
             if (offlineRecipients.length) notificationEmails.offline_message = offlineRecipients;
 
             await updateBot(bot.id, {
-                reply_to_email: replyToEmail.trim() || null,
+                reply_to_email: replyToEmail[0] || null,
                 notification_emails: notificationEmails,
                 email_on_qualified: emailOnQualified,
                 email_on_handoff: emailOnHandoff,
@@ -223,8 +229,6 @@ function EmailSettings() {
             setSaving(false);
         }
     };
-
-    const inputClass = "w-full px-3.5 py-2.5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500";
 
     if (loading) {
         return (
@@ -259,12 +263,11 @@ function EmailSettings() {
 
                     <div>
                         <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Reply-To Email</label>
-                        <input
-                            type="email"
-                            className={inputClass}
+                        <EmailChipInput
+                            emails={replyToEmail}
+                            onChange={setReplyToEmail}
                             placeholder="support@yourdomain.com"
-                            value={replyToEmail}
-                            onChange={(e) => setReplyToEmail(e.target.value)}
+                            maxEmails={1}
                         />
                         <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">When visitors reply to emails, responses go to this address</p>
                     </div>
