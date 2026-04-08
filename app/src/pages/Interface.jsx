@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { getAuthState } from '../utils/auth';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
-import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus } from 'lucide-react';
+import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus, Mail } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -129,7 +129,8 @@ export default function Interface({ embedded = false }) {
         { field: 'name', required: true },
         { field: 'email', required: true },
     ]);
-    const [notificationEmail, setNotificationEmail] = useState('');
+    const [notificationEmails, setNotificationEmails] = useState([]);
+    const [notificationEmailInput, setNotificationEmailInput] = useState('');
     const [emailOnQualified, setEmailOnQualified] = useState(true);
     const [emailOnHandoff, setEmailOnHandoff] = useState(true);
     const [liveChatEnabled, setLiveChatEnabled] = useState(true);
@@ -173,7 +174,15 @@ export default function Interface({ embedded = false }) {
                 setOrbColor(settings.orb_color || '');
                 setLeadFormEnabled(settings.lead_form_enabled ?? false);
                 if (settings.lead_form_fields) setLeadFormFields(settings.lead_form_fields);
-                setNotificationEmail(settings.notification_email || '');
+                // Load emails: prefer notification_emails.default (multi), fallback to legacy notification_email
+                const defaultEmails = settings.notification_emails?.default;
+                if (Array.isArray(defaultEmails) && defaultEmails.length > 0) {
+                    setNotificationEmails(defaultEmails);
+                } else if (settings.notification_email) {
+                    setNotificationEmails([settings.notification_email]);
+                } else {
+                    setNotificationEmails([]);
+                }
                 setEmailOnQualified(settings.email_on_qualified ?? true);
                 setEmailOnHandoff(settings.email_on_handoff ?? true);
                 setLiveChatEnabled(settings.live_chat_enabled ?? true);
@@ -270,7 +279,8 @@ export default function Interface({ embedded = false }) {
                 orb_color: orbColor || null,
                 lead_form_enabled: leadFormEnabled,
                 lead_form_fields: leadFormFields,
-                notification_email: notificationEmail || null,
+                notification_email: notificationEmails[0] || null,
+                notification_emails: notificationEmails.length > 0 ? { default: notificationEmails } : null,
                 email_on_qualified: emailOnQualified,
                 email_on_handoff: emailOnHandoff,
                 live_chat_enabled: liveChatEnabled,
@@ -889,14 +899,64 @@ export default function Interface({ embedded = false }) {
 
                             <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                                 <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Notification Email</label>
-                                    <input
-                                        type="email"
-                                        value={notificationEmail}
-                                        onChange={(e) => setNotificationEmail(e.target.value)}
-                                        placeholder="sales@yourcompany.com"
-                                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
-                                    />
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">
+                                        Notification Emails
+                                    </label>
+                                    <div
+                                        className="min-h-[42px] w-full flex flex-wrap gap-1.5 px-2.5 py-2 border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-900 focus-within:border-primary-400 transition-colors cursor-text"
+                                        onClick={() => document.getElementById('notif-email-input').focus()}
+                                    >
+                                        {notificationEmails.map((email) => (
+                                            <span
+                                                key={email}
+                                                className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md bg-primary-50 dark:bg-primary-500/15 border border-primary-200 dark:border-primary-500/30 text-[12px] font-medium text-primary-700 dark:text-primary-300 max-w-full"
+                                            >
+                                                <Mail size={11} className="flex-shrink-0 opacity-70" />
+                                                <span className="truncate">{email}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setNotificationEmails((prev) => prev.filter((e) => e !== email));
+                                                    }}
+                                                    className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors"
+                                                    aria-label={`Remove ${email}`}
+                                                >
+                                                    <X size={10} />
+                                                </button>
+                                            </span>
+                                        ))}
+                                        <input
+                                            id="notif-email-input"
+                                            type="email"
+                                            value={notificationEmailInput}
+                                            onChange={(e) => setNotificationEmailInput(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ',') {
+                                                    e.preventDefault();
+                                                    const val = notificationEmailInput.trim().replace(/,$/, '');
+                                                    if (val && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) && !notificationEmails.includes(val)) {
+                                                        setNotificationEmails((prev) => [...prev, val]);
+                                                        setNotificationEmailInput('');
+                                                    }
+                                                } else if (e.key === 'Backspace' && !notificationEmailInput && notificationEmails.length > 0) {
+                                                    setNotificationEmails((prev) => prev.slice(0, -1));
+                                                }
+                                            }}
+                                            onBlur={() => {
+                                                const val = notificationEmailInput.trim();
+                                                if (val && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) && !notificationEmails.includes(val)) {
+                                                    setNotificationEmails((prev) => [...prev, val]);
+                                                    setNotificationEmailInput('');
+                                                }
+                                            }}
+                                            placeholder={notificationEmails.length === 0 ? 'sales@yourcompany.com' : 'Add another...'}
+                                            className="flex-1 min-w-[160px] text-sm text-surface-600 dark:text-surface-300 bg-transparent outline-none placeholder:text-surface-400 dark:placeholder:text-surface-500 py-0.5"
+                                        />
+                                    </div>
+                                    <p className="text-[11px] text-surface-400 dark:text-surface-500">
+                                        Press Enter or comma to add. Backspace removes the last chip.
+                                    </p>
                                 </div>
                                 <div className="flex items-center justify-between py-2">
                                     <span className="text-[13px] text-surface-700">Email on qualified lead</span>
