@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { Layout, Smartphone, Cloud, Check, Eye, X } from 'lucide-react';
-import ChatWindow from '../../../Frontend/src/components/ChatWindow';
+// ChatWindow preview removed — widget runs in a separate Vite build and cannot be imported directly.
+// To preview themes, embed the widget via iframe from the preview server (port 4173).
 
 export const themes = [
     {
@@ -118,8 +119,8 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                             <p className="text-white/50 text-sm font-medium">Live chatbot preview</p>
                         </div>
 
-                        <div className="relative shadow-[0_20px_60px_rgba(0,0,0,0.5)] rounded-3xl overflow-hidden">
-                            <ChatWindow theme={previewTheme} onClose={() => setPreviewTheme(null)} />
+                        <div className="relative shadow-[0_20px_60px_rgba(0,0,0,0.5)] rounded-3xl overflow-hidden w-[360px] h-[520px] bg-white/5 border border-white/10 flex items-center justify-center">
+                            <p className="text-white/40 text-sm text-center px-8">Widget preview is not available in the admin panel.<br />Apply the theme and test on your website.</p>
                         </div>
 
                         <div className="mt-8">

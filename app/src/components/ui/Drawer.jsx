@@ -1,10 +1,15 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useId, createContext, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
+const DrawerContext = createContext(null);
+
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 export default function Drawer({ open, onClose, children, className, side = 'right', size = 'md' }) {
   const drawerRef = useRef(null);
+  const titleId = useId();
 
   const handleEsc = useCallback((e) => {
     if (e.key === 'Escape') onClose?.();
@@ -16,7 +21,7 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
       document.body.style.overflow = 'hidden';
 
       const timer = setTimeout(() => {
-        const focusable = drawerRef.current?.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        const focusable = drawerRef.current?.querySelector(FOCUSABLE_SELECTOR);
         focusable?.focus();
       }, 50);
 
@@ -28,13 +33,45 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
     }
   }, [open, handleEsc]);
 
+  // Focus trap: Tab wraps within the drawer
+  useEffect(() => {
+    if (!open) return;
+
+    const handleFocusTrap = (e) => {
+      if (e.key !== 'Tab' || !drawerRef.current) return;
+
+      const focusableElements = Array.from(
+        drawerRef.current.querySelectorAll(FOCUSABLE_SELECTOR)
+      );
+      if (focusableElements.length === 0) return;
+
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleFocusTrap);
+    return () => document.removeEventListener('keydown', handleFocusTrap);
+  }, [open]);
+
   const sizes = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-lg', xl: 'max-w-xl', '2xl': 'max-w-2xl' };
   const isRight = side === 'right';
 
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-labelledby={titleId}>
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -56,7 +93,9 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
               className
             )}
           >
-            {children}
+            <DrawerContext.Provider value={{ titleId }}>
+              {children}
+            </DrawerContext.Provider>
           </motion.div>
         </div>
       )}
@@ -81,8 +120,17 @@ function DrawerHeader({ children, onClose, className }) {
   );
 }
 
+function DrawerTitle({ children, className }) {
+  const ctx = useContext(DrawerContext);
+  return (
+    <h2 id={ctx?.titleId} className={cn('text-lg font-semibold text-surface-900 dark:text-surface-50 tracking-tight', className)}>
+      {children}
+    </h2>
+  );
+}
+
 function DrawerBody({ children, className }) {
   return <div className={cn('p-6', className)}>{children}</div>;
 }
 
-export { DrawerHeader, DrawerBody };
+export { DrawerHeader, DrawerTitle, DrawerBody };

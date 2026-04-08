@@ -3,12 +3,14 @@ import {
     Activity,
     Users as UsersIcon,
     Sparkles,
-    MessageSquareQuote
+    MessageSquareQuote,
+    PanelLeftClose,
+    PanelLeftOpen,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import SettingsDropup from '../components/SettingsDropup';
 
-export default function SuperadminSidebar({ isOpen }) {
+export default function SuperadminSidebar({ isOpen, setIsOpen }) {
     const location = useLocation();
 
     const menuItems = [
@@ -59,7 +61,7 @@ export default function SuperadminSidebar({ isOpen }) {
         <aside
             className={cn(
                 'fixed top-0 left-0 h-screen overflow-x-hidden bg-surface-950 border-r border-surface-800/50 z-20 transition-all duration-300',
-                isOpen ? 'w-58' : 'w-20'
+                isOpen ? 'w-[14.5rem]' : 'w-20'
             )}
         >
             {/* Logo */}
@@ -83,8 +85,19 @@ export default function SuperadminSidebar({ isOpen }) {
 
             </nav>
 
-            <div className="absolute bottom-4 left-0 w-full px-4">
+            <div className="absolute bottom-4 left-0 w-full px-4 space-y-2">
                 <SettingsDropup isOpen={isOpen} />
+                <button
+                    onClick={() => setIsOpen(prev => !prev)}
+                    className={cn(
+                        'flex items-center gap-2 w-full px-3 py-2 rounded-xl text-surface-400 hover:bg-white/[0.05] hover:text-surface-200 transition-all',
+                        !isOpen && 'justify-center'
+                    )}
+                    title={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+                >
+                    {isOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+                    {isOpen && <span className="text-sm">Collapse</span>}
+                </button>
             </div>
         </aside>
     );

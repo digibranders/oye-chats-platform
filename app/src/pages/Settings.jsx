@@ -6,7 +6,8 @@ import { cn } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
 import { getAuthState } from '../utils/auth';
-import { getBots, updateBot } from '../services/api';
+import { updateBot } from '../services/api';
+import { useBotContext } from '../context/BotContext';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ function Toggle({ checked, onChange, disabled = false, id }) {
 export default function Settings() {
     const { showToast } = useToast();
     const { isOperator, operatorRole, isBotManager } = getAuthState();
+    const { selectedBot, loading: botsLoading } = useBotContext();
     const [feedback, setFeedback] = useState('');
 
     // Bot data
@@ -82,28 +84,20 @@ export default function Settings() {
     const [saving, setSaving] = useState({});
     const [savingHours, setSavingHours] = useState(false);
 
-    // Fetch current bot on mount
+    // Sync from selected bot in BotContext
     useEffect(() => {
-        const fetchBot = async () => {
-            try {
-                const bots = await getBots();
-                if (!bots?.length) return;
-                const bot = bots[0];
-                setBotId(bot.id);
-                setFlags({ ...DEFAULT_FLAGS, ...(bot.feature_flags || {}) });
-                if (bot.business_hours) {
-                    setBusinessHours({ ...DEFAULT_BUSINESS_HOURS, ...bot.business_hours });
-                }
-            } catch {
-                showToast('error', 'Failed to load bot settings.');
-            } finally {
-                setLoadingBot(false);
-            }
-        };
-        fetchBot();
-        // showToast is stable (context value) — intentionally omitted to avoid re-running on provider re-render
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        if (botsLoading) return;
+        if (!selectedBot) {
+            setLoadingBot(false);
+            return;
+        }
+        setBotId(selectedBot.id);
+        setFlags({ ...DEFAULT_FLAGS, ...(selectedBot.feature_flags || {}) });
+        if (selectedBot.business_hours) {
+            setBusinessHours({ ...DEFAULT_BUSINESS_HOURS, ...selectedBot.business_hours });
+        }
+        setLoadingBot(false);
+    }, [selectedBot, botsLoading]);
 
     // Toggle a single feature flag
     const toggleFlag = useCallback(async (key, value) => {

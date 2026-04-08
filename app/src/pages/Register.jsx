@@ -187,6 +187,7 @@ export default function Register() {
             <motion.div
               initial={{ opacity: 0, y: -8, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
+              role="alert"
               className="mb-4 p-3.5 bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 rounded-xl text-sm font-medium border border-rose-200 dark:border-rose-500/20"
             >
               {error}
@@ -279,7 +280,7 @@ export default function Register() {
                 <button
                   type="button" onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 transition-colors"
-                  tabIndex={-1}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>

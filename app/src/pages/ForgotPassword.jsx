@@ -54,6 +54,10 @@ export default function ForgotPassword() {
       setError('Please enter the reset code and your new password.');
       return;
     }
+    if (newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setError('Password must be at least 8 characters and include a letter and a number.');
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -162,6 +166,7 @@ export default function ForgotPassword() {
               <motion.div
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
+                role="alert"
                 className="mb-5 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 text-sm text-rose-600 dark:text-rose-400 font-medium"
               >
                 {error}
@@ -171,6 +176,7 @@ export default function ForgotPassword() {
               <motion.div
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
+                role="alert"
                 className="mb-5 p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-sm text-emerald-600 dark:text-emerald-400 font-medium"
               >
                 {success}
@@ -250,6 +256,14 @@ export default function ForgotPassword() {
                         onChange={(e) => setOtp(e.target.value)}
                       />
                     </div>
+                    <button
+                      type="button"
+                      onClick={handleRequestReset}
+                      disabled={isLoading}
+                      className="mt-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Didn&apos;t receive a code? Resend
+                    </button>
                   </div>
 
                   <div>

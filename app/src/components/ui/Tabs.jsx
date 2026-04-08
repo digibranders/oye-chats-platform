@@ -1,7 +1,9 @@
+import { useId } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '../../lib/utils';
 
 export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', className }) {
+  const instanceId = useId();
   const handleKeyDown = (e, index) => {
     let nextIndex;
     if (e.key === 'ArrowRight') {
@@ -59,7 +61,7 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
               )}
               {isActive && (
                 <motion.div
-                  layoutId="tab-underline"
+                  layoutId={`tab-underline-${instanceId}`}
                   className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-600 dark:bg-primary-400 rounded-full"
                   transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                 />
@@ -93,7 +95,7 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
           >
             {isActive && (
               <motion.div
-                layoutId="tab-pill"
+                layoutId={`tab-pill-${instanceId}`}
                 className="absolute inset-0 bg-white dark:bg-surface-700 rounded-lg shadow-sm"
                 transition={{ type: 'spring', stiffness: 500, damping: 30 }}
               />

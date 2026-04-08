@@ -74,6 +74,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
               : 'text-surface-400 hover:bg-white/[0.05] hover:text-surface-200'
           )}
           title={!isOpen ? item.name : undefined}
+          aria-label={item.name}
         >
           {active && (
             <motion.div
@@ -257,11 +258,12 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
           className={cn(
             'flex items-center gap-3 px-3 py-2 rounded-xl transition-all group',
             isOpen ? 'w-full' : 'w-10 h-10 justify-center',
-            location.pathname === '/settings'
+            location.pathname.startsWith('/settings')
               ? 'bg-white/[0.08] text-white'
               : 'text-surface-400 hover:bg-white/[0.05] hover:text-surface-200'
           )}
           title={!isOpen ? 'Settings' : undefined}
+          aria-label="Settings"
         >
           <Avatar name={adminName} size="xs" />
           {isOpen && (

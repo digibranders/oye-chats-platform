@@ -17,7 +17,11 @@ const pageVariants = {
 };
 
 function AdminLayoutInner() {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= LG_BREAKPOINT);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    const saved = localStorage.getItem('sidebar_open');
+    if (saved !== null) return saved === 'true';
+    return window.innerWidth >= LG_BREAKPOINT;
+  });
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < MD_BREAKPOINT);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -36,6 +40,10 @@ function AdminLayoutInner() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('sidebar_open', String(isSidebarOpen));
+  }, [isSidebarOpen]);
 
   useEffect(() => {
     const isOperator = localStorage.getItem('auth_type') === 'operator';

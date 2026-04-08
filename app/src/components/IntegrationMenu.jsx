@@ -25,7 +25,7 @@ const IntegrationMenu = ({ isOpen: sidebarOpen }) => {
   return (
     <div className="relative w-full" ref={dropupRef}>
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 w-full bg-surface-900 text-white rounded-xl shadow-2xl border border-surface-800 z-50">
+        <div className="absolute bottom-full left-0 mb-2 w-full bg-white dark:bg-surface-900 text-surface-900 dark:text-white rounded-xl shadow-2xl border border-surface-200 dark:border-surface-800 z-50">
           <div className="p-1.5 space-y-0.5">
             {items.map((item) => {
               const Icon = item.icon;

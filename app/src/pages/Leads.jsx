@@ -36,13 +36,6 @@ export default function Leads() {
     const [isDetailLoading, setIsDetailLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => { fetchData(); }, [selectedBot?.id]);
-
-    if (!botsLoading && bots.length === 0) {
-        return <EmptyState title="Leads" description="Create a chatbot first to start capturing and qualifying leads." actionLabel="Create Chatbot" actionTo="/chatbot" />;
-    }
-
     const fetchData = async () => {
         setIsLoading(true);
         try {
@@ -59,6 +52,13 @@ export default function Leads() {
             setIsLoading(false);
         }
     };
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => { fetchData(); }, [selectedBot?.id]);
+
+    if (!botsLoading && bots.length === 0) {
+        return <EmptyState title="Leads" description="Create a chatbot first to start capturing and qualifying leads." actionLabel="Create Chatbot" actionTo="/chatbot" />;
+    }
 
     const handleViewLead = async (sessionId) => {
         setSelectedLead(sessionId);
@@ -88,7 +88,13 @@ export default function Leads() {
     const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 
     const filtered = leads.filter(l => {
-        if (statusFilter && l.status !== statusFilter) return false;
+        if (statusFilter) {
+            // Handle both legacy (cold/warm/hot/qualified) and BANT (unqualified/mql/sal/sql) status names
+            const LEGACY_TO_BANT = { cold: 'unqualified', warm: 'mql', hot: 'sal', qualified: 'sql' };
+            const normalized = LEGACY_TO_BANT[statusFilter] || statusFilter;
+            const leadNormalized = LEGACY_TO_BANT[l.status] || l.status;
+            if (leadNormalized !== normalized) return false;
+        }
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
             const name = l.contact?.name?.toLowerCase() || '';

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Users as UsersIcon, Loader2, Key, Mail, BuildingIcon, Globe,
+    Users as UsersIcon, Loader2, Key, Mail, Building2 as BuildingIcon, Globe,
     Copy, Check, Trash2, X, AlertCircle, Search
 } from 'lucide-react';
 import { cn } from '../../lib/utils';

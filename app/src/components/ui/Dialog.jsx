@@ -1,10 +1,15 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useId, createContext, useContext } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
+const DialogContext = createContext(null);
+
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 export default function Dialog({ open, onClose, children, className, size = 'md' }) {
   const dialogRef = useRef(null);
+  const titleId = useId();
 
   const handleEsc = useCallback((e) => {
     if (e.key === 'Escape') onClose?.();
@@ -15,9 +20,8 @@ export default function Dialog({ open, onClose, children, className, size = 'md'
       document.addEventListener('keydown', handleEsc);
       document.body.style.overflow = 'hidden';
 
-      // Focus trap: focus the dialog container on open
       const timer = setTimeout(() => {
-        const focusable = dialogRef.current?.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        const focusable = dialogRef.current?.querySelector(FOCUSABLE_SELECTOR);
         focusable?.focus();
       }, 50);
 
@@ -28,6 +32,38 @@ export default function Dialog({ open, onClose, children, className, size = 'md'
       };
     }
   }, [open, handleEsc]);
+
+  // Focus trap: Tab wraps within the dialog
+  useEffect(() => {
+    if (!open) return;
+
+    const handleFocusTrap = (e) => {
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+
+      const focusableElements = Array.from(
+        dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR)
+      );
+      if (focusableElements.length === 0) return;
+
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleFocusTrap);
+    return () => document.removeEventListener('keydown', handleFocusTrap);
+  }, [open]);
 
   const sizes = {
     sm: 'max-w-sm',
@@ -41,7 +77,7 @@ export default function Dialog({ open, onClose, children, className, size = 'md'
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -62,7 +98,9 @@ export default function Dialog({ open, onClose, children, className, size = 'md'
               className
             )}
           >
-            {children}
+            <DialogContext.Provider value={{ titleId }}>
+              {children}
+            </DialogContext.Provider>
           </motion.div>
         </div>
       )}
@@ -88,8 +126,9 @@ function DialogHeader({ children, onClose, className }) {
 }
 
 function DialogTitle({ children, className }) {
+  const ctx = useContext(DialogContext);
   return (
-    <h2 className={cn('text-lg font-semibold text-surface-900 dark:text-surface-50 tracking-tight', className)}>
+    <h2 id={ctx?.titleId} className={cn('text-lg font-semibold text-surface-900 dark:text-surface-50 tracking-tight', className)}>
       {children}
     </h2>
   );

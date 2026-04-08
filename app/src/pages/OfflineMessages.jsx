@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Inbox, Mail, Clock, CheckCircle2, Eye, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getOfflineMessages, updateOfflineMessage, deleteOfflineMessage } from '../services/api';
+import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
 
 export default function OfflineMessages({ embedded = false }) {
+    const { showToast } = useToast();
     const [messages, setMessages] = useState([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
@@ -30,26 +32,38 @@ export default function OfflineMessages({ embedded = false }) {
     useEffect(() => { fetchMessages(); }, [page, statusFilter]);
 
     const handleMarkRead = async (id) => {
-        await updateOfflineMessage(id, { status: 'read' });
-        fetchMessages();
-        if (selectedMessage?.id === id) {
-            setSelectedMessage(prev => ({ ...prev, status: 'read' }));
+        try {
+            await updateOfflineMessage(id, { status: 'read' });
+            fetchMessages();
+            if (selectedMessage?.id === id) {
+                setSelectedMessage(prev => ({ ...prev, status: 'read' }));
+            }
+        } catch {
+            showToast('Failed to mark message as read.', 'error');
         }
     };
 
     const handleMarkReplied = async (id) => {
-        await updateOfflineMessage(id, { status: 'replied' });
-        fetchMessages();
-        if (selectedMessage?.id === id) {
-            setSelectedMessage(prev => ({ ...prev, status: 'replied' }));
+        try {
+            await updateOfflineMessage(id, { status: 'replied' });
+            fetchMessages();
+            if (selectedMessage?.id === id) {
+                setSelectedMessage(prev => ({ ...prev, status: 'replied' }));
+            }
+        } catch {
+            showToast('Failed to mark message as replied.', 'error');
         }
     };
 
     const handleDelete = async (id) => {
         if (!confirm('Delete this message?')) return;
-        await deleteOfflineMessage(id);
-        if (selectedMessage?.id === id) setSelectedMessage(null);
-        fetchMessages();
+        try {
+            await deleteOfflineMessage(id);
+            if (selectedMessage?.id === id) setSelectedMessage(null);
+            fetchMessages();
+        } catch {
+            showToast('Failed to delete message.', 'error');
+        }
     };
 
     const statusBadge = (status) => {

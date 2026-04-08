@@ -212,7 +212,7 @@ const AdvancedSettingsTab = ({ settings, onSettingsChange }) => {
 
             <div className="bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/20 rounded-lg p-4">
                 <p className="text-sm text-sky-800 dark:text-sky-300">
-                    💡 <strong>Note:</strong> These are advanced settings affecting performance and user experience. Modify with caution.
+                    💡 <strong>Note:</strong> These are advanced settings. Click <strong>Save Configuration</strong> to apply your changes.
                 </p>
             </div>
         </div>

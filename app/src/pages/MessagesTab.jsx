@@ -212,7 +212,7 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
 
             <div className="bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/20 rounded-lg p-4">
                 <p className="text-sm text-sky-800 dark:text-sky-300">
-                    💡 <strong>Tip:</strong> All changes are saved automatically. Changes will appear in the widget immediately after refresh.
+                    💡 <strong>Tip:</strong> Click <strong>Save Configuration</strong> to apply your changes. They will appear in the widget after the next page refresh.
                 </p>
             </div>
         </div>

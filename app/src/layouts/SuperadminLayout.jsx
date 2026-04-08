@@ -32,7 +32,12 @@ export default function SuperadminLayout() {
 
             {/* Main Content Area */}
             <div className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarOpen ? 'ml-[14.5rem]' : 'ml-20'}`}>
-                <TopBar />
+                <TopBar
+                    isSidebarOpen={isSidebarOpen}
+                    isMobile={false}
+                    toggleSidebar={() => setIsSidebarOpen(prev => !prev)}
+                    onOpenSearch={() => {}}
+                />
 
                 <main className="flex-1 p-6 md:p-8 overflow-y-auto">
                     <div className="max-w-7xl mx-auto">

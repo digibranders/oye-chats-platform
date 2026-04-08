@@ -28,12 +28,12 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit }) => {
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-lg bg-surface-900 text-white rounded-2xl shadow-2xl border border-surface-800 transform transition-all overflow-hidden flex flex-col h-[500px]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-800">
+      <div className="relative w-full max-w-lg bg-white dark:bg-surface-900 text-surface-900 dark:text-white rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-800 transform transition-all overflow-hidden flex flex-col h-[500px]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 dark:border-surface-800">
           <h2 className="text-xl font-semibold">Send feedback</h2>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-surface-800 transition-colors text-surface-400 hover:text-white"
+            className="p-1.5 rounded-full hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors text-surface-400 hover:text-surface-700 dark:hover:text-white"
           >
             <X size={20} />
           </button>

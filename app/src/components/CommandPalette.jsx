@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Search, LayoutDashboard, BookOpen, BarChart3, Target, Headphones,
+    Search, LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
     Bot, Palette, Settings, Plug, Upload, Plus, X, UsersRound
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -12,7 +12,8 @@ const pages = [
     { name: 'Sources', path: '/knowledge', icon: BookOpen, keywords: 'knowledge base documents upload' },
     { name: 'Insights', path: '/insights', icon: BarChart3, keywords: 'analytics charts metrics activity conversations feedback ratings' },
     { name: 'Support', path: '/support', icon: Headphones, keywords: 'live chat messages offline support operator' },
-    { name: 'Leads', path: '/leads', icon: Target, keywords: 'leads sales bant qualification prospects' },
+    { name: 'Leads', path: '/leads', icon: Target, keywords: 'leads sales prospects' },
+    { name: 'Qualification', path: '/qualification', icon: Crosshair, keywords: 'qualification bant scoring criteria visitor' },
     { name: 'My Bots', path: '/chatbot', icon: Bot, keywords: 'chatbot bots embed code create appearance customize' },
     { name: 'Team', path: '/team', icon: UsersRound, keywords: 'team operators departments members quick replies canned responses' },
     { name: 'Settings', path: '/settings', icon: Settings, keywords: 'settings preferences account theme' },

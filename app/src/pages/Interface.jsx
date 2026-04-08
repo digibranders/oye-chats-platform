@@ -1177,7 +1177,7 @@ export default function Interface({ embedded = false }) {
                                     {/* Welcome Screen */}
                                     <div className="flex flex-col items-start text-left w-full pt-2">
                                         <h2 className="text-2xl font-bold text-[#16202C]">
-                                            {(welcomeTitle || 'Hi there 👋').replace(/[\p{Emoji}]/gu, '').trim() || 'Hi there'}
+                                            {(welcomeTitle || 'Hi there 👋').replace(/\p{Extended_Pictographic}/gu, '').trim() || 'Hi there'}
                                         </h2>
                                         <p className="text-[15px] text-surface-500 mt-1">
                                             {welcomeSubtitle || 'How can we help you today?'}
