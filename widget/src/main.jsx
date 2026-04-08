@@ -57,6 +57,11 @@ const RENDER_TARGET_ID = 'oyechats-shadow-inner';
 const STYLE_LINK_SELECTOR = 'link[data-oyechats-style="1"]';
 
 const getWidgetCssUrl = () => {
+  if (import.meta.env.DEV) {
+    const devBaseUrl = scriptTag?.src || window.location.href;
+    return new URL('/src/index.css', devBaseUrl).href;
+  }
+
   const scriptSrc = scriptTag?.src;
   if (scriptSrc && /\.js(\?.*)?$/.test(scriptSrc)) {
     return scriptSrc.replace(/\.js(\?.*)?$/, '.css$1');
