@@ -508,7 +508,7 @@ export default function Interface({ embedded = false }) {
                                                     {recommendedColors.slice(0, 6).map((color) => (
                                                         <div key={color} className="flex items-center gap-2.5 group">
                                                             <div
-                                                                className="w-8 h-8 rounded-md shadow-sm border border-surface-200 flex-shrink-0 transition-transform group-hover:scale-110 cursor-pointer"
+                                                                className="w-8 h-8 rounded-md shadow-sm border border-surface-200 dark:border-surface-700 flex-shrink-0 transition-transform group-hover:scale-110 cursor-pointer"
                                                                 style={{ backgroundColor: color }}
                                                                 title={color}
                                                             />
@@ -570,24 +570,24 @@ export default function Interface({ embedded = false }) {
                                             key={opt.key}
                                             onClick={() => setAvatarType(opt.key)}
                                             className={`relative flex flex-col items-center gap-2 p-5 rounded-xl border-2 transition-all duration-200 ${isSelected
-                                                    ? 'border-green-500 bg-green-50/50 shadow-sm ring-1 ring-green-500/20'
+                                                    ? 'border-emerald-500 bg-emerald-50/50 dark:bg-emerald-500/10 shadow-sm ring-1 ring-emerald-500/20'
                                                     : 'border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 bg-white dark:bg-surface-900'
                                                 }`}
                                         >
                                             {isSelected && (
                                                 <div className="absolute top-2 right-2">
-                                                    <Check className="w-4 h-4 text-green-500" />
+                                                    <Check className="w-4 h-4 text-emerald-500" />
                                                 </div>
                                             )}
                                             {/* Show uploaded badge on Upload Photo card even when not selected */}
                                             {!isSelected && hasUpload && (
-                                                <div className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-green-100 rounded-full">
-                                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                                                    <span className="text-[8px] font-bold text-green-600 uppercase">Uploaded</span>
+                                                <div className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-500/20 rounded-full">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                    <span className="text-[8px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Uploaded</span>
                                                 </div>
                                             )}
                                             <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors overflow-hidden ${isSelected
-                                                    ? 'bg-green-100 text-green-600'
+                                                    ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
                                                     : 'bg-surface-100 text-surface-500'
                                                 }`}>
                                                 {/* Show thumbnail on Upload card if image exists */}
@@ -596,7 +596,7 @@ export default function Interface({ embedded = false }) {
                                                 ) : opt.icon}
                                             </div>
                                             <span className={`text-[13px] font-bold ${isSelected
-                                                    ? 'text-green-700'
+                                                    ? 'text-emerald-700 dark:text-emerald-400'
                                                     : 'text-surface-700'
                                                 }`}>{opt.label}</span>
                                             <span className="text-[11px] text-surface-400">{opt.desc}</span>
@@ -660,7 +660,7 @@ export default function Interface({ embedded = false }) {
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 mb-0.5">
                                                     <span className="text-[13px] font-semibold text-surface-900 truncate">Avatar Active</span>
-                                                    <span className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold text-green-600 bg-green-100 rounded-full uppercase">
+                                                    <span className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/20 rounded-full uppercase">
                                                         <Check className="w-2.5 h-2.5" /> Uploaded
                                                     </span>
                                                 </div>
@@ -676,7 +676,7 @@ export default function Interface({ embedded = false }) {
                                                 </button>
                                                 <button
                                                     onClick={handleRemove}
-                                                    className="w-8 h-8 rounded-lg bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-red-400 hover:text-red-500 text-surface-400 transition-colors shadow-sm"
+                                                    className="w-8 h-8 rounded-lg bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-rose-400 hover:text-rose-500 dark:hover:border-rose-500 dark:hover:text-rose-400 text-surface-400 transition-colors shadow-sm"
                                                     title="Remove image"
                                                 >
                                                     <Trash2 className="w-3.5 h-3.5" />
@@ -693,7 +693,7 @@ export default function Interface({ embedded = false }) {
                                     <div className="space-y-5 animate-fade-in">
                                         {/* Orb Preview */}
                                         <label className="text-[13px] font-bold text-surface-700">Orb Preview</label>
-                                        <div className="flex items-center gap-6 p-6 bg-surface-50/50 border border-surface-200 rounded-xl">
+                                        <div className="flex items-center gap-6 p-6 bg-surface-50/50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-xl">
                                             <div
                                                 className="w-20 h-20 rounded-full flex-shrink-0"
                                                 style={{
@@ -718,8 +718,8 @@ export default function Interface({ embedded = false }) {
                                                 type="button"
                                                 onClick={() => setOrbColor(orbColor ? '' : primaryColor)}
                                                 className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-[12px] font-semibold transition-all mb-4 ${!orbColor
-                                                        ? 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-500/20'
-                                                        : 'border-surface-200 text-surface-600 hover:border-surface-300'
+                                                        ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 ring-1 ring-emerald-500/20'
+                                                        : 'border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:border-surface-300 dark:hover:border-surface-500'
                                                     }`}
                                             >
                                                 <div className="w-5 h-5 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: primaryColor }} />
@@ -727,7 +727,7 @@ export default function Interface({ embedded = false }) {
                                             </button>
 
                                             {/* HexColorPicker - full saturation/brightness square + hue slider */}
-                                            <div className="p-6 bg-surface-50/50 border border-surface-200 rounded-xl">
+                                            <div className="p-6 bg-surface-50/50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-xl">
                                                 <div className="orb-color-picker">
                                                     <HexColorPicker
                                                         color={activeOrbColor}
@@ -738,7 +738,7 @@ export default function Interface({ embedded = false }) {
                                                 {/* Hex input row */}
                                                 <div className="flex items-center gap-3 mt-4">
                                                     <div
-                                                        className="w-10 h-10 rounded-lg shadow-sm border border-surface-200 flex-shrink-0"
+                                                        className="w-10 h-10 rounded-lg shadow-sm border border-surface-200 dark:border-surface-700 flex-shrink-0"
                                                         style={{ backgroundColor: activeOrbColor }}
                                                     />
                                                     <div className="relative flex-grow max-w-[140px]">
@@ -765,7 +765,7 @@ export default function Interface({ embedded = false }) {
                             {avatarType === 'mascot' && (
                                 <div className="space-y-4 animate-fade-in">
                                     <label className="text-[13px] font-bold text-surface-700">Mascot Preview</label>
-                                    <div className="flex items-center gap-6 p-6 bg-surface-50/50 border border-surface-200 rounded-xl">
+                                    <div className="flex items-center gap-6 p-6 bg-surface-50/50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-xl">
                                         <div
                                             className="w-20 h-20 rounded-full flex-shrink-0 flex items-center justify-center"
                                             style={{ backgroundColor: primaryColor }}
@@ -804,7 +804,7 @@ export default function Interface({ embedded = false }) {
                             </div>
 
                             {/* Pre-Chat Lead Capture Form */}
-                            <div className="border-t border-surface-200 pt-6">
+                            <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
                                 <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
                                     <Sparkles className="w-4 h-4 text-primary-500" />
                                     Pre-Chat Lead Capture
@@ -877,7 +877,7 @@ export default function Interface({ embedded = false }) {
                             )}
 
                             {/* Email Notifications */}
-                            <div className="border-t border-surface-200 pt-6">
+                            <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
                                 <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
                                     <Settings2 className="w-4 h-4 text-primary-500" />
                                     Email Notifications
@@ -938,7 +938,7 @@ export default function Interface({ embedded = false }) {
                             </div>
 
                             {/* Widget Messages */}
-                            <div className="border-t border-surface-200 pt-6">
+                            <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
                                 <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
                                     <Bot className="w-4 h-4 text-primary-500" />
                                     Widget Messages
@@ -975,7 +975,7 @@ export default function Interface({ embedded = false }) {
                             </div>
 
                             {/* What happens when... */}
-                            <div className="border-t border-surface-200 pt-6">
+                            <div className="border-t border-surface-200 dark:border-surface-700 pt-6">
                                 <h3 className="text-[15px] font-bold text-surface-900 flex items-center gap-2">
                                     <Sparkles className="w-4 h-4 text-primary-500" />
                                     What happens when…
@@ -1054,7 +1054,7 @@ export default function Interface({ embedded = false }) {
                         </div>
                     ) : activeTab === 'Custom Brand' ? (
                         <div className="space-y-6 animate-fade-in">
-                            <div className="bg-gradient-to-br from-primary-50 to-indigo-50 p-8 rounded-2xl border border-primary-200 shadow-sm">
+                            <div className="bg-gradient-to-br from-primary-50 to-primary-50/50 dark:from-primary-500/10 dark:to-primary-500/5 p-8 rounded-2xl border border-primary-200 shadow-sm">
                                 <div className="flex items-start gap-4">
                                     <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center flex-shrink-0">
                                         <Settings2 className="w-6 h-6 text-primary-600" />
@@ -1080,7 +1080,7 @@ export default function Interface({ embedded = false }) {
                             </div>
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center justify-center p-12 text-center border-2 border-dashed border-surface-200 rounded-2xl bg-surface-50/50 animate-fade-in">
+                        <div className="flex flex-col items-center justify-center p-12 text-center border-2 border-dashed border-surface-200 dark:border-surface-700 rounded-2xl bg-surface-50/50 dark:bg-surface-800/50 animate-fade-in">
                             <Settings2 className="w-10 h-10 text-surface-300 mb-4" />
                             <h3 className="text-surface-900 font-bold mb-2">Content for {activeTab}</h3>
                             <p className="text-sm text-surface-500 max-w-sm">
@@ -1155,7 +1155,7 @@ export default function Interface({ embedded = false }) {
                                         <span className="text-[11px] text-surface-400 font-medium">Offline</span>
                                     )}
                                     {previewState === 'chat' && (
-                                        <span className="text-[11px] text-green-500 font-medium">Online</span>
+                                        <span className="text-[11px] text-emerald-500 font-medium">Online</span>
                                     )}
                                 </div>
                             </div>
@@ -1257,7 +1257,7 @@ export default function Interface({ embedded = false }) {
                 <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-surface-900/70 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden">
                         {/* Header */}
-                        <div className="px-5 py-4 border-b border-surface-200 flex items-center justify-between">
+                        <div className="px-5 py-4 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between">
                             <div>
                                 <h3 className="text-base font-bold text-surface-900">Crop Avatar</h3>
                                 <p className="text-[11px] text-surface-400 mt-0.5">Drag to reposition, scroll to zoom</p>
@@ -1320,7 +1320,7 @@ export default function Interface({ embedded = false }) {
                         </div>
 
                         {/* Footer */}
-                        <div className="px-5 py-3 border-t border-surface-200 flex items-center justify-end gap-3">
+                        <div className="px-5 py-3 border-t border-surface-200 dark:border-surface-700 flex items-center justify-end gap-3">
                             <button
                                 onClick={() => { setShowCropModal(false); setCropImage(null); }}
                                 className="px-4 py-2 text-sm font-medium text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-surface-600 rounded-xl transition-colors"

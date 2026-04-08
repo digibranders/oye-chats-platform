@@ -12,7 +12,6 @@ import {
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
-import { cn } from '../lib/utils';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -912,12 +911,12 @@ export default function LiveChat({ embedded = false }) {
                 <div className={`flex items-center gap-3 ${embedded ? 'w-full justify-between' : ''}`}>
                     {operatorName && <span className="text-sm text-surface-500 dark:text-surface-400">{operatorName}</span>}
                     {connectionLost && (
-                        <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg">
+                        <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-1 rounded-lg">
                             <Loader2 className="w-3 h-3 animate-spin" />
                             Reconnecting...
                             <button
                                 onClick={() => { reconnectAttemptsRef.current = 0; setReconnectCount(c => c + 1); }}
-                                className="ml-1 underline hover:text-amber-900"
+                                className="ml-1 underline hover:text-amber-900 dark:hover:text-amber-300"
                             >
                                 Retry now
                             </button>
@@ -1561,13 +1560,13 @@ export default function LiveChat({ embedded = false }) {
                                 onKeyDown={(e) => { if (e.key === 'Enter') sendPendingFile(); }}
                                 placeholder="Add a caption…"
                                 autoFocus
-                                className="w-full px-3 py-2 text-sm rounded-xl border border-surface-200 bg-surface-50 outline-none focus:border-primary-400 transition-colors"
+                                className="w-full px-3 py-2 text-sm rounded-xl border border-surface-200 dark:border-surface-600 bg-surface-50 dark:bg-surface-800 dark:text-surface-100 outline-none focus:border-primary-400 dark:focus:border-primary-500 transition-colors placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             />
                             <div className="flex gap-2">
                                 <button
                                     type="button"
                                     onClick={cancelPendingFile}
-                                    className="flex-1 py-2 text-sm font-medium rounded-xl border border-surface-200 text-surface-600 hover:bg-surface-50 transition-colors"
+                                    className="flex-1 py-2 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                                 >
                                     Cancel
                                 </button>
@@ -1575,7 +1574,7 @@ export default function LiveChat({ embedded = false }) {
                                     type="button"
                                     onClick={sendPendingFile}
                                     disabled={fileUploading}
-                                    className="flex-1 py-2 text-sm font-medium rounded-xl bg-primary-600 text-white hover:bg-primary-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                                    className="flex-1 py-2 text-sm font-medium rounded-xl bg-primary-600 dark:bg-primary-500 text-white hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     {fileUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                                     Send
