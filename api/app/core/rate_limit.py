@@ -1,14 +1,42 @@
-"""In-memory rate limiting via SlowAPI (no Redis required).
+"""Rate limiting via SlowAPI.
 
-With 2 uvicorn workers the effective limit is ~2× the configured value
-(each worker has its own counter).  This is acceptable for abuse prevention
-on a 2 GB droplet — the primary goal is protecting LLM API costs and
-preventing crawl abuse, not precise per-second enforcement.
+Backend storage is chosen at startup:
+- If ``REDIS_URL`` env var is set, Redis is used for globally consistent limits
+  across all uvicorn workers.
+- Otherwise, falls back to in-memory counters.  With N workers the effective
+  limit is ~N× the configured value; this is acceptable for single-server
+  deployments where the primary goal is protecting LLM API costs.
+
+Upgrade path: set ``REDIS_URL=redis://localhost:6379`` in production .env.
 """
+
+import logging
+import os
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from starlette.requests import Request
+
+logger = logging.getLogger(__name__)
+
+_REDIS_URL = os.getenv("REDIS_URL")
+
+if _REDIS_URL:
+    _storage_uri = _REDIS_URL
+    logger.info(f"Rate limiter: Redis backend ({_REDIS_URL})")
+else:
+    _storage_uri = "memory://"
+    import multiprocessing
+
+    _workers = int(os.getenv("WEB_CONCURRENCY", multiprocessing.cpu_count()))
+    if _workers > 1:
+        logger.warning(
+            f"Rate limiter: in-memory backend with {_workers} workers — "
+            f"effective limits are ~{_workers}× configured values. "
+            "Set REDIS_URL for global enforcement."
+        )
+    else:
+        logger.info("Rate limiter: in-memory backend (single worker)")
 
 
 def key_from_bot_key(request: Request) -> str:
@@ -24,5 +52,5 @@ def key_from_api_key(request: Request) -> str:
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[],
-    storage_uri="memory://",
+    storage_uri=_storage_uri,
 )

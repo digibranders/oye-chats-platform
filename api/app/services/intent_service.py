@@ -7,20 +7,13 @@ logger = logging.getLogger(__name__)
 
 def _detect_intent_raw(question: str) -> bool:
     """Detect sales intent via LLM. No observability instrumentation (LiteLLM auto-traces)."""
-    prompt = f"""
-    Analyze the following user query and determine if the user is expressing "Sales Intent" or "Business Interest".
+    prompt = f"""Determine if the user query has sales intent.
 
-    Sales Intent indicators:
-    - Asking about services, products, or what the company does.
-    - Asking about pricing, costs, or plans.
-    - Asking for a demo, consultation, or meeting.
-    - Expressing a business problem they want to solve.
-    - Asking about partnership or collaboration.
+Sales intent = asking about services, pricing, plans, demos, consultations, business problems, or partnerships.
 
-    Query: "{question}"
+Query: "{question}"
 
-    Respond with ONLY 'YES' if sales intent is detected, or 'NO' if it is just a general question, small talk, or unrelated.
-    """
+Respond with ONLY 'YES' or 'NO'."""
 
     response = generate_response(prompt, metadata={"generation_name": "intent-detection"})
     result = response.strip().upper()
@@ -44,28 +37,15 @@ def detect_sales_intent(question: str) -> bool:
 
 def _detect_handoff_intent_raw(question: str) -> bool:
     """Detect human handoff intent via LLM. Same pattern as sales intent detection."""
-    prompt = f"""
-    Analyze the following user message and determine if the user wants to be connected
-    to a human agent, support representative, or real person — rather than continuing
-    with an AI chatbot.
+    prompt = f"""Determine if the user wants to speak with a human agent or support representative instead of continuing with AI.
 
-    Human handoff indicators:
-    - Asking to speak with a human, agent, person, or representative.
-    - Expressing desire to escalate beyond the AI chatbot.
-    - Phrases like: "talk to someone", "real person", "connect me with support",
-      "speak to your team", "I want a human", "get me an agent", "talk to a person",
-      "connect me with a human", "I want to speak with someone", "let me talk to support".
+Handoff indicators: "talk to someone", "real person", "connect me with support", "speak to your team", "I want a human", "get me an agent", "let me talk to support", asking to escalate beyond the chatbot.
 
-    Do NOT classify as handoff intent:
-    - General product/service questions.
-    - Help requests that don't express preference for human over AI.
-    - Small talk or greetings.
-    - Questions about pricing, features, or how things work.
+ONLY return YES if the user explicitly wants a human instead of AI. General help requests, product questions, pricing questions, small talk, or greetings = NO.
 
-    User message: "{question}"
+User message: "{question}"
 
-    Respond with ONLY 'YES' or 'NO'.
-    """
+Respond with ONLY 'YES' or 'NO'."""
     response = generate_response(prompt, metadata={"generation_name": "handoff-intent-detection"})
     result = response.strip().upper()
     has_intent = "YES" in result

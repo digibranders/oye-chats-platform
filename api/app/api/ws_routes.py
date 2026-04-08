@@ -69,10 +69,32 @@ async def _send_initial_waiting_queue(
 
 @router.websocket("/ws/chat/{session_id}")
 async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None = None):
-    """WebSocket for visitor (widget) side of live chat."""
-    if not bot_key:
-        await ws.close(code=4001, reason="Missing bot_key query param")
+    """WebSocket for visitor (widget) side of live chat.
+
+    Auth resolution order (most→least preferred):
+    1. ``X-Bot-Key`` request header (non-browser / native clients)
+    2. ``Sec-WebSocket-Protocol`` header encoded as ``bot-key.<value>``
+    3. ``bot_key`` query parameter (browser Widget — browsers cannot set WS headers)
+
+    Note: the query-parameter fallback is intentional.  Browser clients cannot
+    set arbitrary headers on WebSocket connections.  The value is encrypted
+    in transit over TLS/WSS.  Production nginx should be configured to omit
+    WebSocket query strings from access logs to avoid log exposure.
+    """
+    # Prefer header-based auth when available (non-browser clients)
+    resolved_key = ws.headers.get("x-bot-key") or bot_key
+    # Subprotocol trick: allow "bot-key.<value>" in Sec-WebSocket-Protocol
+    if not resolved_key:
+        for proto in ws.headers.get("sec-websocket-protocol", "").split(","):
+            proto = proto.strip()
+            if proto.startswith("bot-key."):
+                resolved_key = proto[len("bot-key.") :]
+                break
+
+    if not resolved_key:
+        await ws.close(code=4001, reason="Missing bot_key")
         return
+    bot_key = resolved_key
 
     with get_session() as session:
         bot = session.execute(select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))).scalar_one_or_none()

@@ -60,12 +60,16 @@ B2_ENDPOINT = os.getenv("R2_ENDPOINT") or os.getenv("B2_ENDPOINT")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
-LANGFUSE_ENABLED = bool(LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY)
+# Set LANGFUSE_FORCE_DISABLE=true to explicitly suppress Langfuse even when keys are present.
+# Useful on low-memory servers where the langfuse_otel callback causes APIConnectionError
+# during LiteLLM streaming — remove this env var once server RAM is upgraded.
+_LANGFUSE_FORCE_DISABLE = os.getenv("LANGFUSE_FORCE_DISABLE", "").lower() in ("1", "true", "yes")
+LANGFUSE_ENABLED = bool(LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY) and not _LANGFUSE_FORCE_DISABLE
 
-if LANGFUSE_ENABLED:
-    # langfuse_otel callback causes APIConnectionError during LiteLLM streaming
-    # on low-memory servers — disabled until server RAM is upgraded.
-    logger.info(f"Langfuse tracing disabled (causes streaming errors) | host={LANGFUSE_HOST}")
+if _LANGFUSE_FORCE_DISABLE:
+    logger.info("Langfuse tracing disabled (LANGFUSE_FORCE_DISABLE=true)")
+elif LANGFUSE_ENABLED:
+    logger.info(f"Langfuse tracing enabled | host={LANGFUSE_HOST}")
 else:
     logger.info("Langfuse tracing disabled (no keys configured)")
 

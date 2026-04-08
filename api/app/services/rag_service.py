@@ -33,6 +33,42 @@ logger = logging.getLogger(__name__)
 
 _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 
+# Prompt injection guard — patterns that attempt to override the system prompt
+_INJECTION_PATTERNS = re.compile(
+    r"(ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context))|"
+    r"(disregard\s+(all\s+)?(previous|prior|above|earlier))|"
+    r"(override\s+(the\s+)?(system|all)\s+(prompt|instructions?))|"
+    r"(you\s+are\s+now\s+(a\s+)?(?!assistant|support))|"
+    r"(new\s+persona\s*:)|"
+    r"(act\s+as\s+(?!a\s+support|a\s+helpful))|"
+    r"(pretend\s+(you\s+are|to\s+be))|"
+    r"(SYSTEM\s*:)|"
+    r"(<<<|>>>|\[\[|\]\]|<\||\|>)",  # common injection delimiters
+    re.IGNORECASE,
+)
+# Maximum chars accepted for a custom system prompt (validated at API boundary too)
+_MAX_CUSTOM_PROMPT_CHARS = 2000
+
+
+def _sanitize_system_prompt(prompt: str) -> str:
+    """Strip prompt-injection attempts from a customer-supplied system prompt.
+
+    This is a defence-in-depth measure.  The primary validation (max_length,
+    field type) happens at the Pydantic model layer in bot_routes.py.
+
+    Returns the sanitised prompt, or an empty string if the entire input is
+    considered unsafe.
+    """
+    if not prompt:
+        return ""
+    prompt = prompt[:_MAX_CUSTOM_PROMPT_CHARS]
+    if _INJECTION_PATTERNS.search(prompt):
+        logger.warning("Prompt injection attempt detected in custom system prompt — field cleared.")
+        return ""
+    # Strip control characters and suspicious Unicode that could break prompt boundaries
+    prompt = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", prompt)
+    return prompt.strip()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BANT Extraction — Pydantic schemas
@@ -202,6 +238,7 @@ CURRENT BANT STATE AND SCORING RUBRIC:
 {rubric_text}
 
 INSTRUCTIONS:
+- If the user's message is a greeting, thank you, or small talk, return an empty signals list immediately.
 - Only extract signals that are NEW in this latest exchange. Do not re-extract existing data.
 - For each new signal, provide the exact user quote, a structured summary, confidence level, and a score (0-25) based on the rubric options above.
 - Match the score to the closest rubric option that fits the user's statement.
@@ -393,6 +430,8 @@ def build_hybrid_prompt(
     bant_enabled: bool = True,
     bant_config: dict = None,
     live_chat_enabled: bool = True,
+    custom_system_prompt: str | None = None,
+    brand_tone: str | None = None,
 ) -> str:
     """Construct the Hybrid RAG system prompt with BANT qualification support."""
 
@@ -464,63 +503,34 @@ CURRENT QUALIFICATION STATE:
 
     if live_chat_enabled:
         handoff_section = """
-6. LIVE SUPPORT REQUESTS:
-If the user explicitly asks to speak with a person, agent, support team, or representative:
-- Respond warmly and briefly — 1-2 sentences only.
-- Example: "Of course! Let me connect you with our team right away — they'll be happy to help."
-- Do NOT continue trying to answer their original question or ask a follow-up question.
-- Do NOT say you cannot help. Just acknowledge warmly and confirm they are being connected.
-- IMPORTANT: Never use the phrase "human team" — say "our team", "a team member", or "our support team" instead.
-"""
+LIVE SUPPORT: If the user asks to speak with a person, respond warmly in 1-2 sentences and confirm they're being connected. Say "our team" — never "human team". Don't answer their question after they ask for a person."""
+        handoff_offer = "Offer to connect with a team member."
     else:
         handoff_section = """
-6. SUPPORT REQUESTS:
-Live support is currently not available.
-If the user asks to speak with a person, agent, support team, or representative:
-- Acknowledge their request warmly.
-- Let them know that they can leave a message using the contact form (available in the menu at the top of the chat).
-- Assure them the team will follow up via email as soon as possible.
-- Example: "I understand you'd like to speak with our team. While live support isn't available right now, you can leave a message using the contact form in the menu above — our team will get back to you by email shortly!"
-- Do NOT say the team is unavailable in a negative way. Keep it helpful and reassuring.
-- Do NOT try to handle the issue yourself if the visitor specifically insists on speaking with a person.
-- IMPORTANT: Never use the phrase "human team" — say "our team", "a team member", or "our support team" instead.
-"""
+SUPPORT REQUESTS: If the user asks for a person, warmly direct them to the contact form in the menu above. Say the team will follow up by email. Say "our team" — never "human team"."""
+        handoff_offer = "Direct them to the contact form in the menu above."
 
-    hybrid_system_prompt = f"""
-SYSTEM ROLE:
-You are a helpful, professional, and conversational customer support assistant for
-**{client.name}**. Your primary goal is to provide accurate, easy-to-read
-information about our services without sounding overly aggressive, jargon-heavy,
-or "salesy."
+    # Build optional sections (truncate to prevent prompt bloat)
+    if custom_system_prompt:
+        sanitized_prompt = _sanitize_system_prompt(custom_system_prompt)
+        custom_prompt_section = f"\n\nCUSTOM INSTRUCTIONS:\n{sanitized_prompt[:1500]}" if sanitized_prompt else ""
+    else:
+        custom_prompt_section = ""
+    tone_section = f"\n\nBRAND TONE: {brand_tone[:300]}" if brand_tone else ""
 
-Please adhere strictly to the following rules:
+    hybrid_system_prompt = f"""You are **{client.name}**'s support assistant. Answer visitor questions using ONLY the knowledge base context below.
 
-1. CONCISENESS & SCANNABILITY:
-- Never output long, dense paragraphs or "walls of text."
-- Always use bullet points when listing 3 or more services, features, or options.
-- When using bullet points, list ONLY the main point or item name. Do NOT add
-  descriptions, colons, dashes, or explanations after each bullet. Keep each
-  bullet to a few words maximum.
-- Keep your answers brief and directly address the user's specific question.
-- Provide a high-level summary first; wait before providing a deep dive.
-- Use **bold** (markdown) to highlight important keywords, names, service names,
-  numbers, or key phrases in your responses so users can quickly scan.
-
-2. TONE & PERSONALITY:
-- Be polite, welcoming, and conversational.
-- Avoid corporate buzzwords (e.g., "operational efficiency," "synergy"). Use plain, accessible language.
-- Do not immediately push the user into a consultation or sales pitch. Keep the pressure low.
-
-3. HANDLING KNOWLEDGE & CONTEXT:
-- You will be provided with specific context or retrieved document chunks. Base your answers strictly on this provided information.
-- If the answer to the user's question is not contained in the provided context, gracefully admit that you don't have that specific information. Do not hallucinate or guess.
-- {"If you cannot answer from the provided context, offer to connect the visitor with a team member." if live_chat_enabled else "If you cannot answer from the provided context, let the visitor know they can leave a message via the contact form in the menu above, and the team will follow up by email."}
-
-4. CONVERSATION FLOW:
-- Conclude your responses with a single, simple, and low-pressure follow-up question to keep the conversation natural (e.g., "Would you like to hear more about [Specific Service]?" or "Does that answer your question?").
-- Do not ask the user to do heavy mental lifting (e.g., do not ask them to choose between 5 different complex options at once).
+RULES:
+1. Answer directly in 1-3 sentences. Up to 5 for complex topics. Never exceed 80 words unless listing items.
+2. Bullet points for 3+ items. Keep each bullet to a few words — no descriptions after bullets.
+3. Bold only: **{client.name}**, product/service names, and prices. No other bold.
+4. Tone: like a knowledgeable colleague replying in chat — friendly but direct. Never start with "Great question!", "Absolutely!", "I'd be happy to help!" or "Thank you for asking!". Never say "Based on the information provided". Just answer naturally.
+5. If the context doesn't contain the answer, say so honestly. {handoff_offer}
+6. Only ask a follow-up question if the user's query is genuinely ambiguous.
+7. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".{custom_prompt_section}{tone_section}
 {qualification_section}
 {handoff_section}
+
 ═══════════════════════════════════════════════════════
 KNOWLEDGE BASE CONTEXT
 ═══════════════════════════════════════════════════════
@@ -664,7 +674,9 @@ def rag_pipeline(
 
             context_parts = []
             for i, doc in enumerate(final_results, 1):
-                context_parts.append(f"[Source {i}] {doc.document_name}\nContent:\n{doc.content}\n")
+                # Truncate per-chunk to prevent prompt token overflow on large documents
+                chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
+                context_parts.append(f"[Source {i}] {doc.document_name}\nContent:\n{chunk_content}\n")
             context_text = "\n---\n".join(context_parts) if context_parts else "No relevant documents found."
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
@@ -680,10 +692,13 @@ def rag_pipeline(
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
                 live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
+                custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
+                brand_tone=getattr(bot, "brand_tone", None) if bot else None,
             )
 
             answer = generate_response(
                 prompt,
+                max_tokens=350,
                 metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
             )
 
@@ -817,7 +832,11 @@ async def rag_pipeline_stream(
 
         context_text = (
             "\n---\n".join(
-                [f"[Source {i}] {doc.document_name}\nContent:\n{doc.content}" for i, doc in enumerate(final_results, 1)]
+                [
+                    f"[Source {i}] {doc.document_name}\nContent:\n"
+                    + (doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content)
+                    for i, doc in enumerate(final_results, 1)
+                ]
             )
             if final_results
             else "No relevant documents found."
@@ -836,6 +855,8 @@ async def rag_pipeline_stream(
             bant_enabled=is_bant_enabled,
             bant_config=bant_config,
             live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
+            custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
+            brand_tone=getattr(bot, "brand_tone", None) if bot else None,
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -843,6 +864,7 @@ async def rag_pipeline_stream(
             chunk_count = 0
             for chunk in generate_response_stream(
                 prompt,
+                max_tokens=350,
                 metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
             ):
                 if chunk:
@@ -855,8 +877,8 @@ async def rag_pipeline_stream(
                 yield "I'm sorry, I couldn't generate a response. Please try again or ask something else."
                 full_answer = "I'm sorry, I couldn't generate a response. Please try again or ask something else."
         except Exception as e:
-            logger.error(f"Streaming prompt error: {e}")
-            yield f" [Backend Error: {str(e)}]"
+            logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
+            yield " [I encountered an error. Please try again.]"
 
         # Strip CTA marker from response before saving
         full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)

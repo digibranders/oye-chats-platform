@@ -14,6 +14,7 @@ from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
 from app.schemas.client import CrawlRequest
 from app.services.crawler_service import CrawlerError, crawl_website
+from app.services.llm_service import extract_brand_tone
 
 logger = logging.getLogger(__name__)
 
@@ -260,15 +261,28 @@ async def crawl_endpoint(
             lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
         )
 
-        if recommended_colors:
+        # Extract brand tone from crawled content (non-blocking, best-effort)
+        brand_tone = None
+        if valid_pages and bot_id:
+            content_sample = "\n\n".join(p["content"][:1000] for p in valid_pages[:3])
+            brand_tone = await loop.run_in_executor(None, lambda: extract_brand_tone(content_sample))
+
+        if recommended_colors or brand_tone:
             with get_session() as session:
                 if bot_id:
                     bot_db = session.get(Bot, bot_id)
                     if bot_db and bot_db.client_id == client_id:
-                        bot_db.recommended_colors = recommended_colors
+                        if recommended_colors:
+                            bot_db.recommended_colors = recommended_colors
+                        if brand_tone:
+                            bot_db.brand_tone = brand_tone
                         session.commit()
-                        logger.info(f"Saved {len(recommended_colors)} recommended colors for bot {bot_id}")
-                else:
+                        logger.info(
+                            f"Saved crawl metadata for bot {bot_id}: "
+                            f"colors={len(recommended_colors) if recommended_colors else 0}, "
+                            f"tone={'yes' if brand_tone else 'no'}"
+                        )
+                elif recommended_colors:
                     client_db = session.get(Client, client_id)
                     if client_db:
                         client_db.recommended_colors = recommended_colors
@@ -282,6 +296,7 @@ async def crawl_endpoint(
             "chunks_processed": total_chunks,
             "pages_crawled": [p["url"] for p in valid_pages],
             "recommended_colors": recommended_colors,
+            "brand_tone": brand_tone,
         }
     except HTTPException:
         raise

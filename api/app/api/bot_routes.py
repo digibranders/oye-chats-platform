@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
@@ -53,7 +53,9 @@ class CreateBotRequest(BaseModel):
 
 class UpdateBotRequest(BaseModel):
     name: str | None = None
-    system_prompt: str | None = None
+    # max_length matches _MAX_CUSTOM_PROMPT_CHARS in rag_service — enforced at API boundary
+    system_prompt: str | None = Field(None, max_length=2000)
+    brand_tone: str | None = Field(None, max_length=500)
     website: str | None = None
     bot_logo: str | None = None
     launcher_name: str | None = None
@@ -108,6 +110,7 @@ class BotResponse(BaseModel):
     name: str
     website: str | None
     system_prompt: str | None
+    brand_tone: str | None = None
     bot_logo: str | None
     launcher_name: str
     launcher_logo: str | None
