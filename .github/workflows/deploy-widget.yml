@@ -28,8 +28,11 @@ jobs:
       - name: Verify build output exists
         run: |
           test -f widget/dist/oyechats-widget.js || { echo "❌ Build output missing: oyechats-widget.js"; exit 1; }
+          test -f widget/dist/oyechats-widget.css || { echo "❌ Build output missing: oyechats-widget.css"; exit 1; }
           JS_SIZE=$(stat -c%s widget/dist/oyechats-widget.js 2>/dev/null || stat -f%z widget/dist/oyechats-widget.js)
-          echo "✅ Widget JS size: ${JS_SIZE} bytes (CSS inlined — single-file bundle)"
+          CSS_SIZE=$(stat -c%s widget/dist/oyechats-widget.css 2>/dev/null || stat -f%z widget/dist/oyechats-widget.css)
+          echo "✅ Widget JS size: ${JS_SIZE} bytes"
+          echo "✅ Widget CSS size: ${CSS_SIZE} bytes"
           if [ "$JS_SIZE" -lt 10000 ]; then echo "❌ Widget JS suspiciously small"; exit 1; fi
 
       # Upload versioned backup first (rollback safety), then overwrite latest
@@ -55,7 +58,16 @@ jobs:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
 
-      # CSS is now inlined into the JS bundle (Shadow DOM isolation) — no separate CSS upload needed
+      - name: Upload CSS to Cloudflare R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          command: >-
+            r2 object put oyechats-cdn/oyechats-widget.css
+            --file widget/dist/oyechats-widget.css
+            --content-type "text/css"
+            --cache-control "public, max-age=60, s-maxage=60"
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
 
       - name: Purge Cloudflare CDN cache
         env:
@@ -69,7 +81,7 @@ jobs:
           RESPONSE=$(curl -sf -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"files":["https://cdn.oyechats.com/oyechats-widget.js"]}')
+            -d '{"files":["https://cdn.oyechats.com/oyechats-widget.js","https://cdn.oyechats.com/oyechats-widget.css"]}')
           echo "$RESPONSE"
           echo "$RESPONSE" | grep -q '"success":true' || { echo "❌ Cache purge failed"; exit 1; }
           echo "✅ CDN cache purged successfully"

@@ -8,14 +8,12 @@ export default defineConfig({
     cors: true,
   },
   build: {
-    cssCodeSplit: false,
     rollupOptions: {
       output: {
         manualChunks: undefined,
         entryFileNames: 'oyechats-widget.js',
         chunkFileNames: 'oyechats-widget.js',
-        // CSS is inlined into JS via ?inline import (Shadow DOM injection),
-        // so no separate .css file is emitted. Keep pattern for other assets.
+        // Emit sibling assets with predictable names for script+css embedding.
         assetFileNames: 'oyechats-widget.[ext]',
       }
     }

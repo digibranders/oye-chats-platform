@@ -8,7 +8,7 @@ The widget (`oyechats-widget.js`) is an IIFE (Immediately Invoked Function Expre
 
 1. Finds its own `<script>` tag and reads the `data-bot-key` attribute
 2. Sets `window.OYECHATS_BOT_KEY` globally
-3. Injects CSS inline into a Shadow DOM root for complete style isolation from the host page
+3. Loads sibling CSS (`oyechats-widget.css`) into a Shadow DOM root for complete style isolation from the host page
 4. Creates a `<div id="oyechats-widget-root">` in the DOM
 5. Renders a React app with its own bundled React instance (isolated from the host page)
 6. Communicates with the backend API via `X-Bot-Key` header
@@ -60,7 +60,7 @@ Communicates with the backend. Key functions:
 
 ```
 widget/src/
-├── main.jsx              # Entry point, CSS injection, bot key detection
+├── main.jsx              # Entry point, shadow root bootstrap, bot key detection
 ├── App.jsx               # Root component
 ├── services/
 │   └── api.js            # Backend API client
@@ -74,7 +74,7 @@ widget/src/
 
 ## Build Process
 
-The widget is built with Vite into a single-file bundle:
+The widget is built with Vite into a JS+CSS artifact pair:
 
 ```bash
 cd widget
@@ -82,15 +82,16 @@ npm run build
 ```
 
 **Output files:**
-- `dist/oyechats-widget.js` — Single IIFE bundle with React, all components, and Tailwind styles (CSS is bundled inline)
+- `dist/oyechats-widget.js` — IIFE bundle with React and widget logic
+- `dist/oyechats-widget.css` — Widget styles loaded into the shadow root at runtime
 
 ### Vite Configuration (`widget/vite.config.js`)
 
 Key build settings:
 - **Format:** IIFE (no module imports needed by the host page)
 - **Entry:** `src/main.jsx`
-- **Output name:** `oyechats-widget.js` (single file — no separate CSS file)
-- **CSS:** Inlined into the JS bundle via `?inline` import; injected into a Shadow DOM root at runtime
+- **Output names:** `oyechats-widget.js` + `oyechats-widget.css`
+- **CSS loading:** Runtime derives `.css` from the script URL and appends it to the shadow root
 - **Dev CORS:** Enabled for local development
 
 ## Development vs. Production
@@ -123,8 +124,7 @@ Then embed on your test page:
 
 The built bundle is deployed to `cdn.oyechats.com`:
 - `https://cdn.oyechats.com/oyechats-widget.js`
-
-CSS is bundled inline inside the JS file and injected into a Shadow DOM — no separate CSS file is deployed.
+- `https://cdn.oyechats.com/oyechats-widget.css`
 
 ## Customization
 
@@ -156,7 +156,7 @@ The widget is designed to not interfere with the host page:
 
 | Item | Value |
 |------|-------|
-| Widget bundle | `oyechats-widget.js` (CSS inlined, no separate `.css` file) |
+| Widget bundle | `oyechats-widget.js` + `oyechats-widget.css` |
 | DOM container | `oyechats-widget-root` |
 | Window globals | `window.OYECHATS_BOT_KEY`, `window.OYECHATS_API_KEY` |
 | Console prefix | `[OyeChats]` |

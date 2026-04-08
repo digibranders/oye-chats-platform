@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Sentry from "@sentry/react";
-import cssText from './index.css?inline'
+import './index.css'
 import App from './App.jsx'
 
 // Initialize Sentry error tracking (opt-in via env var)
@@ -53,6 +53,25 @@ if (scriptTag) {
 
 // Find or create the root container for the widget
 const CONTAINER_ID = 'oyechats-widget-root';
+const RENDER_TARGET_ID = 'oyechats-shadow-inner';
+const STYLE_LINK_SELECTOR = 'link[data-oyechats-style="1"]';
+
+const getWidgetCssUrl = () => {
+  const scriptSrc = scriptTag?.src;
+  if (scriptSrc && /\.js(\?.*)?$/.test(scriptSrc)) {
+    return scriptSrc.replace(/\.js(\?.*)?$/, '.css$1');
+  }
+
+  const scripts = document.getElementsByTagName('script');
+  for (let i = scripts.length - 1; i >= 0; i--) {
+    const src = scripts[i].src || '';
+    if (src.includes('oyechats-widget') && /\.js(\?.*)?$/.test(src)) {
+      return src.replace(/\.js(\?.*)?$/, '.css$1');
+    }
+  }
+
+  return null;
+};
 
 const initWidget = () => {
   console.log('[OyeChats] Attempting to initialize widget container...');
@@ -73,20 +92,41 @@ const initWidget = () => {
   }
 
   if (container) {
-    // Shadow DOM for complete CSS isolation from host page styles
-    const shadow = container.attachShadow({ mode: 'open' });
+    // Reuse existing shadow root when re-initialized to avoid attachShadow crashes.
+    const shadow = container.shadowRoot || container.attachShadow({ mode: 'open' });
 
-    // Inject widget CSS into shadow root (bundled inline by Vite)
-    const style = document.createElement('style');
-    style.textContent = cssText;
-    shadow.appendChild(style);
+    // Inject widget CSS as a sibling stylesheet (CSP compatible).
+    if (!shadow.querySelector(STYLE_LINK_SELECTOR)) {
+      const cssUrl = getWidgetCssUrl();
+      if (cssUrl) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = cssUrl;
+        link.setAttribute('data-oyechats-style', '1');
+        shadow.appendChild(link);
+        console.log('[OyeChats] Shadow DOM stylesheet attached:', cssUrl);
+      } else {
+        console.warn('[OyeChats] Could not determine stylesheet URL for shadow root');
+      }
+    }
 
-    // Create render target inside shadow root
-    const renderTarget = document.createElement('div');
-    renderTarget.id = 'oyechats-shadow-inner';
-    shadow.appendChild(renderTarget);
+    // Create render target inside shadow root only once.
+    let renderTarget = shadow.querySelector(`#${RENDER_TARGET_ID}`);
+    if (!renderTarget) {
+      renderTarget = document.createElement('div');
+      renderTarget.id = RENDER_TARGET_ID;
+      shadow.appendChild(renderTarget);
+    }
 
-    console.log('[OyeChats] Shadow DOM created, starting React render');
+    // Skip duplicate mounts when script executes more than once.
+    if (renderTarget.dataset.oyechatsMounted === 'true' || renderTarget.hasChildNodes()) {
+      renderTarget.dataset.oyechatsMounted = 'true';
+      console.log('[OyeChats] Widget already mounted, skipping duplicate initialization');
+      return;
+    }
+
+    renderTarget.dataset.oyechatsMounted = 'true';
+    console.log('[OyeChats] Shadow DOM ready, starting React render');
     createRoot(renderTarget).render(
       <StrictMode>
         <App />

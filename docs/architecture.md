@@ -33,7 +33,7 @@ The central nervous system. Handles all business logic, data persistence, and AI
 
 A self-contained JavaScript bundle that customers embed on their websites.
 
-- **Output:** Single IIFE file `oyechats-widget.js` (~416KB) — CSS is bundled inline via Shadow DOM injection
+- **Output:** IIFE script `oyechats-widget.js` + sibling stylesheet `oyechats-widget.css`
 - **Stack:** React 19, Vite 7, Tailwind CSS 4
 - **Isolation:** Bundles its own React instance — no conflicts with the host page
 - **Communication:** REST API calls with SSE streaming for real-time responses
