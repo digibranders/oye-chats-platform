@@ -6,6 +6,8 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss }) => {
 
     useEffect(() => {
         const handleMessage = (event) => {
+            // Only accept messages from Calendly to prevent spoofed events
+            if (event.origin !== 'https://calendly.com') return;
             const data = event?.data;
             if (!data || typeof data !== 'object') return;
             if (data.event === 'calendly.event_scheduled') {
@@ -52,7 +54,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss }) => {
                     width="100%"
                     height="350"
                     frameBorder="0"
-                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation"
+                    sandbox="allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation"
                 />
             )}
         </div>
