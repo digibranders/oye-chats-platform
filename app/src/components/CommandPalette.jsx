@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, LayoutDashboard, BookOpen, BarChart3, Target, Headphones,
     Bot, Palette, Settings, Plug, Upload, Plus, X, UsersRound
 } from 'lucide-react';
+import { cn } from '../lib/utils';
 
 const pages = [
     { name: 'Overview', path: '/', icon: LayoutDashboard, keywords: 'dashboard home overview stats' },
@@ -22,6 +24,18 @@ const actions = [
     { name: 'Create New Bot', path: '/chatbot?create=true', icon: Plus, keywords: 'create new bot chatbot' },
     { name: 'Customize Bot', path: '/chatbot?tab=appearance', icon: Palette, keywords: 'customize bot appearance theme colors branding' },
 ];
+
+const overlayVariants = {
+    hidden: { opacity: 0 },
+    visible: { opacity: 1 },
+    exit: { opacity: 0 },
+};
+
+const modalVariants = {
+    hidden: { opacity: 0, scale: 0.95, y: -10 },
+    visible: { opacity: 1, scale: 1, y: 0, transition: { type: 'spring', damping: 25, stiffness: 400 } },
+    exit: { opacity: 0, scale: 0.95, y: -10, transition: { duration: 0.15 } },
+};
 
 export default function CommandPalette({ isOpen, onClose }) {
     const [query, setQuery] = useState('');
@@ -75,61 +89,95 @@ export default function CommandPalette({ isOpen, onClose }) {
 
     useEffect(() => { setSelectedIndex(0); }, [query]);
 
-    if (!isOpen) return null;
-
     let selectableIndex = -1;
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] animate-fade-in">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-            <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-secondary-200 overflow-hidden animate-scale-in">
-                {/* Search Input */}
-                <div className="flex items-center gap-3 px-4 py-3 border-b border-secondary-100">
-                    <Search size={18} className="text-secondary-400 shrink-0" />
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search pages and actions..."
-                        className="flex-1 bg-transparent text-secondary-900 placeholder-secondary-400 outline-none text-sm"
+        <AnimatePresence>
+            {isOpen && (
+                <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh]">
+                    <motion.div
+                        className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm"
+                        variants={overlayVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="exit"
+                        onClick={onClose}
                     />
-                    <kbd className="px-1.5 py-0.5 bg-secondary-100 rounded text-[10px] font-semibold text-secondary-400">ESC</kbd>
-                </div>
+                    <motion.div
+                        className="relative w-full max-w-lg bg-white dark:bg-surface-900 rounded-2xl shadow-2xl border border-surface-200 dark:border-surface-700 overflow-hidden"
+                        variants={modalVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="exit"
+                    >
+                        {/* Search Input */}
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-surface-100 dark:border-surface-700">
+                            <Search size={18} className="text-surface-400 dark:text-surface-500 shrink-0" />
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                                placeholder="Search pages and actions..."
+                                className="flex-1 bg-transparent text-surface-900 dark:text-surface-100 placeholder-surface-400 dark:placeholder-surface-500 outline-none text-sm"
+                            />
+                            <kbd className="px-1.5 py-0.5 bg-surface-100 dark:bg-surface-800 rounded text-[10px] font-semibold text-surface-400 dark:text-surface-500">ESC</kbd>
+                        </div>
 
-                {/* Results */}
-                <div className="max-h-80 overflow-y-auto p-2">
-                    {results.length === 0 ? (
-                        <div className="py-8 text-center text-secondary-400 text-sm">No results found</div>
-                    ) : (
-                        results.map((item, i) => {
-                            if (item.type === 'section') {
-                                return <p key={`section-${i}`} className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-secondary-400">{item.label}</p>;
-                            }
-                            selectableIndex++;
-                            const isSelected = selectableIndex === selectedIndex;
-                            const Icon = item.icon;
-                            const currentIdx = selectableIndex;
-                            return (
-                                <button
-                                    key={item.path + item.name}
-                                    onClick={() => { navigate(item.path); onClose(); }}
-                                    onMouseEnter={() => setSelectedIndex(currentIdx)}
-                                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                                        isSelected ? 'bg-primary-50 text-primary-700' : 'text-secondary-700 hover:bg-secondary-50:bg-secondary-800'
-                                    }`}
-                                >
-                                    <Icon size={16} className={isSelected ? 'text-primary-500' : 'text-secondary-400'} />
-                                    <span className="text-sm font-medium">{item.name}</span>
-                                    {item.type === 'action' && (
-                                        <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-secondary-400 bg-secondary-100 px-1.5 py-0.5 rounded">Action</span>
-                                    )}
-                                </button>
-                            );
-                        })
-                    )}
+                        {/* Results */}
+                        <div className="max-h-80 overflow-y-auto p-2">
+                            {results.length === 0 ? (
+                                <div className="py-8 text-center text-surface-400 dark:text-surface-500 text-sm">No results found</div>
+                            ) : (
+                                results.map((item, i) => {
+                                    if (item.type === 'section') {
+                                        return (
+                                            <p
+                                                key={`section-${i}`}
+                                                className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500"
+                                            >
+                                                {item.label}
+                                            </p>
+                                        );
+                                    }
+                                    selectableIndex++;
+                                    const isSelected = selectableIndex === selectedIndex;
+                                    const Icon = item.icon;
+                                    const currentIdx = selectableIndex;
+                                    return (
+                                        <button
+                                            key={item.path + item.name}
+                                            onClick={() => { navigate(item.path); onClose(); }}
+                                            onMouseEnter={() => setSelectedIndex(currentIdx)}
+                                            className={cn(
+                                                'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors',
+                                                isSelected
+                                                    ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                                                    : 'text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800'
+                                            )}
+                                        >
+                                            <Icon
+                                                size={16}
+                                                className={cn(
+                                                    isSelected
+                                                        ? 'text-primary-500 dark:text-primary-400'
+                                                        : 'text-surface-400 dark:text-surface-500'
+                                                )}
+                                            />
+                                            <span className="text-sm font-medium">{item.name}</span>
+                                            {item.type === 'action' && (
+                                                <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500 bg-surface-100 dark:bg-surface-800 px-1.5 py-0.5 rounded">
+                                                    Action
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </motion.div>
                 </div>
-            </div>
-        </div>
+            )}
+        </AnimatePresence>
     );
 }

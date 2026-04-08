@@ -18,7 +18,7 @@ const tabs = [
 ];
 
 const STATUS_CARDS = [
-    { key: 'unqualified', label: 'Unqualified', color: 'text-secondary-600', border: 'border-secondary-200', bg: 'bg-secondary-50' },
+    { key: 'unqualified', label: 'Unqualified', color: 'text-surface-600', border: 'border-surface-200', bg: 'bg-surface-50' },
     { key: 'mql', label: 'MQL', color: 'text-blue-600', border: 'border-blue-200', bg: 'bg-blue-50' },
     { key: 'sal', label: 'SAL', color: 'text-orange-600', border: 'border-orange-200', bg: 'bg-orange-50' },
     { key: 'sql', label: 'SQL', color: 'text-green-600', border: 'border-green-200', bg: 'bg-green-50' },
@@ -125,13 +125,13 @@ function KpiInfoButton({ text, label }) {
         <div className="relative group">
             <button
                 type="button"
-                className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-secondary-300 text-secondary-500 hover:text-secondary-700 hover:border-secondary-400 focus:outline-none focus:ring-2 focus:ring-primary-400/60"
+                className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-surface-300 text-surface-500 hover:text-surface-700 hover:border-surface-400 focus:outline-none focus:ring-2 focus:ring-primary-400/60"
                 title={text}
                 aria-label={label}
             >
                 <Info className="w-2.5 h-2.5" />
             </button>
-            <div className="pointer-events-none absolute z-20 left-1/2 top-full mt-2 w-64 -translate-x-1/2 rounded-lg border border-secondary-200 bg-white px-3 py-2 text-[11px] font-medium text-secondary-600 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+            <div className="pointer-events-none absolute z-20 left-1/2 top-full mt-2 w-64 -translate-x-1/2 rounded-lg border border-surface-200 bg-white px-3 py-2 text-[11px] font-medium text-surface-600 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
                 {text}
             </div>
         </div>
@@ -192,25 +192,25 @@ function ScorecardTab() {
                     return (
                         <div key={card.key} className={`p-5 rounded-xl border ${card.border} ${card.bg} transition-all`}>
                             <div className="flex items-center justify-between gap-2">
-                                <p className="text-[12px] font-bold uppercase tracking-wider text-secondary-500">{card.label}</p>
+                                <p className="text-[12px] font-bold uppercase tracking-wider text-surface-500">{card.label}</p>
                                 <KpiInfoButton text={KPI_INFO[card.key]} label={`${card.label} metric info`} />
                             </div>
                             <p className={`text-3xl font-bold mt-1 ${card.color}`}>{count}</p>
-                            <p className="text-[12px] text-secondary-400 mt-0.5">{pct}% of total</p>
+                            <p className="text-[12px] text-surface-400 mt-0.5">{pct}% of total</p>
                         </div>
                     );
                 })}
             </div>
 
-            <div className="bg-white rounded-xl border border-secondary-200 p-5">
+            <div className="bg-white rounded-xl border border-surface-200 p-5">
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-secondary-700">Average Lead Score</p>
+                        <p className="text-sm font-semibold text-surface-700">Average Lead Score</p>
                         <KpiInfoButton text={KPI_INFO.avgScore} label="Average lead score metric info" />
                     </div>
-                    <span className="text-lg font-bold text-secondary-900">{Math.round(avgScore)}</span>
+                    <span className="text-lg font-bold text-surface-900">{Math.round(avgScore)}</span>
                 </div>
-                <div className="w-full h-3 bg-secondary-100 rounded-full overflow-hidden">
+                <div className="w-full h-3 bg-surface-100 rounded-full overflow-hidden">
                     <div
                         className="h-full rounded-full transition-all duration-500"
                         style={{
@@ -219,7 +219,7 @@ function ScorecardTab() {
                         }}
                     />
                 </div>
-                <div className="flex justify-between mt-1.5 text-[11px] text-secondary-400">
+                <div className="flex justify-between mt-1.5 text-[11px] text-surface-400">
                     <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
                 </div>
             </div>
@@ -406,13 +406,13 @@ function ConfigurationTab() {
 
     return (
         <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
+            <div className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
                 <div>
-                    <label className="block text-sm font-semibold text-secondary-700 mb-2">Select Bot</label>
+                    <label className="block text-sm font-semibold text-surface-700 mb-2">Select Bot</label>
                     <select
                         value={selectedBotId || ''}
                         onChange={(e) => setSelectedBotId(Number(e.target.value))}
-                        className="w-full max-w-xs px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                        className="w-full max-w-xs px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                     >
                         <option value="" disabled>Choose a bot...</option>
                         {bots.map((bot) => (
@@ -422,12 +422,12 @@ function ConfigurationTab() {
                 </div>
 
                 <div>
-                    <label className="block text-sm font-semibold text-secondary-700 mb-2">Qualification Framework</label>
+                    <label className="block text-sm font-semibold text-surface-700 mb-2">Qualification Framework</label>
                     <div className="flex flex-wrap items-center gap-3">
                         <select
                             value={selectedFramework}
                             onChange={(e) => handleFrameworkChange(e.target.value)}
-                            className="w-full max-w-sm px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                            className="w-full max-w-sm px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                         >
                             {FRAMEWORK_OPTIONS.map((opt) => (
                                 <option key={opt.key} value={opt.key}>{opt.label}</option>
@@ -466,7 +466,7 @@ function ConfigurationTab() {
                         if (!d) return null;
                         const label = d.label || toLabel(dim);
                         return (
-                            <div key={dim} className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
+                            <div key={dim} className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex-1 space-y-2">
                                         {selectedFramework === 'custom' ? (
@@ -474,22 +474,22 @@ function ConfigurationTab() {
                                                 type="text"
                                                 value={label}
                                                 onChange={(e) => updateDimensionName(dim, e.target.value)}
-                                                className="w-full max-w-sm px-3 py-2 text-sm font-semibold bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                                className="w-full max-w-sm px-3 py-2 text-sm font-semibold bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                                             />
                                         ) : (
-                                            <h3 className="text-base font-bold text-secondary-900">{label}</h3>
+                                            <h3 className="text-base font-bold text-surface-900">{label}</h3>
                                         )}
                                         <div className="flex items-center gap-2">
-                                            <span className="text-[11px] text-secondary-400">Weight</span>
+                                            <span className="text-[11px] text-surface-400">Weight</span>
                                             <input
                                                 type="number"
                                                 min={0}
                                                 max={100}
                                                 value={d.weight ?? 0}
                                                 onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
-                                                className="w-20 px-2 py-1 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
+                                                className="w-20 px-2 py-1 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
                                             />
-                                            <span className="text-[11px] text-secondary-400">/100</span>
+                                            <span className="text-[11px] text-surface-400">/100</span>
                                         </div>
                                     </div>
 
@@ -499,7 +499,7 @@ function ConfigurationTab() {
                                             role="switch"
                                             aria-checked={d.enabled}
                                             onClick={() => updateDimension(dim, 'enabled', !d.enabled)}
-                                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.enabled ? 'bg-primary-500' : 'bg-secondary-300'}`}
+                                            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.enabled ? 'bg-primary-500' : 'bg-surface-300'}`}
                                         >
                                             <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                                         </button>
@@ -507,7 +507,7 @@ function ConfigurationTab() {
                                             <button
                                                 type="button"
                                                 onClick={() => removeDimension(dim)}
-                                                className="p-1.5 text-secondary-400 hover:text-red-500"
+                                                className="p-1.5 text-surface-400 hover:text-red-500"
                                                 title="Remove dimension"
                                             >
                                                 <Trash2 size={14} />
@@ -519,16 +519,16 @@ function ConfigurationTab() {
                                 {d.enabled && (
                                     <>
                                         <div className="space-y-2">
-                                            <p className="text-[12px] font-bold uppercase tracking-wider text-secondary-500">Options</p>
+                                            <p className="text-[12px] font-bold uppercase tracking-wider text-surface-500">Options</p>
                                             {(d.options || []).map((opt, idx) => (
                                                 <div key={idx} className="flex items-center gap-3">
-                                                    <GripVertical size={14} className="text-secondary-300 flex-shrink-0" />
+                                                    <GripVertical size={14} className="text-surface-300 flex-shrink-0" />
                                                     <input
                                                         type="text"
                                                         value={opt.label}
                                                         onChange={(e) => updateOption(dim, idx, 'label', e.target.value)}
                                                         placeholder="Option label"
-                                                        className="flex-1 px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                                        className="flex-1 px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                                                     />
                                                     <input
                                                         type="number"
@@ -536,12 +536,12 @@ function ConfigurationTab() {
                                                         max={100}
                                                         value={opt.score}
                                                         onChange={(e) => updateOption(dim, idx, 'score', e.target.value)}
-                                                        className="w-20 px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
+                                                        className="w-20 px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
                                                     />
                                                     <button
                                                         type="button"
                                                         onClick={() => removeOption(dim, idx)}
-                                                        className="p-1.5 text-secondary-400 hover:text-red-500 transition-colors"
+                                                        className="p-1.5 text-surface-400 hover:text-red-500 transition-colors"
                                                         title="Remove option"
                                                     >
                                                         <Trash2 size={14} />
@@ -558,16 +558,16 @@ function ConfigurationTab() {
                                             </button>
                                         </div>
 
-                                        <div className="border-t border-secondary-100 pt-4 space-y-3">
+                                        <div className="border-t border-surface-100 pt-4 space-y-3">
                                             <div className="flex items-center gap-3">
                                                 <label className="flex items-center gap-2 cursor-pointer">
-                                                    <span className="text-sm font-medium text-secondary-700">CTA Enabled</span>
+                                                    <span className="text-sm font-medium text-surface-700">CTA Enabled</span>
                                                     <button
                                                         type="button"
                                                         role="switch"
                                                         aria-checked={d.cta_enabled}
                                                         onClick={() => updateDimension(dim, 'cta_enabled', !d.cta_enabled)}
-                                                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.cta_enabled ? 'bg-primary-500' : 'bg-secondary-300'}`}
+                                                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.cta_enabled ? 'bg-primary-500' : 'bg-surface-300'}`}
                                                     >
                                                         <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${d.cta_enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                                                     </button>
@@ -579,7 +579,7 @@ function ConfigurationTab() {
                                                     value={d.cta_prompt || ''}
                                                     onChange={(e) => updateDimension(dim, 'cta_prompt', e.target.value)}
                                                     placeholder="CTA prompt text"
-                                                    className="w-full px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                                    className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                                                 />
                                             )}
                                         </div>
@@ -589,8 +589,8 @@ function ConfigurationTab() {
                         );
                     })}
 
-                    <div className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
-                        <h3 className="text-base font-bold text-secondary-900">Thresholds</h3>
+                    <div className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
+                        <h3 className="text-base font-bold text-surface-900">Thresholds</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             {[
                                 { key: 'mql', label: 'MQL Threshold' },
@@ -598,29 +598,29 @@ function ConfigurationTab() {
                                 { key: 'sql', label: 'SQL Threshold' },
                             ].map(({ key, label }) => (
                                 <div key={key}>
-                                    <label className="block text-[12px] font-bold text-secondary-500 mb-1">{label}</label>
+                                    <label className="block text-[12px] font-bold text-surface-500 mb-1">{label}</label>
                                     <input
                                         type="number"
                                         min={0}
                                         max={100}
                                         value={config.thresholds?.[key] ?? 0}
                                         onChange={(e) => updateThreshold(key, e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                                     />
                                 </div>
                             ))}
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-xl border border-secondary-200 p-5 space-y-4">
+                    <div className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-base font-bold text-secondary-900">Score Decay</h3>
+                            <h3 className="text-base font-bold text-surface-900">Score Decay</h3>
                             <button
                                 type="button"
                                 role="switch"
                                 aria-checked={config.decay?.enabled ?? false}
                                 onClick={() => updateDecay('enabled', !(config.decay?.enabled ?? false))}
-                                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${config.decay?.enabled ? 'bg-primary-500' : 'bg-secondary-300'}`}
+                                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${config.decay?.enabled ? 'bg-primary-500' : 'bg-surface-300'}`}
                             >
                                 <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${config.decay?.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                             </button>
@@ -628,23 +628,23 @@ function ConfigurationTab() {
                         {config.decay?.enabled && (
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-[12px] font-bold text-secondary-500 mb-1">Timeline decay per 30d</label>
+                                    <label className="block text-[12px] font-bold text-surface-500 mb-1">Timeline decay per 30d</label>
                                     <input
                                         type="number"
                                         min={0}
                                         value={config.decay?.timeline_decay_per_30d ?? 0}
                                         onChange={(e) => updateDecay('timeline_decay_per_30d', e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[12px] font-bold text-secondary-500 mb-1">Need decay per 30d</label>
+                                    <label className="block text-[12px] font-bold text-surface-500 mb-1">Need decay per 30d</label>
                                     <input
                                         type="number"
                                         min={0}
                                         value={config.decay?.need_decay_per_30d ?? 0}
                                         onChange={(e) => updateDecay('need_decay_per_30d', e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white border border-secondary-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                                     />
                                 </div>
                             </div>
@@ -725,7 +725,7 @@ function FunnelTab() {
                         className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
                             period === opt.key
                                 ? 'bg-primary-50 border-primary-300 text-primary-700'
-                                : 'bg-white border-secondary-200 text-secondary-600 hover:bg-secondary-50'
+                                : 'bg-white border-surface-200 text-surface-600 hover:bg-surface-50'
                         }`}
                     >
                         {opt.label}
@@ -736,7 +736,7 @@ function FunnelTab() {
             {isLoading ? (
                 <SkeletonChart />
             ) : (
-                <div className="bg-white rounded-xl border border-secondary-200 p-5">
+                <div className="bg-white rounded-xl border border-surface-200 p-5">
                     <div className="h-[340px]">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
@@ -770,7 +770,7 @@ function FunnelTab() {
                 <StatCard label="SQL Conversion Rate" value={`${sqlConversionRate}%`} />
                 <StatCard label="Avg Time to Qualify" value={avgTimeToQualify} />
             </div>
-            <div className="text-xs text-secondary-500">
+            <div className="text-xs text-surface-500">
                 SQL to meeting conversion: <span className="font-semibold">{meetingConversionRate}%</span>
             </div>
         </div>

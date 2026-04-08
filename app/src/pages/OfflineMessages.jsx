@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Inbox, Mail, Clock, CheckCircle2, Eye, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getOfflineMessages, updateOfflineMessage, deleteOfflineMessage } from '../services/api';
+import { cn } from '../lib/utils';
 
 export default function OfflineMessages({ embedded = false }) {
     const [messages, setMessages] = useState([]);
@@ -53,12 +54,12 @@ export default function OfflineMessages({ embedded = false }) {
 
     const statusBadge = (status) => {
         const styles = {
-            new: 'bg-blue-100 text-blue-700',
-            read: 'bg-gray-100 text-gray-600',
-            replied: 'bg-green-100 text-green-700',
+            new: 'bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400',
+            read: 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400',
+            replied: 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
         };
         return (
-            <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${styles[status] || styles.new}`}>
+            <span className={cn('px-2 py-0.5 rounded-full text-[11px] font-medium', styles[status] || styles.new)}>
                 {status}
             </span>
         );
@@ -70,8 +71,8 @@ export default function OfflineMessages({ embedded = false }) {
         <div className="space-y-6">
             {!embedded && (
                 <div>
-                    <h1 className="text-2xl font-bold text-secondary-900">Offline Messages</h1>
-                    <p className="text-secondary-500 text-sm mt-1">Messages left by visitors when no agent was available.</p>
+                    <h1 className="text-2xl font-bold text-surface-900 dark:text-white">Offline Messages</h1>
+                    <p className="text-surface-500 dark:text-surface-400 text-sm mt-1">Messages left by visitors when no agent was available.</p>
                 </div>
             )}
 
@@ -81,11 +82,12 @@ export default function OfflineMessages({ embedded = false }) {
                     <button
                         key={s}
                         onClick={() => { setStatusFilter(s); setPage(1); }}
-                        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                        className={cn(
+                            'px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
                             statusFilter === s
-                                ? 'bg-primary-50 border-primary-200 text-primary-700'
-                                : 'bg-white border-secondary-200 text-secondary-600 hover:bg-secondary-50'
-                        }`}
+                                ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/30 text-primary-700 dark:text-primary-400'
+                                : 'bg-white dark:bg-surface-900 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800'
+                        )}
                     >
                         {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
                     </button>
@@ -94,18 +96,18 @@ export default function OfflineMessages({ embedded = false }) {
 
             <div className="flex gap-6">
                 {/* Message List */}
-                <div className="flex-1 bg-white rounded-2xl border border-secondary-200 overflow-hidden">
+                <div className="flex-1 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                     {loading ? (
                         <div className="flex items-center justify-center py-20">
                             <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
                         </div>
                     ) : messages.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-20 text-secondary-400">
+                        <div className="flex flex-col items-center justify-center py-20 text-surface-400 dark:text-surface-500">
                             <Inbox size={40} className="mb-3" />
                             <p className="font-medium">No messages</p>
                         </div>
                     ) : (
-                        <div className="divide-y divide-secondary-100">
+                        <div className="divide-y divide-surface-100 dark:divide-surface-800">
                             {messages.map((msg) => (
                                 <div
                                     key={msg.id}
@@ -113,24 +115,26 @@ export default function OfflineMessages({ embedded = false }) {
                                         setSelectedMessage(msg);
                                         if (msg.status === 'new') handleMarkRead(msg.id);
                                     }}
-                                    className={`p-4 hover:bg-secondary-50:bg-secondary-800/50 cursor-pointer transition-colors ${
-                                        selectedMessage?.id === msg.id ? 'bg-primary-50/50' : ''
-                                    } ${msg.status === 'new' ? 'border-l-3 border-l-blue-500' : ''}`}
+                                    className={cn(
+                                        'p-4 cursor-pointer transition-colors hover:bg-surface-50 dark:hover:bg-surface-800/50',
+                                        selectedMessage?.id === msg.id && 'bg-primary-50/50 dark:bg-primary-500/10',
+                                        msg.status === 'new' && 'border-l-3 border-l-blue-500'
+                                    )}
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="min-w-0 flex-1">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="font-semibold text-sm text-secondary-900 truncate">
+                                                <span className="font-semibold text-sm text-surface-900 dark:text-surface-100 truncate">
                                                     {msg.visitor_name}
                                                 </span>
                                                 {statusBadge(msg.status)}
                                             </div>
-                                            <p className="text-xs text-secondary-500 mb-1">{msg.visitor_email}</p>
-                                            <p className="text-sm text-secondary-700 line-clamp-2">
+                                            <p className="text-xs text-surface-500 dark:text-surface-400 mb-1">{msg.visitor_email}</p>
+                                            <p className="text-sm text-surface-700 dark:text-surface-300 line-clamp-2">
                                                 {msg.message_body}
                                             </p>
                                         </div>
-                                        <div className="text-[11px] text-secondary-400 shrink-0">
+                                        <div className="text-[11px] text-surface-400 dark:text-surface-500 shrink-0">
                                             {msg.created_at ? new Date(msg.created_at).toLocaleDateString() : ''}
                                         </div>
                                     </div>
@@ -141,14 +145,22 @@ export default function OfflineMessages({ embedded = false }) {
 
                     {/* Pagination */}
                     {totalPages > 1 && (
-                        <div className="flex items-center justify-between px-4 py-3 border-t border-secondary-100">
-                            <span className="text-xs text-secondary-500">{total} messages</span>
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-surface-100 dark:border-surface-800">
+                            <span className="text-xs text-surface-500 dark:text-surface-400">{total} messages</span>
                             <div className="flex gap-1">
-                                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1 rounded disabled:opacity-30">
+                                <button
+                                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                                    disabled={page === 1}
+                                    className="p-1 rounded text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 disabled:opacity-30 transition-colors"
+                                >
                                     <ChevronLeft size={16} />
                                 </button>
-                                <span className="text-xs text-secondary-600 px-2 py-1">{page} / {totalPages}</span>
-                                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="p-1 rounded disabled:opacity-30">
+                                <span className="text-xs text-surface-600 dark:text-surface-400 px-2 py-1">{page} / {totalPages}</span>
+                                <button
+                                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={page >= totalPages}
+                                    className="p-1 rounded text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 disabled:opacity-30 transition-colors"
+                                >
                                     <ChevronRight size={16} />
                                 </button>
                             </div>
@@ -158,14 +170,14 @@ export default function OfflineMessages({ embedded = false }) {
 
                 {/* Detail Panel */}
                 {selectedMessage && (
-                    <div className="w-96 bg-white rounded-2xl border border-secondary-200 p-5 shrink-0 self-start">
+                    <div className="w-96 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 shrink-0 self-start">
                         <div className="flex items-center justify-between mb-4">
-                            <h3 className="font-bold text-secondary-900">Message Details</h3>
+                            <h3 className="font-bold text-surface-900 dark:text-white">Message Details</h3>
                             <div className="flex gap-1">
                                 {selectedMessage.status !== 'replied' && (
                                     <button
                                         onClick={() => handleMarkReplied(selectedMessage.id)}
-                                        className="p-1.5 rounded-lg hover:bg-green-50 text-green-600"
+                                        className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 transition-colors"
                                         title="Mark as replied"
                                     >
                                         <CheckCircle2 size={16} />
@@ -173,7 +185,7 @@ export default function OfflineMessages({ embedded = false }) {
                                 )}
                                 <button
                                     onClick={() => handleDelete(selectedMessage.id)}
-                                    className="p-1.5 rounded-lg hover:bg-red-50 text-red-500"
+                                    className="p-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-500/10 text-rose-500 dark:text-rose-400 transition-colors"
                                     title="Delete"
                                 >
                                     <Trash2 size={16} />
@@ -183,35 +195,35 @@ export default function OfflineMessages({ embedded = false }) {
 
                         <div className="space-y-3">
                             <div>
-                                <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">From</label>
-                                <p className="text-sm font-medium text-secondary-900">{selectedMessage.visitor_name}</p>
-                                <p className="text-xs text-secondary-500">{selectedMessage.visitor_email}</p>
-                                {selectedMessage.visitor_phone && <p className="text-xs text-secondary-500">{selectedMessage.visitor_phone}</p>}
+                                <label className="text-[11px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">From</label>
+                                <p className="text-sm font-medium text-surface-900 dark:text-surface-100">{selectedMessage.visitor_name}</p>
+                                <p className="text-xs text-surface-500 dark:text-surface-400">{selectedMessage.visitor_email}</p>
+                                {selectedMessage.visitor_phone && <p className="text-xs text-surface-500 dark:text-surface-400">{selectedMessage.visitor_phone}</p>}
                             </div>
 
                             <div>
-                                <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">Status</label>
+                                <label className="text-[11px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">Status</label>
                                 <div className="mt-0.5">{statusBadge(selectedMessage.status)}</div>
                             </div>
 
                             {selectedMessage.bot_name && (
                                 <div>
-                                    <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">Bot</label>
-                                    <p className="text-sm text-secondary-700">{selectedMessage.bot_name}</p>
+                                    <label className="text-[11px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">Bot</label>
+                                    <p className="text-sm text-surface-700 dark:text-surface-300">{selectedMessage.bot_name}</p>
                                 </div>
                             )}
 
                             <div>
-                                <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">Received</label>
-                                <p className="text-sm text-secondary-700">
+                                <label className="text-[11px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">Received</label>
+                                <p className="text-sm text-surface-700 dark:text-surface-300">
                                     {selectedMessage.created_at ? new Date(selectedMessage.created_at).toLocaleString() : 'Unknown'}
                                 </p>
                             </div>
 
                             <div>
-                                <label className="text-[11px] font-medium text-secondary-400 uppercase tracking-wider">Message</label>
-                                <div className="mt-1 p-3 bg-secondary-50 rounded-xl">
-                                    <p className="text-sm text-secondary-800 whitespace-pre-wrap leading-relaxed">
+                                <label className="text-[11px] font-medium text-surface-400 dark:text-surface-500 uppercase tracking-wider">Message</label>
+                                <div className="mt-1 p-3 bg-surface-50 dark:bg-surface-800 rounded-xl">
+                                    <p className="text-sm text-surface-800 dark:text-surface-200 whitespace-pre-wrap leading-relaxed">
                                         {selectedMessage.message_body}
                                     </p>
                                 </div>
@@ -220,7 +232,7 @@ export default function OfflineMessages({ embedded = false }) {
                             {/* Quick reply via email link */}
                             <a
                                 href={`mailto:${selectedMessage.visitor_email}?subject=Re: Your message to us&body=Hi ${selectedMessage.visitor_name},\n\nThank you for reaching out.\n\n`}
-                                className="flex items-center justify-center gap-2 w-full py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors"
+                                className="flex items-center justify-center gap-2 w-full py-2.5 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-xl text-sm font-medium transition-colors"
                                 onClick={() => handleMarkReplied(selectedMessage.id)}
                             >
                                 <Mail size={15} /> Reply via Email

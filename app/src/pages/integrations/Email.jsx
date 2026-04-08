@@ -3,29 +3,29 @@ import PageHeader from '../../components/ui/PageHeader';
 import Badge from '../../components/ui/Badge';
 
 export default function Email() {
-    const inputClass = "w-full px-3.5 py-2.5 bg-white border border-secondary-200 rounded-xl text-sm text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
-    const selectClass = "w-full px-3.5 py-2.5 bg-white border border-secondary-200 rounded-xl text-sm text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
+    const inputClass = "w-full px-3.5 py-2.5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-surface-400";
+    const selectClass = "w-full px-3.5 py-2.5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
 
     return (
-        <div className="space-y-6 animate-fade-in max-w-3xl">
+        <div className="space-y-6 max-w-3xl">
             <PageHeader title="Email Integration" subtitle="Configure email notifications and outreach">
                 <Badge variant="neutral">Not Configured</Badge>
             </PageHeader>
 
-            <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-info-50 flex items-center justify-center">
-                        <Mail size={20} className="text-info-600" />
+                    <div className="w-10 h-10 rounded-xl bg-sky-50 dark:bg-sky-500/10 flex items-center justify-center">
+                        <Mail size={20} className="text-sky-600 dark:text-sky-400" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-secondary-900">Email Configuration</h3>
-                        <p className="text-xs text-secondary-500">Set up SMTP or API to send email notifications</p>
+                        <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">Email Configuration</h3>
+                        <p className="text-xs text-surface-500 dark:text-surface-400">Set up SMTP or API to send email notifications</p>
                     </div>
                 </div>
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-secondary-700 mb-1.5">Provider</label>
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Provider</label>
                         <select className={selectClass}>
                             <option value="smtp">Custom SMTP</option>
                             <option value="sendgrid">SendGrid</option>
@@ -34,16 +34,16 @@ export default function Email() {
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-secondary-700 mb-1.5">SMTP Host</label>
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">SMTP Host</label>
                         <input type="text" className={inputClass} placeholder="e.g. smtp.example.com" />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">SMTP Port</label>
+                            <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">SMTP Port</label>
                             <input type="text" className={inputClass} placeholder="e.g. 587" />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">Security</label>
+                            <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Security</label>
                             <select className={selectClass}>
                                 <option value="tls">TLS</option>
                                 <option value="ssl">SSL</option>
@@ -52,11 +52,11 @@ export default function Email() {
                         </div>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-secondary-700 mb-1.5">Username</label>
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Username</label>
                         <input type="text" className={inputClass} placeholder="SMTP Username" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-secondary-700 mb-1.5">Password</label>
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Password</label>
                         <input type="password" className={inputClass} placeholder="SMTP Password" />
                     </div>
                     <div className="pt-2">

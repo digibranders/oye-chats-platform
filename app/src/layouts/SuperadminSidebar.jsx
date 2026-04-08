@@ -2,10 +2,10 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
     Activity,
     Users as UsersIcon,
-    Bot,
-    Settings,
+    Sparkles,
     MessageSquareQuote
 } from 'lucide-react';
+import { cn } from '../lib/utils';
 import SettingsDropup from '../components/SettingsDropup';
 
 export default function SuperadminSidebar({ isOpen }) {
@@ -29,23 +29,27 @@ export default function SuperadminSidebar({ isOpen }) {
             <NavLink
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-3 rounded-xl transition-all group ${isOpen ? 'w-full h-8' : 'w-8 h-8 justify-center'
-                    } ${active
-                        ? 'bg-primary-50 text-primary-700 font-medium'
-                        : 'text-secondary-600 hover:bg-secondary-50:bg-secondary-700/50 hover:text-secondary-900:text-secondary-200'
-                    }`}
+                className={cn(
+                    'flex items-center gap-3 px-3 rounded-xl transition-all group',
+                    isOpen ? 'w-full h-8' : 'w-8 h-8 justify-center',
+                    active
+                        ? 'bg-white/[0.08] text-white'
+                        : 'text-surface-400 hover:bg-white/[0.05] hover:text-surface-200'
+                )}
                 title={!isOpen ? item.name : undefined}
             >
                 <Icon
                     size={18}
-                    className={`flex-shrink-0 transition-colors ${active
-                        ? 'text-primary-600'
-                        : 'text-secondary-400 group-hover:text-secondary-600:text-secondary-300'
-                        }`}
+                    className={cn(
+                        'flex-shrink-0 transition-colors',
+                        active
+                            ? 'text-primary-400'
+                            : 'text-surface-500 group-hover:text-surface-300'
+                    )}
                 />
                 {isOpen && <span className="truncate text-sm">{item.name}</span>}
                 {active && isOpen && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-600 flex-shrink-0"></div>
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-500 flex-shrink-0"></div>
                 )}
             </NavLink>
         );
@@ -53,17 +57,19 @@ export default function SuperadminSidebar({ isOpen }) {
 
     return (
         <aside
-            className={`fixed top-0 left-0 h-screen overflow-x-hidden bg-white border-r border-secondary-200 shadow-sm z-20 transition-all duration-300 ${isOpen ? 'w-58' : 'w-20'
-                }`}
+            className={cn(
+                'fixed top-0 left-0 h-screen overflow-x-hidden bg-surface-950 border-r border-surface-800/50 z-20 transition-all duration-300',
+                isOpen ? 'w-58' : 'w-20'
+            )}
         >
             {/* Logo */}
-            <div className="flex items-center justify-center h-16 border-b border-secondary-100">
+            <div className="flex items-center justify-center h-16 border-b border-surface-800/50">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center flex-shrink-0 shadow-md">
-                        <Bot size={20} />
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-primary-500/25">
+                        <Sparkles size={18} />
                     </div>
                     {isOpen && (
-                        <span className="text-l font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-900 truncate pr-4">
+                        <span className="text-[15px] font-bold text-white tracking-tight truncate pr-4">
                             Superadmin
                         </span>
                     )}
