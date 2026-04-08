@@ -6,6 +6,8 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss }) => {
 
     useEffect(() => {
         const handleMessage = (event) => {
+            // Only accept messages from Calendly's origin to prevent spoofed events
+            if (event.origin !== 'https://calendly.com') return;
             const data = event?.data;
             if (!data || typeof data !== 'object') return;
             if (data.event === 'calendly.event_scheduled') {

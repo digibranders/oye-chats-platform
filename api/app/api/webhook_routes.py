@@ -1,3 +1,6 @@
+import ipaddress
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import desc, func, select
@@ -5,6 +8,7 @@ from sqlalchemy import desc, func, select
 from app.api.auth import get_current_client_or_operator
 from app.db.models import Bot, Webhook, WebhookDelivery
 from app.db.session import get_session
+from app.schemas.client import _is_public_hostname
 from app.services.webhook_service import SUPPORTED_EVENTS, generate_webhook_secret, queue_webhook_delivery
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -36,6 +40,28 @@ def _get_owned_webhook(session, webhook_id: int, client_id: int) -> Webhook:
     if not webhook:
         raise HTTPException(status_code=404, detail="Webhook not found.")
     return webhook
+
+
+def _validate_webhook_url(url: str) -> None:
+    """Block webhook URLs that target internal/private networks (SSRF protection)."""
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(status_code=422, detail="Webhook URL must contain a valid hostname.")
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+            raise HTTPException(
+                status_code=422, detail="Webhook URLs targeting internal or private network addresses are not allowed."
+            )
+    except ValueError:
+        # hostname is not a literal IP — resolve DNS and verify all results are public
+        if not _is_public_hostname(hostname):
+            raise HTTPException(
+                status_code=422,
+                detail="Webhook URL resolves to a private/internal address and is not allowed.",
+            ) from None
 
 
 def _validate_events(events: list[str]) -> None:
@@ -82,6 +108,7 @@ def create_webhook(
     auth: dict = Depends(get_current_client_or_operator),
 ):
     _validate_events(body.events)
+    _validate_webhook_url(str(body.url))
     with get_session() as session:
         _get_owned_bot(session, bot_id, auth["client_id"])
         webhook = Webhook(
@@ -117,6 +144,7 @@ def update_webhook(
             _validate_events(body.events)
             webhook.events = body.events
         if body.url is not None:
+            _validate_webhook_url(str(body.url))
             webhook.url = str(body.url)
         if body.is_active is not None:
             webhook.is_active = body.is_active
