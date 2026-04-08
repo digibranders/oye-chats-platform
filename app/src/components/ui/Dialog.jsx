@@ -1,9 +1,11 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export default function Dialog({ open, onClose, children, className, size = 'md' }) {
+  const dialogRef = useRef(null);
+
   const handleEsc = useCallback((e) => {
     if (e.key === 'Escape') onClose?.();
   }, [onClose]);
@@ -12,7 +14,15 @@ export default function Dialog({ open, onClose, children, className, size = 'md'
     if (open) {
       document.addEventListener('keydown', handleEsc);
       document.body.style.overflow = 'hidden';
+
+      // Focus trap: focus the dialog container on open
+      const timer = setTimeout(() => {
+        const focusable = dialogRef.current?.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        focusable?.focus();
+      }, 50);
+
       return () => {
+        clearTimeout(timer);
         document.removeEventListener('keydown', handleEsc);
         document.body.style.overflow = '';
       };
@@ -31,7 +41,7 @@ export default function Dialog({ open, onClose, children, className, size = 'md'
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -41,6 +51,7 @@ export default function Dialog({ open, onClose, children, className, size = 'md'
             onClick={onClose}
           />
           <motion.div
+            ref={dialogRef}
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -66,6 +77,7 @@ function DialogHeader({ children, onClose, className }) {
       {onClose && (
         <button
           onClick={onClose}
+          aria-label="Close"
           className="p-1.5 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors flex-shrink-0 ml-4"
         >
           <X size={16} />

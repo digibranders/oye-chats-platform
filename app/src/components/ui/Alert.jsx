@@ -20,7 +20,7 @@ export default function Alert({ type = 'info', title, children, onDismiss, class
         {children}
       </div>
       {onDismiss && (
-        <button onClick={onDismiss} className={cn('flex-shrink-0 p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors', c.text)}>
+        <button onClick={onDismiss} aria-label="Dismiss alert" className={cn('flex-shrink-0 p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors', c.text)}>
           <X size={14} />
         </button>
       )}

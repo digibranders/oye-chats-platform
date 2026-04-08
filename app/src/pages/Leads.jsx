@@ -11,14 +11,14 @@ import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const STATUS_CONFIG = {
     unqualified: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    mql: { label: 'MQL', color: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' },
+    mql: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
     sal: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
-    sql: { label: 'SQL', color: 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' },
+    sql: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
     // backward-compat aliases
     cold: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    warm: { label: 'MQL', color: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' },
+    warm: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
     hot: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
-    qualified: { label: 'SQL', color: 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400' },
+    qualified: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
 };
 
 const BANT_LABELS = { need: 'Need', budget: 'Budget', authority: 'Authority', timeline: 'Timeline' };
@@ -118,10 +118,10 @@ export default function Leads() {
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     {[
                         { label: 'Total', value: stats.total, color: 'text-surface-900 dark:text-surface-100' },
-                        { label: 'Cold', value: stats.cold, color: 'text-blue-600 dark:text-blue-400' },
+                        { label: 'Cold', value: stats.cold, color: 'text-sky-600 dark:text-sky-400' },
                         { label: 'Warm', value: stats.warm, color: 'text-yellow-600 dark:text-yellow-400' },
                         { label: 'Hot', value: stats.hot, color: 'text-orange-600 dark:text-orange-400' },
-                        { label: 'Qualified', value: stats.qualified, color: 'text-green-600 dark:text-green-400' },
+                        { label: 'Qualified', value: stats.qualified, color: 'text-emerald-600 dark:text-emerald-400' },
                     ].map(s => (
                         <button
                             key={s.label}
@@ -224,7 +224,7 @@ export default function Leads() {
                                                         className={cn(
                                                             'w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center',
                                                             (lead.bant?.[key]?.score || 0) > 0
-                                                                ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+                                                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
                                                                 : 'bg-surface-100 text-surface-400 dark:bg-surface-800 dark:text-surface-500'
                                                         )}
                                                         title={`${label}: ${lead.bant?.[key]?.value || 'Not captured'} (${lead.bant?.[key]?.score || 0}/25)`}
@@ -335,7 +335,7 @@ export default function Leads() {
                                                             <div
                                                                 className={cn(
                                                                     'h-1.5 rounded-full transition-all',
-                                                                    dimScore >= 20 ? 'bg-green-500' : dimScore >= 10 ? 'bg-blue-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
+                                                                    dimScore >= 20 ? 'bg-emerald-500' : dimScore >= 10 ? 'bg-sky-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
                                                                 )}
                                                                 style={{ width: `${(dimScore / 25) * 100}%` }}
                                                             />
@@ -360,9 +360,9 @@ export default function Leads() {
                                                                 <span className={cn(
                                                                     'text-[9px] px-1.5 py-0.5 rounded-full font-bold',
                                                                     s.confidence === 'high'
-                                                                        ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
+                                                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
                                                                         : s.confidence === 'medium'
-                                                                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400'
+                                                                            ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400'
                                                                             : 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400'
                                                                 )}>{s.confidence}</span>
                                                                 <span className="text-[10px] text-surface-400 dark:text-surface-500 ml-auto">{s.score_before} → {s.score_after}</span>
@@ -388,9 +388,9 @@ export default function Leads() {
                                                         className={cn(
                                                             'h-1.5 rounded-full transition-all',
                                                             (leadDetail.behavioral_score || 0) >= 15
-                                                                ? 'bg-green-500'
+                                                                ? 'bg-emerald-500'
                                                                 : (leadDetail.behavioral_score || 0) >= 8
-                                                                    ? 'bg-blue-500'
+                                                                    ? 'bg-sky-500'
                                                                     : 'bg-amber-400'
                                                         )}
                                                         style={{ width: `${Math.min(((leadDetail.behavioral_score || 0) / 20) * 100, 100)}%` }}

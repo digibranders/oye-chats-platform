@@ -108,7 +108,7 @@ export default function CannedResponses({ embedded = false }) {
                 )}
                 <button
                     onClick={openCreateModal}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                    className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors"
                 >
                     <Plus className="w-4 h-4" />
                     Add Response
@@ -124,14 +124,14 @@ export default function CannedResponses({ embedded = false }) {
                         placeholder="Search responses..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-indigo-300 dark:focus:border-indigo-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                     />
                 </div>
                 {categories.length > 0 && (
                     <select
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
-                        className="px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-indigo-300 dark:focus:border-indigo-600"
+                        className="px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600"
                     >
                         <option value="">All categories</option>
                         {categories.map(cat => (
@@ -170,7 +170,7 @@ export default function CannedResponses({ embedded = false }) {
                                             </span>
                                         )}
                                         {response.category && (
-                                            <span className="flex items-center gap-1 px-2 py-0.5 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[11px] rounded">
+                                            <span className="flex items-center gap-1 px-2 py-0.5 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 text-[11px] rounded">
                                                 <Tag className="w-3 h-3" />
                                                 {response.category}
                                             </span>
@@ -181,7 +181,7 @@ export default function CannedResponses({ embedded = false }) {
                                 <div className="flex items-center gap-1">
                                     <button
                                         onClick={() => openEditModal(response)}
-                                        className="p-1.5 text-surface-400 dark:text-surface-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded transition-colors"
+                                        className="p-1.5 text-surface-400 dark:text-surface-500 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded transition-colors"
                                         title="Edit"
                                     >
                                         <Pencil className="w-4 h-4" />
@@ -220,7 +220,7 @@ export default function CannedResponses({ embedded = false }) {
                                     value={form.title}
                                     onChange={(e) => setForm(prev => ({ ...prev, title: e.target.value }))}
                                     placeholder="e.g., Greeting"
-                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-indigo-300 dark:focus:border-indigo-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     required
                                 />
                             </div>
@@ -231,7 +231,7 @@ export default function CannedResponses({ embedded = false }) {
                                     onChange={(e) => setForm(prev => ({ ...prev, content: e.target.value }))}
                                     placeholder="The message content that will be sent..."
                                     rows={4}
-                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-indigo-300 dark:focus:border-indigo-600 resize-none placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                    className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 resize-none placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     required
                                 />
                             </div>
@@ -245,7 +245,7 @@ export default function CannedResponses({ embedded = false }) {
                                             value={form.shortcut}
                                             onChange={(e) => setForm(prev => ({ ...prev, shortcut: e.target.value.replace(/\s/g, '') }))}
                                             placeholder="greeting"
-                                            className="flex-1 px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-r-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-indigo-300 dark:focus:border-indigo-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                            className="flex-1 px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-r-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                         />
                                     </div>
                                 </div>
@@ -256,7 +256,7 @@ export default function CannedResponses({ embedded = false }) {
                                         value={form.category}
                                         onChange={(e) => setForm(prev => ({ ...prev, category: e.target.value }))}
                                         placeholder="e.g., Sales, Support"
-                                        className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-indigo-300 dark:focus:border-indigo-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                                        className="w-full px-3 py-2 text-sm border border-surface-200 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-300 dark:focus:border-primary-600 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     />
                                 </div>
                             </div>
@@ -271,7 +271,7 @@ export default function CannedResponses({ embedded = false }) {
                                 <button
                                     type="submit"
                                     disabled={submitting}
-                                    className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-60"
+                                    className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60"
                                 >
                                     {submitting ? 'Saving...' : editingResponse ? 'Update' : 'Create'}
                                 </button>

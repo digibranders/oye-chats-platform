@@ -1,9 +1,11 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export default function Drawer({ open, onClose, children, className, side = 'right', size = 'md' }) {
+  const drawerRef = useRef(null);
+
   const handleEsc = useCallback((e) => {
     if (e.key === 'Escape') onClose?.();
   }, [onClose]);
@@ -12,7 +14,14 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
     if (open) {
       document.addEventListener('keydown', handleEsc);
       document.body.style.overflow = 'hidden';
+
+      const timer = setTimeout(() => {
+        const focusable = drawerRef.current?.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        focusable?.focus();
+      }, 50);
+
       return () => {
+        clearTimeout(timer);
         document.removeEventListener('keydown', handleEsc);
         document.body.style.overflow = '';
       };
@@ -25,7 +34,7 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex">
+        <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -35,6 +44,7 @@ export default function Drawer({ open, onClose, children, className, side = 'rig
             onClick={onClose}
           />
           <motion.div
+            ref={drawerRef}
             initial={{ x: isRight ? '100%' : '-100%' }}
             animate={{ x: 0 }}
             exit={{ x: isRight ? '100%' : '-100%' }}
@@ -61,6 +71,7 @@ function DrawerHeader({ children, onClose, className }) {
       {onClose && (
         <button
           onClick={onClose}
+          aria-label="Close"
           className="p-1.5 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
         >
           <X size={16} />

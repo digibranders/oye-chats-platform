@@ -22,7 +22,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-end sm:items-center sm:justify-center p-4 sm:p-0">
+    <div className="fixed inset-0 z-[60] flex items-end justify-end sm:items-center sm:justify-center p-4 sm:p-0">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
         onClick={onClose}

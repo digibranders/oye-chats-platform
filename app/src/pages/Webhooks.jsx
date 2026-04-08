@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, CheckCircle2, ChevronDown, ChevronUp, Copy, Loader2, Pencil, Plus, Send, Trash2, Webhook as WebhookIcon } from 'lucide-react';
+import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
@@ -70,8 +71,8 @@ const CRM_TEMPLATES = [
 const truncate = (value, max = 64) => (value.length > max ? `${value.slice(0, max)}...` : value);
 
 const badgeClassByStatus = (statusCode) => {
-    if (statusCode >= 200 && statusCode < 300) return 'bg-green-100 text-green-700';
-    return 'bg-red-100 text-red-700';
+    if (statusCode >= 200 && statusCode < 300) return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400';
+    return 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400';
 };
 
 function Toggle({ checked, onChange, disabled = false }) {
@@ -82,15 +83,17 @@ function Toggle({ checked, onChange, disabled = false }) {
             aria-checked={checked}
             disabled={disabled}
             onClick={() => onChange(!checked)}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out disabled:cursor-not-allowed disabled:opacity-50 ${
-                checked ? 'bg-primary-600' : 'bg-surface-200'
-            }`}
+            className={cn(
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out disabled:cursor-not-allowed disabled:opacity-50',
+                checked ? 'bg-primary-600' : 'bg-surface-200 dark:bg-surface-700'
+            )}
         >
             <span
                 aria-hidden="true"
-                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                className={cn(
+                    'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                     checked ? 'translate-x-4' : 'translate-x-0'
-                }`}
+                )}
             />
         </button>
     );
@@ -298,26 +301,26 @@ export default function Webhooks({ embedded = false }) {
             <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
             {activeTab === 'webhooks' && (
-                <div className="bg-white border border-surface-200 rounded-2xl p-5">
+                <div className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5">
                     {loadingWebhooks ? (
-                        <div className="flex items-center gap-2 text-surface-500">
+                        <div className="flex items-center gap-2 text-surface-500 dark:text-surface-400">
                             <Loader2 className="w-4 h-4 animate-spin" />
                             Loading webhooks...
                         </div>
                     ) : webhooks.length === 0 ? (
-                        <p className="text-sm text-surface-500">No webhooks configured for this bot yet.</p>
+                        <p className="text-sm text-surface-500 dark:text-surface-400">No webhooks configured for this bot yet.</p>
                     ) : (
                         <div className="space-y-3">
                             {webhooks.map((webhook) => (
-                                <div key={webhook.id} className="border border-surface-200 rounded-xl p-4">
+                                <div key={webhook.id} className="border border-surface-200 dark:border-surface-700 rounded-xl p-4">
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="space-y-2 flex-1 min-w-0">
-                                            <p className="text-sm font-semibold text-surface-900" title={webhook.url}>
+                                            <p className="text-sm font-semibold text-surface-900 dark:text-surface-100" title={webhook.url}>
                                                 {truncate(webhook.url, 96)}
                                             </p>
                                             <div className="flex flex-wrap gap-1.5">
                                                 {(webhook.events || []).map((eventType) => (
-                                                    <span key={eventType} className="px-2 py-0.5 rounded-full text-[11px] bg-surface-100 text-surface-700">
+                                                    <span key={eventType} className="px-2 py-0.5 rounded-full text-[11px] bg-surface-100 dark:bg-surface-800 text-surface-700 dark:text-surface-300">
                                                         {eventType}
                                                     </span>
                                                 ))}
@@ -331,21 +334,21 @@ export default function Webhooks({ embedded = false }) {
                                             />
                                             <button
                                                 onClick={() => openEditModal(webhook)}
-                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-surface-200 text-surface-700 hover:bg-surface-50"
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800"
                                             >
                                                 <Pencil className="w-3.5 h-3.5" />
                                                 Edit
                                             </button>
                                             <button
                                                 onClick={() => handleTest(webhook.id)}
-                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-200 text-blue-700 hover:bg-blue-50"
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-sky-200 dark:border-sky-700 text-sky-700 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20"
                                             >
                                                 <Send className="w-3.5 h-3.5" />
                                                 Test
                                             </button>
                                             <button
                                                 onClick={() => handleDelete(webhook.id)}
-                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-red-200 text-red-700 hover:bg-red-50"
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20"
                                             >
                                                 <Trash2 className="w-3.5 h-3.5" />
                                                 Delete
@@ -360,7 +363,7 @@ export default function Webhooks({ embedded = false }) {
             )}
 
             {activeTab === 'delivery-log' && (
-                <div className="bg-white border border-surface-200 rounded-2xl p-5 space-y-4">
+                <div className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 space-y-4">
                     <div className="flex items-center justify-between gap-3">
                         <select
                             value={selectedWebhookId || ''}
@@ -368,7 +371,7 @@ export default function Webhooks({ embedded = false }) {
                                 setSelectedWebhookId(e.target.value ? Number(e.target.value) : null);
                                 setDeliveryPage(1);
                             }}
-                            className="text-sm border border-surface-200 rounded-lg px-3 py-2 bg-white text-surface-900 focus:outline-none focus:border-primary-500"
+                            className="text-sm border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:outline-none focus:border-primary-500"
                         >
                             <option value="">Select webhook</option>
                             {webhooks.map((webhook) => (
@@ -392,48 +395,48 @@ export default function Webhooks({ embedded = false }) {
                                 }
                             }}
                             disabled={!selectedWebhookId || loadingDeliveries}
-                            className="px-3 py-2 text-sm rounded-lg border border-surface-200 text-surface-700 hover:bg-surface-50 disabled:opacity-50"
+                            className="px-3 py-2 text-sm rounded-lg border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 disabled:opacity-50"
                         >
                             Refresh
                         </button>
                     </div>
 
                     {!selectedWebhookId ? (
-                        <p className="text-sm text-surface-500">Choose a webhook to view delivery attempts.</p>
+                        <p className="text-sm text-surface-500 dark:text-surface-400">Choose a webhook to view delivery attempts.</p>
                     ) : loadingDeliveries ? (
-                        <div className="flex items-center gap-2 text-surface-500">
+                        <div className="flex items-center gap-2 text-surface-500 dark:text-surface-400">
                             <Loader2 className="w-4 h-4 animate-spin" />
                             Loading delivery log...
                         </div>
                     ) : deliveries.length === 0 ? (
-                        <p className="text-sm text-surface-500">No deliveries yet.</p>
+                        <p className="text-sm text-surface-500 dark:text-surface-400">No deliveries yet.</p>
                     ) : (
                         <>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="border-b border-surface-100">
-                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500">Event</th>
-                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500">Status</th>
-                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500">Attempt</th>
-                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500">Created</th>
-                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500">Delivered</th>
+                                        <tr className="border-b border-surface-100 dark:border-surface-800">
+                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500 dark:text-surface-400">Event</th>
+                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500 dark:text-surface-400">Status</th>
+                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500 dark:text-surface-400">Attempt</th>
+                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500 dark:text-surface-400">Created</th>
+                                            <th className="text-left py-2.5 text-[11px] uppercase tracking-wider text-surface-500 dark:text-surface-400">Delivered</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {deliveries.map((item) => (
-                                            <tr key={item.id} className="border-b border-surface-50">
-                                                <td className="py-2.5 text-surface-800">{item.event_type}</td>
+                                            <tr key={item.id} className="border-b border-surface-50 dark:border-surface-800">
+                                                <td className="py-2.5 text-surface-800 dark:text-surface-200">{item.event_type}</td>
                                                 <td className="py-2.5">
-                                                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${badgeClassByStatus(item.status_code || 0)}`}>
+                                                    <span className={cn('px-2 py-0.5 rounded-full text-[11px] font-semibold', badgeClassByStatus(item.status_code || 0))}>
                                                         {item.status_code || 0}
                                                     </span>
                                                 </td>
-                                                <td className="py-2.5 text-surface-700">{item.attempt}</td>
-                                                <td className="py-2.5 text-surface-600">
-                                                    {item.created_at ? new Date(item.created_at).toLocaleString() : '—'}
+                                                <td className="py-2.5 text-surface-700 dark:text-surface-300">{item.attempt}</td>
+                                                <td className="py-2.5 text-surface-600 dark:text-surface-400">
+                                                    {item.created_at ? new Date(item.created_at).toLocaleString() : '\u2014'}
                                                 </td>
-                                                <td className="py-2.5 text-surface-600">
+                                                <td className="py-2.5 text-surface-600 dark:text-surface-400">
                                                     {item.delivered_at
                                                         ? new Date(item.delivered_at).toLocaleString()
                                                         : item.next_retry_at
@@ -447,21 +450,21 @@ export default function Webhooks({ embedded = false }) {
                             </div>
 
                             <div className="flex items-center justify-between pt-2">
-                                <p className="text-xs text-surface-500">
+                                <p className="text-xs text-surface-500 dark:text-surface-400">
                                     Page {deliveryPage} of {totalPages}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => setDeliveryPage((prev) => Math.max(1, prev - 1))}
                                         disabled={deliveryPage <= 1}
-                                        className="px-3 py-1.5 text-xs rounded-md border border-surface-200 text-surface-700 hover:bg-surface-50 disabled:opacity-50"
+                                        className="px-3 py-1.5 text-xs rounded-md border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 disabled:opacity-50"
                                     >
                                         Previous
                                     </button>
                                     <button
                                         onClick={() => setDeliveryPage((prev) => Math.min(totalPages, prev + 1))}
                                         disabled={deliveryPage >= totalPages}
-                                        className="px-3 py-1.5 text-xs rounded-md border border-surface-200 text-surface-700 hover:bg-surface-50 disabled:opacity-50"
+                                        className="px-3 py-1.5 text-xs rounded-md border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 disabled:opacity-50"
                                     >
                                         Next
                                     </button>
@@ -474,18 +477,18 @@ export default function Webhooks({ embedded = false }) {
 
             {activeTab === 'crm-integration' && (
                 <div className="space-y-4">
-                    <div className="bg-white border border-surface-200 rounded-2xl p-5">
-                        <h2 className="text-lg font-bold text-surface-900">Connect to Your CRM</h2>
-                        <p className="text-sm text-surface-500 mt-1">
+                    <div className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5">
+                        <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100">Connect to Your CRM</h2>
+                        <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
                             Use webhooks to push qualified leads to HubSpot, Salesforce, or any CRM via Zapier/Make
                         </p>
                     </div>
 
                     <div className="grid md:grid-cols-3 gap-4">
                         {CRM_TEMPLATES.map((template) => (
-                            <div key={template.id} className="bg-white border border-surface-200 rounded-2xl p-5 space-y-3">
-                                <h3 className="text-sm font-bold text-surface-900">{template.title}</h3>
-                                <p className="text-sm text-surface-500">{template.description}</p>
+                            <div key={template.id} className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 space-y-3">
+                                <h3 className="text-sm font-bold text-surface-900 dark:text-surface-100">{template.title}</h3>
+                                <p className="text-sm text-surface-500 dark:text-surface-400">{template.description}</p>
 
                                 <button
                                     onClick={async () => {
@@ -500,36 +503,36 @@ export default function Webhooks({ embedded = false }) {
                                             showToast('error', 'Failed to copy setup guide');
                                         }
                                     }}
-                                    className="w-full px-3 py-2 text-xs font-medium rounded-lg border border-primary-200 text-primary-700 hover:bg-primary-50"
+                                    className="w-full px-3 py-2 text-xs font-medium rounded-lg border border-primary-200 dark:border-primary-700 text-primary-700 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20"
                                 >
                                     {template.buttonLabel}
                                 </button>
 
-                                <div className="border border-surface-100 rounded-xl overflow-hidden">
+                                <div className="border border-surface-100 dark:border-surface-700 rounded-xl overflow-hidden">
                                     <button
                                         onClick={() => setOpenSchema((prev) => ({ ...prev, [template.id]: !prev[template.id] }))}
-                                        className="w-full px-3 py-2 text-xs font-semibold text-surface-700 bg-surface-50 flex items-center justify-between"
+                                        className="w-full px-3 py-2 text-xs font-semibold text-surface-700 dark:text-surface-300 bg-surface-50 dark:bg-surface-800 flex items-center justify-between"
                                     >
                                         Payload Schema
                                         {openSchema[template.id] ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                     </button>
                                     {openSchema[template.id] && (
-                                        <pre className="p-3 text-[11px] leading-relaxed text-surface-700 overflow-x-auto bg-white">
+                                        <pre className="p-3 text-[11px] leading-relaxed text-surface-700 dark:text-surface-300 overflow-x-auto bg-white dark:bg-surface-900">
                                             {PAYLOAD_SCHEMA}
                                         </pre>
                                     )}
                                 </div>
 
-                                <div className="border border-surface-100 rounded-xl overflow-hidden">
+                                <div className="border border-surface-100 dark:border-surface-700 rounded-xl overflow-hidden">
                                     <button
                                         onClick={() => setOpenGuide((prev) => ({ ...prev, [template.id]: !prev[template.id] }))}
-                                        className="w-full px-3 py-2 text-xs font-semibold text-surface-700 bg-surface-50 flex items-center justify-between"
+                                        className="w-full px-3 py-2 text-xs font-semibold text-surface-700 dark:text-surface-300 bg-surface-50 dark:bg-surface-800 flex items-center justify-between"
                                     >
                                         Setup Guide
                                         {openGuide[template.id] ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                     </button>
                                     {openGuide[template.id] && (
-                                        <p className="p-3 text-[12px] text-surface-600 leading-relaxed">{template.guide}</p>
+                                        <p className="p-3 text-[12px] text-surface-600 dark:text-surface-400 leading-relaxed">{template.guide}</p>
                                     )}
                                 </div>
                             </div>
@@ -540,29 +543,29 @@ export default function Webhooks({ embedded = false }) {
 
             {showModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-                    <div className="absolute inset-0 bg-black/30" onClick={closeModal} />
-                    <div className="relative w-full max-w-xl rounded-2xl bg-white border border-surface-200 shadow-2xl p-6 space-y-4">
-                        <h2 className="text-lg font-bold text-surface-900">
+                    <div className="absolute inset-0 bg-black/30 dark:bg-black/60" onClick={closeModal} />
+                    <div className="relative w-full max-w-xl rounded-2xl bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 shadow-2xl p-6 space-y-4">
+                        <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100">
                             {editingWebhook ? 'Edit Webhook' : 'Add Webhook'}
                         </h2>
 
                         <div className="space-y-2">
-                            <label className="text-xs font-bold uppercase tracking-wider text-surface-500">Endpoint URL</label>
+                            <label className="text-xs font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Endpoint URL</label>
                             <input
                                 type="url"
                                 value={formUrl}
                                 onChange={(e) => setFormUrl(e.target.value)}
                                 placeholder="https://your-crm.com/webhooks/oyechats"
-                                className="w-full px-3 py-2.5 rounded-lg border border-surface-200 text-sm focus:outline-none focus:border-primary-500"
+                                className="w-full px-3 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm focus:outline-none focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                 disabled={isSubmitting || !!newSecret}
                             />
                         </div>
 
                         <div className="space-y-2">
-                            <p className="text-xs font-bold uppercase tracking-wider text-surface-500">Events</p>
+                            <p className="text-xs font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Events</p>
                             <div className="grid sm:grid-cols-2 gap-2">
                                 {EVENT_OPTIONS.map((eventType) => (
-                                    <label key={eventType} className="flex items-center gap-2 text-sm text-surface-800">
+                                    <label key={eventType} className="flex items-center gap-2 text-sm text-surface-800 dark:text-surface-200">
                                         <input
                                             type="checkbox"
                                             checked={formEvents.includes(eventType)}
@@ -576,24 +579,24 @@ export default function Webhooks({ embedded = false }) {
                         </div>
 
                         {newSecret && (
-                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
-                                <p className="text-xs font-semibold text-amber-800">Save this secret - it won&apos;t be shown again</p>
+                            <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
+                                <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">Save this secret - it won&apos;t be shown again</p>
                                 <div className="flex items-center gap-2">
                                     <input
                                         type="text"
                                         readOnly
                                         value={newSecret}
-                                        className="flex-1 px-3 py-2 text-xs rounded-lg border border-amber-200 bg-white text-surface-800"
+                                        className="flex-1 px-3 py-2 text-xs rounded-lg border border-amber-200 dark:border-amber-700 bg-white dark:bg-surface-800 text-surface-800 dark:text-surface-200"
                                     />
                                     <button
                                         onClick={copySecret}
-                                        className="inline-flex items-center gap-1 px-3 py-2 text-xs font-medium rounded-lg border border-amber-300 text-amber-800 hover:bg-amber-100"
+                                        className="inline-flex items-center gap-1 px-3 py-2 text-xs font-medium rounded-lg border border-amber-300 dark:border-amber-600 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30"
                                     >
                                         <Copy className="w-3.5 h-3.5" />
                                         Copy
                                     </button>
                                 </div>
-                                <div className="flex items-center gap-1.5 text-xs text-green-700">
+                                <div className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400">
                                     <CheckCircle2 className="w-3.5 h-3.5" />
                                     Webhook created successfully.
                                 </div>
@@ -603,7 +606,7 @@ export default function Webhooks({ embedded = false }) {
                         <div className="flex items-center justify-end gap-2">
                             <button
                                 onClick={closeModal}
-                                className="px-4 py-2 rounded-lg border border-surface-200 text-surface-700 text-sm hover:bg-surface-50"
+                                className="px-4 py-2 rounded-lg border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 text-sm hover:bg-surface-50 dark:hover:bg-surface-800"
                             >
                                 {newSecret ? 'Done' : 'Cancel'}
                             </button>

@@ -200,7 +200,7 @@ export default function ForgotPassword() {
                         className={cn(
                           'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                           'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                          'outline-none transition-all text-sm placeholder:text-surface-400'
+                          'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                         )}
                         placeholder="you@company.com"
                         value={email}
@@ -243,7 +243,7 @@ export default function ForgotPassword() {
                         className={cn(
                           'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                           'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                          'outline-none transition-all text-sm placeholder:text-surface-400 font-mono tracking-widest'
+                          'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500 font-mono tracking-widest'
                         )}
                         placeholder="000000"
                         value={otp}
@@ -263,7 +263,7 @@ export default function ForgotPassword() {
                         className={cn(
                           'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                           'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                          'outline-none transition-all text-sm placeholder:text-surface-400'
+                          'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                         )}
                         placeholder="New password"
                         value={newPassword}

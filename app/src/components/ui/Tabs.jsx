@@ -2,16 +2,42 @@ import { motion } from 'framer-motion';
 import { cn } from '../../lib/utils';
 
 export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', className }) {
+  const handleKeyDown = (e, index) => {
+    let nextIndex;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      nextIndex = (index + 1) % tabs.length;
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      nextIndex = (index - 1 + tabs.length) % tabs.length;
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      nextIndex = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      nextIndex = tabs.length - 1;
+    }
+    if (nextIndex !== undefined) {
+      onChange(tabs[nextIndex].id);
+      // Focus the new tab button
+      e.currentTarget.parentElement?.querySelectorAll('[role="tab"]')[nextIndex]?.focus();
+    }
+  };
+
   if (variant === 'underline') {
     return (
-      <div className={cn('flex items-center gap-6 border-b border-surface-200 dark:border-surface-800', className)}>
-        {tabs.map((tab) => {
+      <div role="tablist" className={cn('flex items-center gap-6 border-b border-surface-200 dark:border-surface-800', className)}>
+        {tabs.map((tab, index) => {
           const isActive = activeTab === tab.id;
           const Icon = tab.icon;
           return (
             <button
               key={tab.id}
+              role="tab"
+              aria-selected={isActive}
+              tabIndex={isActive ? 0 : -1}
               onClick={() => onChange(tab.id)}
+              onKeyDown={(e) => handleKeyDown(e, index)}
               className={cn(
                 'relative flex items-center gap-2 pb-3 text-sm font-medium transition-colors',
                 isActive
@@ -46,14 +72,18 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
   }
 
   return (
-    <div className={cn('flex items-center gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit', className)}>
-      {tabs.map((tab) => {
+    <div role="tablist" className={cn('flex items-center gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit', className)}>
+      {tabs.map((tab, index) => {
         const isActive = activeTab === tab.id;
         const Icon = tab.icon;
         return (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(tab.id)}
+            onKeyDown={(e) => handleKeyDown(e, index)}
             className={cn(
               'relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
               isActive

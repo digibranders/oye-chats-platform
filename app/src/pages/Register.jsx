@@ -203,7 +203,7 @@ export default function Register() {
                   className={cn(
                     'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                     'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                    'outline-none transition-all text-sm placeholder:text-surface-400'
+                    'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                   )}
                   placeholder="John Doe" autoComplete="name" tabIndex={1}
                 />
@@ -219,7 +219,7 @@ export default function Register() {
                   className={cn(
                     'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                     'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                    'outline-none transition-all text-sm placeholder:text-surface-400'
+                    'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                   )}
                   placeholder="you@company.com" autoComplete="email" tabIndex={2}
                 />
@@ -238,7 +238,7 @@ export default function Register() {
                     className={cn(
                       'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                       'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                      'outline-none transition-all text-sm placeholder:text-surface-400'
+                      'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                     )}
                     placeholder="Acme Inc." autoComplete="organization" tabIndex={3}
                   />
@@ -255,7 +255,7 @@ export default function Register() {
                     className={cn(
                       'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                       'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                      'outline-none transition-all text-sm placeholder:text-surface-400'
+                      'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                     )}
                     placeholder="https://..." autoComplete="url" tabIndex={4}
                   />
@@ -272,7 +272,7 @@ export default function Register() {
                   className={cn(
                     'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
                     'border-surface-200 dark:border-surface-800 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400',
-                    'outline-none transition-all text-sm placeholder:text-surface-400'
+                    'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500'
                   )}
                   placeholder="Create a strong password" autoComplete="new-password" tabIndex={5}
                 />
@@ -316,7 +316,7 @@ export default function Register() {
                   type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
                   className={cn(
                     'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-900 text-surface-900 dark:text-white',
-                    'outline-none transition-all text-sm placeholder:text-surface-400',
+                    'outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500',
                     'focus:ring-2 focus:ring-primary-500/20',
                     confirmPassword
                       ? passwordsMatch

@@ -19,9 +19,9 @@ const tabs = [
 
 const STATUS_CARDS = [
     { key: 'unqualified', label: 'Unqualified', color: 'text-surface-600', border: 'border-surface-200', bg: 'bg-surface-50' },
-    { key: 'mql', label: 'MQL', color: 'text-blue-600', border: 'border-blue-200', bg: 'bg-blue-50' },
+    { key: 'mql', label: 'MQL', color: 'text-sky-600', border: 'border-sky-200', bg: 'bg-sky-50' },
     { key: 'sal', label: 'SAL', color: 'text-orange-600', border: 'border-orange-200', bg: 'bg-orange-50' },
-    { key: 'sql', label: 'SQL', color: 'text-green-600', border: 'border-green-200', bg: 'bg-green-50' },
+    { key: 'sql', label: 'SQL', color: 'text-emerald-600', border: 'border-emerald-200', bg: 'bg-emerald-50' },
 ];
 
 const KPI_INFO = {
@@ -507,7 +507,7 @@ function ConfigurationTab() {
                                             <button
                                                 type="button"
                                                 onClick={() => removeDimension(dim)}
-                                                className="p-1.5 text-surface-400 hover:text-red-500"
+                                                className="p-1.5 text-surface-400 hover:text-rose-500"
                                                 title="Remove dimension"
                                             >
                                                 <Trash2 size={14} />
@@ -541,7 +541,7 @@ function ConfigurationTab() {
                                                     <button
                                                         type="button"
                                                         onClick={() => removeOption(dim, idx)}
-                                                        className="p-1.5 text-surface-400 hover:text-red-500 transition-colors"
+                                                        className="p-1.5 text-surface-400 hover:text-rose-500 transition-colors"
                                                         title="Remove option"
                                                     >
                                                         <Trash2 size={14} />

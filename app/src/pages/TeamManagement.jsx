@@ -95,7 +95,7 @@ export default function TeamManagement() {
 
     const roleIcon = (role) => {
         if (role === 'owner') return <Shield size={14} className="text-amber-500" />;
-        if (role === 'admin') return <Shield size={14} className="text-blue-500" />;
+        if (role === 'admin') return <Shield size={14} className="text-sky-500 dark:text-sky-400" />;
         return <User size={14} className="text-surface-400 dark:text-surface-500" />;
     };
 
@@ -183,7 +183,7 @@ export default function TeamManagement() {
                                     <X size={18} />
                                 </button>
                             </div>
-                            {error && <p className="text-sm text-red-600 dark:text-red-400 mb-3">{error}</p>}
+                            {error && <p className="text-sm text-rose-600 dark:text-rose-400 mb-3">{error}</p>}
                             <form onSubmit={handleCreateOperator} className="grid grid-cols-2 gap-3">
                                 <input
                                     type="text" placeholder="Name *" required
@@ -282,7 +282,7 @@ export default function TeamManagement() {
                                             <td className="px-4 py-3 text-right">
                                                 <button
                                                     onClick={() => handleDeleteOperator(operator.id, operator.name)}
-                                                    className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400 transition-colors"
+                                                    className="p-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-400 hover:text-rose-600 dark:text-rose-500 dark:hover:text-rose-400 transition-colors"
                                                     title="Delete operator"
                                                 >
                                                     <Trash2 size={15} />
@@ -352,8 +352,8 @@ export default function TeamManagement() {
                                 <div key={dept.id} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 p-4">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
-                                                <Building2 size={18} className="text-blue-600 dark:text-blue-400" />
+                                            <div className="w-10 h-10 rounded-xl bg-sky-50 dark:bg-sky-900/30 flex items-center justify-center">
+                                                <Building2 size={18} className="text-sky-600 dark:text-sky-400" />
                                             </div>
                                             <div>
                                                 <h3 className="font-semibold text-surface-900 dark:text-surface-50 text-sm">{dept.name}</h3>
@@ -365,7 +365,7 @@ export default function TeamManagement() {
                                             {isBotManager && (
                                                 <button
                                                     onClick={() => handleDeleteDept(dept.id, dept.name)}
-                                                    className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400 transition-colors"
+                                                    className="p-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-400 hover:text-rose-600 dark:text-rose-500 dark:hover:text-rose-400 transition-colors"
                                                     title="Delete department"
                                                 >
                                                     <Trash2 size={15} />

@@ -69,16 +69,16 @@ const ColorPickerControl = ({ label, color, onChange }) => {
 
     return (
         <div className="space-y-2">
-            <label className="text-[13px] font-bold text-surface-700">{label}</label>
+            <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">{label}</label>
             <div className="relative">
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => setIsOpen(!isOpen)}
-                        className="w-10 h-10 rounded-lg shadow-sm border border-surface-200 flex-shrink-0 transition-transform hover:scale-105 active:scale-95"
+                        className="w-10 h-10 rounded-lg shadow-sm border border-surface-200 dark:border-surface-700 flex-shrink-0 transition-transform hover:scale-105 active:scale-95"
                         style={{ backgroundColor: color || '#000000' }}
                     />
                     <div className="relative flex-grow max-w-[140px]">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 font-mono text-xs">#</span>
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 dark:text-surface-500 font-mono text-xs">#</span>
                         <input
                             type="text"
                             value={color ? color.replace('#', '').toUpperCase() : ''}
@@ -88,7 +88,7 @@ const ColorPickerControl = ({ label, color, onChange }) => {
                                     onChange('#' + val);
                                 }
                             }}
-                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 bg-white border border-surface-200 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
                         />
                     </div>
                 </div>
@@ -96,7 +96,7 @@ const ColorPickerControl = ({ label, color, onChange }) => {
                 {isOpen && (
                     <div
                         ref={popover}
-                        className="absolute z-50 mt-2 p-3 bg-white rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] border border-surface-200 animate-in fade-in zoom-in duration-200 origin-top-left"
+                        className="absolute z-50 mt-2 p-3 bg-white dark:bg-surface-800 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] border border-surface-200 dark:border-surface-700 animate-in fade-in zoom-in duration-200 origin-top-left"
                     >
                         <HexColorPicker color={color || '#000000'} onChange={onChange} />
                     </div>
@@ -308,10 +308,10 @@ export default function Interface({ embedded = false }) {
         <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-20">
             {/* Error Toast */}
             {saveError && (
-                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-error-50 border-error-500/20 text-error-600 animate-fade-in">
+                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg border bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20 text-rose-600 dark:text-rose-400 animate-fade-in">
                     <AlertCircle size={18} />
                     <span className="text-sm font-medium">{saveError}</span>
-                    <button onClick={() => setSaveError(null)} className="ml-2 p-0.5 rounded hover:bg-black/10:bg-white/10 transition-colors">
+                    <button onClick={() => setSaveError(null)} className="ml-2 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
                         <X size={14} />
                     </button>
                 </div>
@@ -330,15 +330,15 @@ export default function Interface({ embedded = false }) {
             )}
 
             {/* Tab Navigation Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-surface-200 w-full">
-                <div className="flex items-center gap-1 bg-surface-100 p-1 rounded-xl w-full max-w-4xl overflow-x-auto no-scrollbar">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-surface-200 dark:border-surface-700 w-full">
+                <div className="flex items-center gap-1 bg-surface-100 dark:bg-surface-800 p-1 rounded-xl w-full max-w-4xl overflow-x-auto no-scrollbar">
                     {tabs.map((tab) => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
                             className={`flex-1 min-w-max px-3 py-2 text-[12px] rounded-lg transition-all ${activeTab === tab
-                                    ? 'bg-white text-surface-900 shadow-sm font-semibold'
-                                    : 'text-surface-500 font-medium hover:text-surface-700:text-surface-200'
+                                    ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm font-semibold'
+                                    : 'text-surface-500 dark:text-surface-400 font-medium hover:text-surface-700 dark:hover:text-surface-200'
                                 }`}
                         >
                             {tab}
@@ -350,7 +350,7 @@ export default function Interface({ embedded = false }) {
                     onClick={handleSave}
                     disabled={!isBotManager || isSaving || saved}
                     className={`group relative flex items-center gap-2 px-5 h-10 rounded-xl shadow-sm transition-all font-medium text-sm disabled:opacity-70 overflow-hidden ${saved
-                        ? 'bg-success-500 hover:bg-success-600 text-white'
+                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
                         : 'bg-primary-600 hover:bg-primary-700 text-white'
                         }`}
                 >
@@ -394,7 +394,7 @@ export default function Interface({ embedded = false }) {
                                     onChange={(e) => setBotName(e.target.value)}
                                     maxLength={40}
                                     placeholder="e.g. AI Assistant, Support Bot..."
-                                    className="w-full max-w-lg h-10 px-3 rounded-md border border-surface-200 bg-white text-sm text-surface-900 placeholder-surface-400 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
+                                    className="w-full max-w-lg h-10 px-3 rounded-md border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 placeholder-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
                                 />
                             </div>
 
@@ -475,7 +475,7 @@ export default function Interface({ embedded = false }) {
                                     </p>
                                 </div>
 
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x gap-y-10 bg-surface-50/50 p-8 rounded-2xl border border-surface-200 animate-fade-in" style={{ animationDelay: '0.1s' }}>
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x gap-y-10 bg-surface-50/50 dark:bg-surface-800/50 p-8 rounded-2xl border border-surface-200 dark:border-surface-700 animate-fade-in" style={{ animationDelay: '0.1s' }}>
                                     {/* Left Column: Manual Controls */}
                                     <div className="space-y-8">
                                         <div>
@@ -497,7 +497,7 @@ export default function Interface({ embedded = false }) {
                                     </div>
 
                                     {/* Right Column: Recommended Colors Section */}
-                                    <div className="lg:border-l lg:border-surface-200 lg: lg:pl-8">
+                                    <div className="lg:border-l lg:border-surface-200 dark:lg:border-surface-700 lg:pl-8">
                                         {recommendedColors.length > 0 ? (
                                             <div className="space-y-4">
                                                 <div className="flex items-center gap-2 mb-1">
@@ -514,7 +514,7 @@ export default function Interface({ embedded = false }) {
                                                             />
                                                             <div className="relative w-[100px]">
                                                                 <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-400 font-mono text-[10px]">#</span>
-                                                                <div className="w-full h-8 pl-5 pr-2 text-[12px] font-mono text-surface-600 bg-white border border-surface-200 rounded-md shadow-sm flex items-center">
+                                                                <div className="w-full h-8 pl-5 pr-2 text-[12px] font-mono text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md shadow-sm flex items-center">
                                                                     {color.replace('#', '').toUpperCase()}
                                                                 </div>
                                                             </div>
@@ -571,7 +571,7 @@ export default function Interface({ embedded = false }) {
                                             onClick={() => setAvatarType(opt.key)}
                                             className={`relative flex flex-col items-center gap-2 p-5 rounded-xl border-2 transition-all duration-200 ${isSelected
                                                     ? 'border-green-500 bg-green-50/50 shadow-sm ring-1 ring-green-500/20'
-                                                    : 'border-surface-200 hover:border-surface-300:border-surface-600 bg-white'
+                                                    : 'border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 bg-white dark:bg-surface-900'
                                                 }`}
                                         >
                                             {isSelected && (
@@ -631,7 +631,7 @@ export default function Interface({ embedded = false }) {
                                                 const file = e.dataTransfer.files?.[0];
                                                 if (file) handleFile(file);
                                             }}
-                                            className="w-full max-w-lg border-2 border-dashed border-surface-200 rounded-xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-primary-400 hover:bg-primary-50/30:bg-primary-900/5 transition-all group"
+                                            className="w-full max-w-lg border-2 border-dashed border-surface-200 dark:border-surface-700 rounded-xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-primary-400 hover:bg-primary-50/30 dark:hover:bg-primary-900/5 transition-all group"
                                         >
                                             {isUploading ? (
                                                 <div className="flex flex-col items-center gap-2">
@@ -640,7 +640,7 @@ export default function Interface({ embedded = false }) {
                                                 </div>
                                             ) : (
                                                 <>
-                                                    <div className="w-12 h-12 rounded-full bg-surface-100 flex items-center justify-center group-hover:bg-primary-100:bg-primary-900/20 transition-colors">
+                                                    <div className="w-12 h-12 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center group-hover:bg-primary-100 dark:group-hover:bg-primary-900/20 transition-colors">
                                                         <Upload className="w-5 h-5 text-surface-400 group-hover:text-primary-500 transition-colors" />
                                                     </div>
                                                     <div className="text-center">
@@ -653,8 +653,8 @@ export default function Interface({ embedded = false }) {
                                             )}
                                         </div>
                                     ) : (
-                                        <div className="w-full max-w-lg bg-surface-50/50 border border-surface-200 rounded-xl p-4 flex items-center gap-4">
-                                            <div className="w-14 h-14 rounded-xl bg-white border border-surface-200 flex items-center justify-center overflow-hidden flex-shrink-0 shadow-sm">
+                                        <div className="w-full max-w-lg bg-surface-50/50 dark:bg-surface-800/50 border border-surface-200 dark:border-surface-700 rounded-xl p-4 flex items-center gap-4">
+                                            <div className="w-14 h-14 rounded-xl bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center overflow-hidden flex-shrink-0 shadow-sm">
                                                 <img src={logo} alt="avatar" className="w-full h-full object-cover" />
                                             </div>
                                             <div className="flex-1 min-w-0">
@@ -669,14 +669,14 @@ export default function Interface({ embedded = false }) {
                                             <div className="flex items-center gap-2 flex-shrink-0">
                                                 <button
                                                     onClick={() => inputRef.current?.click()}
-                                                    className="w-8 h-8 rounded-lg bg-white border border-surface-200 flex items-center justify-center hover:border-primary-400 hover:text-primary-500 transition-colors shadow-sm"
+                                                    className="w-8 h-8 rounded-lg bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-primary-400 hover:text-primary-500 transition-colors shadow-sm"
                                                     title="Replace image"
                                                 >
                                                     <Upload className="w-3.5 h-3.5" />
                                                 </button>
                                                 <button
                                                     onClick={handleRemove}
-                                                    className="w-8 h-8 rounded-lg bg-white border border-surface-200 flex items-center justify-center hover:border-red-400 hover:text-red-500 text-surface-400 transition-colors shadow-sm"
+                                                    className="w-8 h-8 rounded-lg bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 flex items-center justify-center hover:border-red-400 hover:text-red-500 text-surface-400 transition-colors shadow-sm"
                                                     title="Remove image"
                                                 >
                                                     <Trash2 className="w-3.5 h-3.5" />
@@ -752,7 +752,7 @@ export default function Interface({ embedded = false }) {
                                                                     setOrbColor('#' + val);
                                                                 }
                                                             }}
-                                                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 bg-white border border-surface-200 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
+                                                            className="w-full h-9 pl-6 pr-3 text-sm font-mono text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-md focus:outline-none focus:border-primary-400 shadow-sm transition-colors"
                                                         />
                                                     </div>
                                                 </div>
@@ -792,14 +792,14 @@ export default function Interface({ embedded = false }) {
                                     AI will subtly ask qualifying questions (Budget, Authority, Need, Timeline) when the user shows buying intent.
                                 </p>
                             </div>
-                            <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm flex items-center justify-between">
+                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-surface-900">Enable BANT Qualification</h4>
-                                    <p className="text-[12px] text-surface-500 mt-1">Qualify leads automatically during chat.</p>
+                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable BANT Qualification</h4>
+                                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">Qualify leads automatically during chat.</p>
                                 </div>
                                 <label className="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" className="sr-only peer" checked={bantEnabled} onChange={(e) => setBantEnabled(e.target.checked)} />
-                                    <div className="w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                                    <div className="w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
                                 </label>
                             </div>
 
@@ -814,21 +814,21 @@ export default function Interface({ embedded = false }) {
                                 </p>
                             </div>
 
-                            <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm flex items-center justify-between">
+                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-surface-900">Enable Lead Form</h4>
-                                    <p className="text-[12px] text-surface-500 mt-1">New visitors fill out a form before chatting.</p>
+                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable Lead Form</h4>
+                                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">New visitors fill out a form before chatting.</p>
                                 </div>
                                 <label className="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" className="sr-only peer" checked={leadFormEnabled} onChange={(e) => setLeadFormEnabled(e.target.checked)} />
-                                    <div className="w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                                    <div className="w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
                                 </label>
                             </div>
 
                             {leadFormEnabled && (
-                                <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm space-y-3">
-                                    <h4 className="text-[14px] font-semibold text-surface-900">Form Fields</h4>
-                                    <p className="text-[12px] text-surface-500">Select which fields to show and mark as required.</p>
+                                <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-3">
+                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Form Fields</h4>
+                                    <p className="text-[12px] text-surface-500 dark:text-surface-400">Select which fields to show and mark as required.</p>
                                     {['name', 'email', 'phone', 'company'].map((fieldName) => {
                                         const existing = leadFormFields.find(f => f.field === fieldName);
                                         const isEnabled = !!existing;
@@ -851,7 +851,7 @@ export default function Interface({ embedded = false }) {
                                                                 }
                                                             }}
                                                         />
-                                                        <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                                                        <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
                                                     </label>
                                                     <span className="text-[13px] font-medium text-surface-700">{labels[fieldName]}</span>
                                                 </div>
@@ -887,29 +887,29 @@ export default function Interface({ embedded = false }) {
                                 </p>
                             </div>
 
-                            <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm space-y-4">
+                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                                 <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700">Notification Email</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Notification Email</label>
                                     <input
                                         type="email"
                                         value={notificationEmail}
                                         onChange={(e) => setNotificationEmail(e.target.value)}
                                         placeholder="sales@yourcompany.com"
-                                        className="w-full h-10 px-3 text-sm text-surface-600 bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
                                     />
                                 </div>
                                 <div className="flex items-center justify-between py-2">
                                     <span className="text-[13px] text-surface-700">Email on qualified lead</span>
                                     <label className="relative inline-flex items-center cursor-pointer">
                                         <input type="checkbox" className="sr-only peer" checked={emailOnQualified} onChange={(e) => setEmailOnQualified(e.target.checked)} />
-                                        <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                                        <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
                                     </label>
                                 </div>
                                 <div className="flex items-center justify-between py-2">
                                     <span className="text-[13px] text-surface-700">Email on live chat request</span>
                                     <label className="relative inline-flex items-center cursor-pointer">
                                         <input type="checkbox" className="sr-only peer" checked={emailOnHandoff} onChange={(e) => setEmailOnHandoff(e.target.checked)} />
-                                        <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                                        <div className="w-9 h-5 bg-surface-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
                                     </label>
                                 </div>
                             </div>
@@ -926,14 +926,14 @@ export default function Interface({ embedded = false }) {
                                     Allow visitors to request a live operator during a chat session.
                                 </p>
                             </div>
-                            <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm flex items-center justify-between">
+                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm flex items-center justify-between">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-surface-900">Enable Live Chat</h4>
-                                    <p className="text-[12px] text-surface-500 mt-1">Show &quot;Talk to a human&quot; button in the widget.</p>
+                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Enable Live Chat</h4>
+                                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-1">Show &quot;Talk to a human&quot; button in the widget.</p>
                                 </div>
                                 <label className="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" className="sr-only peer" checked={liveChatEnabled} onChange={(e) => setLiveChatEnabled(e.target.checked)} />
-                                    <div className="w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                                    <div className="w-11 h-6 bg-surface-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-surface-300 dark:after:border-surface-600 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
                                 </label>
                             </div>
 
@@ -947,28 +947,28 @@ export default function Interface({ embedded = false }) {
                                     Customize the text visitors see when they open the chat.
                                 </p>
                             </div>
-                            <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm space-y-4">
+                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                                 <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700">Welcome Title</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Welcome Title</label>
                                     <input
                                         type="text"
                                         value={welcomeTitle}
                                         onChange={(e) => setWelcomeTitle(e.target.value)}
                                         maxLength={80}
                                         placeholder="Hi there 👋"
-                                        className="w-full h-10 px-3 text-sm text-surface-600 bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
                                     />
                                     <p className="text-[11px] text-surface-400">Main heading shown on the welcome screen.</p>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700">Welcome Subtitle</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Welcome Subtitle</label>
                                     <input
                                         type="text"
                                         value={welcomeSubtitle}
                                         onChange={(e) => setWelcomeSubtitle(e.target.value)}
                                         maxLength={120}
                                         placeholder="How can we help you today?"
-                                        className="w-full h-10 px-3 text-sm text-surface-600 bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500"
                                     />
                                     <p className="text-[11px] text-surface-400">Subtitle shown below the welcome title.</p>
                                 </div>
@@ -986,29 +986,29 @@ export default function Interface({ embedded = false }) {
                             </div>
 
                             {/* Waiting state */}
-                            <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm space-y-4">
+                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-surface-900">Visitor requests live chat</h4>
-                                    <p className="text-[12px] text-surface-500 mt-0.5">Shown while the visitor waits for an operator to accept.</p>
+                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Visitor requests live chat</h4>
+                                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">Shown while the visitor waits for an operator to accept.</p>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700">Waiting Message</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Waiting Message</label>
                                     <textarea
                                         value={waitingMessage}
                                         onChange={(e) => setWaitingMessage(e.target.value)}
                                         maxLength={200}
                                         rows={2}
                                         placeholder="Connecting you to support..."
-                                        className="w-full px-3 py-2.5 text-sm text-surface-600 bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400 resize-none"
+                                        className="w-full px-3 py-2.5 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 resize-none dark:placeholder:text-surface-500"
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700">Handoff Delay</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Handoff Delay</label>
                                     <p className="text-[11px] text-surface-400">Time before the handoff form appears after the bot suggests live chat.</p>
                                     <select
                                         value={handoffDelaySeconds}
                                         onChange={(e) => setHandoffDelaySeconds(Number(e.target.value))}
-                                        className="h-10 px-3 text-sm text-surface-600 bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                     >
                                         <option value={0}>Immediately</option>
                                         <option value={2}>After 2 seconds</option>
@@ -1019,20 +1019,20 @@ export default function Interface({ embedded = false }) {
                             </div>
 
                             {/* Offline / unavailable state */}
-                            <div className="bg-white p-5 rounded-2xl border border-surface-200 shadow-sm space-y-4">
+                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-surface-900">No operators are available</h4>
-                                    <p className="text-[12px] text-surface-500 mt-0.5">Shown when live chat is off or all operators are offline.</p>
+                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">No operators are available</h4>
+                                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">Shown when live chat is off or all operators are offline.</p>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700">Offline / Unavailable Message</label>
+                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Offline / Unavailable Message</label>
                                     <textarea
                                         value={offlineMessage}
                                         onChange={(e) => setOfflineMessage(e.target.value)}
                                         maxLength={200}
                                         rows={2}
                                         placeholder="Our team is currently unavailable."
-                                        className="w-full px-3 py-2.5 text-sm text-surface-600 bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400 resize-none"
+                                        className="w-full px-3 py-2.5 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 resize-none dark:placeholder:text-surface-500"
                                     />
                                 </div>
                             </div>
@@ -1066,7 +1066,7 @@ export default function Interface({ embedded = false }) {
                                         <p className="text-[13px] text-surface-600 leading-relaxed mb-4">
                                             If you'd like to add <span className="font-semibold text-surface-700">custom branding</span>, <span className="font-semibold text-surface-700">unique themes</span>, or any <span className="font-semibold text-surface-700">personalized features</span> to your chatbot, our development team is here to help!
                                         </p>
-                                        <div className="bg-white px-5 py-4 rounded-xl border border-surface-200 inline-flex items-center gap-3">
+                                        <div className="bg-white dark:bg-surface-900 px-5 py-4 rounded-xl border border-surface-200 dark:border-surface-700 inline-flex items-center gap-3">
                                             <span className="text-[13px] text-surface-500">Email us at:</span>
                                             <a
                                                 href="mailto:developer@oyechats.com"
@@ -1102,7 +1102,7 @@ export default function Interface({ embedded = false }) {
                     </div>
 
                     {/* Preview State Tabs */}
-                    <div className="flex gap-1 bg-surface-100 p-1 rounded-lg w-full max-w-[360px] mb-3">
+                    <div className="flex gap-1 bg-surface-100 dark:bg-surface-800 p-1 rounded-lg w-full max-w-[360px] mb-3">
                         {[
                             { key: 'chat', label: 'Chat' },
                             { key: 'waiting', label: 'Waiting' },
@@ -1111,7 +1111,7 @@ export default function Interface({ embedded = false }) {
                             <button
                                 key={key}
                                 onClick={() => setPreviewState(key)}
-                                className={`flex-1 py-1.5 text-[11px] font-semibold rounded-md transition-all ${previewState === key ? 'bg-white text-surface-900 shadow-sm' : 'text-surface-500 hover:text-surface-700'}`}
+                                className={`flex-1 py-1.5 text-[11px] font-semibold rounded-md transition-all ${previewState === key ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm' : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200'}`}
                             >
                                 {label}
                             </button>
@@ -1122,7 +1122,7 @@ export default function Interface({ embedded = false }) {
                     <div className="w-full max-w-[360px] bg-white rounded-2xl overflow-hidden shadow-[0_20px_40px_-15px_rgba(0,0,0,0.15)] flex flex-col border border-[#BBE7FF]/30 transition-colors">
 
                         {/* 1. Header — white bg, dark text (matches widget classic theme) */}
-                        <div className="bg-white px-5 py-3.5 flex items-center justify-between shrink-0 border-b border-gray-100">
+                        <div className="bg-white px-5 py-3.5 flex items-center justify-between shrink-0 border-b border-surface-100">
                             <div className="flex items-center gap-3">
                                 {avatarType === 'orb' ? (
                                     <div
@@ -1152,7 +1152,7 @@ export default function Interface({ embedded = false }) {
                                         <span className="text-[11px] text-amber-500 font-medium">Connecting...</span>
                                     )}
                                     {previewState === 'unavailable' && (
-                                        <span className="text-[11px] text-gray-400 font-medium">Offline</span>
+                                        <span className="text-[11px] text-surface-400 font-medium">Offline</span>
                                     )}
                                     {previewState === 'chat' && (
                                         <span className="text-[11px] text-green-500 font-medium">Online</span>
@@ -1160,10 +1160,10 @@ export default function Interface({ embedded = false }) {
                                 </div>
                             </div>
                             <div className="flex items-center gap-1">
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400">
+                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-surface-400">
                                     <Plus className="w-4 h-4" />
                                 </div>
-                                <div className="w-7 h-7 flex items-center justify-center text-gray-400">
+                                <div className="w-7 h-7 flex items-center justify-center text-surface-400">
                                     <X className="w-5 h-5" />
                                 </div>
                             </div>
@@ -1179,7 +1179,7 @@ export default function Interface({ embedded = false }) {
                                         <h2 className="text-2xl font-bold text-[#16202C]">
                                             {(welcomeTitle || 'Hi there 👋').replace(/[\p{Emoji}]/gu, '').trim() || 'Hi there'}
                                         </h2>
-                                        <p className="text-[15px] text-gray-500 mt-1">
+                                        <p className="text-[15px] text-surface-500 mt-1">
                                             {welcomeSubtitle || 'How can we help you today?'}
                                         </p>
                                         <div className="flex flex-wrap gap-2 mt-5 justify-start">
@@ -1189,7 +1189,7 @@ export default function Interface({ embedded = false }) {
                                             ).filter(Boolean).map((s) => (
                                                 <span
                                                     key={s}
-                                                    className="px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200"
+                                                    className="px-4 py-2 rounded-full text-[13px] text-surface-600 bg-surface-50 border border-surface-200"
                                                 >
                                                     {s}
                                                 </span>
@@ -1214,21 +1214,21 @@ export default function Interface({ embedded = false }) {
                                         <p className="text-[14px] font-semibold text-[#16202C]">
                                             {waitingMessage || 'Connecting you to support...'}
                                         </p>
-                                        <p className="text-[12px] text-gray-400 mt-1">Please wait a moment.</p>
+                                        <p className="text-[12px] text-surface-400 mt-1">Please wait a moment.</p>
                                     </div>
                                 </div>
                             )}
 
                             {previewState === 'unavailable' && (
                                 <div className="flex flex-col items-center justify-center h-full py-10 gap-4 text-center">
-                                    <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
-                                        <Bot className="w-7 h-7 text-gray-400" />
+                                    <div className="w-14 h-14 rounded-full bg-surface-100 flex items-center justify-center">
+                                        <Bot className="w-7 h-7 text-surface-400" />
                                     </div>
                                     <div>
                                         <p className="text-[14px] font-semibold text-[#16202C]">
                                             {offlineMessage || 'Our team is currently unavailable.'}
                                         </p>
-                                        <p className="text-[12px] text-gray-400 mt-1">Leave a message and we&apos;ll get back to you.</p>
+                                        <p className="text-[12px] text-surface-400 mt-1">Leave a message and we&apos;ll get back to you.</p>
                                     </div>
                                 </div>
                             )}
@@ -1238,7 +1238,7 @@ export default function Interface({ embedded = false }) {
                         {previewState === 'chat' && (
                             <div className="px-4 pb-4 pt-2 shrink-0 bg-white">
                                 <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
-                                    <div className="text-[14px] text-gray-400">Ask anything...</div>
+                                    <div className="text-[14px] text-surface-400">Ask anything...</div>
                                     <div className="flex items-center justify-between mt-2">
                                         <Paperclip className="w-5 h-5 text-[#16202C]" />
                                         <svg width="20" height="20" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: primaryColor }}>
@@ -1255,7 +1255,7 @@ export default function Interface({ embedded = false }) {
             {/* Crop Modal */}
             {showCropModal && cropImage && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-surface-900/70 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-surface-200 overflow-hidden">
+                    <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden">
                         {/* Header */}
                         <div className="px-5 py-4 border-b border-surface-200 flex items-center justify-between">
                             <div>
@@ -1264,7 +1264,7 @@ export default function Interface({ embedded = false }) {
                             </div>
                             <button
                                 onClick={() => { setShowCropModal(false); setCropImage(null); }}
-                                className="p-1.5 rounded-lg text-surface-400 hover:text-surface-600:text-surface-200 hover:bg-surface-100:bg-surface-700 transition-colors"
+                                className="p-1.5 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
                             >
                                 <X size={18} />
                             </button>
@@ -1323,13 +1323,13 @@ export default function Interface({ embedded = false }) {
                         <div className="px-5 py-3 border-t border-surface-200 flex items-center justify-end gap-3">
                             <button
                                 onClick={() => { setShowCropModal(false); setCropImage(null); }}
-                                className="px-4 py-2 text-sm font-medium text-surface-600 bg-surface-100 hover:bg-surface-200:bg-surface-600 rounded-xl transition-colors"
+                                className="px-4 py-2 text-sm font-medium text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 hover:bg-surface-200 dark:hover:bg-surface-600 rounded-xl transition-colors"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleCropConfirm}
-                                className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-700:bg-primary-600 rounded-xl shadow-lg shadow-primary-500/25 transition-all flex items-center gap-2"
+                                className="px-4 py-2 text-sm font-semibold text-white bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 rounded-xl shadow-lg shadow-primary-500/25 transition-all flex items-center gap-2"
                             >
                                 <Check size={14} />
                                 Apply & Upload

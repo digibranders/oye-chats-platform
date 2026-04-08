@@ -40,7 +40,7 @@ export default function PlatformSelector({ platforms, selectedId, onSelect }) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search platforms..."
-          className="w-full h-9 pl-9 pr-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-white text-xs focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all placeholder:text-surface-400"
+          className="w-full h-9 pl-9 pr-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-white text-xs focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500"
         />
       </div>
 

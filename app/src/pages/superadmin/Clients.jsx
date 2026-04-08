@@ -132,7 +132,7 @@ export default function SuperadminClients() {
                             {isLoading ? (
                                 <tr>
                                     <td colSpan="5" className="py-12 text-center text-surface-500 dark:text-surface-400">
-                                        <Loader2 className="w-8 h-8 animate-spin mx-auto text-indigo-500 mb-4" />
+                                        <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary-500 mb-4" />
                                         Fetching system clients...
                                     </td>
                                 </tr>
@@ -225,7 +225,7 @@ export default function SuperadminClients() {
                             <div className="flex justify-between items-start mb-6">
                                 <div>
                                     <h2 className="text-xl font-bold text-surface-900 dark:text-surface-100 flex items-center gap-2">
-                                        <BuildingIcon className="w-5 h-5 text-indigo-500" />
+                                        <BuildingIcon className="w-5 h-5 text-primary-500" />
                                         {selectedClient.name}
                                     </h2>
                                     <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">Client Details</p>
@@ -256,7 +256,7 @@ export default function SuperadminClients() {
                                             <p className="text-surface-900 dark:text-surface-100 font-semibold flex items-center gap-2">
                                                 <Globe className="w-4 h-4 text-surface-400 dark:text-surface-500" />
                                                 {selectedClient.website ? (
-                                                    <a href={selectedClient.website} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+                                                    <a href={selectedClient.website} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">
                                                         {selectedClient.website}
                                                     </a>
                                                 ) : 'N/A'}
@@ -281,7 +281,7 @@ export default function SuperadminClients() {
                                                 {selectedClient.api_key && (
                                                     <button
                                                         onClick={() => handleCopy(selectedClient.api_key, 'api_key')}
-                                                        className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+                                                        className="flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
                                                     >
                                                         {copiedField === 'api_key' ? <Check size={12} /> : <Copy size={12} />}
                                                         <span className="text-[9px] font-bold uppercase">{copiedField === 'api_key' ? 'Copied' : 'Copy'}</span>

@@ -11,7 +11,7 @@ export default function Progress({ value = 0, max = 100, size = 'md', color = 'p
     warning: 'bg-amber-500',
     error: 'bg-rose-500',
     info: 'bg-sky-500',
-    dynamic: pct >= 75 ? 'bg-emerald-500' : pct >= 50 ? 'bg-sky-500' : pct >= 25 ? 'bg-amber-500' : 'bg-surface-400',
+    dynamic: pct >= 75 ? 'bg-emerald-500 dark:bg-emerald-400' : pct >= 50 ? 'bg-sky-500 dark:bg-sky-400' : pct >= 25 ? 'bg-amber-500 dark:bg-amber-400' : 'bg-surface-400 dark:bg-surface-500',
   };
 
   return (
@@ -41,7 +41,7 @@ export function CircularProgress({ value = 0, max = 100, size = 48, strokeWidth 
   };
 
   return (
-    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+    <div className="relative inline-flex items-center justify-center" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={max} style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
         <circle
           cx={size / 2} cy={size / 2} r={radius}

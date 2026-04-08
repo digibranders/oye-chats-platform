@@ -35,9 +35,9 @@ export default function SuperadminOverview() {
 
                 {/* Total Clients Card */}
                 <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm relative overflow-hidden transition-all hover:shadow-md group">
-                    <div className="absolute -right-4 -top-4 w-24 h-24 bg-indigo-500/5 dark:bg-indigo-500/10 rounded-full blur-2xl group-hover:bg-indigo-500/10 dark:group-hover:bg-indigo-500/20 transition-colors"></div>
+                    <div className="absolute -right-4 -top-4 w-24 h-24 bg-primary-500/5 dark:bg-primary-500/10 rounded-full blur-2xl group-hover:bg-primary-500/10 dark:group-hover:bg-primary-500/20 transition-colors"></div>
                     <h3 className="text-sm font-medium text-surface-500 dark:text-surface-400 flex items-center gap-2">
-                        <UsersIcon className="w-4 h-4 text-indigo-500" />
+                        <UsersIcon className="w-4 h-4 text-primary-500" />
                         Total Clients
                     </h3>
                     {isLoading ? (
@@ -82,8 +82,8 @@ export default function SuperadminOverview() {
 
             </div>
 
-             <div className="mt-8 p-6 bg-indigo-50 dark:bg-indigo-500/10 rounded-2xl border border-indigo-100 dark:border-indigo-500/20 flex flex-col items-center justify-center text-center">
-                 <Bot size={40} className="text-indigo-400 mb-4" />
+             <div className="mt-8 p-6 bg-primary-50 dark:bg-primary-500/10 rounded-2xl border border-primary-100 dark:border-primary-500/20 flex flex-col items-center justify-center text-center">
+                 <Bot size={40} className="text-primary-400 mb-4" />
                  <h2 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">Platform Health Optimal</h2>
                  <p className="text-surface-600 dark:text-surface-400 max-w-md">
                      Database vectors and chat pipelines are performing normally. API latency is stable.

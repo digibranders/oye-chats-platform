@@ -5,16 +5,16 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] cursor-pointer select-none',
+  'inline-flex items-center justify-center gap-2 font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-surface-900 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] cursor-pointer select-none',
   {
     variants: {
       variant: {
-        primary: 'bg-primary-600 text-white hover:bg-primary-700 shadow-sm shadow-primary-500/20 hover:shadow-md hover:shadow-primary-500/30',
+        primary: 'bg-primary-600 dark:bg-primary-500 text-white hover:bg-primary-700 dark:hover:bg-primary-600 shadow-sm shadow-primary-500/20 dark:shadow-primary-500/10 hover:shadow-md hover:shadow-primary-500/30 dark:hover:shadow-primary-500/20',
         secondary: 'bg-surface-100 text-surface-700 hover:bg-surface-200 dark:bg-surface-800 dark:text-surface-200 dark:hover:bg-surface-700 border border-surface-200 dark:border-surface-700',
         ghost: 'text-surface-600 hover:bg-surface-100 dark:text-surface-300 dark:hover:bg-surface-800',
-        destructive: 'bg-rose-600 text-white hover:bg-rose-700 shadow-sm shadow-rose-500/20',
+        destructive: 'bg-rose-600 dark:bg-rose-500 text-white hover:bg-rose-700 dark:hover:bg-rose-600 shadow-sm shadow-rose-500/20 dark:shadow-rose-500/10',
         outline: 'border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800',
-        success: 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-500/20',
+        success: 'bg-emerald-600 dark:bg-emerald-500 text-white hover:bg-emerald-700 dark:hover:bg-emerald-600 shadow-sm shadow-emerald-500/20 dark:shadow-emerald-500/10',
         link: 'text-primary-600 dark:text-primary-400 hover:underline underline-offset-4 p-0 h-auto',
       },
       size: {

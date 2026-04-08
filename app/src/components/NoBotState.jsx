@@ -18,7 +18,7 @@ export default function NoBotState({ title, subtitle }) {
           {title || 'No Chatbot Yet'}
         </h2>
 
-        <p className="text-surface-500 mb-8 leading-relaxed">
+        <p className="text-surface-500 dark:text-surface-400 mb-8 leading-relaxed">
           {subtitle || (showCreateCta
             ? 'Create your first chatbot to get started. You can upload documents, customize the interface, and embed it on your website.'
             : 'Your workspace owner needs to add a chatbot before this feature is available.'

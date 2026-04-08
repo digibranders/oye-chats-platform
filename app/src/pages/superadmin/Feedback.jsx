@@ -50,13 +50,13 @@ export default function SuperadminFeedback() {
             {/* Content Area */}
             {isLoading ? (
                 <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm p-12 flex flex-col items-center justify-center min-h-[400px]">
-                    <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
+                    <div className="w-12 h-12 border-4 border-primary-500/20 border-t-primary-500 rounded-full animate-spin"></div>
                     <p className="mt-4 text-surface-500 dark:text-surface-400 font-medium">Loading global feedback data...</p>
                 </div>
             ) : feedback.length === 0 ? (
                 <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm p-12 flex flex-col items-center text-center min-h-[400px] justify-center">
                     <div className="w-20 h-20 bg-surface-50 dark:bg-surface-800 rounded-full flex items-center justify-center mb-6">
-                        <MessageSquareQuote className="w-10 h-10 text-indigo-500" />
+                        <MessageSquareQuote className="w-10 h-10 text-primary-500" />
                     </div>
                     <h3 className="text-xl font-bold text-surface-900 dark:text-surface-100 mb-2">No Global Feedback Yet</h3>
                     <p className="text-surface-500 dark:text-surface-400 max-w-md mx-auto">
@@ -81,7 +81,7 @@ export default function SuperadminFeedback() {
                                 {feedback.map((item) => (
                                     <tr key={item.message_id} className="hover:bg-surface-50/50 dark:hover:bg-surface-800/50 transition-colors group">
                                         <td className="py-4 px-6 align-top">
-                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-primary-500/10 text-primary-600 dark:text-primary-400 whitespace-nowrap">
                                                 <BuildingIcon className="w-3.5 h-3.5" />
                                                 {item.client_name}
                                             </div>
