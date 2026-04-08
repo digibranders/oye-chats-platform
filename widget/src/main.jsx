@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Sentry from "@sentry/react";
-import './index.css'
+import cssText from './index.css?inline'
 import App from './App.jsx'
 
 // Initialize Sentry error tracking (opt-in via env var)
@@ -17,41 +17,6 @@ if (SENTRY_DSN) {
 }
 
 console.log(`[OyeChats] Widget v2.1.0 — build ${import.meta.env.VITE_BUILD_TIMESTAMP || 'dev'}`);
-
-// ── CSS Auto-Injection ──────────────────────────────────────────────
-// In production the build outputs oyechats-widget.js + oyechats-widget.css as
-// separate files.  Third-party sites only embed the JS via <script>, so
-// the CSS never loads and the widget is invisible.
-// Fix: detect the script's own URL and load the sibling CSS file.
-// Skip in dev mode — Vite HMR already handles CSS injection.
-if (import.meta.env.PROD) {
-  try {
-    const selfScript =
-      document.currentScript ||
-      (() => {
-        const all = document.getElementsByTagName('script');
-        for (let i = all.length - 1; i >= 0; i--) {
-          if (all[i].src && all[i].src.includes('oyechats-widget')) return all[i];
-        }
-        return null;
-      })();
-
-    if (selfScript && selfScript.src) {
-      const cssUrl = selfScript.src.replace(/\.js(\?.*)?$/, '.css');
-      if (!document.querySelector(`link[href="${cssUrl}"]`)) {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = cssUrl;
-        document.head.appendChild(link);
-        console.log('[OyeChats] CSS auto-injected:', cssUrl);
-      }
-    } else {
-      console.warn('[OyeChats] Could not determine script URL for CSS injection');
-    }
-  } catch (e) {
-    console.warn('[OyeChats] CSS auto-injection failed:', e);
-  }
-}
 
 // Extract Bot Key or API Key from the script tag
 // Priority: data-bot-key > data-api-key (backward compat)
@@ -108,8 +73,21 @@ const initWidget = () => {
   }
 
   if (container) {
-    console.log('[OyeChats] Starting React render on container:', container);
-    createRoot(container).render(
+    // Shadow DOM for complete CSS isolation from host page styles
+    const shadow = container.attachShadow({ mode: 'open' });
+
+    // Inject widget CSS into shadow root (bundled inline by Vite)
+    const style = document.createElement('style');
+    style.textContent = cssText;
+    shadow.appendChild(style);
+
+    // Create render target inside shadow root
+    const renderTarget = document.createElement('div');
+    renderTarget.id = 'oyechats-shadow-inner';
+    shadow.appendChild(renderTarget);
+
+    console.log('[OyeChats] Shadow DOM created, starting React render');
+    createRoot(renderTarget).render(
       <StrictMode>
         <App />
       </StrictMode>,
@@ -125,6 +103,3 @@ if (document.readyState === 'loading') {
 } else {
   initWidget();
 }
-
-
-

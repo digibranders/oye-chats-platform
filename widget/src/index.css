@@ -1,5 +1,36 @@
 @import "tailwindcss";
 
+/* Shadow DOM host reset — prevents host page CSS from leaking into widget */
+:host {
+  all: initial;
+  display: block;
+  font-family: 'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif;
+  color-scheme: light;
+}
+
+/*
+ * Tailwind v4 @property declarations are ignored inside Shadow DOM (browser limitation).
+ * Explicitly initialize all required Tailwind CSS custom properties so borders,
+ * shadows, rings, and transforms render correctly.
+ */
+*, *::before, *::after {
+  --tw-scale-x: 1;
+  --tw-scale-y: 1;
+  --tw-scale-z: 1;
+  --tw-space-y-reverse: 0;
+  --tw-border-style: solid;
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-alpha: 100%;
+  --tw-inset-shadow: 0 0 #0000;
+  --tw-inset-shadow-alpha: 100%;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-inset-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-width: 0px;
+  --tw-ring-offset-color: #fff;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-drop-shadow-alpha: 100%;
+}
+
 @theme {
   --font-sans: 'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif;
 }
