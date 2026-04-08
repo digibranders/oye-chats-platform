@@ -131,7 +131,7 @@ function KpiInfoButton({ text, label }) {
             >
                 <Info className="w-2.5 h-2.5" />
             </button>
-            <div className="pointer-events-none absolute z-20 left-1/2 top-full mt-2 w-64 -translate-x-1/2 rounded-lg border border-surface-200 bg-white px-3 py-2 text-[11px] font-medium text-surface-600 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+            <div className="pointer-events-none absolute z-20 left-1/2 top-full mt-2 w-64 -translate-x-1/2 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 px-3 py-2 text-[11px] font-medium text-surface-600 dark:text-surface-300 shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
                 {text}
             </div>
         </div>
@@ -202,15 +202,15 @@ function ScorecardTab() {
                 })}
             </div>
 
-            <div className="bg-white rounded-xl border border-surface-200 p-5">
+            <div className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-700 p-5">
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-surface-700">Average Lead Score</p>
+                        <p className="text-sm font-semibold text-surface-700 dark:text-surface-300">Average Lead Score</p>
                         <KpiInfoButton text={KPI_INFO.avgScore} label="Average lead score metric info" />
                     </div>
-                    <span className="text-lg font-bold text-surface-900">{Math.round(avgScore)}</span>
+                    <span className="text-lg font-bold text-surface-900 dark:text-surface-100">{Math.round(avgScore)}</span>
                 </div>
-                <div className="w-full h-3 bg-surface-100 rounded-full overflow-hidden">
+                <div className="w-full h-3 bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
                     <div
                         className="h-full rounded-full transition-all duration-500"
                         style={{
@@ -406,13 +406,13 @@ function ConfigurationTab() {
 
     return (
         <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
+            <div className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-700 p-5 space-y-4">
                 <div>
-                    <label className="block text-sm font-semibold text-surface-700 mb-2">Select Bot</label>
+                    <label className="block text-sm font-semibold text-surface-700 dark:text-surface-300 mb-2">Select Bot</label>
                     <select
                         value={selectedBotId || ''}
                         onChange={(e) => setSelectedBotId(Number(e.target.value))}
-                        className="w-full max-w-xs px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                        className="w-full max-w-xs px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500"
                     >
                         <option value="" disabled>Choose a bot...</option>
                         {bots.map((bot) => (
@@ -427,7 +427,7 @@ function ConfigurationTab() {
                         <select
                             value={selectedFramework}
                             onChange={(e) => handleFrameworkChange(e.target.value)}
-                            className="w-full max-w-sm px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                            className="w-full max-w-sm px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500"
                         >
                             {FRAMEWORK_OPTIONS.map((opt) => (
                                 <option key={opt.key} value={opt.key}>{opt.label}</option>
@@ -466,7 +466,7 @@ function ConfigurationTab() {
                         if (!d) return null;
                         const label = d.label || toLabel(dim);
                         return (
-                            <div key={dim} className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
+                            <div key={dim} className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-700 p-5 space-y-4">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex-1 space-y-2">
                                         {selectedFramework === 'custom' ? (
@@ -477,7 +477,7 @@ function ConfigurationTab() {
                                                 className="w-full max-w-sm px-3 py-2 text-sm font-semibold bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
                                             />
                                         ) : (
-                                            <h3 className="text-base font-bold text-surface-900">{label}</h3>
+                                            <h3 className="text-base font-bold text-surface-900 dark:text-surface-100">{label}</h3>
                                         )}
                                         <div className="flex items-center gap-2">
                                             <span className="text-[11px] text-surface-400">Weight</span>
@@ -487,7 +487,7 @@ function ConfigurationTab() {
                                                 max={100}
                                                 value={d.weight ?? 0}
                                                 onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
-                                                className="w-20 px-2 py-1 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
+                                                className="w-20 px-2 py-1 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500 text-center"
                                             />
                                             <span className="text-[11px] text-surface-400">/100</span>
                                         </div>
@@ -528,7 +528,7 @@ function ConfigurationTab() {
                                                         value={opt.label}
                                                         onChange={(e) => updateOption(dim, idx, 'label', e.target.value)}
                                                         placeholder="Option label"
-                                                        className="flex-1 px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                                        className="flex-1 px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500"
                                                     />
                                                     <input
                                                         type="number"
@@ -536,7 +536,7 @@ function ConfigurationTab() {
                                                         max={100}
                                                         value={opt.score}
                                                         onChange={(e) => updateOption(dim, idx, 'score', e.target.value)}
-                                                        className="w-20 px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400 text-center"
+                                                        className="w-20 px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500 text-center"
                                                     />
                                                     <button
                                                         type="button"
@@ -558,7 +558,7 @@ function ConfigurationTab() {
                                             </button>
                                         </div>
 
-                                        <div className="border-t border-surface-100 pt-4 space-y-3">
+                                        <div className="border-t border-surface-100 dark:border-surface-700 pt-4 space-y-3">
                                             <div className="flex items-center gap-3">
                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                     <span className="text-sm font-medium text-surface-700">CTA Enabled</span>
@@ -579,7 +579,7 @@ function ConfigurationTab() {
                                                     value={d.cta_prompt || ''}
                                                     onChange={(e) => updateDimension(dim, 'cta_prompt', e.target.value)}
                                                     placeholder="CTA prompt text"
-                                                    className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                                    className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500"
                                                 />
                                             )}
                                         </div>
@@ -589,8 +589,8 @@ function ConfigurationTab() {
                         );
                     })}
 
-                    <div className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
-                        <h3 className="text-base font-bold text-surface-900">Thresholds</h3>
+                    <div className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-700 p-5 space-y-4">
+                        <h3 className="text-base font-bold text-surface-900 dark:text-surface-100">Thresholds</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             {[
                                 { key: 'mql', label: 'MQL Threshold' },
@@ -605,16 +605,16 @@ function ConfigurationTab() {
                                         max={100}
                                         value={config.thresholds?.[key] ?? 0}
                                         onChange={(e) => updateThreshold(key, e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500"
                                     />
                                 </div>
                             ))}
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-xl border border-surface-200 p-5 space-y-4">
+                    <div className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-700 p-5 space-y-4">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-base font-bold text-surface-900">Score Decay</h3>
+                            <h3 className="text-base font-bold text-surface-900 dark:text-surface-100">Score Decay</h3>
                             <button
                                 type="button"
                                 role="switch"
@@ -634,7 +634,7 @@ function ConfigurationTab() {
                                         min={0}
                                         value={config.decay?.timeline_decay_per_30d ?? 0}
                                         onChange={(e) => updateDecay('timeline_decay_per_30d', e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500"
                                     />
                                 </div>
                                 <div>
@@ -644,7 +644,7 @@ function ConfigurationTab() {
                                         min={0}
                                         value={config.decay?.need_decay_per_30d ?? 0}
                                         onChange={(e) => updateDecay('need_decay_per_30d', e.target.value)}
-                                        className="w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg focus:outline-none focus:border-primary-400"
+                                        className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100 dark:placeholder:text-surface-500"
                                     />
                                 </div>
                             </div>
@@ -656,7 +656,7 @@ function ConfigurationTab() {
                             type="button"
                             onClick={handleSave}
                             disabled={isSaving}
-                            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-50"
+                            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-xl hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-50"
                         >
                             {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                             Save Configuration
@@ -725,7 +725,7 @@ function FunnelTab() {
                         className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
                             period === opt.key
                                 ? 'bg-primary-50 border-primary-300 text-primary-700'
-                                : 'bg-white border-surface-200 text-surface-600 hover:bg-surface-50'
+                                : 'bg-white dark:bg-surface-900 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800'
                         }`}
                     >
                         {opt.label}
@@ -736,7 +736,7 @@ function FunnelTab() {
             {isLoading ? (
                 <SkeletonChart />
             ) : (
-                <div className="bg-white rounded-xl border border-surface-200 p-5">
+                <div className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-700 p-5">
                     <div className="h-[340px]">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
