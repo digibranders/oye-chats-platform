@@ -40,40 +40,40 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
     return (
         <div className="space-y-8">
             {/* Welcome Screen Section */}
-            <div className="border border-gray-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Welcome Screen</h3>
+            <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-6 bg-white dark:bg-surface-900">
+                <h3 className="text-lg font-semibold mb-4 text-surface-900 dark:text-surface-100">Welcome Screen</h3>
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             Greeting Message
                         </label>
                         <input
                             type="text"
                             value={messages.welcome_greeting || 'Hi There, How can I help you today?'}
                             onChange={(e) => handleMessageChange('welcome_greeting', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="Hi There, How can I help you today?"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Displayed as the main welcome message</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Displayed as the main welcome message</p>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             Welcome Subtitle
                         </label>
                         <input
                             type="text"
                             value={messages.welcome_subtitle || 'How can we help you today?'}
                             onChange={(e) => handleMessageChange('welcome_subtitle', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="How can we help you today?"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Secondary text under the greeting</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Secondary text under the greeting</p>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-3">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-3">
                             Quick Action Buttons
                         </label>
                         <div className="space-y-2">
@@ -84,11 +84,11 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
                                         value={suggestion}
                                         onChange={(e) => handleSuggestionChange(index, e.target.value)}
                                         placeholder={`Suggestion ${index + 1}`}
-                                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        className="flex-1 px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                     />
                                     <button
                                         onClick={() => removeSuggestion(index)}
-                                        className="px-3 py-2 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors"
+                                        className="px-3 py-2 bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 rounded-md hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors"
                                     >
                                         Remove
                                     </button>
@@ -97,7 +97,7 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
                         </div>
                         <button
                             onClick={addSuggestion}
-                            className="mt-3 px-3 py-2 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors text-sm font-medium"
+                            className="mt-3 px-3 py-2 bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 rounded-md hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors text-sm font-medium"
                         >
                             + Add Suggestion
                         </button>
@@ -106,113 +106,113 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
             </div>
 
             {/* Chat Interface Section */}
-            <div className="border border-gray-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Chat Interface</h3>
+            <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-6 bg-white dark:bg-surface-900">
+                <h3 className="text-lg font-semibold mb-4 text-surface-900 dark:text-surface-100">Chat Interface</h3>
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             Message Input Placeholder
                         </label>
                         <input
                             type="text"
                             value={messages.input_placeholder || 'Write a message...'}
                             onChange={(e) => handleMessageChange('input_placeholder', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="Write a message..."
                         />
-                        <p className="text-xs text-gray-500 mt-1">Hint text in the chat input field</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Hint text in the chat input field</p>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             Live Chat Button Label
                         </label>
                         <input
                             type="text"
                             value={messages.live_chat_label || 'Live chat'}
                             onChange={(e) => handleMessageChange('live_chat_label', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="Live chat"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Label for the live chat action button</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Label for the live chat action button</p>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             Greeting Bubble Message
                         </label>
                         <input
                             type="text"
                             value={messages.greeting_message || 'Hi! Let us know if you have any questions.'}
                             onChange={(e) => handleMessageChange('greeting_message', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="Hi! Let us know if you have any questions."
                         />
-                        <p className="text-xs text-gray-500 mt-1">Initial greeting bubble message (appears after delay)</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Initial greeting bubble message (appears after delay)</p>
                     </div>
                 </div>
             </div>
 
             {/* Offline Mode Section */}
-            <div className="border border-gray-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Offline Mode</h3>
+            <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-6 bg-white dark:bg-surface-900">
+                <h3 className="text-lg font-semibold mb-4 text-surface-900 dark:text-surface-100">Offline Mode</h3>
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             Offline Message
                         </label>
                         <input
                             type="text"
                             value={messages.offline_message || 'Team is currently unavailable'}
                             onChange={(e) => handleMessageChange('offline_message', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="Team is currently unavailable"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Header message when bot is offline</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Header message when bot is offline</p>
                     </div>
                 </div>
             </div>
 
             {/* Post-Chat Section */}
-            <div className="border border-gray-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Post-Chat</h3>
+            <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-6 bg-white dark:bg-surface-900">
+                <h3 className="text-lg font-semibold mb-4 text-surface-900 dark:text-surface-100">Post-Chat</h3>
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             Rating Prompt
                         </label>
                         <input
                             type="text"
                             value={messages.rating_prompt || 'How was your experience?'}
                             onChange={(e) => handleMessageChange('rating_prompt', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="How was your experience?"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Prompt shown in the post-chat rating card</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Prompt shown in the post-chat rating card</p>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">
                             End Chat Button Label
                         </label>
                         <input
                             type="text"
                             value={messages.end_chat_label || 'End chat and return to AI'}
                             onChange={(e) => handleMessageChange('end_chat_label', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-surface-200 dark:border-surface-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 dark:focus:border-primary-400 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             placeholder="End chat and return to AI"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Label for ending live chat</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400 mt-1">Label for ending live chat</p>
                     </div>
                 </div>
             </div>
 
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                    💡 <strong>Tip:</strong> All changes are saved automatically. Changes will appear in the widget immediately after refresh.
+            <div className="bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/20 rounded-lg p-4">
+                <p className="text-sm text-sky-800 dark:text-sky-300">
+                    💡 <strong>Tip:</strong> Click <strong>Save Configuration</strong> to apply your changes. They will appear in the widget after the next page refresh.
                 </p>
             </div>
         </div>

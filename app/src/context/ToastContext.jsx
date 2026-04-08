@@ -1,32 +1,55 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, useRef, useCallback } from 'react';
+import { createContext, useContext, useCallback } from 'react';
+import { Toaster, toast as sonnerToast } from 'sonner';
 
 const ToastContext = createContext(null);
 
 export function ToastProvider({ children }) {
-    const [toast, setToast] = useState(null);
-    const timerRef = useRef(null);
+  const showToast = useCallback((type, message) => {
+    switch (type) {
+      case 'success':
+        sonnerToast.success(message);
+        break;
+      case 'error':
+        sonnerToast.error(message);
+        break;
+      case 'warning':
+        sonnerToast.warning(message);
+        break;
+      case 'info':
+        sonnerToast.info(message);
+        break;
+      default:
+        sonnerToast(message);
+    }
+  }, []);
 
-    const showToast = useCallback((type, message, duration = 4000) => {
-        if (timerRef.current) clearTimeout(timerRef.current);
-        setToast({ type, message });
-        timerRef.current = setTimeout(() => setToast(null), duration);
-    }, []);
+  const dismissToast = useCallback(() => {
+    sonnerToast.dismiss();
+  }, []);
 
-    const dismissToast = useCallback(() => {
-        if (timerRef.current) clearTimeout(timerRef.current);
-        setToast(null);
-    }, []);
-
-    return (
-        <ToastContext.Provider value={{ toast, showToast, dismissToast }}>
-            {children}
-        </ToastContext.Provider>
-    );
+  return (
+    <ToastContext.Provider value={{ toast: null, showToast, dismissToast }}>
+      {children}
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          className: 'font-sans',
+          style: {
+            fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
+          },
+        }}
+        richColors
+        closeButton
+        offset={16}
+        gap={8}
+      />
+    </ToastContext.Provider>
+  );
 }
 
 export function useToast() {
-    const ctx = useContext(ToastContext);
-    if (!ctx) throw new Error('useToast must be used within a ToastProvider');
-    return ctx;
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error('useToast must be used within a ToastProvider');
+  return ctx;
 }

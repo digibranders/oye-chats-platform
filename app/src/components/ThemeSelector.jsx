@@ -1,7 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { useState } from 'react';
 import { Layout, Smartphone, Cloud, Check, Eye, X } from 'lucide-react';
-import ChatWindow from '../../../Frontend/src/components/ChatWindow';
+// ChatWindow preview removed — widget runs in a separate Vite build and cannot be imported directly.
+// To preview themes, embed the widget via iframe from the preview server (port 4173).
 
 export const themes = [
     {
@@ -48,7 +49,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                         onClick={() => onSelect(theme.id)}
                         className={`group relative cursor-pointer rounded-lg border-2 transition-all duration-300 overflow-hidden ${isSelected
                                 ? 'border-primary-500 ring-4 ring-primary-500/15'
-                                : 'border-secondary-200 hover:border-primary-300'
+                                : 'border-surface-200 dark:border-surface-700 hover:border-primary-300'
                             }`}
                     >
                         {/* Card Visual Area */}
@@ -67,9 +68,9 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                         </div>
 
                         {/* Card Footer */}
-                        <div className="p-4 bg-white flex items-center justify-between border-t border-secondary-200">
+                        <div className="p-4 bg-white dark:bg-surface-900 flex items-center justify-between border-t border-surface-200 dark:border-surface-700">
                             <div>
-                                <h3 className="font-semibold text-sm text-secondary-900">{theme.name}</h3>
+                                <h3 className="font-semibold text-sm text-surface-900 dark:text-surface-100">{theme.name}</h3>
                                 {isSelected && (
                                     <span className="text-[10px] font-bold text-primary-600 uppercase tracking-widest">Active</span>
                                 )}
@@ -79,7 +80,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                                     e.stopPropagation();
                                     setPreviewTheme(theme.id);
                                 }}
-                                className="flex items-center gap-1.5 px-3 h-8 rounded-md bg-secondary-100 text-secondary-600 hover:bg-primary-500 hover:text-white transition-all text-xs font-semibold"
+                                className="flex items-center gap-1.5 px-3 h-8 rounded-md bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400 hover:bg-primary-500 hover:text-white transition-all text-xs font-semibold"
                             >
                                 <Eye className="w-3.5 h-3.5" />
                                 Preview
@@ -118,8 +119,8 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                             <p className="text-white/50 text-sm font-medium">Live chatbot preview</p>
                         </div>
 
-                        <div className="relative shadow-[0_20px_60px_rgba(0,0,0,0.5)] rounded-3xl overflow-hidden">
-                            <ChatWindow theme={previewTheme} onClose={() => setPreviewTheme(null)} />
+                        <div className="relative shadow-[0_20px_60px_rgba(0,0,0,0.5)] rounded-3xl overflow-hidden w-[360px] h-[520px] bg-white/5 border border-white/10 flex items-center justify-center">
+                            <p className="text-white/40 text-sm text-center px-8">Widget preview is not available in the admin panel.<br />Apply the theme and test on your website.</p>
                         </div>
 
                         <div className="mt-8">
@@ -128,7 +129,7 @@ export default function ThemeSelector({ selectedTheme, onSelect }) {
                                     onSelect(previewTheme);
                                     setPreviewTheme(null);
                                 }}
-                                className="px-8 py-3.5 bg-white text-secondary-900 rounded-2xl font-bold text-base hover:bg-primary-50 transition-all shadow-xl"
+                                className="px-8 py-3.5 bg-white text-surface-900 rounded-2xl font-bold text-base hover:bg-primary-50 transition-all shadow-xl"
                             >
                                 Use this Theme
                             </button>

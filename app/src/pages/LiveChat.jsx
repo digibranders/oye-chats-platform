@@ -889,9 +889,9 @@ export default function LiveChat({ embedded = false }) {
     };
 
     const statusDotClass = (status) => {
-        if (status === 'online') return 'bg-green-500';
+        if (status === 'online') return 'bg-emerald-500';
         if (status === 'busy') return 'bg-amber-400';
-        return 'bg-secondary-300';
+        return 'bg-surface-300';
     };
 
     if (!botsLoading && bots.length === 0) {
@@ -909,14 +909,14 @@ export default function LiveChat({ embedded = false }) {
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
                 {!embedded && <PageHeader title="Live Chat" subtitle="Chat with visitors in real-time" />}
                 <div className={`flex items-center gap-3 ${embedded ? 'w-full justify-between' : ''}`}>
-                    {operatorName && <span className="text-sm text-secondary-500">{operatorName}</span>}
+                    {operatorName && <span className="text-sm text-surface-500 dark:text-surface-400">{operatorName}</span>}
                     {connectionLost && (
-                        <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg">
+                        <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-1 rounded-lg">
                             <Loader2 className="w-3 h-3 animate-spin" />
                             Reconnecting...
                             <button
                                 onClick={() => { reconnectAttemptsRef.current = 0; setReconnectCount(c => c + 1); }}
-                                className="ml-1 underline hover:text-amber-900"
+                                className="ml-1 underline hover:text-amber-900 dark:hover:text-amber-300"
                             >
                                 Retry now
                             </button>
@@ -926,11 +926,11 @@ export default function LiveChat({ embedded = false }) {
                         onClick={handleToggleStatus}
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
                             isOnline
-                                ? 'bg-green-50 border-green-200 text-green-700'
-                                : 'bg-secondary-50 border-secondary-200 text-secondary-600'
+                                ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                                : 'bg-surface-50 dark:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400'
                         }`}
                     >
-                        <Circle className={`w-3 h-3 ${isOnline ? 'fill-green-500 text-green-500' : 'fill-secondary-300 text-secondary-300'}`} />
+                        <Circle className={`w-3 h-3 ${isOnline ? 'fill-emerald-500 text-emerald-500' : 'fill-surface-300 text-surface-300 dark:fill-surface-600 dark:text-surface-600'}`} />
                         {isOnline ? 'Online' : 'Offline'}
                     </button>
                 </div>
@@ -938,16 +938,16 @@ export default function LiveChat({ embedded = false }) {
 
             {!isOnline ? (
                 <div className="flex flex-col items-center justify-center flex-1 text-center">
-                    <div className="w-16 h-16 rounded-full bg-secondary-100 flex items-center justify-center mb-4">
-                        <Headphones className="w-8 h-8 text-secondary-400" />
+                    <div className="w-16 h-16 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center mb-4">
+                        <Headphones className="w-8 h-8 text-surface-400 dark:text-surface-500" />
                     </div>
-                    <h3 className="text-lg font-bold text-secondary-900 mb-2">You're offline</h3>
-                    <p className="text-sm text-secondary-500 max-w-sm mb-4">
+                    <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">You&apos;re offline</h3>
+                    <p className="text-sm text-surface-500 dark:text-surface-400 max-w-sm mb-4">
                         Go online to start receiving live chat requests from visitors.
                     </p>
                     <button
                         onClick={handleToggleStatus}
-                        className="px-6 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors"
+                        className="px-6 py-2.5 bg-primary-600 dark:bg-primary-500 text-white rounded-xl text-sm font-medium hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
                     >
                         Go Online
                     </button>
@@ -956,30 +956,30 @@ export default function LiveChat({ embedded = false }) {
                 <div className="flex gap-3 flex-1 min-h-0">
 
                     {/* ── Left: Queue + Active Chats ── */}
-                    <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-secondary-200 overflow-hidden flex flex-col">
+                    <div className="w-64 flex-shrink-0 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
                         {/* Waiting queue */}
                         {queue.length > 0 && (
-                            <div className="border-b border-secondary-200 flex-shrink-0">
-                                <div className="px-4 py-3 bg-amber-50">
-                                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-amber-700">
+                            <div className="border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
+                                <div className="px-4 py-3 bg-amber-50 dark:bg-amber-500/10">
+                                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                                         Waiting ({queue.length})
                                     </h4>
                                 </div>
                                 {queue.map(item => (
-                                    <div key={item.session_id} className="px-4 py-3 border-b border-secondary-100 hover:bg-secondary-50 transition-colors">
+                                    <div key={item.session_id} className="px-4 py-3 border-b border-surface-100 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors">
                                         <div className="flex items-center justify-between mb-1">
-                                            <span className="text-sm font-medium text-secondary-900 truncate">
+                                            <span className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
                                                 {item.name || 'Anonymous'}
                                             </span>
                                             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
                                         </div>
                                         {item.reason && (
-                                            <p className="text-[11px] text-secondary-500 truncate mb-2">{item.reason}</p>
+                                            <p className="text-[11px] text-surface-500 dark:text-surface-400 truncate mb-2">{item.reason}</p>
                                         )}
                                         <button
                                             onClick={() => handleAcceptChat(item.session_id, item.name, item.reason)}
                                             disabled={acceptingSessionId === item.session_id}
-                                            className="w-full py-1.5 bg-primary-600 text-white text-[12px] font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
+                                            className="w-full py-1.5 bg-primary-600 dark:bg-primary-500 text-white text-[12px] font-medium rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
                                         >
                                             {acceptingSessionId === item.session_id ? (
                                                 <><Loader2 className="w-3 h-3 animate-spin" /> Accepting...</>
@@ -993,12 +993,12 @@ export default function LiveChat({ embedded = false }) {
                         {/* Active chats */}
                         <div className="flex-1 overflow-y-auto">
                             <div className="px-4 py-3 flex-shrink-0">
-                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-secondary-500">
+                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">
                                     Active ({activeChats.length})
                                 </h4>
                             </div>
                             {activeChats.length === 0 ? (
-                                <div className="px-4 py-8 text-center text-sm text-secondary-400">
+                                <div className="px-4 py-8 text-center text-sm text-surface-400 dark:text-surface-500">
                                     No active chats
                                 </div>
                             ) : (
@@ -1010,34 +1010,34 @@ export default function LiveChat({ embedded = false }) {
                                         <button
                                             key={sid}
                                             onClick={() => handleSelectChat(sid)}
-                                            className={`w-full px-4 py-3 text-left border-b border-secondary-100 transition-colors ${
+                                            className={`w-full px-4 py-3 text-left border-b border-surface-100 dark:border-surface-700 transition-colors ${
                                                 selectedChat === sid
-                                                    ? 'bg-primary-50 border-l-2 border-l-primary-500'
-                                                    : 'hover:bg-secondary-50'
+                                                    ? 'bg-primary-50 dark:bg-primary-500/10 border-l-2 border-l-primary-500'
+                                                    : 'hover:bg-surface-50 dark:hover:bg-surface-800'
                                             }`}
                                         >
                                             <div className="flex items-center justify-between gap-2">
                                                 <div className="min-w-0">
-                                                    <span className="text-sm font-medium text-secondary-900 truncate block">
+                                                    <span className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate block">
                                                         {name}
                                                     </span>
                                                     {vStatus === 'disconnected' && (
-                                                        <span className="text-[10px] text-amber-600 block">Disconnected</span>
+                                                        <span className="text-[10px] text-amber-600 dark:text-amber-400 block">Disconnected</span>
                                                     )}
                                                     {lastMessages[sid] && (
-                                                        <p className="text-[11px] text-secondary-400 truncate">{lastMessages[sid]}</p>
+                                                        <p className="text-[11px] text-surface-400 dark:text-surface-500 truncate">{lastMessages[sid]}</p>
                                                     )}
                                                 </div>
                                                 <div className="flex items-center gap-1.5 flex-shrink-0">
                                                     {unread > 0 && (
                                                         <span
-                                                            className="min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center"
+                                                            className="min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center"
                                                             aria-label={`${unread} unread message${unread !== 1 ? 's' : ''}`}
                                                         >
                                                             {unread > 9 ? '9+' : unread}
                                                         </span>
                                                     )}
-                                                    <span className={`w-2 h-2 rounded-full ${vStatus === 'disconnected' ? 'bg-amber-400' : 'bg-green-500'}`} />
+                                                    <span className={`w-2 h-2 rounded-full ${vStatus === 'disconnected' ? 'bg-amber-400' : 'bg-emerald-500'}`} />
                                                 </div>
                                             </div>
                                         </button>
@@ -1048,18 +1048,18 @@ export default function LiveChat({ embedded = false }) {
                     </div>
 
                     {/* ── Center: Chat Panel ── */}
-                    <div className="flex-1 bg-white rounded-2xl border border-secondary-200 overflow-hidden flex flex-col min-w-0">
+                    <div className="flex-1 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col min-w-0">
                         {selectedChat ? (
                             <>
                                 {/* Chat header */}
-                                <div className="px-4 py-3 border-b border-secondary-200 flex items-center justify-between flex-shrink-0">
+                                <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between flex-shrink-0">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
-                                            <User className="w-4 h-4 text-primary-600" />
+                                        <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+                                            <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                                         </div>
                                         <div>
-                                            <h4 className="text-sm font-semibold text-secondary-900">{currentVisitorName}</h4>
-                                            <p className={`text-[11px] ${(visitorStatus[selectedChat] || 'online') === 'disconnected' ? 'text-amber-600' : 'text-green-600'}`}>
+                                            <h4 className="text-sm font-semibold text-surface-900 dark:text-surface-100">{currentVisitorName}</h4>
+                                            <p className={`text-[11px] ${(visitorStatus[selectedChat] || 'online') === 'disconnected' ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                                 {(visitorStatus[selectedChat] || 'online') === 'disconnected' ? 'Disconnected' : 'Connected'}
                                             </p>
                                         </div>
@@ -1067,21 +1067,21 @@ export default function LiveChat({ embedded = false }) {
                                     <div className="flex items-center gap-2">
                                         <button
                                             onClick={openTransferModal}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-500/10 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors"
                                         >
                                             <ArrowRightLeft className="w-3.5 h-3.5" />
                                             Transfer
                                         </button>
                                         <button
                                             onClick={() => { if (window.confirm(`End chat with ${currentVisitorName}?`)) handleCloseChat(selectedChat); }}
-                                            className="px-3 py-1.5 text-[12px] font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                                            className="px-3 py-1.5 text-[12px] font-medium text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors"
                                         >
                                             End Chat
                                         </button>
                                         <button
                                             onClick={() => setShowRightPanel(p => !p)}
                                             aria-label={showRightPanel ? 'Hide info panel' : 'Show info panel'}
-                                            className="p-1.5 text-secondary-400 hover:text-secondary-600 hover:bg-secondary-100 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary-300"
+                                            className="p-1.5 text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary-300"
                                         >
                                             {showRightPanel
                                                 ? <ChevronRight className="w-4 h-4" />
@@ -1092,7 +1092,7 @@ export default function LiveChat({ embedded = false }) {
 
                                 {/* End Chat error banner */}
                                 {closeChatError && (
-                                    <div className="mx-4 mt-2 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                                    <div className="mx-4 mt-2 flex items-center gap-2 px-3 py-2 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-lg text-xs text-rose-700 dark:text-rose-400">
                                         <X className="w-3.5 h-3.5 flex-shrink-0" />
                                         {closeChatError}
                                     </div>
@@ -1106,7 +1106,7 @@ export default function LiveChat({ embedded = false }) {
                                             <button
                                                 onClick={handleLoadEarlier}
                                                 disabled={loadingEarlier}
-                                                className="text-xs text-secondary-500 hover:text-primary-600 flex items-center gap-1.5 disabled:opacity-50"
+                                                className="text-xs text-surface-500 dark:text-surface-400 hover:text-primary-600 dark:hover:text-primary-400 flex items-center gap-1.5 disabled:opacity-50"
                                             >
                                                 {loadingEarlier ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                                                 {loadingEarlier ? 'Loading...' : 'Load earlier messages'}
@@ -1116,7 +1116,7 @@ export default function LiveChat({ embedded = false }) {
 
                                     {/* Empty state */}
                                     {messages.length === 0 && !isTyping && (
-                                        <div className="flex flex-col items-center justify-center h-full py-16 text-secondary-400">
+                                        <div className="flex flex-col items-center justify-center h-full py-16 text-surface-400 dark:text-surface-500">
                                             <MessageCircle className="w-8 h-8 mb-2 opacity-40" />
                                             <p className="text-sm">No messages yet</p>
                                         </div>
@@ -1126,10 +1126,10 @@ export default function LiveChat({ embedded = false }) {
                                         <div key={msg.id} className={`flex ${msg.role === 'operator' ? 'justify-end' : 'justify-start'}`}>
                                             <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
                                                 msg.role === 'operator'
-                                                    ? 'bg-primary-600 text-white rounded-br-md'
+                                                    ? 'bg-primary-600 dark:bg-primary-500 text-white rounded-br-md'
                                                     : msg.role === 'user'
-                                                    ? 'bg-secondary-100 text-secondary-800 rounded-bl-md'
-                                                    : 'bg-secondary-50 text-secondary-600 italic text-xs rounded-bl-md'
+                                                    ? 'bg-surface-100 dark:bg-surface-800 text-surface-800 dark:text-surface-200 rounded-bl-md'
+                                                    : 'bg-surface-50 dark:bg-surface-800 text-surface-600 dark:text-surface-400 italic text-xs rounded-bl-md'
                                             }`}>
                                                 {msg.file_url ? (
                                                     msg.content_type?.startsWith('image/') ? (
@@ -1156,14 +1156,14 @@ export default function LiveChat({ embedded = false }) {
                                     ))}
                                     {isTyping && (
                                         <div className="flex justify-start items-end gap-2">
-                                            <div className="bg-secondary-100 px-4 py-3 rounded-2xl rounded-bl-md">
+                                            <div className="bg-surface-100 dark:bg-surface-800 px-4 py-3 rounded-2xl rounded-bl-md">
                                                 <div className="flex gap-1.5">
-                                                    <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                                    <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                                    <span className="w-2 h-2 bg-secondary-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                    <span className="w-2 h-2 bg-surface-400 dark:bg-surface-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                    <span className="w-2 h-2 bg-surface-400 dark:bg-surface-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                    <span className="w-2 h-2 bg-surface-400 dark:bg-surface-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                                                 </div>
                                             </div>
-                                            <span className="text-[11px] text-secondary-400 pb-1">
+                                            <span className="text-[11px] text-surface-400 dark:text-surface-500 pb-1">
                                                 {chatNamesRef.current[selectedChat]?.name || 'Visitor'} is typing...
                                             </span>
                                         </div>
@@ -1172,25 +1172,25 @@ export default function LiveChat({ embedded = false }) {
                                 </div>
 
                                 {/* Message input */}
-                                <div className="border-t border-secondary-200 px-4 py-3 relative flex-shrink-0">
+                                <div className="border-t border-surface-200 dark:border-surface-700 px-4 py-3 relative flex-shrink-0">
                                     {showCannedDropdown && filteredCanned.length > 0 && (
-                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-white border border-secondary-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
+                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
                                             {filteredCanned.slice(0, 8).map((r, idx) => (
                                                 <button
                                                     key={r.id}
                                                     onClick={() => selectCannedResponse(r)}
                                                     onMouseEnter={() => setCannedHighlightIndex(idx)}
-                                                    className={`w-full text-left px-4 py-2.5 transition-colors border-b border-secondary-100 last:border-b-0 ${idx === cannedHighlightIndex ? 'bg-primary-50' : 'hover:bg-secondary-50'}`}
+                                                    className={`w-full text-left px-4 py-2.5 transition-colors border-b border-surface-100 dark:border-surface-700 last:border-b-0 ${idx === cannedHighlightIndex ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-50 dark:hover:bg-surface-800'}`}
                                                 >
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-sm font-medium text-secondary-900">{r.title}</span>
+                                                        <span className="text-sm font-medium text-surface-900 dark:text-surface-100">{r.title}</span>
                                                         {r.shortcut && (
-                                                            <span className="px-1.5 py-0.5 bg-secondary-100 text-secondary-500 text-[10px] font-mono rounded">
+                                                            <span className="px-1.5 py-0.5 bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 text-[10px] font-mono rounded">
                                                                 /{r.shortcut}
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <p className="text-[11px] text-secondary-500 truncate mt-0.5">{r.content}</p>
+                                                    <p className="text-[11px] text-surface-500 dark:text-surface-400 truncate mt-0.5">{r.content}</p>
                                                 </button>
                                             ))}
                                         </div>
@@ -1219,7 +1219,7 @@ export default function LiveChat({ embedded = false }) {
                                             }}
                                             onPaste={handleOperatorPaste}
                                             placeholder="Type your reply... (/ for quick replies)"
-                                            className="flex-1 px-4 py-2.5 text-sm bg-secondary-50 rounded-xl outline-none border border-transparent focus:border-primary-300 transition-colors"
+                                            className="flex-1 px-4 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 dark:text-surface-100 rounded-xl outline-none border border-transparent dark:border-surface-600 focus:border-primary-300 dark:focus:border-primary-500 transition-colors placeholder:text-surface-400 dark:placeholder:text-surface-500"
                                         />
                                         {/* File attach — visible only when file_sharing feature flag is on */}
                                         {bots[0]?.feature_flags?.file_sharing && (
@@ -1230,7 +1230,7 @@ export default function LiveChat({ embedded = false }) {
                                                     disabled={fileUploading || !selectedChat}
                                                     aria-label="Attach file"
                                                     title="Attach file (images, PDF, TXT — max 10 MB)"
-                                                    className="w-10 h-10 flex items-center justify-center text-secondary-400 hover:text-secondary-600 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    className="w-10 h-10 flex items-center justify-center text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                                                 >
                                                     {fileUploading
                                                         ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -1250,7 +1250,7 @@ export default function LiveChat({ embedded = false }) {
                                             type="submit"
                                             disabled={!inputText.trim()}
                                             aria-label="Send message"
-                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors disabled:opacity-30 focus-visible:ring-2 focus-visible:ring-primary-300"
+                                            className="w-10 h-10 flex items-center justify-center bg-primary-600 dark:bg-primary-500 text-white rounded-xl hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-30 focus-visible:ring-2 focus-visible:ring-primary-300"
                                         >
                                             <Send className="w-4 h-4" />
                                         </button>
@@ -1259,11 +1259,11 @@ export default function LiveChat({ embedded = false }) {
                             </>
                         ) : (
                             <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
-                                <div className="w-16 h-16 rounded-full bg-secondary-100 flex items-center justify-center mb-4">
-                                    <MessageCircle className="w-8 h-8 text-secondary-400" />
+                                <div className="w-16 h-16 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center mb-4">
+                                    <MessageCircle className="w-8 h-8 text-surface-400 dark:text-surface-500" />
                                 </div>
-                                <h3 className="text-lg font-bold text-secondary-900 mb-2">No chat selected</h3>
-                                <p className="text-sm text-secondary-500">
+                                <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">No chat selected</h3>
+                                <p className="text-sm text-surface-500 dark:text-surface-400">
                                     {queue.length > 0
                                         ? 'Accept a waiting chat from the queue on the left.'
                                         : 'Waiting for visitors to request live support...'}
@@ -1274,16 +1274,16 @@ export default function LiveChat({ embedded = false }) {
 
                     {/* ── Right: Session Info + Team Roster ── */}
                     {showRightPanel && (
-                        <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-secondary-200 overflow-hidden flex flex-col">
+                        <div className="w-64 flex-shrink-0 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
                             {/* Tabs — only show tab bar when both tabs are relevant */}
                             {selectedChat ? (
-                                <div className="flex border-b border-secondary-200 flex-shrink-0">
+                                <div className="flex border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
                                     <button
                                         onClick={() => setRightPanelTab('session')}
                                         className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-medium transition-colors ${
                                             rightPanelTab === 'session'
-                                                ? 'text-primary-600 border-b-2 border-primary-500'
-                                                : 'text-secondary-500 hover:text-secondary-700'
+                                                ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-500'
+                                                : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-300'
                                         }`}
                                     >
                                         <Info className="w-3.5 h-3.5" />
@@ -1293,8 +1293,8 @@ export default function LiveChat({ embedded = false }) {
                                         onClick={() => setRightPanelTab('team')}
                                         className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-medium transition-colors ${
                                             rightPanelTab === 'team'
-                                                ? 'text-primary-600 border-b-2 border-primary-500'
-                                                : 'text-secondary-500 hover:text-secondary-700'
+                                                ? 'text-primary-600 dark:text-primary-400 border-b-2 border-primary-500'
+                                                : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-300'
                                         }`}
                                     >
                                         <Users className="w-3.5 h-3.5" />
@@ -1302,9 +1302,9 @@ export default function LiveChat({ embedded = false }) {
                                     </button>
                                 </div>
                             ) : (
-                                <div className="flex items-center gap-1.5 px-4 py-3 border-b border-secondary-200 flex-shrink-0">
-                                    <Users className="w-3.5 h-3.5 text-primary-600" />
-                                    <span className="text-[12px] font-medium text-primary-600">Team</span>
+                                <div className="flex items-center gap-1.5 px-4 py-3 border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
+                                    <Users className="w-3.5 h-3.5 text-primary-600 dark:text-primary-400" />
+                                    <span className="text-[12px] font-medium text-primary-600 dark:text-primary-400">Team</span>
                                 </div>
                             )}
 
@@ -1313,66 +1313,66 @@ export default function LiveChat({ embedded = false }) {
                                 {selectedChat && rightPanelTab === 'session' && (
                                     <div className="p-4 space-y-4">
                                         {!selectedChat ? (
-                                            <p className="text-sm text-secondary-400 text-center py-8">Select a chat to view details</p>
+                                            <p className="text-sm text-surface-400 dark:text-surface-500 text-center py-8">Select a chat to view details</p>
                                         ) : !sessionInfo ? (
                                             <div className="flex justify-center py-8">
-                                                <Loader2 className="w-5 h-5 animate-spin text-secondary-400" />
+                                                <Loader2 className="w-5 h-5 animate-spin text-surface-400 dark:text-surface-500" />
                                             </div>
                                         ) : (
                                             <>
                                                 {sessionInfo.lead_info && (
                                                     <div className="space-y-2.5">
-                                                        <h5 className="text-[11px] font-bold uppercase tracking-wider text-secondary-500">Visitor</h5>
+                                                        <h5 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Visitor</h5>
                                                         {sessionInfo.lead_info.name && (
-                                                            <div className="flex items-center gap-2 text-sm text-secondary-700">
-                                                                <User className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0" />
+                                                            <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                                <User className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
                                                                 <span className="truncate">{sessionInfo.lead_info.name}</span>
                                                             </div>
                                                         )}
                                                         {sessionInfo.lead_info.email && (
-                                                            <div className="flex items-center gap-2 text-sm text-secondary-700">
-                                                                <Mail className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0" />
+                                                            <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                                <Mail className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
                                                                 <span className="truncate">{sessionInfo.lead_info.email}</span>
                                                             </div>
                                                         )}
                                                         {sessionInfo.lead_info.phone && (
-                                                            <div className="flex items-center gap-2 text-sm text-secondary-700">
-                                                                <Phone className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0" />
+                                                            <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                                <Phone className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
                                                                 <span>{sessionInfo.lead_info.phone}</span>
                                                             </div>
                                                         )}
                                                         {sessionInfo.lead_info.company && (
-                                                            <div className="flex items-center gap-2 text-sm text-secondary-700">
-                                                                <Building2 className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0" />
+                                                            <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                                <Building2 className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
                                                                 <span className="truncate">{sessionInfo.lead_info.company}</span>
                                                             </div>
                                                         )}
                                                     </div>
                                                 )}
 
-                                                <div className="space-y-2.5 pt-2 border-t border-secondary-100">
-                                                    <h5 className="text-[11px] font-bold uppercase tracking-wider text-secondary-500">Session</h5>
+                                                <div className="space-y-2.5 pt-2 border-t border-surface-100 dark:border-surface-700">
+                                                    <h5 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Session</h5>
                                                     {sessionInfo.location && (
-                                                        <div className="flex items-center gap-2 text-sm text-secondary-700">
-                                                            <MapPin className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0" />
+                                                        <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                            <MapPin className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
                                                             <span className="truncate">{sessionInfo.location}</span>
                                                         </div>
                                                     )}
                                                     {sessionInfo.device && (
-                                                        <div className="flex items-center gap-2 text-sm text-secondary-700">
-                                                            <Monitor className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0" />
+                                                        <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                            <Monitor className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
                                                             <span className="truncate">{sessionInfo.device}</span>
                                                         </div>
                                                     )}
                                                     {sessionInfo.handoff_reason && (
-                                                        <div className="flex items-start gap-2 text-sm text-secondary-700">
-                                                            <MessageCircle className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0 mt-0.5" />
+                                                        <div className="flex items-start gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                            <MessageCircle className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0 mt-0.5" />
                                                             <span className="break-words">{sessionInfo.handoff_reason}</span>
                                                         </div>
                                                     )}
                                                     {sessionInfo.created_at && (
-                                                        <div className="flex items-center gap-2 text-sm text-secondary-700">
-                                                            <Clock className="w-3.5 h-3.5 text-secondary-400 flex-shrink-0" />
+                                                        <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                                            <Clock className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
                                                             <span>{new Date(sessionInfo.created_at).toLocaleTimeString()}</span>
                                                         </div>
                                                     )}
@@ -1385,11 +1385,11 @@ export default function LiveChat({ embedded = false }) {
                                 {/* Team Roster Tab */}
                                 {(!selectedChat || rightPanelTab === 'team') && (
                                     <div className="p-4">
-                                        <h5 className="text-[11px] font-bold uppercase tracking-wider text-secondary-500 mb-3">
+                                        <h5 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 mb-3">
                                             Operators ({operatorsList.length})
                                         </h5>
                                         {operatorsList.length === 0 ? (
-                                            <p className="text-sm text-secondary-400 text-center py-6">No operators yet</p>
+                                            <p className="text-sm text-surface-400 dark:text-surface-500 text-center py-6">No operators yet</p>
                                         ) : (
                                             <div className="space-y-2">
                                                 {operatorsList.map(operator => {
@@ -1397,14 +1397,14 @@ export default function LiveChat({ embedded = false }) {
                                                     return (
                                                         <div key={operator.id} className="flex items-center gap-2.5 py-1.5">
                                                             <div className="relative flex-shrink-0">
-                                                                <div className="w-7 h-7 rounded-full bg-secondary-100 flex items-center justify-center text-secondary-600 font-bold text-[11px]">
+                                                                <div className="w-7 h-7 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center text-surface-600 dark:text-surface-300 font-bold text-[11px]">
                                                                     {operator.name?.charAt(0).toUpperCase() || '?'}
                                                                 </div>
-                                                                <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${statusDotClass(status)}`} />
+                                                                <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-surface-900 ${statusDotClass(status)}`} />
                                                             </div>
                                                             <div className="min-w-0">
-                                                                <p className="text-sm font-medium text-secondary-900 truncate">{operator.name}</p>
-                                                                <p className="text-[10px] text-secondary-400">
+                                                                <p className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate">{operator.name}</p>
+                                                                <p className="text-[10px] text-surface-400 dark:text-surface-500">
                                                                     {status === 'online' && 'Online'}
                                                                     {status === 'busy' && `Busy · ${operator.active_chats} chat${operator.active_chats !== 1 ? 's' : ''}`}
                                                                     {status === 'offline' && 'Offline'}
@@ -1426,16 +1426,16 @@ export default function LiveChat({ embedded = false }) {
             {/* Transfer Modal */}
             {showTransferModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Transfer chat">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100">
-                            <h2 className="font-semibold text-secondary-900 flex items-center gap-2">
+                    <div className="bg-white dark:bg-surface-900 rounded-xl shadow-xl w-full max-w-md">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-700">
+                            <h2 className="font-semibold text-surface-900 dark:text-surface-100 flex items-center gap-2">
                                 <ArrowRightLeft className="w-4 h-4" />
                                 {transferTarget ? 'Confirm Transfer' : 'Transfer Chat'}
                             </h2>
                             <button
                                 onClick={() => { setShowTransferModal(false); setTransferTarget(null); }}
                                 aria-label="Close transfer modal"
-                                className="text-secondary-400 hover:text-secondary-600 focus-visible:ring-2 focus-visible:ring-primary-300 rounded"
+                                className="text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 focus-visible:ring-2 focus-visible:ring-primary-300 rounded"
                             >
                                 <X className="w-5 h-5" />
                             </button>
@@ -1444,19 +1444,19 @@ export default function LiveChat({ embedded = false }) {
                             {/* Step 2: confirmation */}
                             {transferTarget ? (
                                 <div className="text-center space-y-4">
-                                    <p className="text-sm text-secondary-700">
+                                    <p className="text-sm text-surface-700 dark:text-surface-300">
                                         Transfer this chat to <strong>{transferTarget.label}</strong>?
                                     </p>
                                     <div className="flex gap-3">
                                         <button
                                             onClick={() => setTransferTarget(null)}
-                                            className="flex-1 py-2 rounded-lg border border-secondary-200 text-sm text-secondary-600 hover:bg-secondary-50 transition-colors"
+                                            className="flex-1 py-2 rounded-lg border border-surface-200 dark:border-surface-700 text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                                         >
                                             Back
                                         </button>
                                         <button
                                             onClick={() => handleTransfer(transferTarget.operatorId, transferTarget.deptId)}
-                                            className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
+                                            className="flex-1 py-2 rounded-lg bg-primary-600 dark:bg-primary-500 text-white text-sm font-medium hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
                                         >
                                             Confirm Transfer
                                         </button>
@@ -1466,20 +1466,20 @@ export default function LiveChat({ embedded = false }) {
                             <>
                             {transferOperators.length > 0 && (
                                 <div>
-                                    <h3 className="text-sm font-medium text-secondary-700 mb-2">Online Operators</h3>
+                                    <h3 className="text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">Online Operators</h3>
                                     <div className="space-y-1">
                                         {transferOperators.map(operator => (
                                             <button
                                                 key={operator.id}
                                                 onClick={() => setTransferTarget({ operatorId: operator.id, deptId: null, label: operator.name })}
-                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors text-left"
                                             >
-                                                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-sm">
+                                                <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-500/10 flex items-center justify-center text-primary-600 dark:text-primary-400 font-bold text-sm">
                                                     {operator.name?.charAt(0).toUpperCase() || '?'}
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-secondary-900">{operator.name}</p>
-                                                    <p className="text-[11px] text-secondary-500">
+                                                    <p className="text-sm font-medium text-surface-900 dark:text-surface-100">{operator.name}</p>
+                                                    <p className="text-[11px] text-surface-500 dark:text-surface-400">
                                                         {operator.department_name || 'No department'} · {operator.active_chats || 0} active
                                                     </p>
                                                 </div>
@@ -1490,25 +1490,25 @@ export default function LiveChat({ embedded = false }) {
                             )}
                             {transferDepartments.length > 0 && (
                                 <div>
-                                    <h3 className="text-sm font-medium text-secondary-700 mb-2">Departments</h3>
+                                    <h3 className="text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">Departments</h3>
                                     <div className="space-y-1">
                                         {transferDepartments.map(dept => (
                                             <button
                                                 key={dept.id}
                                                 onClick={() => setTransferTarget({ operatorId: null, deptId: dept.id, label: dept.name })}
-                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary-50 transition-colors text-left"
+                                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors text-left"
                                             >
-                                                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-sm">
+                                                <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/10 flex items-center justify-center text-amber-600 dark:text-amber-400 font-bold text-sm">
                                                     {dept.name?.charAt(0).toUpperCase() || '?'}
                                                 </div>
-                                                <p className="text-sm font-medium text-secondary-900">{dept.name}</p>
+                                                <p className="text-sm font-medium text-surface-900 dark:text-surface-100">{dept.name}</p>
                                             </button>
                                         ))}
                                     </div>
                                 </div>
                             )}
                             {transferOperators.length === 0 && transferDepartments.length === 0 && (
-                                <p className="text-sm text-secondary-500 text-center py-4">No operators online or departments available.</p>
+                                <p className="text-sm text-surface-500 dark:text-surface-400 text-center py-4">No operators online or departments available.</p>
                             )}
                             </>
                             )}
@@ -1520,22 +1520,22 @@ export default function LiveChat({ embedded = false }) {
             {/* ── Pre-send file preview modal ── */}
             {pendingFile && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col">
+                    <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col">
                         {/* Header */}
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-secondary-100">
-                            <h3 className="text-sm font-semibold text-secondary-900">Send file</h3>
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-700">
+                            <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">Send file</h3>
                             <button
                                 type="button"
                                 onClick={cancelPendingFile}
                                 aria-label="Cancel"
-                                className="text-secondary-400 hover:text-secondary-700 transition-colors"
+                                className="text-surface-400 hover:text-surface-700 dark:hover:text-surface-300 transition-colors"
                             >
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
 
                         {/* Preview */}
-                        <div className="flex items-center justify-center bg-secondary-50 p-6 min-h-[200px]">
+                        <div className="flex items-center justify-center bg-surface-50 dark:bg-surface-800 p-6 min-h-[200px]">
                             {pendingFile.isImage ? (
                                 <img
                                     src={pendingFile.previewUrl}
@@ -1543,10 +1543,10 @@ export default function LiveChat({ embedded = false }) {
                                     className="max-w-full max-h-64 object-contain rounded-xl shadow-sm"
                                 />
                             ) : (
-                                <div className="flex flex-col items-center gap-3 text-secondary-500">
-                                    <div className="w-16 h-16 rounded-2xl bg-secondary-200 flex items-center justify-center text-2xl">📎</div>
-                                    <p className="text-sm font-medium text-secondary-800 text-center break-all">{pendingFile.file.name}</p>
-                                    <p className="text-xs text-secondary-400">{(pendingFile.file.size / 1024).toFixed(1)} KB</p>
+                                <div className="flex flex-col items-center gap-3 text-surface-500 dark:text-surface-400">
+                                    <div className="w-16 h-16 rounded-2xl bg-surface-200 dark:bg-surface-700 flex items-center justify-center text-2xl">📎</div>
+                                    <p className="text-sm font-medium text-surface-800 dark:text-surface-200 text-center break-all">{pendingFile.file.name}</p>
+                                    <p className="text-xs text-surface-400 dark:text-surface-500">{(pendingFile.file.size / 1024).toFixed(1)} KB</p>
                                 </div>
                             )}
                         </div>
@@ -1560,13 +1560,13 @@ export default function LiveChat({ embedded = false }) {
                                 onKeyDown={(e) => { if (e.key === 'Enter') sendPendingFile(); }}
                                 placeholder="Add a caption…"
                                 autoFocus
-                                className="w-full px-3 py-2 text-sm rounded-xl border border-secondary-200 bg-secondary-50 outline-none focus:border-primary-400 transition-colors"
+                                className="w-full px-3 py-2 text-sm rounded-xl border border-surface-200 dark:border-surface-600 bg-surface-50 dark:bg-surface-800 dark:text-surface-100 outline-none focus:border-primary-400 dark:focus:border-primary-500 transition-colors placeholder:text-surface-400 dark:placeholder:text-surface-500"
                             />
                             <div className="flex gap-2">
                                 <button
                                     type="button"
                                     onClick={cancelPendingFile}
-                                    className="flex-1 py-2 text-sm font-medium rounded-xl border border-secondary-200 text-secondary-600 hover:bg-secondary-50 transition-colors"
+                                    className="flex-1 py-2 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                                 >
                                     Cancel
                                 </button>
@@ -1574,7 +1574,7 @@ export default function LiveChat({ embedded = false }) {
                                     type="button"
                                     onClick={sendPendingFile}
                                     disabled={fileUploading}
-                                    className="flex-1 py-2 text-sm font-medium rounded-xl bg-primary-600 text-white hover:bg-primary-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                                    className="flex-1 py-2 text-sm font-medium rounded-xl bg-primary-600 dark:bg-primary-500 text-white hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     {fileUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                                     Send

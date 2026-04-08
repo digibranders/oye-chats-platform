@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Mail, Webhook as WebhookIcon, Calendar, Loader2, Info, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
+import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
@@ -16,11 +17,18 @@ function Toggle({ checked, onChange, disabled = false }) {
             aria-checked={checked}
             disabled={disabled}
             onClick={() => onChange(!checked)}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${checked ? 'bg-primary-600' : 'bg-secondary-200'}`}
+            className={cn(
+                'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+                'dark:focus-visible:ring-offset-surface-900',
+                checked ? 'bg-primary-600' : 'bg-surface-300 dark:bg-surface-700',
+            )}
         >
             <span
                 aria-hidden="true"
-                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${checked ? 'translate-x-4' : 'translate-x-0'}`}
+                className={cn(
+                    'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                    checked ? 'translate-x-4' : 'translate-x-0',
+                )}
             />
         </button>
     );
@@ -30,7 +38,7 @@ function Toggle({ checked, onChange, disabled = false }) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function EmailChipInput({ emails, onChange, placeholder = 'Type email and press Enter' }) {
+function EmailChipInput({ emails, onChange, placeholder = 'Type email and press Enter', maxEmails }) {
     const [inputValue, setInputValue] = useState('');
     const [error, setError] = useState('');
     const inputRef = useRef(null);
@@ -38,6 +46,10 @@ function EmailChipInput({ emails, onChange, placeholder = 'Type email and press 
     const addEmail = (raw) => {
         const email = raw.trim().toLowerCase();
         if (!email) return;
+        if (maxEmails && emails.length >= maxEmails) {
+            setError(`Only ${maxEmails} email${maxEmails > 1 ? 's' : ''} allowed here`);
+            return;
+        }
         if (!EMAIL_RE.test(email)) {
             setError(`"${email}" is not a valid email`);
             return;
@@ -92,38 +104,40 @@ function EmailChipInput({ emails, onChange, placeholder = 'Type email and press 
     return (
         <div>
             <div
-                className="flex flex-wrap items-center gap-1.5 min-h-[42px] px-3 py-2 bg-white border border-secondary-200 rounded-xl text-sm cursor-text focus-within:ring-2 focus-within:ring-primary-500/20 focus-within:border-primary-500 transition-all"
+                className="flex flex-wrap items-center gap-1.5 min-h-[42px] px-3 py-2 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm cursor-text focus-within:ring-2 focus-within:ring-primary-500/20 focus-within:border-primary-500 transition-all"
                 onClick={() => inputRef.current?.focus()}
             >
                 {emails.map((email) => (
                     <span
                         key={email}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary-50 border border-primary-200 text-xs font-medium text-primary-700 animate-fade-in"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary-50 dark:bg-primary-900/30 border border-primary-200 dark:border-primary-700 text-xs font-medium text-primary-700 dark:text-primary-300 animate-fade-in"
                     >
                         <span className="font-mono">{email}</span>
                         <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); removeEmail(email); }}
-                            className="p-0.5 rounded hover:bg-primary-100 text-primary-400 hover:text-primary-600 transition-colors"
+                            className="p-0.5 rounded hover:bg-primary-100 dark:hover:bg-primary-800/40 text-primary-400 hover:text-primary-600 dark:hover:text-primary-300 transition-colors"
                             aria-label={`Remove ${email}`}
                         >
                             <X size={12} />
                         </button>
                     </span>
                 ))}
-                <input
-                    ref={inputRef}
-                    type="text"
-                    className="flex-1 min-w-[180px] bg-transparent outline-none text-sm text-secondary-900 placeholder:text-secondary-400"
-                    placeholder={emails.length === 0 ? placeholder : 'Add another...'}
-                    value={inputValue}
-                    onChange={(e) => { setInputValue(e.target.value); setError(''); }}
-                    onKeyDown={handleKeyDown}
-                    onPaste={handlePaste}
-                    onBlur={handleBlur}
-                />
+                {(!maxEmails || emails.length < maxEmails) && (
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        className="flex-1 min-w-[180px] bg-transparent outline-none text-sm text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                        placeholder={emails.length === 0 ? placeholder : 'Add another...'}
+                        value={inputValue}
+                        onChange={(e) => { setInputValue(e.target.value); setError(''); }}
+                        onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
+                        onBlur={handleBlur}
+                    />
+                )}
             </div>
-            {error && <p className="text-xs text-error-600 mt-1">{error}</p>}
+            {error && <p className="text-xs text-rose-600 dark:text-rose-400 mt-1">{error}</p>}
         </div>
     );
 }
@@ -136,8 +150,8 @@ function EmailSettings() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
-    // Form state — reply-to is a single string; recipients are arrays
-    const [replyToEmail, setReplyToEmail] = useState('');
+    // Form state — reply-to is a single email (stored as array for chip input); recipients are arrays
+    const [replyToEmail, setReplyToEmail] = useState([]);
     const [defaultRecipients, setDefaultRecipients] = useState([]);
     const [qualifiedLeadRecipients, setQualifiedLeadRecipients] = useState([]);
     const [handoffRecipients, setHandoffRecipients] = useState([]);
@@ -159,7 +173,7 @@ function EmailSettings() {
             if (bots?.length > 0) {
                 const b = bots[0];
                 setBot(b);
-                setReplyToEmail(b.reply_to_email || '');
+                setReplyToEmail(b.reply_to_email ? [b.reply_to_email] : []);
                 setEmailOnQualified(b.email_on_qualified ?? true);
                 setEmailOnHandoff(b.email_on_handoff ?? true);
                 setEmailOnOffline(b.email_on_offline ?? true);
@@ -196,7 +210,7 @@ function EmailSettings() {
             if (offlineRecipients.length) notificationEmails.offline_message = offlineRecipients;
 
             await updateBot(bot.id, {
-                reply_to_email: replyToEmail.trim() || null,
+                reply_to_email: replyToEmail[0] || null,
                 notification_emails: notificationEmails,
                 email_on_qualified: emailOnQualified,
                 email_on_handoff: emailOnHandoff,
@@ -216,12 +230,10 @@ function EmailSettings() {
         }
     };
 
-    const inputClass = "w-full px-3.5 py-2.5 bg-white border border-secondary-200 rounded-xl text-sm text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
-
     if (loading) {
         return (
             <div className="flex items-center justify-center py-20">
-                <Loader2 className="w-6 h-6 animate-spin text-secondary-400" />
+                <Loader2 className="w-6 h-6 animate-spin text-surface-400 dark:text-surface-500" />
             </div>
         );
     }
@@ -229,68 +241,67 @@ function EmailSettings() {
     return (
         <div className="space-y-6 max-w-3xl">
             {/* Section 1: Sender Identity */}
-            <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <div className="flex items-center gap-3 mb-5">
-                    <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center">
-                        <Mail size={20} className="text-primary-600" />
+                    <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center">
+                        <Mail size={20} className="text-primary-600 dark:text-primary-400" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-secondary-900">Sender Identity</h3>
-                        <p className="text-xs text-secondary-500">How your emails appear to recipients</p>
+                        <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">Sender Identity</h3>
+                        <p className="text-xs text-surface-500 dark:text-surface-400">How your emails appear to recipients</p>
                     </div>
                 </div>
 
                 <div className="space-y-4">
-                    <div className="flex items-start gap-2 px-3.5 py-3 bg-secondary-50 rounded-xl">
-                        <Info size={14} className="text-secondary-400 mt-0.5 shrink-0" />
-                        <p className="text-xs text-secondary-600 leading-relaxed">
+                    <div className="flex items-start gap-2 px-3.5 py-3 bg-surface-50 dark:bg-surface-800 rounded-xl">
+                        <Info size={14} className="text-surface-400 dark:text-surface-500 mt-0.5 shrink-0" />
+                        <p className="text-xs text-surface-600 dark:text-surface-400 leading-relaxed">
                             Emails are sent as <strong>&ldquo;{bot?.name || 'Your Bot'} via OyeChats&rdquo;</strong> from{' '}
                             <span className="font-mono text-xs">notifications@oyechats.com</span>. Replies go to the address below.
                         </p>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-secondary-700 mb-1.5">Reply-To Email</label>
-                        <input
-                            type="email"
-                            className={inputClass}
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Reply-To Email</label>
+                        <EmailChipInput
+                            emails={replyToEmail}
+                            onChange={setReplyToEmail}
                             placeholder="support@yourdomain.com"
-                            value={replyToEmail}
-                            onChange={(e) => setReplyToEmail(e.target.value)}
+                            maxEmails={1}
                         />
-                        <p className="text-xs text-secondary-400 mt-1">When visitors reply to emails, responses go to this address</p>
+                        <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">When visitors reply to emails, responses go to this address</p>
                     </div>
                 </div>
             </div>
 
             {/* Section 2: Notification Recipients */}
-            <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
-                <h3 className="text-sm font-semibold text-secondary-900 mb-4">Notification Recipients</h3>
+            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+                <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100 mb-4">Notification Recipients</h3>
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-secondary-700 mb-1.5">Default Recipients</label>
+                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Default Recipients</label>
                         <EmailChipInput
                             emails={defaultRecipients}
                             onChange={setDefaultRecipients}
                             placeholder="team@yourdomain.com"
                         />
-                        <p className="text-xs text-secondary-400 mt-1">Press Enter or comma to add. Used for all events unless overridden below.</p>
+                        <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">Press Enter or comma to add. Used for all events unless overridden below.</p>
                     </div>
 
                     <button
                         type="button"
                         onClick={() => setShowPerEvent(!showPerEvent)}
-                        className="flex items-center gap-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 transition-colors"
+                        className="flex items-center gap-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
                     >
                         {showPerEvent ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         Per-event recipient overrides
                     </button>
 
                     {showPerEvent && (
-                        <div className="space-y-3 pl-4 border-l-2 border-secondary-100">
+                        <div className="space-y-3 pl-4 border-l-2 border-surface-100 dark:border-surface-700">
                             <div>
-                                <label className="block text-xs font-medium text-secondary-600 mb-1">Qualified Leads</label>
+                                <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">Qualified Leads</label>
                                 <EmailChipInput
                                     emails={qualifiedLeadRecipients}
                                     onChange={setQualifiedLeadRecipients}
@@ -298,7 +309,7 @@ function EmailSettings() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-secondary-600 mb-1">Handoff Requests</label>
+                                <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">Handoff Requests</label>
                                 <EmailChipInput
                                     emails={handoffRecipients}
                                     onChange={setHandoffRecipients}
@@ -306,7 +317,7 @@ function EmailSettings() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-secondary-600 mb-1">Offline Messages</label>
+                                <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">Offline Messages</label>
                                 <EmailChipInput
                                     emails={offlineRecipients}
                                     onChange={setOfflineRecipients}
@@ -319,48 +330,48 @@ function EmailSettings() {
             </div>
 
             {/* Section 3: Email Toggles */}
-            <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
-                <h3 className="text-sm font-semibold text-secondary-900 mb-4">Email Notifications</h3>
+            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+                <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100 mb-4">Email Notifications</h3>
 
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm font-medium text-secondary-800">Notify team on qualified leads</p>
-                            <p className="text-xs text-secondary-500">Send email when a visitor reaches SQL qualification</p>
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Notify team on qualified leads</p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">Send email when a visitor reaches SQL qualification</p>
                         </div>
                         <Toggle checked={emailOnQualified} onChange={setEmailOnQualified} />
                     </div>
 
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm font-medium text-secondary-800">Notify team on handoff requests</p>
-                            <p className="text-xs text-secondary-500">Send email when a visitor requests live support</p>
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Notify team on handoff requests</p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">Send email when a visitor requests live support</p>
                         </div>
                         <Toggle checked={emailOnHandoff} onChange={setEmailOnHandoff} />
                     </div>
 
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm font-medium text-secondary-800">Notify team on offline messages</p>
-                            <p className="text-xs text-secondary-500">Send email when a visitor leaves a message</p>
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Notify team on offline messages</p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">Send email when a visitor leaves a message</p>
                         </div>
                         <Toggle checked={emailOnOffline} onChange={setEmailOnOffline} />
                     </div>
 
-                    <hr className="border-secondary-100" />
+                    <hr className="border-surface-100 dark:border-surface-800" />
 
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm font-medium text-secondary-800">Send confirmation to visitors</p>
-                            <p className="text-xs text-secondary-500">Visitors receive a &ldquo;we got your message&rdquo; email after submitting offline messages</p>
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Send confirmation to visitors</p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">Visitors receive a &ldquo;we got your message&rdquo; email after submitting offline messages</p>
                         </div>
                         <Toggle checked={emailVisitorConfirmation} onChange={setEmailVisitorConfirmation} />
                     </div>
 
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm font-medium text-secondary-800">Allow visitors to email transcript</p>
-                            <p className="text-xs text-secondary-500">Show &ldquo;Send transcript&rdquo; option in the widget menu</p>
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Allow visitors to email transcript</p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">Show &ldquo;Send transcript&rdquo; option in the widget menu</p>
                         </div>
                         <Toggle checked={emailTranscript} onChange={setEmailTranscript} />
                     </div>
@@ -372,11 +383,12 @@ function EmailSettings() {
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50 ${
+                    className={cn(
+                        'flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50',
                         justSaved
-                            ? 'bg-success-600 hover:bg-success-700 text-white'
-                            : 'bg-primary-600 hover:bg-primary-700 text-white'
-                    }`}
+                            ? 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white'
+                            : 'bg-primary-600 hover:bg-primary-700 dark:bg-primary-600 dark:hover:bg-primary-500 text-white',
+                    )}
                 >
                     {saving && <Loader2 size={14} className="animate-spin" />}
                     {justSaved && <Check size={14} />}
@@ -436,12 +448,12 @@ function CalendlySettings() {
         }
     };
 
-    const inputClass = "w-full px-3.5 py-2.5 bg-white border border-secondary-200 rounded-xl text-sm text-secondary-900 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all";
+    const inputClass = "w-full px-3.5 py-2.5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500";
 
     if (loading) {
         return (
             <div className="flex items-center justify-center py-20">
-                <Loader2 className="w-6 h-6 animate-spin text-secondary-400" />
+                <Loader2 className="w-6 h-6 animate-spin text-surface-400 dark:text-surface-500" />
             </div>
         );
     }
@@ -449,36 +461,36 @@ function CalendlySettings() {
     return (
         <div className="space-y-6 max-w-3xl">
             {/* Calendly Configuration */}
-            <div className="bg-white rounded-2xl border border-secondary-200 shadow-sm p-6">
+            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <div className="flex items-center gap-3 mb-5">
-                    <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center">
-                        <Calendar size={20} className="text-primary-600" />
+                    <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center">
+                        <Calendar size={20} className="text-primary-600 dark:text-primary-400" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-secondary-900">Meeting Booking</h3>
-                        <p className="text-xs text-secondary-500">Show a Calendly booking widget when leads qualify as SQL</p>
+                        <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">Meeting Booking</h3>
+                        <p className="text-xs text-surface-500 dark:text-surface-400">Show a Calendly booking widget when leads qualify as SQL</p>
                     </div>
                 </div>
 
                 <div className="space-y-4">
-                    <div className="flex items-start gap-2 px-3.5 py-3 bg-secondary-50 rounded-xl">
-                        <Info size={14} className="text-secondary-400 mt-0.5 shrink-0" />
-                        <p className="text-xs text-secondary-600 leading-relaxed">
+                    <div className="flex items-start gap-2 px-3.5 py-3 bg-surface-50 dark:bg-surface-800 rounded-xl">
+                        <Info size={14} className="text-surface-400 dark:text-surface-500 mt-0.5 shrink-0" />
+                        <p className="text-xs text-surface-600 dark:text-surface-400 leading-relaxed">
                             When enabled, visitors who qualify as a Sales Qualified Lead (SQL) will see an embedded Calendly widget to book a meeting directly in the chat.
                         </p>
                     </div>
 
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-sm font-medium text-secondary-800">Enable meeting booking</p>
-                            <p className="text-xs text-secondary-500">Automatically offer meeting scheduling to qualified leads</p>
+                            <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Enable meeting booking</p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">Automatically offer meeting scheduling to qualified leads</p>
                         </div>
                         <Toggle checked={meetingBookingEnabled} onChange={setMeetingBookingEnabled} />
                     </div>
 
                     {meetingBookingEnabled && (
                         <div>
-                            <label className="block text-sm font-medium text-secondary-700 mb-1.5">Calendly URL</label>
+                            <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Calendly URL</label>
                             <input
                                 type="url"
                                 value={calendlyUrl}
@@ -486,7 +498,7 @@ function CalendlySettings() {
                                 placeholder="https://calendly.com/your-name/30min"
                                 className={inputClass}
                             />
-                            <p className="text-xs text-secondary-400 mt-1">Paste your Calendly scheduling link here</p>
+                            <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">Paste your Calendly scheduling link here</p>
                         </div>
                     )}
                 </div>
@@ -497,11 +509,12 @@ function CalendlySettings() {
                 <button
                     onClick={handleSave}
                     disabled={saving || (meetingBookingEnabled && !calendlyUrl.trim())}
-                    className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50 ${
+                    className={cn(
+                        'flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50',
                         justSaved
-                            ? 'bg-success-600 hover:bg-success-700 text-white'
-                            : 'bg-primary-600 hover:bg-primary-700 text-white'
-                    }`}
+                            ? 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white'
+                            : 'bg-primary-600 hover:bg-primary-700 dark:bg-primary-600 dark:hover:bg-primary-500 text-white',
+                    )}
                 >
                     {saving && <Loader2 size={14} className="animate-spin" />}
                     {justSaved && <Check size={14} />}
