@@ -299,7 +299,8 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(request: LoginRequest):
+@limiter.limit("10/minute")
+def login(request: LoginRequest, fastapi_request: Request):
     """
     Authenticate a Client via Email and Password for Admin Dashboard access.
     Returns the Client's API Key to be used as a Bearer/API token for subsequent requests.
@@ -345,7 +346,8 @@ def login(request: LoginRequest):
 
 
 @router.post("/register", response_model=RegisterResponse)
-def register(request: RegisterRequest):
+@limiter.limit("5/minute")
+def register(request: RegisterRequest, fastapi_request: Request):
     """
     Self-service client registration.
     Creates a new client account and returns an API key for immediate login.
@@ -505,7 +507,8 @@ class OperatorChangePasswordRequest(BaseModel):
 
 
 @router.post("/operator-login", response_model=OperatorLoginResponse)
-def operator_login(request: OperatorLoginRequest):
+@limiter.limit("10/minute")
+def operator_login(request: OperatorLoginRequest, fastapi_request: Request):
     """
     Authenticate an Operator via email and password.
     Returns the Operator's API Key for subsequent requests via X-Operator-Key header.

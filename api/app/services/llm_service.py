@@ -3,7 +3,7 @@ import time
 
 import litellm
 
-from app.config import LLM_FALLBACKS, LLM_MODEL, OPENAI_API_KEY
+from app.config import FALLBACK_MODEL, GOOGLE_API_KEY, LLM_FALLBACKS, LLM_MODEL, OPENAI_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -11,19 +11,22 @@ if not OPENAI_API_KEY:
     logger.error("CRITICAL: OPENAI_API_KEY is not set! Chat responses will fail. Check your .env file.")
 
 
-def generate_response(prompt: str, *, metadata: dict | None = None) -> str:
+def generate_response(prompt: str, *, max_tokens: int | None = None, metadata: dict | None = None) -> str:
     """Generate a non-streaming response via LiteLLM."""
     if not OPENAI_API_KEY:
         logger.error("Cannot generate response: OPENAI_API_KEY is not set.")
         return "Configuration error: AI service is not configured. Please contact the administrator."
     try:
         logger.info(f"Generating LLM response | model={LLM_MODEL} | prompt_length={len(prompt)}")
-        response = litellm.completion(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            metadata=metadata,
-            fallbacks=LLM_FALLBACKS,
-        )
+        kwargs: dict = {
+            "model": LLM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "metadata": metadata,
+            "fallbacks": LLM_FALLBACKS,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        response = litellm.completion(**kwargs)
         content = response.choices[0].message.content
         if content:
             logger.info(f"LLM response received | length={len(content)}")
@@ -33,44 +36,122 @@ def generate_response(prompt: str, *, metadata: dict | None = None) -> str:
             return "I'm sorry, I couldn't generate a response. Please try again."
     except Exception as e:
         logger.error(f"LLM API Error ({type(e).__name__}): {e}", exc_info=True)
-        return f"I encountered an error generating the response. Error: {type(e).__name__}"
+        return "I encountered an error generating the response. Please try again."
+
+
+def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:
+    """Analyze scraped website content and extract a concise brand tone description.
+
+    Returns a short tone description (e.g., "Professional and friendly, uses simple language")
+    or None if extraction fails.
+    """
+    if not OPENAI_API_KEY or not content_sample.strip():
+        return None
+    try:
+        prompt = f"""Analyze this website content and describe the brand's communication tone in 1-2 sentences.
+
+Focus on: formality level (formal/casual/mixed), personality (friendly/authoritative/playful/neutral), vocabulary complexity (simple/technical/mixed), and overall voice.
+
+Example outputs:
+- "Professional and approachable. Uses simple language with a warm, helpful tone."
+- "Technical and authoritative. Industry jargon is common, formal sentence structure."
+- "Casual and playful. Short sentences, conversational, uses humor."
+
+Website content:
+{content_sample[:3000]}
+
+Return ONLY the tone description, nothing else."""
+
+        response = litellm.completion(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            metadata=metadata or {"generation_name": "brand-tone-extraction"},
+            fallbacks=LLM_FALLBACKS,
+        )
+        tone = (response.choices[0].message.content or "").strip()
+        if tone and len(tone) < 500:
+            logger.info(f"Brand tone extracted: {tone[:80]}...")
+            return tone
+        return None
+    except Exception as e:
+        logger.warning(f"Brand tone extraction failed (non-blocking): {e}")
+        return None
 
 
 _STREAM_CHUNK_TIMEOUT_S = 30
 
 
-def generate_response_stream(prompt: str, *, metadata: dict | None = None):
+def _stream_from_model(model: str, prompt: str, max_tokens: int | None, metadata: dict | None):
+    """Inner generator: stream chunks from ``model``, enforcing per-chunk timeout.
+
+    Raises on connection / API error so the caller can fall back to another model.
+    """
+    kwargs: dict = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+        "metadata": metadata,
+    }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    response = litellm.completion(**kwargs)
+    deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
+    for chunk in response:
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"LLM streaming timed out after {_STREAM_CHUNK_TIMEOUT_S}s")
+        content = chunk.choices[0].delta.content
+        if content:
+            # Reset deadline on each received chunk so slow-but-live streams aren't killed
+            deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
+            yield content
+
+
+def generate_response_stream(prompt: str, *, max_tokens: int | None = None, metadata: dict | None = None):
     """Generate a streaming response via LiteLLM. Yields text chunks.
 
-    Enforces a per-chunk wall-clock timeout of ``_STREAM_CHUNK_TIMEOUT_S``
-    seconds so a stalled upstream connection never hangs the client forever.
+    Fallback chain:
+    1. Primary model (``LLM_MODEL`` — OpenAI gpt-5.4-mini)
+    2. Fallback model (``FALLBACK_MODEL`` — Gemini 2.5 Flash) if primary raises
+    3. Generic error message if both fail
+
+    Enforces a per-chunk wall-clock timeout of ``_STREAM_CHUNK_TIMEOUT_S`` so
+    a stalled upstream connection never hangs the client forever.
     """
     if not OPENAI_API_KEY:
         logger.error("Cannot stream response: OPENAI_API_KEY is not set.")
         yield "Configuration error: AI service is not configured. Please contact the administrator."
         return
+
+    logger.info(f"Starting LLM stream | model={LLM_MODEL} | prompt_length={len(prompt)}")
     try:
-        logger.info(f"Starting LLM stream | model={LLM_MODEL} | prompt_length={len(prompt)}")
-        # Note: fallbacks intentionally omitted for streaming — LiteLLM's fallback
-        # wrapper returns an AsyncStream which can't be iterated synchronously.
-        # If the primary model fails, the error is caught and yielded to the client.
-        response = litellm.completion(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            stream=True,
-            metadata=metadata,
+        yield from _stream_from_model(LLM_MODEL, prompt, max_tokens, metadata)
+        return
+    except TimeoutError as e:
+        logger.error(str(e))
+        yield " [Response timed out. Please try again.]"
+        return
+    except Exception as primary_err:
+        logger.warning(
+            f"Primary LLM stream failed ({type(primary_err).__name__}): {primary_err} "
+            f"— attempting fallback to {FALLBACK_MODEL}"
         )
-        deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
-        for chunk in response:
-            if time.monotonic() > deadline:
-                logger.error(f"LLM streaming timed out after {_STREAM_CHUNK_TIMEOUT_S}s — aborting stream")
-                yield " [Response timed out. Please try again.]"
-                return
-            content = chunk.choices[0].delta.content
-            if content:
-                # Reset deadline on each received chunk so slow-but-live streams aren't killed
-                deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
-                yield content
-    except Exception as e:
-        logger.error(f"LLM Streaming Error ({type(e).__name__}): {e}", exc_info=True)
-        yield f"I encountered an error generating the response. Error: {type(e).__name__}"
+
+    # Fallback to secondary model
+    if not GOOGLE_API_KEY:
+        logger.error("Fallback model unavailable: GOOGLE_API_KEY is not set.")
+        yield " [I encountered an error. Please try again.]"
+        return
+
+    try:
+        logger.info(f"LLM stream fallback | model={FALLBACK_MODEL}")
+        yield from _stream_from_model(FALLBACK_MODEL, prompt, max_tokens, metadata)
+    except TimeoutError as e:
+        logger.error(f"Fallback stream timed out: {e}")
+        yield " [Response timed out. Please try again.]"
+    except Exception as fallback_err:
+        logger.error(
+            f"Fallback LLM stream also failed ({type(fallback_err).__name__}): {fallback_err}",
+            exc_info=True,
+        )
+        yield " [I encountered an error. Please try again.]"

@@ -1,13 +1,15 @@
 import contextlib
+import html as html_lib
 import json
 import logging
+import re
 import urllib.request
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
@@ -26,13 +28,50 @@ from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
 from app.services.sdr_service import run_sdr_qualification
 
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def _redact_email(email: str | None) -> str:
+    """Return a partially redacted email for safe logging (GDPR)."""
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    return f"{local[0]}***@{domain}"
+
+
+def _resolve_session_id(provided: str | None, bot_id: int) -> str:
+    """Return a validated session_id.
+
+    If the caller supplies one, verify it belongs to this bot before trusting it.
+    A session belonging to a different bot gets a fresh server-generated UUID so
+    callers cannot hijack another bot's conversation.
+    """
+    if not provided:
+        return str(uuid.uuid4())
+    with get_session() as db:
+        existing = db.execute(select(ChatSession).where(ChatSession.id == provided)).scalar_one_or_none()
+    if existing is not None and existing.bot_id != bot_id:
+        # Session exists but belongs to a different bot — reject and mint a fresh ID
+        return str(uuid.uuid4())
+    return provided
+
 
 class LeadCaptureRequest(PydanticBaseModel):
     session_id: str
-    name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    company: str | None = None
+    name: str | None = Field(None, max_length=255)
+    email: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=50)
+    company: str | None = Field(None, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("Please enter a valid email address.")
+        return v
 
 
 class BehavioralSignalsRequest(PydanticBaseModel):
@@ -165,7 +204,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
     try:
         ip_address, formatted_device = _parse_request_context(request)
         location = f"IP: {ip_address}"
-        session_id = body.session_id or str(uuid.uuid4())
+        session_id = _resolve_session_id(body.session_id, bot.id)
 
         # Fire-and-forget geolocation (saves 2-8s per request)
         submit_background(_resolve_and_update_location, session_id, ip_address)
@@ -203,7 +242,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     """
     ip_address, formatted_device = _parse_request_context(request)
     location = f"IP: {ip_address}"
-    session_id = body.session_id or str(uuid.uuid4())
+    session_id = _resolve_session_id(body.session_id, bot.id)
 
     # Fire-and-forget geolocation
     submit_background(_resolve_and_update_location, session_id, ip_address)
@@ -224,6 +263,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 
 
 @router.post("/chat/lead-capture")
+@limiter.limit("10/minute", key_func=key_from_bot_key)
 def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Capture lead contact info from pre-chat or handoff form. Auth: X-Bot-Key."""
     try:
@@ -239,7 +279,7 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
                 company=body.company,
             )
             session.commit()
-            logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={body.email}")
+            logger.info(f"Lead captured | bot={bot.id} session={body.session_id} email={_redact_email(body.email)}")
             try:
                 from app.services.webhook_service import fire_webhook
 
@@ -263,7 +303,8 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
 
 
 @router.post("/chat/behavioral-signals")
-def behavioral_signals_endpoint(body: BehavioralSignalsRequest, bot: Bot = Depends(get_current_bot)):
+@limiter.limit("30/minute", key_func=key_from_bot_key)
+def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     """Receive behavioral signals from the widget and compute a behavioral score.
 
     Called on session init with page context, and on beforeunload with time-on-page.
@@ -353,7 +394,8 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, bot: Bot = Depen
 
 
 @router.post("/chat/meeting-booked")
-def meeting_booked_endpoint(body: MeetingBookedRequest, bot: Bot = Depends(get_current_bot)):
+@limiter.limit("10/minute", key_func=key_from_bot_key)
+def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: Bot = Depends(get_current_bot)):
     try:
         from datetime import datetime
 
@@ -697,7 +739,7 @@ def send_chat_transcript(
         message_dicts = [
             {
                 "role": msg.role,
-                "content": msg.content,
+                "content": html_lib.escape(msg.content or ""),
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
             }
             for msg in messages

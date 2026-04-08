@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-    MessageSquareWarning, Paperclip, Star, Award, AlignLeft, Clock, Mail, Loader2
+    MessageSquareWarning, Paperclip, Star, Award, AlignLeft, Clock, Mail, Loader2,
+    Sparkles
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
@@ -80,6 +81,11 @@ export default function Settings() {
     const [businessHours, setBusinessHours] = useState(DEFAULT_BUSINESS_HOURS);
     const [loadingBot, setLoadingBot] = useState(true);
 
+    // Tone & Personality
+    const [brandTone, setBrandTone] = useState('');
+    const [systemPrompt, setSystemPrompt] = useState('');
+    const [savingTone, setSavingTone] = useState(false);
+
     // Saving state: key → true while in-flight
     const [saving, setSaving] = useState({});
     const [savingHours, setSavingHours] = useState(false);
@@ -93,6 +99,8 @@ export default function Settings() {
         }
         setBotId(selectedBot.id);
         setFlags({ ...DEFAULT_FLAGS, ...(selectedBot.feature_flags || {}) });
+        setBrandTone(selectedBot.brand_tone || '');
+        setSystemPrompt(selectedBot.system_prompt || '');
         if (selectedBot.business_hours) {
             setBusinessHours({ ...DEFAULT_BUSINESS_HOURS, ...selectedBot.business_hours });
         }
@@ -140,6 +148,24 @@ export default function Settings() {
             return next;
         });
     }, [saveBusinessHours]);
+
+    // Save tone & personality settings
+    const saveToneSettings = useCallback(async () => {
+        if (!botId) return;
+        setSavingTone(true);
+        try {
+            await updateBot(botId, {
+                brand_tone: brandTone || null,
+                system_prompt: systemPrompt || null,
+            });
+            showToast('success', 'Tone settings saved.');
+        } catch {
+            showToast('error', 'Failed to save tone settings.');
+        } finally {
+            setSavingTone(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [botId, brandTone, systemPrompt]);
 
     const handleSendFeedback = (e) => {
         e.preventDefault();
@@ -218,6 +244,94 @@ export default function Settings() {
                                 saving={saving.email_transcript}
                                 onChange={(v) => toggleFlag('email_transcript', v)}
                             />
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ── Tone & Personality ──────────────────────────────────────── */}
+            {showBotConfig && (
+                <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+                    <div className="flex items-center gap-2 mb-1">
+                        <Sparkles size={16} className="text-primary-600 dark:text-primary-400" />
+                        <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50">Tone & Personality</h2>
+                    </div>
+                    <p className="text-sm text-surface-500 dark:text-surface-400 mb-5">
+                        Control how your AI assistant communicates. Brand tone is auto-detected when you crawl your website.
+                    </p>
+
+                    {loadingBot ? (
+                        <div className="flex items-center gap-2 text-surface-400 dark:text-surface-500 text-sm py-2">
+                            <Loader2 size={14} className="animate-spin" />
+                            Loading settings…
+                        </div>
+                    ) : (
+                        <div className="space-y-5">
+                            {/* Brand Tone */}
+                            <div>
+                                <label className="text-sm font-medium text-surface-800 dark:text-surface-200 flex items-center gap-2 mb-2">
+                                    Brand Tone
+                                    {brandTone && (
+                                        <span className="text-xs font-normal text-primary-600 dark:text-primary-400 flex items-center gap-1">
+                                            <Sparkles size={10} />
+                                            Auto-detected
+                                        </span>
+                                    )}
+                                </label>
+                                <textarea
+                                    value={brandTone}
+                                    onChange={(e) => setBrandTone(e.target.value)}
+                                    className={cn(
+                                        'w-full px-4 py-3 rounded-xl border border-surface-200 dark:border-surface-600',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
+                                        'outline-none transition-all resize-none h-20 text-sm'
+                                    )}
+                                    placeholder='e.g., "Professional and approachable. Uses simple language with a warm, helpful tone."'
+                                />
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
+                                    Describes your brand&apos;s voice. Auto-filled when you crawl your website, or customize manually.
+                                </p>
+                            </div>
+
+                            {/* Custom Instructions */}
+                            <div>
+                                <label className="text-sm font-medium text-surface-800 dark:text-surface-200 mb-2 block">
+                                    Custom Instructions
+                                </label>
+                                <textarea
+                                    value={systemPrompt}
+                                    onChange={(e) => setSystemPrompt(e.target.value)}
+                                    className={cn(
+                                        'w-full px-4 py-3 rounded-xl border border-surface-200 dark:border-surface-600',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
+                                        'outline-none transition-all resize-none h-28 text-sm'
+                                    )}
+                                    placeholder='e.g., "Always mention our free trial. Refer to our product as CloudSync. Avoid discussing competitor pricing."'
+                                />
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
+                                    Additional rules your AI should follow. These override the default behavior.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={saveToneSettings}
+                                disabled={savingTone}
+                                className="py-2.5 px-5 bg-primary-600 hover:bg-primary-700 dark:bg-primary-600 dark:hover:bg-primary-500 text-white text-sm font-medium rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {savingTone ? (
+                                    <>
+                                        <Loader2 size={14} className="animate-spin" />
+                                        Saving…
+                                    </>
+                                ) : (
+                                    'Save Tone Settings'
+                                )}
+                            </button>
                         </div>
                     )}
                 </div>

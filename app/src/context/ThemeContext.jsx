@@ -7,57 +7,40 @@ function getSystemTheme() {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-function getStoredTheme() {
-  return localStorage.getItem('admin_theme') || 'system';
-}
-
-function resolveTheme(mode) {
-  if (mode === 'system') return getSystemTheme();
-  return mode;
-}
-
 export function ThemeProvider({ children }) {
-  const [mode, setModeState] = useState(getStoredTheme);
-  const [resolved, setResolved] = useState(() => resolveTheme(getStoredTheme()));
+  const [theme, setTheme] = useState(getSystemTheme);
 
-  const applyTheme = useCallback((theme) => {
+  const applyTheme = useCallback((nextTheme) => {
     const root = document.documentElement;
-    if (theme === 'dark') {
+    if (nextTheme === 'dark') {
       root.classList.add('dark');
     } else {
       root.classList.remove('dark');
     }
-    root.style.colorScheme = theme;
+    root.style.colorScheme = nextTheme;
   }, []);
-
-  const setTheme = useCallback((newMode) => {
-    setModeState(newMode);
-    localStorage.setItem('admin_theme', newMode);
-    const r = resolveTheme(newMode);
-    setResolved(r);
-    applyTheme(r);
-  }, [applyTheme]);
 
   // Apply on mount
   useEffect(() => {
-    applyTheme(resolved);
-  }, [applyTheme, resolved]);
+    applyTheme(theme);
+  }, [applyTheme, theme]);
 
-  // Listen for system theme changes when in 'system' mode
   useEffect(() => {
-    if (mode !== 'system') return;
+    localStorage.removeItem('admin_theme');
+  }, []);
+
+  // Always follow the device/browser color scheme.
+  useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e) => {
-      const r = e.matches ? 'dark' : 'light';
-      setResolved(r);
-      applyTheme(r);
+      setTheme(e.matches ? 'dark' : 'light');
     };
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
-  }, [mode, applyTheme]);
+  }, []);
 
   return (
-    <ThemeContext.Provider value={{ theme: resolved, mode, setTheme }}>
+    <ThemeContext.Provider value={{ theme, mode: 'system' }}>
       {children}
     </ThemeContext.Provider>
   );

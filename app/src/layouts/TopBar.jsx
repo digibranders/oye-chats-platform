@@ -1,29 +1,19 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, LogOut, Menu, PanelLeftClose, Sun, Moon, Monitor, Settings } from 'lucide-react';
+import { Search, LogOut, Menu, PanelLeftClose, Settings } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { AUTH_STORAGE_KEYS } from '../utils/auth';
-import { useTheme } from '../context/ThemeContext';
 import Avatar from '../components/ui/Avatar';
-import { cn } from '../lib/utils';
 
 export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenSearch }) {
   const navigate = useNavigate();
   const adminName = localStorage.getItem('admin_name') || 'Admin';
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const { mode, setTheme } = useTheme();
-
   const handleLogout = () => {
     AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
     navigate('/login');
   };
-
-  const themeOptions = [
-    { value: 'light', icon: Sun, label: 'Light' },
-    { value: 'dark', icon: Moon, label: 'Dark' },
-    { value: 'system', icon: Monitor, label: 'System' },
-  ];
 
   return (
     <header className="h-14 bg-white/80 dark:bg-surface-950/80 backdrop-blur-xl border-b border-surface-200/60 dark:border-surface-800/60 px-3 md:px-6 flex items-center justify-between sticky top-0 z-20 transition-colors">
@@ -63,25 +53,6 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
           <Search size={16} />
         </button>
 
-        {/* Theme toggle (desktop only) */}
-        <div className="hidden md:flex items-center gap-0.5 p-0.5 bg-surface-100 dark:bg-surface-800 rounded-lg">
-          {themeOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setTheme(opt.value)}
-              className={cn(
-                'p-1.5 rounded-md transition-all',
-                mode === opt.value
-                  ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm'
-                  : 'text-surface-400 hover:text-surface-600 dark:hover:text-surface-300'
-              )}
-              title={opt.label}
-            >
-              <opt.icon size={13} />
-            </button>
-          ))}
-        </div>
-
         {/* User menu */}
         <div className="relative">
           <button
@@ -116,28 +87,6 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                     <Settings size={14} />
                     Settings
                   </button>
-
-                  {/* Mobile theme switcher */}
-                  <div className="md:hidden px-3 py-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-surface-400 mb-2">Theme</p>
-                    <div className="flex gap-1">
-                      {themeOptions.map((opt) => (
-                        <button
-                          key={opt.value}
-                          onClick={() => setTheme(opt.value)}
-                          className={cn(
-                            'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-                            mode === opt.value
-                              ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400'
-                              : 'text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800'
-                          )}
-                        >
-                          <opt.icon size={12} />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
                   <div className="border-t border-surface-100 dark:border-surface-800 mt-1 pt-1">
                     <button
                       onClick={handleLogout}

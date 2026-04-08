@@ -52,6 +52,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss }) => {
                     width="100%"
                     height="350"
                     frameBorder="0"
+                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation"
                 />
             )}
         </div>
