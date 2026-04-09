@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { Bot, ChevronDown, X, ArrowUp } from 'lucide-react';
+import { sanitizeColor, sanitizeImageUrl } from '../services/sanitize';
 
 const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     const launcherName = settings?.launcher_name || "Have Questions?";
-    const launcherLogo = settings?.launcher_logo;
+    const launcherLogo = sanitizeImageUrl(settings?.launcher_logo);
     const avatarType = settings?.avatar_type || 'upload';
-    const primaryColor = settings?.primary_color || '#2B66BC';
+    const primaryColor = sanitizeColor(settings?.primary_color);
     const botName = settings?.bot_name || 'AI Assistant';
     const [isScrolling, setIsScrolling] = useState(false);
     const scrollTimer = useRef(null);
@@ -56,7 +57,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
 
     const renderBotIcon = () => {
         if (avatarType === 'orb') {
-            const oc = settings?.orb_color || primaryColor;
+            const oc = sanitizeColor(settings?.orb_color, primaryColor);
             return (
                 <div
                     className="w-full h-full rounded-full"
@@ -93,7 +94,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     // Small avatar for the greeting bubble
     const renderSmallAvatar = () => {
         if (avatarType === 'orb') {
-            const oc = settings?.orb_color || primaryColor;
+            const oc = sanitizeColor(settings?.orb_color, primaryColor);
             return (
                 <div
                     className="w-7 h-7 rounded-full flex-shrink-0"

@@ -1,5 +1,6 @@
 import React from 'react';
 import BotAvatar from './BotAvatar';
+import { sanitizeColor } from '../services/sanitize';
 
 /**
  * Thinking loader shown while the bot is generating a response.
@@ -11,7 +12,7 @@ import BotAvatar from './BotAvatar';
  *   settings — bot settings (primary_color, bot_logo, avatar_type)
  */
 const TypingIndicator = ({ settings }) => {
-    const primaryColor = settings?.primary_color || '#3A0CA3';
+    const primaryColor = sanitizeColor(settings?.primary_color, '#3A0CA3');
 
     return (
         <div className="flex items-start gap-2 w-full">

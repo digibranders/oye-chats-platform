@@ -333,23 +333,31 @@ def search_similar_documents(
     else:
         emb_str = str(query_embedding)
 
-    # Execute raw SQL — bypasses pgvector Python type processor entirely
+    # Execute raw SQL — bypasses pgvector Python type processor entirely.
+    # Use separate static SQL strings (never interpolate into SQL text).
     if bot_id:
-        where_clause = "WHERE bot_id = :owner_id"
+        sql = text(
+            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+                      embedding <-> CAST(:emb AS vector) AS distance
+               FROM documents
+               WHERE bot_id = :owner_id AND embedding <-> CAST(:emb AS vector) < :max_dist
+               ORDER BY distance
+               LIMIT :k"""
+        )
         owner_id = bot_id
     else:
-        where_clause = "WHERE client_id = :owner_id"
+        sql = text(
+            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+                      embedding <-> CAST(:emb AS vector) AS distance
+               FROM documents
+               WHERE client_id = :owner_id AND embedding <-> CAST(:emb AS vector) < :max_dist
+               ORDER BY distance
+               LIMIT :k"""
+        )
         owner_id = client_id
 
     results = session.execute(
-        text(
-            f"""SELECT id, client_id, bot_id, document_name, content, metadata_info,
-                       embedding <-> CAST(:emb AS vector) AS distance
-                FROM documents
-                {where_clause} AND embedding <-> CAST(:emb AS vector) < :max_dist
-                ORDER BY distance
-                LIMIT :k"""
-        ),
+        sql,
         {"emb": emb_str, "owner_id": owner_id, "max_dist": max_distance, "k": k},
     ).fetchall()
 

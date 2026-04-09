@@ -1,5 +1,6 @@
 import React from 'react';
 import { Bot } from 'lucide-react';
+import { sanitizeColor, sanitizeImageUrl } from '../services/sanitize';
 
 const SIZES = {
     xs: { container: 'w-5 h-5', icon: 10, orbShadow: '0 0 4px' },
@@ -11,11 +12,11 @@ const SIZES = {
 
 const BotAvatar = ({ settings, size = 'md' }) => {
     const avatarType = settings.avatar_type || 'upload';
-    const pc = settings.primary_color || '#2B66BC';
+    const pc = sanitizeColor(settings.primary_color);
     const s = SIZES[size] || SIZES.md;
 
     if (avatarType === 'orb') {
-        const oc = settings.orb_color || pc;
+        const oc = sanitizeColor(settings.orb_color, pc);
         return (
             <div
                 className={`${s.container} rounded-full flex-shrink-0`}
@@ -37,8 +38,9 @@ const BotAvatar = ({ settings, size = 'md' }) => {
     }
 
     // Default: upload
-    if (settings.bot_logo && settings.bot_logo !== "null") {
-        return <img src={settings.bot_logo} alt={settings.bot_name} className={`${s.container} rounded-full object-cover`} />;
+    const safeLogo = sanitizeImageUrl(settings.bot_logo);
+    if (safeLogo && settings.bot_logo !== "null") {
+        return <img src={safeLogo} alt={settings.bot_name} className={`${s.container} rounded-full object-cover`} />;
     }
 
     return (
