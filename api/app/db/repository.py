@@ -295,7 +295,7 @@ def search_keyword_documents(session, client_id: int = None, query: str = "", k=
 
 
 def search_similar_documents(
-    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 0.55
+    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 0.65
 ):
     """Find top-k most similar documents using vector similarity with distance threshold.
 

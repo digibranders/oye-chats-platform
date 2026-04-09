@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 
 from app.api.auth import get_current_client_or_operator
 from app.config import DOCUMENTS_DIR
+from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.core.rate_limit import key_from_api_key, limiter
 from app.db.models import Bot, Client, Document
 from app.db.repository import get_ingested_documents
@@ -14,7 +15,7 @@ from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
 from app.schemas.client import CrawlRequest
 from app.services.crawler_service import CrawlerError, crawl_website
-from app.services.llm_service import extract_brand_tone
+from app.services.llm_service import extract_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,10 @@ def delete_document_endpoint(
             if file_path.exists():
                 file_path.unlink()
                 logger.info(f"Deleted file from disk: {file_path}")
+
+            # Invalidate cached QA responses — knowledge base has changed
+            if bot_id:
+                cache_delete_prefix(qa_prefix_for_bot(bot_id))
 
             logger.info(f"Deleted {deleted_count} chunks for document '{document_name}' (client {client_id})")
             return {"message": f"Successfully deleted '{document_name}'", "chunks_removed": deleted_count}
@@ -263,13 +268,17 @@ async def crawl_endpoint(
             lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
         )
 
-        # Extract brand tone from crawled content (non-blocking, best-effort)
+        # Extract brand tone and company context from crawled content (non-blocking, best-effort)
         brand_tone = None
+        company_context = None  # dict with "name" and "description" keys
         if valid_pages and bot_id:
             content_sample = "\n\n".join(p["content"][:1000] for p in valid_pages[:3])
-            brand_tone = await loop.run_in_executor(None, lambda: extract_brand_tone(content_sample))
+            brand_tone, company_context = await asyncio.gather(
+                loop.run_in_executor(None, lambda: extract_brand_tone(content_sample)),
+                loop.run_in_executor(None, lambda: extract_company_context(content_sample)),
+            )
 
-        if recommended_colors or brand_tone:
+        if recommended_colors or brand_tone or company_context:
             with get_session() as session:
                 if bot_id:
                     bot_db = session.get(Bot, bot_id)
@@ -278,11 +287,17 @@ async def crawl_endpoint(
                             bot_db.recommended_colors = recommended_colors
                         if brand_tone:
                             bot_db.brand_tone = brand_tone
+                        if company_context:
+                            if company_context.get("name"):
+                                bot_db.company_name = company_context["name"]
+                            if company_context.get("description"):
+                                bot_db.company_description = company_context["description"]
                         session.commit()
                         logger.info(
                             f"Saved crawl metadata for bot {bot_id}: "
                             f"colors={len(recommended_colors) if recommended_colors else 0}, "
-                            f"tone={'yes' if brand_tone else 'no'}"
+                            f"tone={'yes' if brand_tone else 'no'}, "
+                            f"company_name={company_context.get('name') if company_context else 'no'}"
                         )
                 elif recommended_colors:
                     client_db = session.get(Client, client_id)

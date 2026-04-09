@@ -300,25 +300,25 @@ class ResetPasswordRequest(BaseModel):
 
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("10/minute")
-def login(request: LoginRequest, fastapi_request: Request):
+def login(request: Request, body: LoginRequest):
     """
     Authenticate a Client via Email and Password for Admin Dashboard access.
     Returns the Client's API Key to be used as a Bearer/API token for subsequent requests.
     """
     try:
         with get_session() as session:
-            stmt = select(Client).where(Client.email == request.email.strip().lower()).limit(1)
+            stmt = select(Client).where(Client.email == body.email.strip().lower()).limit(1)
             client = session.execute(stmt).scalars().first()
 
             if not client:
-                logger.warning(f"Login failed: Unknown email {request.email}")
+                logger.warning(f"Login failed: Unknown email {body.email}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
                 )
 
-            if not verify_password(request.password, client.hashed_password):
-                logger.warning(f"Login failed: Incorrect password for {request.email}")
+            if not verify_password(body.password, client.hashed_password):
+                logger.warning(f"Login failed: Incorrect password for {body.email}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
@@ -338,7 +338,7 @@ def login(request: LoginRequest, fastapi_request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"LOGIN FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(f"LOGIN FAILED for {body.email}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed. Please try again.",
@@ -347,7 +347,7 @@ def login(request: LoginRequest, fastapi_request: Request):
 
 @router.post("/register", response_model=RegisterResponse)
 @limiter.limit("5/minute")
-def register(request: RegisterRequest, fastapi_request: Request):
+def register(request: Request, body: RegisterRequest):
     """
     Self-service client registration.
     Creates a new client account and returns an API key for immediate login.
@@ -355,7 +355,7 @@ def register(request: RegisterRequest, fastapi_request: Request):
     try:
         with get_session() as session:
             # Check for duplicate email
-            stmt = select(Client).where(Client.email == request.email).limit(1)
+            stmt = select(Client).where(Client.email == body.email).limit(1)
             existing = session.execute(stmt).scalars().first()
             if existing:
                 raise HTTPException(
@@ -365,12 +365,12 @@ def register(request: RegisterRequest, fastapi_request: Request):
 
             # Create the client
             new_client = Client(
-                name=request.name.strip(),
-                email=request.email,  # already lowercased by validator
-                company_name=request.company_name.strip() if request.company_name else None,
-                hashed_password=get_password_hash(request.password),
+                name=body.name.strip(),
+                email=body.email,  # already lowercased by validator
+                company_name=body.company_name.strip() if body.company_name else None,
+                hashed_password=get_password_hash(body.password),
                 api_key=str(uuid.uuid4().hex),
-                website=request.website.strip() if request.website else None,
+                website=body.website.strip() if body.website else None,
                 is_superadmin=False,
             )
 
@@ -400,7 +400,7 @@ def register(request: RegisterRequest, fastapi_request: Request):
     except HTTPException:
         raise  # Re-raise 409 (duplicate email) and other HTTP errors as-is
     except Exception as e:
-        logger.error(f"REGISTRATION FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(f"REGISTRATION FAILED for {body.email}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed. Please try again.",
@@ -409,11 +409,11 @@ def register(request: RegisterRequest, fastapi_request: Request):
 
 @router.post("/request-password-reset")
 @limiter.limit("3/minute")
-def request_password_reset(request: RequestPasswordResetRequest, fastapi_request: Request):
+def request_password_reset(request: Request, body: RequestPasswordResetRequest):
     """Generates an OTP and sends it via email."""
     try:
         with get_session() as session:
-            stmt = select(Client).where(Client.email == request.email.strip().lower()).limit(1)
+            stmt = select(Client).where(Client.email == body.email.strip().lower()).limit(1)
             client = session.execute(stmt).scalars().first()
             if not client:
                 # Return success anyway to avoid email enumeration
@@ -427,17 +427,17 @@ def request_password_reset(request: RequestPasswordResetRequest, fastapi_request
             send_password_reset_email(client.email, otp)
             return {"message": "If an account exists, a reset link has been sent."}
     except Exception as e:
-        logger.error(f"Failed to request password reset for {request.email}: {e}")
+        logger.error(f"Failed to request password reset for {body.email}: {e}")
         raise HTTPException(status_code=500, detail="An error occurred.") from e
 
 
 @router.post("/reset-password")
 @limiter.limit("5/minute")
-def reset_password(request: ResetPasswordRequest, fastapi_request: Request):
+def reset_password(request: Request, body: ResetPasswordRequest):
     """Verifies OTP and resets the password."""
     try:
         with get_session() as session:
-            stmt = select(Client).where(Client.email == request.email.strip().lower()).limit(1)
+            stmt = select(Client).where(Client.email == body.email.strip().lower()).limit(1)
             client = session.execute(stmt).scalars().first()
 
             if not client or not client.reset_otp or not client.reset_otp_expires_at:
@@ -449,14 +449,14 @@ def reset_password(request: ResetPasswordRequest, fastapi_request: Request):
                 session.commit()
                 raise HTTPException(status_code=400, detail="Reset code has expired.")
 
-            if not hmac.compare_digest(client.reset_otp, request.otp.strip()):
+            if not hmac.compare_digest(client.reset_otp, body.otp.strip()):
                 # Invalidate OTP after wrong guess to prevent brute-force
                 client.reset_otp = None
                 client.reset_otp_expires_at = None
                 session.commit()
                 raise HTTPException(status_code=400, detail="Invalid reset code. Please request a new code.")
 
-            client.hashed_password = get_password_hash(request.new_password)
+            client.hashed_password = get_password_hash(body.new_password)
             client.reset_otp = None
             client.reset_otp_expires_at = None
             session.commit()
@@ -465,7 +465,7 @@ def reset_password(request: ResetPasswordRequest, fastapi_request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to reset password for {request.email}: {e}")
+        logger.error(f"Failed to reset password for {body.email}: {e}")
         raise HTTPException(status_code=500, detail="An error occurred.") from e
 
 
@@ -508,14 +508,14 @@ class OperatorChangePasswordRequest(BaseModel):
 
 @router.post("/operator-login", response_model=OperatorLoginResponse)
 @limiter.limit("10/minute")
-def operator_login(request: OperatorLoginRequest, fastapi_request: Request):
+def operator_login(request: Request, body: OperatorLoginRequest):
     """
     Authenticate an Operator via email and password.
     Returns the Operator's API Key for subsequent requests via X-Operator-Key header.
     """
     try:
         with get_session() as session:
-            email = request.email.strip().lower()
+            email = body.email.strip().lower()
             operators = (
                 session.execute(
                     select(Operator)
@@ -527,11 +527,11 @@ def operator_login(request: OperatorLoginRequest, fastapi_request: Request):
             )
 
             valid_operators = [
-                op for op in operators if op.hashed_password and verify_password(request.password, op.hashed_password)
+                op for op in operators if op.hashed_password and verify_password(body.password, op.hashed_password)
             ]
 
             if not valid_operators:
-                logger.warning(f"Operator login failed: unknown email or no password set for {request.email}")
+                logger.warning(f"Operator login failed: unknown email or no password set for {body.email}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
@@ -581,7 +581,7 @@ def operator_login(request: OperatorLoginRequest, fastapi_request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"OPERATOR LOGIN FAILED for {request.email}: {type(e).__name__}: {e}", exc_info=True)
+        logger.error(f"OPERATOR LOGIN FAILED for {body.email}: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed. Please try again.",

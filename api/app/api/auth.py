@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Query, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import select
 
+from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
 from app.db.models import Bot, Client, Operator
 from app.db.session import get_session
 
@@ -213,6 +214,72 @@ def get_superadmin(client: Client = Depends(get_current_client)):
     return client
 
 
+def _bot_to_cache_dict(bot: Bot) -> dict:
+    """Serialize a Bot ORM object to a JSON-safe dict for Redis caching."""
+    return {
+        "id": bot.id,
+        "client_id": bot.client_id,
+        "bot_key": bot.bot_key,
+        "name": bot.name,
+        "system_prompt": bot.system_prompt,
+        "brand_tone": bot.brand_tone,
+        "company_description": bot.company_description,
+        "website": bot.website,
+        "bot_logo": bot.bot_logo,
+        "launcher_name": bot.launcher_name,
+        "launcher_logo": bot.launcher_logo,
+        "primary_color": bot.primary_color,
+        "background_color": bot.background_color,
+        "header_color": bot.header_color,
+        "user_bubble_color": bot.user_bubble_color,
+        "bant_enabled": bot.bant_enabled,
+        "bant_config": bot.bant_config,
+        "avatar_type": bot.avatar_type,
+        "orb_color": bot.orb_color,
+        "lead_form_enabled": bot.lead_form_enabled,
+        "lead_form_fields": bot.lead_form_fields,
+        "notification_email": bot.notification_email,
+        "notification_emails": bot.notification_emails,
+        "reply_to_email": bot.reply_to_email,
+        "email_on_qualified": bot.email_on_qualified,
+        "email_on_handoff": bot.email_on_handoff,
+        "email_on_offline": bot.email_on_offline,
+        "email_visitor_confirmation": bot.email_visitor_confirmation,
+        "live_chat_enabled": bot.live_chat_enabled,
+        "operator_timeout_seconds": bot.operator_timeout_seconds,
+        "visitor_disconnect_timeout": bot.visitor_disconnect_timeout,
+        "operator_disconnect_timeout": bot.operator_disconnect_timeout,
+        "business_hours": bot.business_hours,
+        "welcome_title": bot.welcome_title,
+        "welcome_subtitle": bot.welcome_subtitle,
+        "waiting_message": bot.waiting_message,
+        "offline_message": bot.offline_message,
+        "handoff_delay_seconds": bot.handoff_delay_seconds,
+        "calendly_url": bot.calendly_url,
+        "meeting_booking_enabled": bot.meeting_booking_enabled,
+        "feature_flags": bot.feature_flags,
+        "widget_messages": bot.widget_messages,
+        "widget_config": bot.widget_config,
+        "branding_text": bot.branding_text,
+        "branding_url": bot.branding_url,
+        "is_active": bot.is_active,
+        "recommended_colors": bot.recommended_colors,
+        "created_at": bot.created_at.isoformat() if bot.created_at else None,
+    }
+
+
+def _bot_from_cache_dict(data: dict) -> Bot:
+    """Reconstruct a detached Bot object from a cached dict."""
+    from datetime import datetime
+
+    bot = Bot()
+    for key, value in data.items():
+        if key == "created_at" and isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        setattr(bot, key, value)
+    return bot
+
+
 def get_current_bot(
     bot_key: str = Security(bot_key_header),
     api_key: str = Security(api_key_header),
@@ -223,9 +290,15 @@ def get_current_bot(
 
     Falls back to X-API-Key → client's default (first) bot for backward compatibility.
 
-    NOTE: We call session.expunge(bot) to detach the object cleanly before the
-    session closes, ensuring all loaded column attributes remain accessible.
+    Bot configs are cached in Redis (if configured) to avoid a DB query on every
+    widget request.  Cache is invalidated when bot settings are updated.
     """
+    # Fast path: check Redis cache for bot_key lookups
+    if bot_key:
+        cached = cache_get(bot_config_key(bot_key))
+        if cached:
+            return _bot_from_cache_dict(cached)
+
     with get_session() as session:
         # Primary path: resolve via bot_key
         if bot_key:
@@ -236,6 +309,8 @@ def get_current_bot(
                 _ = bot.id, bot.name, bot.system_prompt, bot.client_id, bot.bot_key
                 _ = bot.primary_color, bot.header_color, bot.background_color
                 _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
+                # Cache for future requests
+                cache_set(bot_config_key(bot_key), _bot_to_cache_dict(bot), BOT_CONFIG_TTL)
                 session.expunge(bot)
                 return bot
             raise HTTPException(

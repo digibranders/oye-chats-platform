@@ -51,6 +51,9 @@ def chunk_text(pages_data: list[dict], document_name: str = "") -> list[LCDocume
 
         # Prepend document context so the embedding captures source identity
         prefix = doc_prefix
+        title = chunk.metadata.get("title")
+        if title:
+            prefix += f"[Title: {title}] "
         page = chunk.metadata.get("page")
         if page is not None:
             prefix += f"[Page: {page}] "
