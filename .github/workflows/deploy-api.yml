@@ -33,11 +33,12 @@ jobs:
           RELEVANCE_GATE_ENABLED: ${{ secrets.RELEVANCE_GATE_ENABLED }}
           CHUNK_ENRICHMENT_ENABLED: ${{ secrets.CHUNK_ENRICHMENT_ENABLED }}
           CRAWLER_JS_ALL_PAGES: ${{ secrets.CRAWLER_JS_ALL_PAGES }}
+          RERANK_ENABLED: ${{ secrets.RERANK_ENABLED }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -66,7 +67,7 @@ jobs:
               "REDIS_URL=${REDIS_URL}" \
               "LLM_MODEL=openai/gpt-5.4-mini" \
               "FALLBACK_MODEL=gemini/gemini-2.5-flash" \
-              "RERANK_ENABLED=true" \
+              "RERANK_ENABLED=${RERANK_ENABLED}" \
               "RERANK_TOP_N=5" \
               "CAG_LITE_THRESHOLD=20" \
               "CHUNK_SIZE=1000" \

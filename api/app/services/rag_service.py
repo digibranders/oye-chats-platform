@@ -1034,6 +1034,7 @@ async def rag_pipeline_stream(
                 _gate_score,
                 session_id,
             )
+            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
             yield "I can only answer questions related to this business. Could you ask me something I can help with?"
             return
 

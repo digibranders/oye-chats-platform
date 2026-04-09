@@ -228,6 +228,12 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
                 continue
 
             chunk_contents = [c.page_content for c in chunks]
+
+            # Optional: contextual enrichment before embedding (mirrors _ingest_document)
+            if CHUNK_ENRICHMENT_ENABLED and chunk_contents:
+                document_summary = content[:2000]
+                chunk_contents = enrich_chunks_batch(chunk_contents, document_summary)
+
             chunk_metas = []
             for c in chunks:
                 meta = c.metadata.copy()
