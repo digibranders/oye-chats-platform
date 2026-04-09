@@ -21,8 +21,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Primary and fallback models (LiteLLM format: provider/model-name)
-LLM_MODEL = "openai/gpt-5.4-mini"
-FALLBACK_MODEL = "gemini/gemini-2.5-flash"
+LLM_MODEL = "gemini/gemini-2.5-flash"
+FALLBACK_MODEL = "openai/gpt-5.4-mini"
 
 # LiteLLM fallback chain: primary → fallback (only if Google key is set)
 LLM_FALLBACKS: list[dict[str, list[str]]] | None = [{LLM_MODEL: [FALLBACK_MODEL]}] if GOOGLE_API_KEY else None
