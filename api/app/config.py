@@ -91,6 +91,17 @@ else:
     logger.info("Email notifications disabled (no BREVO_API_KEY)")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Redis (optional — enables distributed rate limiting + caching)
+# ─────────────────────────────────────────────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL")
+REDIS_ENABLED = bool(REDIS_URL)
+
+if REDIS_ENABLED:
+    logger.info("Redis caching enabled (Upstash)")
+else:
+    logger.info("Redis not configured — caching disabled, rate limiter uses in-memory backend")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler
 # ─────────────────────────────────────────────────────────────────────────────
 DOCUMENTS_DIR = "documents"
