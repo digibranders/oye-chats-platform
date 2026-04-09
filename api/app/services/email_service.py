@@ -12,6 +12,16 @@ logger = logging.getLogger(__name__)
 
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
+# ── Brevo Template IDs (created 2026-04-09) ──────────────────────────────────
+# Manage templates at: https://app.brevo.com/templates/listing
+TEMPLATE_PASSWORD_RESET = 57
+TEMPLATE_QUALIFIED_LEAD = 60
+TEMPLATE_HANDOFF_REQUEST = 61
+TEMPLATE_MISSED_CALLBACK = 62
+TEMPLATE_OFFLINE_MESSAGE = 58
+TEMPLATE_CHAT_TRANSCRIPT = 63
+TEMPLATE_VISITOR_CONFIRMATION = 59
+
 
 def _send_brevo_email(
     to_email: str,
@@ -21,12 +31,12 @@ def _send_brevo_email(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ) -> bool:
-    """Send an email via Brevo transactional API. Returns True on success.
+    """Send an email via Brevo transactional API using raw HTML. Returns True on success.
 
     Args:
         to_email: Recipient email address.
         subject: Email subject line.
-        html_body: Full HTML content.
+        html_body: Full HTML content (used for complex dynamic emails).
         reply_to: Optional Reply-To address (for branded "via OyeChats" emails).
         sender_name: Optional override for the sender display name.
     """
@@ -68,6 +78,60 @@ def _send_brevo_email(
         return False
 
 
+def _send_brevo_template(
+    to_email: str,
+    template_id: int,
+    params: dict,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+) -> bool:
+    """Send an email via a Brevo saved template with dynamic params. Returns True on success.
+
+    Args:
+        to_email: Recipient email address.
+        template_id: Brevo template ID (see TEMPLATE_* constants above).
+        params: Dict of template variable values (mapped to {{params.*}} in the template).
+        reply_to: Optional Reply-To address.
+        sender_name: Optional override for the sender display name.
+    """
+    if not EMAIL_ENABLED:
+        logger.debug("Email not sent (Brevo not configured)")
+        return False
+
+    # When using templateId, Brevo uses the template's own verified sender.
+    # We omit the sender override to avoid failures from unverified addresses.
+    # reply_to is still forwarded so visitors can reply to the brand email.
+    email_payload: dict = {
+        "to": [{"email": to_email}],
+        "templateId": template_id,
+        "params": params,
+    }
+    if reply_to:
+        email_payload["replyTo"] = {"email": reply_to}
+
+    payload = json.dumps(email_payload).encode("utf-8")
+
+    req = Request(
+        BREVO_API_URL,
+        data=payload,
+        headers={
+            "accept": "application/json",
+            "content-type": "application/json",
+            "api-key": BREVO_API_KEY,
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(req, timeout=10) as resp:
+            logger.info(f"Template email sent to {to_email} | template_id={template_id} | status={resp.status}")
+            return True
+    except Exception as e:
+        logger.error(f"Brevo template email failed to {to_email} (template={template_id}): {e}")
+        return False
+
+
 def send_email_async(
     to_email: str,
     subject: str,
@@ -76,7 +140,7 @@ def send_email_async(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ):
-    """Fire-and-forget email sending. Non-blocking."""
+    """Fire-and-forget raw HTML email. Non-blocking."""
 
     def _send():
         _send_brevo_email(to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name)
@@ -90,6 +154,41 @@ def send_email_async(
         threading.Thread(target=_send, daemon=True).start()
 
 
+def send_template_async(
+    to_email: str,
+    template_id: int,
+    params: dict,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+):
+    """Fire-and-forget Brevo template email. Non-blocking."""
+
+    def _send():
+        _send_brevo_template(to_email, template_id, params, reply_to=reply_to, sender_name=sender_name)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, _send)
+    except RuntimeError:
+        import threading
+
+        threading.Thread(target=_send, daemon=True).start()
+
+
+def send_template_to_multiple(
+    recipients: list[str],
+    template_id: int,
+    params: dict,
+    *,
+    reply_to: str | None = None,
+    sender_name: str | None = None,
+):
+    """Send a Brevo template email to multiple recipients. Non-blocking."""
+    for email_addr in recipients:
+        send_template_async(email_addr, template_id, params, reply_to=reply_to, sender_name=sender_name)
+
+
 def send_email_to_multiple(
     recipients: list[str],
     subject: str,
@@ -98,7 +197,7 @@ def send_email_to_multiple(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ):
-    """Send the same email to multiple recipients (one API call per recipient). Non-blocking."""
+    """Send the same raw HTML email to multiple recipients (one API call per recipient). Non-blocking."""
     for email_addr in recipients:
         send_email_async(email_addr, subject, html_body, reply_to=reply_to, sender_name=sender_name)
 
@@ -136,33 +235,309 @@ def _branded_sender_name(bot_name: str) -> str:
     return f"{bot_name} via OyeChats"
 
 
-# ── Email Templates ──
-
-
-def _base_template(title: str, content: str) -> str:
-    return f"""
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
-                sans-serif; max-width: 560px; margin: 0 auto; padding: 32px 24px;">
-        <div style="text-align: center; margin-bottom: 24px;">
-            <h1 style="font-size: 20px; font-weight: 700; color: #1a1a2e;
-                       margin: 0;">OyeChats</h1>
-        </div>
-        <div style="background: #ffffff; border: 1px solid #e5e7eb;
-                    border-radius: 12px; padding: 24px;">
-            <h2 style="font-size: 18px; font-weight: 600; color: #1a1a2e;
-                       margin: 0 0 16px 0;">{title}</h2>
-            {content}
-        </div>
-        <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 24px;">
-            Sent by OyeChats &middot; <a href="https://app.oyechats.com" style="color: #6366f1;">View Dashboard</a>
-        </p>
-    </div>
-    """
+# ── Template Helpers ──
 
 
 def _esc(value: str | None) -> str:
     """HTML-escape a user-supplied value for safe inclusion in email templates."""
-    return html.escape(str(value)) if value else "—"
+    return html.escape(str(value)) if value else "&#8212;"
+
+
+def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
+    """Wrap email body in a full HTML document with header, footer, and email meta tags.
+
+    Args:
+        preheader: Hidden preview text shown in email client inbox listings.
+        body_inner: The main card HTML to render inside the email body.
+        visitor: When True, renders a visitor-safe footer (no "View Dashboard" link).
+                 Set to True for emails sent to website visitors (transcript, confirmation).
+    """
+    preheader_html = (
+        f'<span style="display:none;font-size:1px;color:#eeeef4;max-height:0;'
+        f'overflow:hidden;mso-hide:all;">{html.escape(preheader)}&zwnj;</span>'
+        if preheader
+        else ""
+    )
+
+    if visitor:
+        footer_links = (
+            "<p style=\"margin:0 0 6px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+            'Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:#9ca3af;">'
+            "Powered by OyeChats &middot; AI Customer Support</p>"
+        )
+    else:
+        footer_links = (
+            "<p style=\"margin:0 0 6px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+            'Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:#9ca3af;">'
+            "Sent by OyeChats &nbsp;&middot;&nbsp; "
+            '<a href="https://app.oyechats.com" style="color:#9ca3af;text-decoration:underline;">View Dashboard</a>'
+            "</p>"
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="format-detection" content="telephone=no,date=no,address=no,email=no">
+<title>OyeChats</title>
+<!--[if mso]>
+<xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch><o:AllowPNG/></o:OfficeDocumentSettings></xml>
+<![endif]-->
+</head>
+<body style="margin:0;padding:0;background-color:#eeeef4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+{preheader_html}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#eeeef4;">
+  <tr>
+    <td align="center" style="padding:40px 16px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#0f0f1a;background-image:linear-gradient(135deg,#0a0a14 0%,#1a1040 100%);border-radius:20px 20px 0 0;padding:32px 40px;text-align:center;">
+            <a href="https://oyechats.com" style="text-decoration:none;display:inline-block;">
+              <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">Oye<span style="color:#a5b4fc;">Chats</span></span>
+            </a>
+            <p style="margin:6px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:10px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#6b6b8d;">AI-Powered Customer Conversations</p>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="background-color:#ffffff;padding:0 0 40px 0;">
+            {body_inner}
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background-color:#f8f8fc;border-radius:0 0 20px 20px;padding:28px 40px;text-align:center;border-top:1px solid #e8e8f0;">
+            <a href="https://oyechats.com" style="text-decoration:none;display:inline-block;margin-bottom:10px;">
+              <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:800;color:#6366f1;letter-spacing:-0.3px;">Oye<span style="color:#4f46e5;">Chats</span></span>
+            </a>
+            {footer_links}
+            <p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;color:#d1d5db;">
+              &copy; 2026 OyeChats. All rights reserved.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>"""
+
+
+def _base_template(
+    title: str,
+    content: str,
+    *,
+    preheader: str = "",
+    accent_color: str = "#6366f1",
+    accent_bg: str = "#eef2ff",
+    accent_border: str = "#a5b4fc",
+    accent_icon: str = "",
+    category: str = "",
+    overline: str = "",
+    visitor: bool = False,
+) -> str:
+    """Build a premium email card with accent bar, icon badge, title, and content.
+
+    Args:
+        title: Card heading text (no emoji — use accent_icon for the badge).
+        content: Inner HTML content block.
+        preheader: Hidden inbox preview text.
+        accent_color: Top accent bar and interactive element color.
+        accent_bg: Icon badge background color.
+        accent_border: Icon badge border color.
+        accent_icon: Emoji for the icon badge (skipped if empty).
+        category: Small uppercase label shown below the icon badge.
+        overline: Small uppercase label shown above the h1 heading.
+        visitor: When True, renders a visitor-safe footer (no "View Dashboard" link).
+    """
+    # Accent stripe + halo (halo hidden from Outlook via MSO conditional)
+    accent_bar_html = (
+        f"\n    <!-- Accent stripe -->"
+        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+        f'\n      <tr><td style="height:6px;background-color:{accent_color};font-size:0;line-height:0;">&nbsp;</td></tr>'
+        f"\n    </table>"
+        f"\n    <!--[if !mso]><!-->"
+        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+        f'\n      <tr><td style="height:24px;background-color:#ffffff;'
+        f"background-image:linear-gradient(to bottom,rgba({_hex_to_rgba(accent_color)},0.10),"
+        f'rgba({_hex_to_rgba(accent_color)},0));font-size:0;line-height:0;">&nbsp;</td></tr>'
+        f"\n    </table>"
+        f"\n    <!--<![endif]-->"
+    )
+
+    # Icon badge (72px table cell — renders as square in Outlook, circle elsewhere)
+    icon_html = ""
+    if accent_icon:
+        category_label = (
+            f'\n            <tr><td align="center" style="padding:10px 0 0 0;">'
+            f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+            f'font-size:10px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:{accent_color};">'
+            f"{category}</span></td></tr>"
+            if category
+            else ""
+        )
+        icon_html = (
+            f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+            f'\n      <tr><td align="center" style="padding:4px 40px 0 40px;">'
+            f'\n        <table role="presentation" cellpadding="0" cellspacing="0" border="0">'
+            f'\n          <tr><td width="72" height="72" align="center" valign="middle"'
+            f' style="width:72px;height:72px;border-radius:50%;background-color:{accent_bg};'
+            f"border:2px solid {accent_border};font-size:30px;text-align:center;vertical-align:middle;"
+            f"font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif;\">"
+            f"{accent_icon}</td></tr>"
+            f"{category_label}"
+            f"\n        </table>"
+            f"\n      </td></tr>"
+            f"\n    </table>"
+        )
+
+    # Overline label above h1
+    overline_html = (
+        f'\n      <tr><td style="padding:20px 40px 0 40px;">'
+        f"<p style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        f'font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:{accent_color};">'
+        f"{overline}</p></td></tr>"
+        if overline
+        else ""
+    )
+
+    heading_top = "20px" if (accent_icon or overline) else "32px"
+    heading_padding = "8px 40px 0 40px" if overline else f"{heading_top} 40px 0 40px"
+
+    card_html = (
+        f"{accent_bar_html}"
+        f"\n    <!-- Card content -->"
+        f"{icon_html}"
+        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+        f"{overline_html}"
+        f'\n      <tr><td style="padding:{heading_padding};">'
+        f"<h1 style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        f'font-size:26px;font-weight:800;color:#0f0f1a;line-height:1.25;letter-spacing:-0.3px;">{title}</h1>'
+        f"</td></tr>"
+        f"\n    </table>"
+        f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+        f'\n      <tr><td style="padding:16px 40px 0 40px;">'
+        f"\n        {content}"
+        f"\n      </td></tr>"
+        f"\n    </table>"
+    )
+
+    return _html_doc(preheader, card_html, visitor=visitor)
+
+
+def _hex_to_rgba(hex_color: str) -> str:
+    """Convert a 6-digit hex color to an 'R,G,B' string for use in rgba() CSS values."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"{r},{g},{b}"
+
+
+def _info_row(label: str, value: str) -> str:
+    """Single key-value row for use inside _info_table."""
+    return (
+        f"<tr>"
+        f"<td style=\"padding:9px 16px 9px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        f"font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#6b7280;"
+        f'white-space:nowrap;vertical-align:top;width:110px;">{label}</td>'
+        f"<td style=\"padding:9px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        f'font-size:14px;font-weight:500;color:#0f0f1a;vertical-align:top;line-height:1.5;">{value}</td>'
+        f"</tr>"
+    )
+
+
+def _info_table(rows: list[str], *, bg: str, border_color: str) -> str:
+    """Grouped info card with colored background and border.
+
+    Args:
+        rows: List of HTML <tr> strings (from _info_row).
+        bg: Background color hex.
+        border_color: Border color hex.
+    """
+    rows_html = "".join(rows)
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'style="background-color:{bg};border:1px solid {border_color};border-radius:16px;'
+        f'margin-bottom:20px;">'
+        f'<tr><td style="padding:8px 20px 4px 20px;">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+        f"{rows_html}"
+        f"</table>"
+        f"</td></tr>"
+        f"</table>"
+    )
+
+
+def _cta_button(text: str, url: str, *, color: str = "#6366f1") -> str:
+    """Outlook-compatible full-width pill CTA button.
+
+    Args:
+        text: Button label (an arrow suffix → is appended automatically).
+        url: Destination URL.
+        color: Button background color.
+    """
+    label = f"{text} &#8594;"
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:28px;">'
+        f"<tr>"
+        f'<td align="center" style="border-radius:100px;background-color:{color};">'
+        f'<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" '
+        f'href="{url}" style="height:56px;v-text-anchor:middle;width:460px;" arcsize="50%" '
+        f'stroke="f" fillcolor="{color}"><w:anchorlock/><center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">'
+        f"{label}</center></v:roundrect><![endif]-->"
+        f"<!--[if !mso]><!-->"
+        f'<a href="{url}" style="display:block;background-color:{color};color:#ffffff;'
+        f"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        f"font-size:16px;font-weight:800;text-decoration:none;text-align:center;"
+        f'padding:17px 32px;border-radius:100px;letter-spacing:0.02em;line-height:1;">{label}</a>'
+        f"<!--<![endif]-->"
+        f"</td>"
+        f"</tr>"
+        f"</table>"
+    )
+
+
+def _alert_box(text: str, *, bg: str, border_color: str, text_color: str) -> str:
+    """Inline alert/notice box with left accent border."""
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'style="margin-bottom:20px;">'
+        f"<tr>"
+        f'<td style="background-color:{bg};border:1px solid {border_color};'
+        f'border-left:4px solid {border_color};border-radius:0 12px 12px 0;padding:16px 18px;">'
+        f"<p style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        f'font-size:14px;color:{text_color};line-height:1.6;">{text}</p>'
+        f"</td>"
+        f"</tr>"
+        f"</table>"
+    )
+
+
+def _body_text(text: str, *, color: str = "#4b5563") -> str:
+    """Standard body paragraph."""
+    return (
+        f"<p style=\"margin:0 0 16px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+        f'Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:{color};line-height:1.7;">{text}</p>'
+    )
+
+
+def _section_label(text: str) -> str:
+    """Small uppercase section label above an info block."""
+    return (
+        f"<p style=\"margin:0 0 8px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+        f"Roboto,Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;"
+        f'letter-spacing:0.12em;color:#6b7280;">{text}</p>'
+    )
+
+
+# ── Email Templates ──
 
 
 def send_qualified_lead_email(
@@ -174,10 +549,10 @@ def send_qualified_lead_email(
     *,
     reply_to: str | None = None,
 ):
-    """Send email when a lead reaches a BANT qualification tier.
+    """Send email when a lead reaches a BANT qualification tier (Brevo template #60).
 
     Args:
-        notification_email: Recipient address (or comma-separated list).
+        notification_email: Recipient address.
         bot_name: Name of the bot that captured the lead.
         bant: Dict with BANT fields (bant_need, bant_budget, bant_authority, bant_timeline).
         contact: Optional visitor contact info (name, email, phone, company).
@@ -186,71 +561,36 @@ def send_qualified_lead_email(
     """
     tier_upper = tier.upper()
     tier_labels: dict[str, str] = {
-        "MQL": "Lead reached MQL",
-        "SQL": "New SQL Lead",
+        "MQL": "Marketing Qualified Lead",
+        "SQL": "Sales Qualified Lead",
     }
-    tier_label = tier_labels.get(tier_upper, f"New {tier_upper} Lead")
+    tier_label = tier_labels.get(tier_upper, f"{tier_upper} Lead")
+    badge_bg = "#dcfce7" if tier_upper == "SQL" else "#fef9c3"
+    badge_color = "#166534" if tier_upper == "SQL" else "#854d0e"
 
-    contact_section = ""
-    if contact:
-        parts = []
-        if contact.get("name"):
-            parts.append(f"<li><strong>Name:</strong> {_esc(contact['name'])}</li>")
-        if contact.get("email"):
-            parts.append(f"<li><strong>Email:</strong> {_esc(contact['email'])}</li>")
-        if contact.get("phone"):
-            parts.append(f"<li><strong>Phone:</strong> {_esc(contact['phone'])}</li>")
-        if contact.get("company"):
-            parts.append(f"<li><strong>Company:</strong> {_esc(contact['company'])}</li>")
-        if parts:
-            parts_html = "".join(parts)
-            contact_section = (
-                '<h3 style="font-size: 14px; font-weight: 600; color: #374151; '
-                'margin: 16px 0 8px 0;">Contact Info</h3>'
-                '<ul style="margin: 0; padding-left: 20px; color: #4b5563;">'
-                f"{parts_html}</ul>"
-            )
+    params: dict = {
+        "bot_name": _esc(bot_name),
+        "tier": tier_upper,
+        "tier_label": tier_label,
+        "badge_bg": badge_bg,
+        "badge_color": badge_color,
+        # BANT — use em-dash for missing fields so template rows always render
+        "bant_need": _esc(bant.get("bant_need")) if bant.get("bant_need") else "&#8212;",
+        "bant_budget": _esc(bant.get("bant_budget")) if bant.get("bant_budget") else "&#8212;",
+        "bant_authority": _esc(bant.get("bant_authority")) if bant.get("bant_authority") else "&#8212;",
+        "bant_timeline": _esc(bant.get("bant_timeline")) if bant.get("bant_timeline") else "&#8212;",
+        # Contact — empty string if not provided
+        "contact_name": _esc(contact.get("name")) if contact and contact.get("name") else "&#8212;",
+        "contact_email": _esc(contact.get("email")) if contact and contact.get("email") else "&#8212;",
+        "contact_phone": _esc(contact.get("phone")) if contact and contact.get("phone") else "&#8212;",
+        "contact_company": _esc(contact.get("company")) if contact and contact.get("company") else "&#8212;",
+    }
 
-    # Build BANT summary rows, only including fields that have a value.
-    bant_rows: list[str] = []
-    for key, label in [
-        ("bant_need", "Need"),
-        ("bant_budget", "Budget"),
-        ("bant_authority", "Authority"),
-        ("bant_timeline", "Timeline"),
-    ]:
-        value = bant.get(key)
-        if value:
-            bant_rows.append(f"<li><strong>{label}:</strong> {_esc(value)}</li>")
-
-    bant_section = ""
-    if bant_rows:
-        rows_html = "".join(bant_rows)
-        bant_section = (
-            '<div style="background: #f0fdf4; border-radius: 8px; padding: 16px; margin-bottom: 16px;">'
-            '<h3 style="font-size: 14px; font-weight: 600; color: #166534; margin: 0 0 12px 0;">BANT Summary</h3>'
-            f'<ul style="margin: 0; padding-left: 20px; color: #15803d; line-height: 1.8;">{rows_html}</ul>'
-            "</div>"
-        )
-
-    content = f"""
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        A visitor on <strong>{bot_name}</strong> has reached <strong>{tier_upper}</strong> qualification.
-    </p>
-    {bant_section}
-    {contact_section}
-    <a href="https://app.oyechats.com/leads"
-        style="display: inline-block; background: #6366f1; color: #ffffff;
-               padding: 10px 24px; border-radius: 8px; text-decoration: none;
-               font-weight: 600; font-size: 14px; margin-top: 8px;">
-        View in Dashboard
-    </a>
-    """
     sender = _branded_sender_name(bot_name)
-    send_email_async(
+    send_template_async(
         notification_email,
-        f"[OyeChats] {tier_label} — {bot_name}",
-        _base_template(f"{tier_label} \U0001f3af", content),
+        TEMPLATE_QUALIFIED_LEAD,
+        params,
         reply_to=reply_to,
         sender_name=sender,
     )
@@ -264,43 +604,19 @@ def send_handoff_request_email(
     *,
     reply_to: str | None = None,
 ):
-    """Send email when a visitor requests live agent support."""
-    contact_info = ""
-    if contact:
-        parts = []
-        if contact.get("name"):
-            parts.append(f"<strong>{_esc(contact['name'])}</strong>")
-        if contact.get("email"):
-            parts.append(_esc(contact["email"]))
-        if parts:
-            contact_info = f'<p style="color: #4b5563;">From: {" — ".join(parts)}</p>'
-
-    content = f"""
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        A visitor on <strong>{bot_name}</strong> has requested to speak with a team member.
-    </p>
-    {contact_info}
-    {
-        (
-            f'<div style="background: #fef3c7; border-radius: 8px; padding: 16px; '
-            f'margin: 16px 0;"><p style="margin: 0; color: #92400e;"><strong>Reason:'
-            f"</strong> {_esc(reason)}</p></div>"
-        )
-        if reason
-        else ""
+    """Send email when a visitor requests live agent support (Brevo template #61)."""
+    params: dict = {
+        "bot_name": _esc(bot_name),
+        "contact_name": _esc(contact.get("name")) if contact and contact.get("name") else "Unknown",
+        "contact_email": _esc(contact.get("email")) if contact and contact.get("email") else "&#8212;",
+        "reason": _esc(reason) if reason else "No reason provided",
     }
-    <a href="https://app.oyechats.com/live-chat"
-        style="display: inline-block; background: #6366f1; color: #ffffff;
-               padding: 10px 24px; border-radius: 8px; text-decoration: none;
-               font-weight: 600; font-size: 14px;">
-        Open Live Chat
-    </a>
-    """
+
     sender = _branded_sender_name(bot_name)
-    send_email_async(
+    send_template_async(
         notification_email,
-        f"[OyeChats] Live Chat Request — {bot_name}",
-        _base_template("Live Chat Request 💬", content),
+        TEMPLATE_HANDOFF_REQUEST,
+        params,
         reply_to=reply_to,
         sender_name=sender,
     )
@@ -309,31 +625,19 @@ def send_handoff_request_email(
 def send_unavailable_callback_email(
     notification_email: str, bot_name: str, contact: dict, *, reply_to: str | None = None
 ):
-    """Send email when no agent was available and visitor left contact details."""
-    content = f"""
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        A visitor on <strong>{bot_name}</strong> requested live support but no
-        agent was available. They left their contact details for a callback.
-    </p>
-    <div style="background: #fef2f2; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-        <ul style="margin: 0; padding-left: 20px; color: #991b1b; line-height: 1.8;">
-            <li><strong>Name:</strong> {_esc(contact.get("name"))}</li>
-            <li><strong>Email:</strong> {_esc(contact.get("email"))}</li>
-            {(f"<li><strong>Phone:</strong> {_esc(contact.get('phone'))}</li>") if contact.get("phone") else ""}
-        </ul>
-    </div>
-    <a href="https://app.oyechats.com/leads"
-        style="display: inline-block; background: #6366f1; color: #ffffff;
-               padding: 10px 24px; border-radius: 8px; text-decoration: none;
-               font-weight: 600; font-size: 14px;">
-        Follow Up
-    </a>
-    """
+    """Send email when no agent was available and visitor left contact details (Brevo template #62)."""
+    params: dict = {
+        "bot_name": _esc(bot_name),
+        "contact_name": _esc(contact.get("name")),
+        "contact_email": _esc(contact.get("email")),
+        "contact_phone": _esc(contact.get("phone")) if contact.get("phone") else "&#8212;",
+    }
+
     sender = _branded_sender_name(bot_name)
-    send_email_async(
+    send_template_async(
         notification_email,
-        f"[OyeChats] Missed Chat — Callback Requested — {bot_name}",
-        _base_template("Missed Chat — Callback Requested 📞", content),
+        TEMPLATE_MISSED_CALLBACK,
+        params,
         reply_to=reply_to,
         sender_name=sender,
     )
@@ -348,65 +652,34 @@ def send_offline_message_email(
     *,
     reply_to: str | None = None,
 ):
-    """Send email when a visitor leaves an offline message."""
-    content = f"""
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        A visitor on <strong>{bot_name}</strong> left a message while no agent was available.
-    </p>
-    <div style="background: #f0f9ff; border-radius: 8px; padding: 16px;
-               margin-bottom: 16px;">
-        <p style="color: #4b5563; margin: 0 0 8px 0;"><strong>From:</strong>
-           {_esc(visitor_name)} ({_esc(visitor_email)})</p>
-        <p style="color: #1e3a5f; margin: 0; line-height: 1.6;
-           white-space: pre-wrap;">{_esc(message_preview)}</p>
-    </div>
-    <a href="https://app.oyechats.com/messages"
-        style="display: inline-block; background: #6366f1; color: #ffffff;
-               padding: 10px 24px; border-radius: 8px; text-decoration: none;
-               font-weight: 600; font-size: 14px;">
-        View Messages
-    </a>
-    """
+    """Send email when a visitor leaves an offline message (Brevo template #58)."""
+    params: dict = {
+        "bot_name": _esc(bot_name),
+        "visitor_name": _esc(visitor_name),
+        "visitor_email": _esc(visitor_email),
+        "message_preview": _esc(message_preview),
+    }
+
     sender = _branded_sender_name(bot_name)
-    send_email_async(
+    send_template_async(
         notification_email,
-        f"[OyeChats] New Offline Message — {bot_name}",
-        _base_template("New Offline Message 📩", content),
+        TEMPLATE_OFFLINE_MESSAGE,
+        params,
         reply_to=reply_to,
         sender_name=sender,
     )
 
 
 def send_password_reset_email(to_email: str, otp: str):
-    """Send a password reset OTP email."""
-    content = f"""
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        You recently requested to reset your password for your OyeChats account.
-    </p>
-    <div style="background: #f3f4f6; border: 1px dashed #d1d5db;
-               border-radius: 8px; padding: 20px; text-align: center;
-               margin-bottom: 24px; margin-top: 16px;">
-        <p style="color: #6b7280; font-size: 13px; text-transform: uppercase;
-           letter-spacing: 0.05em; margin: 0 0 8px 0;">Your Reset Code</p>
-        <div style="font-family: monospace; font-size: 32px; font-weight: 700;
-                    color: #111827; letter-spacing: 4px;">
-            {otp}
-        </div>
-    </div>
-    <p style="color: #4b5563; font-size: 14px; margin: 0;">
-        This code is valid for <strong>15 minutes</strong>. If you did not
-        request a password reset, please ignore this email or contact support
-        if you have concerns.
-    </p>
-    """
-    send_email_async(
+    """Send a password reset OTP email (Brevo template #57)."""
+    send_template_async(
         to_email,
-        "Reset Your Password — OyeChats",
-        _base_template("Password Reset Request 🔐", content),
+        TEMPLATE_PASSWORD_RESET,
+        {"otp": _esc(otp)},
     )
 
 
-# ── New Email Templates (Email Integration) ──
+# ── Visitor-Facing Email Templates ──
 
 
 def send_transcript_email(
@@ -431,59 +704,126 @@ def send_transcript_email(
         "system": "System",
     }
 
-    message_blocks: list[str] = []
+    message_rows: list[str] = []
     for msg in messages:
         role = msg.get("role", "bot")
         text = _esc(msg.get("content") or msg.get("text", ""))
         label = role_labels.get(role, _esc(bot_name))
         timestamp = msg.get("created_at", "")
 
-        is_user = role == "user"
-        bg_color = "#dbeafe" if is_user else "#f3f4f6"
-        align = "right" if is_user else "left"
-        label_color = "#1d4ed8" if is_user else "#4b5563"
-
-        time_html = ""
+        # Format timestamp to HH:MM
+        time_str = ""
         if timestamp:
-            # Show just the time portion if it's a full ISO timestamp
-            display_time = timestamp
-            if "T" in str(timestamp):
-                display_time = str(timestamp).split("T")[1][:5]
-            time_html = f'<span style="font-size: 11px; color: #9ca3af; margin-left: 8px;">{_esc(display_time)}</span>'
+            ts = str(timestamp)
+            time_str = ts.split("T")[1][:5] if "T" in ts else ts[:5]
 
-        block = f"""
-        <div style="text-align: {align}; margin-bottom: 12px;">
-            <span style="font-size: 12px; font-weight: 600; color: {label_color};">{label}</span>
-            {time_html}
-            <div style="display: inline-block; max-width: 85%; background: {bg_color};
-                        border-radius: 12px; padding: 10px 14px; margin-top: 4px;
-                        text-align: left; line-height: 1.5; color: #1f2937;
-                        white-space: pre-wrap; word-break: break-word;">
-                {text}
-            </div>
-        </div>
-        """
-        message_blocks.append(block)
+        time_html = f'&nbsp;<span style="font-size:11px;color:#9ca3af;">{_esc(time_str)}</span>' if time_str else ""
 
-    messages_html = "".join(message_blocks)
+        # System messages: centered italic with dashed dividers
+        if role == "system":
+            message_rows.append(
+                f'<tr><td style="padding:4px 0 10px 0;">'
+                f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+                f'<tr><td style="padding:0 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+                f'<tr><td style="border-top:1px dashed #cbd5e1;font-size:0;line-height:0;">&nbsp;</td></tr>'
+                f"</table></td></tr>"
+                f'<tr><td style="padding:6px 0;text-align:center;">'
+                f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+                f'font-size:12px;color:#94a3b8;font-style:italic;">{text}</span>'
+                f"</td></tr>"
+                f'<tr><td style="padding:0 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+                f'<tr><td style="border-top:1px dashed #cbd5e1;font-size:0;line-height:0;">&nbsp;</td></tr>'
+                f"</table></td></tr>"
+                f"</table></td></tr>"
+            )
+            continue
 
-    content = f"""
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        Here is a transcript of your conversation with <strong>{_esc(bot_name)}</strong>.
-    </p>
-    <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;
-                padding: 16px; margin-bottom: 16px; max-height: 600px; overflow-y: auto;">
-        {messages_html}
-    </div>
-    <p style="text-align: center; font-size: 12px; color: #9ca3af; margin: 0;">
-        This transcript was sent from {_esc(bot_name)} via OyeChats
-    </p>
-    """
+        is_user = role == "user"
+        # Violet tint for bot bubbles, green for operator, blue for user
+        bubble_bg = "#dbeafe" if is_user else ("#d1fae5" if role == "operator" else "#ede9fe")
+        bubble_color = "#1e40af" if is_user else ("#065f46" if role == "operator" else "#4c1d95")
+        label_color = "#1d4ed8" if is_user else ("#059669" if role == "operator" else "#6d28d9")
+        # Table-based bubble (email-safe, no flexbox)
+        if is_user:
+            bubble_row = (
+                f'<tr><td style="padding:0 0 12px 0;">'
+                f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+                f"<tr>"
+                f'<td style="text-align:right;">'
+                f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+                f'font-size:11px;font-weight:700;color:{label_color};">{label}</span>'
+                f"&nbsp;<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+                f'font-size:10px;color:#94a3b8;">{time_html}</span><br>'
+                f'<span style="display:inline-block;background-color:{bubble_bg};border-radius:16px 16px 4px 16px;'
+                f"padding:10px 14px;margin-top:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+                f"Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:{bubble_color};line-height:1.6;"
+                f'white-space:pre-wrap;word-break:break-word;max-width:80%;text-align:left;">{text}</span>'
+                f"</td>"
+                f"</tr>"
+                f"</table>"
+                f"</td></tr>"
+            )
+        else:
+            bubble_row = (
+                f'<tr><td style="padding:0 0 12px 0;">'
+                f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+                f'font-size:11px;font-weight:700;color:{label_color};">{label}</span>'
+                f"&nbsp;<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+                f'font-size:10px;color:#94a3b8;">{time_html}</span><br>'
+                f'<span style="display:inline-block;background-color:{bubble_bg};border-radius:16px 16px 16px 4px;'
+                f"padding:10px 14px;margin-top:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+                f"Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:{bubble_color};line-height:1.6;"
+                f'white-space:pre-wrap;word-break:break-word;max-width:80%;">{text}</span>'
+                f"</td></tr>"
+            )
+
+        message_rows.append(bubble_row)
+
+    messages_html = "".join(message_rows)
+
+    transcript_box = (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'style="background-color:#f8f9fc;border:1px solid #e8eaf0;border-radius:16px;margin-bottom:20px;">'
+        f'<tr><td style="padding:24px 20px;">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+        f"{messages_html}"
+        f"</table>"
+        f"</td></tr></table>"
+    )
+
+    footer_note = (
+        f"<p style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+        f'Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:#94a3b8;text-align:center;">'
+        f'This transcript was sent from <strong style="color:#6b7280;">{_esc(bot_name)}</strong> via OyeChats</p>'
+    )
+
+    content = (
+        _body_text(
+            f"Here is a full transcript of your conversation with "
+            f'<strong style="color:#0f0f1a;">{_esc(bot_name)}</strong>.'
+        )
+        + transcript_box
+        + footer_note
+    )
+
     sender = _branded_sender_name(bot_name)
+    # Transcript uses raw HTML (Brevo template #63 is visual reference only —
+    # message bubbles are too dynamic for simple text params).
     send_email_async(
         to_email,
         f"Chat Transcript — {bot_name}",
-        _base_template("Chat Transcript 💬", content),
+        _base_template(
+            "Your Chat Transcript",
+            content,
+            preheader=f"Your conversation with {bot_name} — full transcript",
+            accent_color="#8b5cf6",
+            accent_bg="#f5f3ff",
+            accent_border="#c4b5fd",
+            accent_icon="\U0001f4ac",
+            category="Conversation Summary",
+            overline="Full Transcript",
+            visitor=True,
+        ),
         reply_to=reply_to,
         sender_name=sender,
     )
@@ -496,7 +836,7 @@ def send_visitor_confirmation_email(
     *,
     reply_to: str | None = None,
 ):
-    """Send a confirmation email to the visitor after they submit an offline message.
+    """Send a confirmation email to the visitor after they submit an offline message (Brevo template #59).
 
     Args:
         to_email: Visitor's email address.
@@ -504,29 +844,17 @@ def send_visitor_confirmation_email(
         visitor_name: Visitor's name for personalization.
         reply_to: Optional Reply-To address (brand email) so visitor can reply directly.
     """
-    content = f"""
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        Hi <strong>{_esc(visitor_name)}</strong>,
-    </p>
-    <p style="color: #4b5563; line-height: 1.6; margin: 0 0 16px 0;">
-        Thank you for reaching out to <strong>{_esc(bot_name)}</strong>. We've received
-        your message and our team will get back to you as soon as possible.
-    </p>
-    <div style="background: #f0fdf4; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-        <p style="color: #166534; margin: 0; font-size: 14px;">
-            You don't need to do anything else — we'll reply to this email address
-            (<strong>{_esc(to_email)}</strong>) when we have an update for you.
-        </p>
-    </div>
-    <p style="color: #9ca3af; font-size: 13px; margin: 0;">
-        If you have additional questions in the meantime, feel free to reply to this email.
-    </p>
-    """
+    params: dict = {
+        "bot_name": _esc(bot_name),
+        "visitor_name": _esc(visitor_name),
+        "visitor_email": _esc(to_email),
+    }
+
     sender = _branded_sender_name(bot_name)
-    send_email_async(
+    send_template_async(
         to_email,
-        f"We received your message — {bot_name}",
-        _base_template("Message Received ✓", content),
+        TEMPLATE_VISITOR_CONFIRMATION,
+        params,
         reply_to=reply_to,
         sender_name=sender,
     )

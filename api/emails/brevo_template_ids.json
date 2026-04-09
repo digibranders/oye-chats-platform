@@ -1,0 +1,9 @@
+{
+  "oyechats_password_reset": 57,
+  "oyechats_offline_message": 58,
+  "oyechats_visitor_confirmation": 59,
+  "oyechats_qualified_lead": 60,
+  "oyechats_handoff_request": 61,
+  "oyechats_missed_callback": 62,
+  "oyechats_chat_transcript": 63
+}
