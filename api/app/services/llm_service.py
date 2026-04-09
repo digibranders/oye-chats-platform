@@ -3,18 +3,15 @@ import time
 
 import litellm
 
-from app.config import FALLBACK_MODEL, GOOGLE_API_KEY, LLM_FALLBACKS, LLM_MODEL, OPENAI_API_KEY
+from app.config import FALLBACK_MODEL, FALLBACK_MODEL_KEY_SET, LLM_FALLBACKS, LLM_MODEL, PRIMARY_MODEL_KEY_SET
 
 logger = logging.getLogger(__name__)
-
-if not OPENAI_API_KEY:
-    logger.error("CRITICAL: OPENAI_API_KEY is not set! Chat responses will fail. Check your .env file.")
 
 
 def generate_response(prompt: str, *, max_tokens: int | None = None, metadata: dict | None = None) -> str:
     """Generate a non-streaming response via LiteLLM."""
-    if not OPENAI_API_KEY:
-        logger.error("Cannot generate response: OPENAI_API_KEY is not set.")
+    if not PRIMARY_MODEL_KEY_SET:
+        logger.error(f"Cannot generate response: API key for primary model '{LLM_MODEL}' is not set.")
         return "Configuration error: AI service is not configured. Please contact the administrator."
     try:
         logger.info(f"Generating LLM response | model={LLM_MODEL} | prompt_length={len(prompt)}")
@@ -45,7 +42,7 @@ def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> 
     Returns a short tone description (e.g., "Professional and friendly, uses simple language")
     or None if extraction fails.
     """
-    if not OPENAI_API_KEY or not content_sample.strip():
+    if not PRIMARY_MODEL_KEY_SET or not content_sample.strip():
         return None
     try:
         prompt = f"""Analyze this website content and describe the brand's communication tone in 1-2 sentences.
@@ -85,7 +82,7 @@ def extract_company_context(content_sample: str, *, metadata: dict | None = None
     Returns ``{"name": "Acme Corp", "description": "Acme Corp is a ..."}``
     or *None* if extraction fails.
     """
-    if not OPENAI_API_KEY or not content_sample.strip():
+    if not PRIMARY_MODEL_KEY_SET or not content_sample.strip():
         return None
     try:
         prompt = f"""Analyze this website content and extract two things:
@@ -178,15 +175,15 @@ def generate_response_stream(prompt: str, *, max_tokens: int | None = None, meta
     """Generate a streaming response via LiteLLM. Yields text chunks.
 
     Fallback chain:
-    1. Primary model (``LLM_MODEL`` — OpenAI gpt-5.4-mini)
-    2. Fallback model (``FALLBACK_MODEL`` — Gemini 2.5 Flash) if primary raises
+    1. Primary model (``LLM_MODEL`` — default: OpenAI gpt-5.4-mini)
+    2. Fallback model (``FALLBACK_MODEL`` — default: Gemini 2.5 Flash) if primary raises
     3. Generic error message if both fail
 
     Enforces a per-chunk wall-clock timeout of ``_STREAM_CHUNK_TIMEOUT_S`` so
     a stalled upstream connection never hangs the client forever.
     """
-    if not OPENAI_API_KEY:
-        logger.error("Cannot stream response: OPENAI_API_KEY is not set.")
+    if not PRIMARY_MODEL_KEY_SET:
+        logger.error(f"Cannot stream response: API key for primary model '{LLM_MODEL}' is not set.")
         yield "Configuration error: AI service is not configured. Please contact the administrator."
         return
 
@@ -205,8 +202,8 @@ def generate_response_stream(prompt: str, *, max_tokens: int | None = None, meta
         )
 
     # Fallback to secondary model
-    if not GOOGLE_API_KEY:
-        logger.error("Fallback model unavailable: GOOGLE_API_KEY is not set.")
+    if not FALLBACK_MODEL_KEY_SET:
+        logger.error(f"Fallback model unavailable: API key for '{FALLBACK_MODEL}' is not set.")
         yield " [I encountered an error. Please try again.]"
         return
 

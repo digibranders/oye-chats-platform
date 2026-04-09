@@ -15,35 +15,51 @@ if not DB_URL:
     logger.error("DB_URL is not set! Database connections will fail.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LLM — models are hardcoded, only API keys come from .env
+# LLM — primary and fallback models are env-configurable (LiteLLM format)
 # ─────────────────────────────────────────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Primary and fallback models (LiteLLM format: provider/model-name)
-LLM_MODEL = "gemini/gemini-2.5-flash"
-FALLBACK_MODEL = "openai/gpt-5.4-mini"
+# Primary and fallback models — override via env vars if needed
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-5.4-mini")
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "gemini/gemini-2.5-flash")
 
-# LiteLLM fallback chain: primary → fallback (only if Google key is set)
-LLM_FALLBACKS: list[dict[str, list[str]]] | None = [{LLM_MODEL: [FALLBACK_MODEL]}] if GOOGLE_API_KEY else None
 
-if not OPENAI_API_KEY:
-    logger.error("OPENAI_API_KEY is not set! LLM calls will fail.")
+def _model_key_is_set(model: str) -> bool:
+    """Return True if the required API key for the given LiteLLM model is configured."""
+    if model.startswith(("gemini/", "google/")):
+        return bool(GOOGLE_API_KEY)
+    if model.startswith(("openai/", "gpt-")):
+        return bool(OPENAI_API_KEY)
+    # Unknown provider — assume available and let LiteLLM surface the error
+    return True
+
+
+PRIMARY_MODEL_KEY_SET = _model_key_is_set(LLM_MODEL)
+FALLBACK_MODEL_KEY_SET = _model_key_is_set(FALLBACK_MODEL)
+
+# LiteLLM fallback chain: primary → fallback (only if fallback key is available)
+LLM_FALLBACKS: list[dict[str, list[str]]] | None = (
+    [{LLM_MODEL: [FALLBACK_MODEL]}] if PRIMARY_MODEL_KEY_SET and FALLBACK_MODEL_KEY_SET else None
+)
+
+if not PRIMARY_MODEL_KEY_SET:
+    logger.error(f"Primary LLM key is not set for model '{LLM_MODEL}'! Chat responses will fail.")
 else:
-    logger.info(f"LLM primary: {LLM_MODEL} (key ...{OPENAI_API_KEY[-4:]})")
+    logger.info(f"LLM primary: {LLM_MODEL}")
 
-if GOOGLE_API_KEY:
+if FALLBACK_MODEL_KEY_SET:
     logger.info(f"LLM fallback: {LLM_MODEL} → {FALLBACK_MODEL}")
 else:
-    logger.warning("GOOGLE_API_KEY not set — no LLM fallback available.")
+    logger.warning(f"Fallback LLM key not set for '{FALLBACK_MODEL}' — no fallback available.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Embeddings & RAG
 # ─────────────────────────────────────────────────────────────────────────────
 EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIMENSIONS = 1536
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "2000"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "300"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File Storage (Backblaze B2 via S3-compatible API)
@@ -109,3 +125,14 @@ ARCHIVE_DIR = "archive"
 # Crawler defaults (read by crawler_script.py subprocess via os.getenv):
 # MAX_CRAWL_PAGES=50, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=20,
 # MAX_CRAWL_DEPTH=3, CRAWL_SUBPROCESS_TIMEOUT=600
+# CRAWLER_JS_ALL_PAGES=false   — set true to use Playwright for all depths (Next.js/SPAs)
+# CRAWLER_BROWSER_RECYCLE=10   — recycle Chromium every N pages (memory leak prevention)
+# ─────────────────────────────────────────────────────────────────────────────
+# Retrieval & Reranking
+# ─────────────────────────────────────────────────────────────────────────────
+# RERANK_ENABLED=false  — set true to activate FlashRank cross-encoder reranking
+# RERANK_TOP_N=5        — final top-n docs passed to LLM after reranking
+# CAG_LITE_THRESHOLD=20 — bots with ≤ this many chunks skip retrieval; all chunks injected directly
+# RELEVANCE_GATE_ENABLED=false — set true to activate CRAG-style relevance gate (LLM judge, Gemini Flash)
+# GATE_MODEL=gemini/gemini-2.5-flash — model used for relevance scoring (cheapest capable)
+# RELEVANCE_THRESHOLD=0.5 — chunks scoring below this cause the gate to fire and block generation

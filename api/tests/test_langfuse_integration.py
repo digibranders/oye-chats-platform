@@ -55,18 +55,18 @@ class TestLLMService:
         """generate_response() returns the model's content string."""
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Hello from GPT-5 Mini!"
+        mock_response.choices[0].message.content = "Hello from Gemini!"
 
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
-            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
             mock_litellm.completion.return_value = mock_response
 
             from app.services.llm_service import generate_response
 
             result = generate_response("test prompt")
-            assert result == "Hello from GPT-5 Mini!"
+            assert result == "Hello from Gemini!"
             mock_litellm.completion.assert_called_once()
 
     def test_generate_response_with_metadata(self):
@@ -77,7 +77,7 @@ class TestLLMService:
 
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
-            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
             mock_litellm.completion.return_value = mock_response
 
@@ -95,7 +95,7 @@ class TestLLMService:
 
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
-            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
             mock_litellm.completion.return_value = mock_response
 
@@ -108,7 +108,7 @@ class TestLLMService:
         """generate_response() returns error message on exception."""
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
-            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
             mock_litellm.completion.side_effect = Exception("API timeout")
 
@@ -128,7 +128,7 @@ class TestLLMService:
 
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
-            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
             mock_litellm.completion.return_value = iter(chunks)
 
@@ -148,7 +148,7 @@ class TestLLMService:
 
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
-            patch("app.services.llm_service.OPENAI_API_KEY", "test-key"),
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
             mock_litellm.completion.return_value = iter(chunks)
 
@@ -158,8 +158,8 @@ class TestLLMService:
             assert result == ["Hello ", "world"]
 
     def test_generate_response_no_api_key(self):
-        """generate_response() returns config error when API key is missing."""
-        with patch("app.services.llm_service.OPENAI_API_KEY", None):
+        """generate_response() returns config error when primary model key is missing."""
+        with patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", False):
             from app.services.llm_service import generate_response
 
             result = generate_response("test")

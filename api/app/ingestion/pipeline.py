@@ -13,6 +13,7 @@ from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
 from app.ingestion.cleaner import clean_text
 from app.ingestion.embedder import embed_chunks
+from app.ingestion.enrichment import CHUNK_ENRICHMENT_ENABLED, enrich_chunks_batch
 from app.ingestion.extraction import load_docx, load_pdf, load_txt
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,14 @@ def _ingest_document(
 
         # Extract content and metadata for external processing
         chunk_contents = [c.page_content for c in chunks]
+
+        # 2a. Optional: contextual enrichment (CHUNK_ENRICHMENT_ENABLED=true)
+        # Prepends a short LLM-generated context to each chunk before embedding.
+        # One-time cost at ingestion; improves retrieval accuracy significantly.
+        if CHUNK_ENRICHMENT_ENABLED and chunk_contents:
+            # Use the beginning of the full text as the document summary for context
+            document_summary = full_text[:2000] if full_text else ""
+            chunk_contents = enrich_chunks_batch(chunk_contents, document_summary)
 
         # Enhance metadata with source info
         current_time = datetime.utcnow().isoformat()
@@ -219,6 +228,12 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
                 continue
 
             chunk_contents = [c.page_content for c in chunks]
+
+            # Optional: contextual enrichment before embedding (mirrors _ingest_document)
+            if CHUNK_ENRICHMENT_ENABLED and chunk_contents:
+                document_summary = content[:2000]
+                chunk_contents = enrich_chunks_batch(chunk_contents, document_summary)
+
             chunk_metas = []
             for c in chunks:
                 meta = c.metadata.copy()

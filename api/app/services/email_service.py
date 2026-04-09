@@ -4,6 +4,7 @@ import asyncio
 import html
 import json
 import logging
+import re
 from urllib.request import Request, urlopen
 
 from app.config import BREVO_API_KEY, EMAIL_ENABLED, EMAIL_FROM_ADDRESS, EMAIL_FROM_NAME
@@ -243,6 +244,28 @@ def _esc(value: str | None) -> str:
     return html.escape(str(value)) if value else "&#8212;"
 
 
+def _md_to_html(text: str) -> str:
+    """Convert basic markdown formatting to HTML (applied after HTML-escaping).
+
+    Handles: **bold**, *italic*, _italic_, inline `code`.
+    Safe to call on already-escaped strings — only processes markdown markers.
+    """
+    # Bold: **text** → <strong>text</strong>
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text, flags=re.DOTALL)
+    # Italic: *text* (but not ** which was already consumed above)
+    text = re.sub(r"\*([^*\n]+?)\*", r"<em>\1</em>", text)
+    # Italic: _text_ (word-boundary aware to avoid breaking snake_case)
+    text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<em>\1</em>", text)
+    # Inline code: `text` → <code> styled span
+    text = re.sub(
+        r"`([^`]+)`",
+        r'<span style="font-family:\'Courier New\',Courier,monospace;'
+        r'background-color:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:13px;">\1</span>',
+        text,
+    )
+    return text
+
+
 def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
     """Wrap email body in a full HTML document with header, footer, and email meta tags.
 
@@ -295,11 +318,11 @@ def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
 
         <!-- Header -->
         <tr>
-          <td style="background-color:#0f0f1a;background-image:linear-gradient(135deg,#0a0a14 0%,#1a1040 100%);border-radius:20px 20px 0 0;padding:32px 40px;text-align:center;">
+          <td style="background-color:#ffffff;border-radius:20px 20px 0 0;padding:28px 40px;text-align:center;border-bottom:1px solid #e8e8f0;">
             <a href="https://oyechats.com" style="text-decoration:none;display:inline-block;">
-              <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">Oye<span style="color:#a5b4fc;">Chats</span></span>
+              <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:26px;font-weight:800;color:#0f0f1a;letter-spacing:-0.5px;">Oye<span style="color:#6366f1;">Chats</span></span>
             </a>
-            <p style="margin:6px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:10px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#6b6b8d;">AI-Powered Customer Conversations</p>
+            <p style="margin:6px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:10px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#9ca3af;">AI-Powered Customer Conversations</p>
           </td>
         </tr>
 
@@ -317,7 +340,7 @@ def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
               <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:800;color:#6366f1;letter-spacing:-0.3px;">Oye<span style="color:#4f46e5;">Chats</span></span>
             </a>
             {footer_links}
-            <p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;color:#d1d5db;">
+            <p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;color:#9ca3af;">
               &copy; 2026 OyeChats. All rights reserved.
             </p>
           </td>
@@ -707,7 +730,7 @@ def send_transcript_email(
     message_rows: list[str] = []
     for msg in messages:
         role = msg.get("role", "bot")
-        text = _esc(msg.get("content") or msg.get("text", ""))
+        text = _md_to_html(_esc(msg.get("content") or msg.get("text", "")))
         label = role_labels.get(role, _esc(bot_name))
         timestamp = msg.get("created_at", "")
 
@@ -739,7 +762,7 @@ def send_transcript_email(
             continue
 
         is_user = role == "user"
-        # Violet tint for bot bubbles, green for operator, blue for user
+        # Distinct tints per role
         bubble_bg = "#dbeafe" if is_user else ("#d1fae5" if role == "operator" else "#ede9fe")
         bubble_color = "#1e40af" if is_user else ("#065f46" if role == "operator" else "#4c1d95")
         label_color = "#1d4ed8" if is_user else ("#059669" if role == "operator" else "#6d28d9")
