@@ -4,6 +4,7 @@ import asyncio
 import html
 import json
 import logging
+import re
 from urllib.request import Request, urlopen
 
 from app.config import BREVO_API_KEY, EMAIL_ENABLED, EMAIL_FROM_ADDRESS, EMAIL_FROM_NAME
@@ -241,6 +242,28 @@ def _branded_sender_name(bot_name: str) -> str:
 def _esc(value: str | None) -> str:
     """HTML-escape a user-supplied value for safe inclusion in email templates."""
     return html.escape(str(value)) if value else "&#8212;"
+
+
+def _md_to_html(text: str) -> str:
+    """Convert basic markdown formatting to HTML (applied after HTML-escaping).
+
+    Handles: **bold**, *italic*, _italic_, inline `code`.
+    Safe to call on already-escaped strings — only processes markdown markers.
+    """
+    # Bold: **text** → <strong>text</strong>
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text, flags=re.DOTALL)
+    # Italic: *text* (but not ** which was already consumed above)
+    text = re.sub(r"\*([^*\n]+?)\*", r"<em>\1</em>", text)
+    # Italic: _text_ (word-boundary aware to avoid breaking snake_case)
+    text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<em>\1</em>", text)
+    # Inline code: `text` → <code> styled span
+    text = re.sub(
+        r"`([^`]+)`",
+        r'<span style="font-family:\'Courier New\',Courier,monospace;'
+        r'background-color:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:13px;">\1</span>',
+        text,
+    )
+    return text
 
 
 def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
@@ -707,7 +730,7 @@ def send_transcript_email(
     message_rows: list[str] = []
     for msg in messages:
         role = msg.get("role", "bot")
-        text = _esc(msg.get("content") or msg.get("text", ""))
+        text = _md_to_html(_esc(msg.get("content") or msg.get("text", "")))
         label = role_labels.get(role, _esc(bot_name))
         timestamp = msg.get("created_at", "")
 
