@@ -1,6 +1,6 @@
 """FlashRank cross-encoder reranker.
 
-Lazy-loads the ms-marco-MiniLM-L-6-v2 model on first use (~50 MB RAM).
+Lazy-loads the ms-marco-MiniLM-L-2-v2 model on first use (~8 MB RAM).
 The model stays resident in memory for the lifetime of the process.
 
 Feature flag: ``RERANK_ENABLED`` (default: false).
@@ -35,8 +35,8 @@ def _get_ranker():
     try:
         from flashrank import Ranker
 
-        _ranker = Ranker(model_name="ms-marco-MiniLM-L-6-v2", cache_dir="/tmp/flashrank_cache")
-        logger.info("FlashRank reranker loaded (ms-marco-MiniLM-L-6-v2)")
+        _ranker = Ranker(model_name="ms-marco-MiniLM-L-2-v2", cache_dir="/tmp/flashrank_cache")
+        logger.info("FlashRank reranker loaded (ms-marco-MiniLM-L-2-v2)")
         return _ranker
     except Exception as exc:
         logger.warning("FlashRank unavailable — reranking disabled: %s", exc)
