@@ -1,5 +1,7 @@
 # Chunking of the text
 
+import re
+
 from langchain_core.documents import Document as LCDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -18,6 +20,29 @@ _SEPARATORS = [
     "",
 ]
 
+# Matches Markdown section headers at the start of a chunk (## or ###)
+_HEADER_RE = re.compile(r"^#{2,4}\s+(.+)", re.MULTILINE)
+
+
+def _propagate_section_headers(chunks: list[LCDocument]) -> list[LCDocument]:
+    """Prepend the last seen Markdown section header to orphaned chunks.
+
+    When a chunk doesn't begin with a ``##``/``###`` header (i.e. it starts
+    mid-section), prepend ``[Section: <header>]`` so every chunk carries
+    its section context for embedding and retrieval.
+    """
+    last_header: str | None = None
+    for chunk in chunks:
+        content = chunk.page_content
+        match = _HEADER_RE.search(content)
+        if match:
+            # This chunk starts with or contains a header — update tracker
+            last_header = match.group(1).strip()
+        elif last_header:
+            # Orphaned chunk: inject the last seen header as a prefix tag
+            chunk.page_content = f"[Section: {last_header}] {content}"
+    return chunks
+
 
 def chunk_text(pages_data: list[dict], document_name: str = "") -> list[LCDocument]:
     """Split text into chunks while preserving metadata.
@@ -27,6 +52,11 @@ def chunk_text(pages_data: list[dict], document_name: str = "") -> list[LCDocume
         document_name: Optional source document name used to build a
             contextual prefix that is prepended to each chunk so embeddings
             carry richer semantic signal.
+
+    Processing order:
+        1. Split into raw chunks (RecursiveCharacterTextSplitter)
+        2. Propagate ``##``/``###`` section headers to orphaned chunks
+        3. Prepend document identity + title + page metadata prefix
     """
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
@@ -41,6 +71,9 @@ def chunk_text(pages_data: list[dict], document_name: str = "") -> list[LCDocume
 
     # Split documents (metadata is automatically preserved/propagated)
     chunks = text_splitter.split_documents(documents)
+
+    # Propagate section headers so mid-section chunks know which section they belong to
+    chunks = _propagate_section_headers(chunks)
 
     # Build a reusable contextual prefix from the document name
     doc_prefix = f"[Document: {document_name}] " if document_name else ""

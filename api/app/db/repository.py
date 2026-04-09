@@ -212,6 +212,28 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
     ]
 
 
+def count_documents_for_bot(session, bot_id: int = None, client_id: int = None) -> int:
+    """Return the total number of stored chunks for a bot.
+
+    Used by CAG-lite to decide whether to skip retrieval and inject all
+    chunks directly into the prompt (when total count is small).
+    """
+    stmt = select(func.count()).select_from(Document).where(_owner_filter(Document, bot_id, client_id))
+    return session.execute(stmt).scalar_one()
+
+
+def get_all_documents_for_bot(session, bot_id: int = None, client_id: int = None) -> list:
+    """Return every stored chunk for a bot, ordered by document name and id.
+
+    Only called by CAG-lite when ``count_documents_for_bot`` is below the
+    threshold — avoids loading thousands of chunks for large KBs.
+    """
+    stmt = (
+        select(Document).where(_owner_filter(Document, bot_id, client_id)).order_by(Document.document_name, Document.id)
+    )
+    return list(session.execute(stmt).scalars())
+
+
 def insert_documents(
     session,
     client_id: int = None,

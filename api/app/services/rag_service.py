@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 
 import litellm
@@ -16,7 +17,9 @@ from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
     add_chat_message,
+    count_documents_for_bot,
     ensure_chat_session,
+    get_all_documents_for_bot,
     get_chat_history,
     get_lead_info_by_session,
     search_keyword_documents,
@@ -26,13 +29,15 @@ from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.services.email_service import send_qualified_lead_email
 from app.services.intent_service import detect_handoff_intent
-from app.services.llm_service import (
-    generate_response,
-    generate_response_stream,
-)
+from app.services.llm_service import generate_response, generate_response_stream
 from app.services.qualification_service import get_framework_config, get_tier
+from app.services.relevance_gate import check_relevance
+from app.services.reranker import RERANK_ENABLED, rerank
 
 logger = logging.getLogger(__name__)
+
+# TTL for query-embedding cache (Phase 4B)
+_EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 
 _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 
@@ -136,8 +141,13 @@ def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
     return [docs[doc_id] for doc_id, _ in ranked]
 
 
-def _trim_results(results: list, top_k: int = 7) -> list:
-    """Keep top-k results from RRF-ranked list."""
+def _trim_results(results: list, top_k: int = 15) -> list:
+    """Keep top-k results from RRF-ranked list.
+
+    Default 15 provides a wider candidate pool for the downstream reranker.
+    Without reranking, 15 is still passed to the LLM — the reranker (Phase 2B)
+    is responsible for trimming to the final top_n before prompt assembly.
+    """
     return results[:top_k]
 
 
@@ -559,23 +569,24 @@ VOICE:
 - Always use first person ("we", "our", "us") when referring to the company, its services, products, or team.
 - Never refer to {display_name} in the third person ("they", "them", "their").
 - Your name is {resolved_bot_name} but you are NOT the company — **{display_name}** is the company you represent.
-- When asked about the company, organization, agency, or "who are you", describe **{display_name}** using the knowledge base context.
+- When asked about the company, organization, agency, or "who are you", describe **{display_name}** using the information provided below.
 
-Answer visitor questions using ONLY the knowledge base context below.
+Answer visitor questions using ONLY the information provided below.
 
 RULES:
-1. Answer directly in 1-3 sentences. Up to 5 for complex topics. Never exceed 80 words unless listing items.
+1. Answer ONLY what was specifically asked — nothing more. If asked about the CEO, mention only the CEO, not the entire team. Keep answers to 1-3 sentences. Up to 5 for complex topics. For listings (services, team, features), up to 150 words is acceptable. Never pad or repeat yourself.
 2. Bullet points for 3+ items. Keep each bullet to a few words — no descriptions after bullets.
 3. Bold only: **{display_name}**, product/service names, and prices. No other bold.
 4. Tone: like a knowledgeable colleague replying in chat — friendly but direct. Never start with "Great question!", "Absolutely!", "I'd be happy to help!" or "Thank you for asking!". Never say "Based on the information provided". Just answer naturally.
-5. If the context doesn't contain the answer, say so honestly. {handoff_offer}
+5. If you don't have the information to answer, say so naturally without mentioning any internal systems, documents, or databases. {handoff_offer}
 6. Only ask a follow-up question if the user's query is genuinely ambiguous.
-7. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".{custom_prompt_section}{tone_section}{company_section}
+7. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
+8. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. If you lack information, simply say you don't have that information right now.{custom_prompt_section}{tone_section}{company_section}
 {qualification_section}
 {handoff_section}
 
 ═══════════════════════════════════════════════════════
-KNOWLEDGE BASE CONTEXT
+REFERENCE INFORMATION
 ═══════════════════════════════════════════════════════
 {context_text}
 
@@ -740,17 +751,53 @@ def rag_pipeline(
             chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
             current_bant = _build_bant_state(chat_session)
             history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-            search_query = rewrite_query(session_id, question, history)
-            search_query = _expand_company_query(search_query, _company_name)
-            query_embedding = embed_chunks([search_query])[0]
 
-            vector_results = search_similar_documents(
-                session, client_id=cid, query_embedding=query_embedding, k=15, bot_id=bid
-            )
-            keyword_results = search_keyword_documents(session, client_id=cid, query=question, k=15, bot_id=bid)
+            # ── CAG-lite: skip retrieval for small knowledge bases ──────────
+            _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
+            _total_chunks = count_documents_for_bot(session, bot_id=bid, client_id=cid) if bid or cid else 0
+            _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
 
-            final_results = reciprocal_rank_fusion(vector_results, keyword_results)
-            final_results = _trim_results(final_results)
+            if _use_cag_lite:
+                logger.info(f"CAG-lite mode: injecting all {_total_chunks} chunks (bot_id={bid})")
+                final_results = get_all_documents_for_bot(session, bot_id=bid, client_id=cid)
+                search_query = question  # no rewrite needed — full KB in context
+            else:
+                search_query = rewrite_query(session_id, question, history)
+                search_query = _expand_company_query(search_query, _company_name)
+
+                # ── Phase 4B: embedding cache ─────────────────────────────
+                _emb_key = f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
+                _cached_emb = cache_get(_emb_key)
+                if _cached_emb and isinstance(_cached_emb, list):
+                    query_embedding = _cached_emb
+                else:
+                    query_embedding = embed_chunks([search_query])[0]
+                    cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
+
+                vector_results = search_similar_documents(
+                    session, client_id=cid, query_embedding=query_embedding, k=15, bot_id=bid
+                )
+                keyword_results = search_keyword_documents(session, client_id=cid, query=question, k=15, bot_id=bid)
+
+                final_results = reciprocal_rank_fusion(vector_results, keyword_results)
+                final_results = _trim_results(final_results)  # top 15 candidate pool
+                if RERANK_ENABLED:
+                    final_results = rerank(search_query, final_results)
+
+            # ── Phase 4A: CRAG relevance gate ────────────────────────────
+            _is_relevant, _gate_score = check_relevance(question, final_results, bot_id=bid, client_id=cid)
+            if not _is_relevant:
+                logger.info(
+                    "Relevance gate fired | score=%.2f session=%s — returning off-topic response",
+                    _gate_score,
+                    session_id,
+                )
+                return {
+                    "answer": "I can only answer questions related to this business. Could you ask me something I can help with?",
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": None,
+                }
 
             context_parts = []
             # Inject company identity so "about the company" queries always have context
@@ -760,7 +807,11 @@ def rag_pipeline(
                 # Truncate per-chunk to prevent prompt token overflow on large documents
                 chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
                 context_parts.append(f"[Source {i}] {doc.document_name}\nContent:\n{chunk_content}\n")
-            context_text = "\n---\n".join(context_parts) if context_parts else "No relevant documents found."
+            context_text = (
+                "\n---\n".join(context_parts)
+                if context_parts
+                else "No specific information is available on this topic."
+            )
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
@@ -784,7 +835,6 @@ def rag_pipeline(
 
             answer = generate_response(
                 prompt,
-                max_tokens=350,
                 metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
             )
 
@@ -934,25 +984,58 @@ async def rag_pipeline_stream(
         current_bant = _build_bant_state(chat_session)
         history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
 
-        handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
-        search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
-        search_query = _expand_company_query(search_query, _company_name)
-        query_embedding = (await embed_chunks_async([search_query]))[0]
+        # ── CAG-lite: skip retrieval for small knowledge bases ──────────────
+        _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
+        _total_chunks = await asyncio.to_thread(count_documents_for_bot, session, bid, cid) if bid or cid else 0
+        _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
 
-        try:
-            suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
-        except TimeoutError:
-            suggest_handoff = False
-            logger.warning(f"Handoff intent detection timed out for session {session_id}")
+        if _use_cag_lite:
+            logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
+            final_results = await asyncio.to_thread(get_all_documents_for_bot, session, bid, cid)
+            search_query = question
+            suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question)
+        else:
+            handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+            search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
+            search_query = _expand_company_query(search_query, _company_name)
 
-        vector_results, keyword_results = await asyncio.gather(
-            asyncio.to_thread(_vector_search, cid, bid, query_embedding),
-            asyncio.to_thread(_keyword_search, cid, bid, search_query),
-        )
+            # ── Phase 4B: embedding cache (async path) ────────────────────
+            _emb_key = f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
+            _cached_emb = cache_get(_emb_key)
+            if _cached_emb and isinstance(_cached_emb, list):
+                query_embedding = _cached_emb
+            else:
+                query_embedding = (await embed_chunks_async([search_query]))[0]
+                cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
 
-        final_results = reciprocal_rank_fusion(vector_results, keyword_results)
-        final_results = _trim_results(final_results)
+            try:
+                suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
+            except TimeoutError:
+                suggest_handoff = False
+                logger.warning(f"Handoff intent detection timed out for session {session_id}")
+
+            vector_results, keyword_results = await asyncio.gather(
+                asyncio.to_thread(_vector_search, cid, bid, query_embedding),
+                asyncio.to_thread(_keyword_search, cid, bid, search_query),
+            )
+
+            final_results = reciprocal_rank_fusion(vector_results, keyword_results)
+            final_results = _trim_results(final_results)  # top 15 candidate pool
+            if RERANK_ENABLED:
+                final_results = rerank(search_query, final_results)
+
         sources = [doc.document_name for doc in final_results]
+
+        # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
+        _is_relevant, _gate_score = await asyncio.to_thread(check_relevance, question, final_results, bid, cid)
+        if not _is_relevant:
+            logger.info(
+                "Relevance gate fired | score=%.2f session=%s — returning off-topic response",
+                _gate_score,
+                session_id,
+            )
+            yield "I can only answer questions related to this business. Could you ask me something I can help with?"
+            return
 
         yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
 
@@ -963,7 +1046,9 @@ async def rag_pipeline_stream(
         for i, doc in enumerate(final_results, 1):
             chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
             context_parts.append(f"[Source {i}] {doc.document_name}\nContent:\n{chunk_content}\n")
-        context_text = "\n---\n".join(context_parts) if context_parts else "No relevant documents found."
+        context_text = (
+            "\n---\n".join(context_parts) if context_parts else "No specific information is available on this topic."
+        )
         history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
         is_bant_enabled = getattr(client, "bant_enabled", True)
@@ -990,7 +1075,6 @@ async def rag_pipeline_stream(
             chunk_count = 0
             for chunk in generate_response_stream(
                 prompt,
-                max_tokens=350,
                 metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
             ):
                 if chunk:

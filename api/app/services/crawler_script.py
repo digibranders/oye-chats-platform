@@ -474,7 +474,24 @@ async def crawl_single_http(
                     if not is_html_content(raw_html):
                         return {"url": url, "depth": depth, "html": None, "markdown": None, "error": "not HTML content"}
 
-                    markdown = h2t.handle(raw_html)
+                    # Trafilatura: ML-based boilerplate removal (0.883 F1).
+                    # Falls back to html2text if trafilatura returns nothing.
+                    markdown = None
+                    try:
+                        import trafilatura
+
+                        markdown = trafilatura.extract(
+                            raw_html,
+                            url=url,
+                            include_comments=False,
+                            include_tables=True,
+                            output_format="markdown",
+                        )
+                    except Exception:
+                        pass
+                    if not markdown:
+                        markdown = h2t.handle(raw_html)
+
                     return {"url": url, "depth": depth, "html": raw_html, "markdown": markdown, "error": None}
             except TimeoutError:
                 if attempt == 1:
@@ -822,75 +839,202 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
     print(json.dumps({"log": f"Phase 1 complete. Browser destroyed. {pages_crawled} page(s), {len(pq)} URLs queued."}))
 
     # ======================================================================
-    # Phase 2: Crawl remaining URLs with lightweight HTTP (no browser)
-    # Memory: ~5 MB per concurrent request vs ~200 MB per Chromium tab
+    # Phase 2: Crawl remaining URLs
+    # CRAWLER_JS_ALL_PAGES=true  → Playwright (sequential, 1 tab, browser recycled
+    #                               every CRAWLER_BROWSER_RECYCLE pages).
+    #                               Handles Next.js / React SPAs that need JS.
+    # CRAWLER_JS_ALL_PAGES=false → Lightweight HTTP (concurrent, original behaviour).
+    #                               ~5 MB per request vs ~200 MB per Chromium tab.
     # ======================================================================
 
+    js_all_pages = os.getenv("CRAWLER_JS_ALL_PAGES", "false").lower() in ("1", "true", "yes")
+    recycle_every = int(os.getenv("CRAWLER_BROWSER_RECYCLE", "10"))
+
+    # Check crawl4ai availability when JS mode is requested
+    if js_all_pages:
+        try:
+            from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+        except ImportError:
+            js_all_pages = False
+            print(json.dumps({"log": "crawl4ai not available for Phase 2, falling back to HTTP"}))
+
     if pq and pages_crawled < max_pages:
-        h2t = _make_html2text()
-        semaphore = asyncio.Semaphore(concurrency)
-        http_headers = {"User-Agent": _HTTP_USER_AGENT}
+        if js_all_pages:
+            # ------------------------------------------------------------------
+            # Browser-based Phase 2 — sequential Playwright with browser recycling.
+            # One Chromium tab at a time; browser restarted every recycle_every
+            # pages to prevent memory creep on long crawls.
+            # Per-page HTTP fallback when Playwright fails.
+            # ------------------------------------------------------------------
+            browser_config_p2 = BrowserConfig(  # type: ignore[name-defined]
+                verbose=False,
+                memory_saving_mode=True,
+                light_mode=True,
+                text_mode=True,  # Text only — no CSS/images needed
+            )
+            run_config_p2 = CrawlerRunConfig(  # type: ignore[name-defined]
+                wait_until="domcontentloaded",
+                screenshot=False,
+                pdf=False,
+                exclude_all_images=True,
+            )
+            h2t_p2 = _make_html2text()
+            semaphore_p2 = asyncio.Semaphore(1)
 
-        async with aiohttp.ClientSession(headers=http_headers) as http_session:
-            while pq and pages_crawled < max_pages:
-                # Collect a batch of URLs to crawl
-                batch_tasks: list = []
-                batch_info: list[dict] = []
-
-                while pq and len(batch_tasks) < concurrency and pages_crawled + len(batch_tasks) < max_pages:
-                    _priority, _counter, current_url, depth = heapq.heappop(pq)
-
-                    norm_url = normalize_url(current_url)
-                    if norm_url in visited:
-                        continue
-
-                    # Respect robots.txt (does not consume page budget)
-                    if robot_parser and not robot_parser.can_fetch("*", current_url):
-                        print(json.dumps({"log": f"Skipped (robots.txt): {current_url}"}))
-                        visited.add(norm_url)
-                        continue
-
-                    visited.add(norm_url)
-
-                    # Adaptive timeout: shorter for deep pages
-                    effective_timeout = page_timeout if depth <= 1 else max(page_timeout - 5, 10)
-                    batch_tasks.append(
-                        crawl_single_http(http_session, current_url, depth, semaphore, effective_timeout, h2t)
+            async def _crawl_page_with_fallback(
+                current_url: str,
+                depth: int,
+                browser_crawler,  # AsyncWebCrawler instance
+            ) -> tuple[str | None, str | None, dict]:
+                """Try Playwright; fall back to plain HTTP on any failure."""
+                try:
+                    res = await asyncio.wait_for(
+                        browser_crawler.arun(url=current_url, config=run_config_p2),
+                        timeout=page_timeout,
                     )
-                    batch_info.append({"url": current_url, "norm_url": norm_url, "depth": depth})
+                    if isinstance(res, list):
+                        res = res[0] if res else None
+                    if res and hasattr(res, "markdown") and res.markdown:
+                        return res.markdown, getattr(res, "html", None), getattr(res, "links", {}) or {}
+                except Exception as _browser_err:
+                    print(
+                        json.dumps({"log": f"Browser failed for {current_url} ({_browser_err}), using HTTP fallback"})
+                    )
 
-                if not batch_tasks:
-                    break
+                # HTTP fallback
+                async with aiohttp.ClientSession(headers={"User-Agent": _HTTP_USER_AGENT}) as _fb_session:
+                    fb = await crawl_single_http(_fb_session, current_url, depth, semaphore_p2, page_timeout, h2t_p2)
+                if not fb["error"] and fb["markdown"]:
+                    return fb["markdown"], fb["html"], {}
+                return None, None, {}
 
+            # Outer loop: create a browser session, crawl up to recycle_every
+            # pages, then destroy and recreate to free memory.
+            while pq and pages_crawled < max_pages:
                 print(
                     json.dumps(
                         {
-                            "log": f"Phase 2: Crawling batch of {len(batch_tasks)} pages via HTTP ({pages_crawled}/{max_pages} crawled, {len(pq)} queued)"
+                            "log": f"Phase 2 (browser): starting session (crawled={pages_crawled}/{max_pages}, queued={len(pq)})"
                         }
                     )
                 )
-                batch_results = await asyncio.gather(*batch_tasks)
+                async with AsyncWebCrawler(config=browser_config_p2) as p2_crawler:  # type: ignore[name-defined]
+                    session_count = 0
+                    while pq and pages_crawled < max_pages and session_count < recycle_every:
+                        _prio, _cnt, current_url, depth = heapq.heappop(pq)
+                        norm_url = normalize_url(current_url)
+                        if norm_url in visited:
+                            continue
+                        if robot_parser and not robot_parser.can_fetch("*", current_url):
+                            print(json.dumps({"log": f"Skipped (robots.txt): {current_url}"}))
+                            visited.add(norm_url)
+                            continue
+                        visited.add(norm_url)
 
-                # Process results
-                for info, crawl_result in zip(batch_info, batch_results, strict=False):
-                    if crawl_result["error"]:
-                        print(json.dumps({"log": f"Error crawling {info['url']}: {crawl_result['error']}"}))
-                        continue
+                        markdown, html, links_dict = await _crawl_page_with_fallback(current_url, depth, p2_crawler)
+                        if not markdown:
+                            continue
 
-                    if not crawl_result["markdown"]:
-                        continue
+                        pages_crawled += 1
+                        session_count += 1
+                        results.append({"url": norm_url, "content": markdown})
+                        print(
+                            json.dumps(
+                                {
+                                    "log": f"Phase 2 (browser): {current_url} [{pages_crawled}/{max_pages}, session={session_count}/{recycle_every}]"
+                                }
+                            )
+                        )
 
-                    pages_crawled += 1
-                    results.append({"url": info["norm_url"], "content": crawl_result["markdown"]})
+                        # Discover new links
+                        if depth < max_depth:
+                            page_links: list[str] = []
+                            if isinstance(links_dict, dict):
+                                for _link in links_dict.get("internal", []):
+                                    _href = _link.get("href") if isinstance(_link, dict) else _link
+                                    if _href:
+                                        page_links.append(urljoin(current_url, _href))
+                            if not page_links and html:
+                                page_links = extract_links_from_html(html, current_url)
+                            for href in page_links:
+                                parsed_url = urlparse(href)
+                                if get_base_domain(parsed_url.netloc) == start_domain and parsed_url.scheme in (
+                                    "http",
+                                    "https",
+                                ):
+                                    push_url(href, depth + 1)
 
-                    # Discover new links if not at max depth
-                    if info["depth"] < max_depth and crawl_result["html"]:
-                        page_links = extract_links_from_html(crawl_result["html"], info["url"])
-                        for href in page_links:
-                            parsed_url = urlparse(href)
-                            link_domain = get_base_domain(parsed_url.netloc)
-                            if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
-                                push_url(href, info["depth"] + 1)
+                if session_count >= recycle_every and pq:
+                    print(json.dumps({"log": f"Phase 2 (browser): recycled browser after {session_count} pages"}))
+
+        else:
+            # ------------------------------------------------------------------
+            # HTTP-based Phase 2 — concurrent aiohttp (original behaviour)
+            # ------------------------------------------------------------------
+            h2t = _make_html2text()
+            semaphore = asyncio.Semaphore(concurrency)
+            http_headers = {"User-Agent": _HTTP_USER_AGENT}
+
+            async with aiohttp.ClientSession(headers=http_headers) as http_session:
+                while pq and pages_crawled < max_pages:
+                    # Collect a batch of URLs to crawl
+                    batch_tasks: list = []
+                    batch_info: list[dict] = []
+
+                    while pq and len(batch_tasks) < concurrency and pages_crawled + len(batch_tasks) < max_pages:
+                        _priority, _counter, current_url, depth = heapq.heappop(pq)
+
+                        norm_url = normalize_url(current_url)
+                        if norm_url in visited:
+                            continue
+
+                        # Respect robots.txt (does not consume page budget)
+                        if robot_parser and not robot_parser.can_fetch("*", current_url):
+                            print(json.dumps({"log": f"Skipped (robots.txt): {current_url}"}))
+                            visited.add(norm_url)
+                            continue
+
+                        visited.add(norm_url)
+
+                        # Adaptive timeout: shorter for deep pages
+                        effective_timeout = page_timeout if depth <= 1 else max(page_timeout - 5, 10)
+                        batch_tasks.append(
+                            crawl_single_http(http_session, current_url, depth, semaphore, effective_timeout, h2t)
+                        )
+                        batch_info.append({"url": current_url, "norm_url": norm_url, "depth": depth})
+
+                    if not batch_tasks:
+                        break
+
+                    print(
+                        json.dumps(
+                            {
+                                "log": f"Phase 2 (HTTP): crawling batch of {len(batch_tasks)} pages ({pages_crawled}/{max_pages} crawled, {len(pq)} queued)"
+                            }
+                        )
+                    )
+                    batch_results = await asyncio.gather(*batch_tasks)
+
+                    # Process results
+                    for info, crawl_result in zip(batch_info, batch_results, strict=False):
+                        if crawl_result["error"]:
+                            print(json.dumps({"log": f"Error crawling {info['url']}: {crawl_result['error']}"}))
+                            continue
+
+                        if not crawl_result["markdown"]:
+                            continue
+
+                        pages_crawled += 1
+                        results.append({"url": info["norm_url"], "content": crawl_result["markdown"]})
+
+                        # Discover new links if not at max depth
+                        if info["depth"] < max_depth and crawl_result["html"]:
+                            page_links = extract_links_from_html(crawl_result["html"], info["url"])
+                            for href in page_links:
+                                parsed_url = urlparse(href)
+                                link_domain = get_base_domain(parsed_url.netloc)
+                                if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
+                                    push_url(href, info["depth"] + 1)
 
     print(json.dumps({"log": f"Crawl complete: {len(results)} pages collected"}))
 

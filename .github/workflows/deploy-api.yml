@@ -29,11 +29,15 @@ jobs:
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
+          # Toggle-able feature flags (set in GitHub secrets to flip without a code push)
+          RELEVANCE_GATE_ENABLED: ${{ secrets.RELEVANCE_GATE_ENABLED }}
+          CHUNK_ENRICHMENT_ENABLED: ${{ secrets.CHUNK_ENRICHMENT_ENABLED }}
+          CRAWLER_JS_ALL_PAGES: ${{ secrets.CRAWLER_JS_ALL_PAGES }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -42,7 +46,7 @@ jobs:
             # Pull latest code FIRST (so .env write applies to new code)
             git pull origin main
 
-            # Generate .env from secrets
+            # Generate .env from secrets + hardcoded prod values
             printf '%s\n' \
               "DB_URL=${DB_URL}" \
               "GOOGLE_API_KEY=${GOOGLE_API_KEY}" \
@@ -57,8 +61,23 @@ jobs:
               "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}" \
               "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}" \
               "LANGFUSE_HOST=https://cloud.langfuse.com" \
+              "LANGFUSE_FORCE_DISABLE=true" \
               "BREVO_API_KEY=${BREVO_API_KEY}" \
               "REDIS_URL=${REDIS_URL}" \
+              "LLM_MODEL=openai/gpt-5.4-mini" \
+              "FALLBACK_MODEL=gemini/gemini-2.5-flash" \
+              "RERANK_ENABLED=true" \
+              "RERANK_TOP_N=5" \
+              "CAG_LITE_THRESHOLD=20" \
+              "CHUNK_SIZE=1000" \
+              "CHUNK_OVERLAP=200" \
+              "RELEVANCE_THRESHOLD=0.5" \
+              "GATE_MODEL=gemini/gemini-2.5-flash" \
+              "ENRICHMENT_MODEL=gemini/gemini-2.5-flash" \
+              "CRAWLER_BROWSER_RECYCLE=10" \
+              "RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED}" \
+              "CHUNK_ENRICHMENT_ENABLED=${CHUNK_ENRICHMENT_ENABLED}" \
+              "CRAWLER_JS_ALL_PAGES=${CRAWLER_JS_ALL_PAGES}" \
               > api/.env
 
             # Sync dependencies
