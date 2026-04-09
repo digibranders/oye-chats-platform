@@ -12,9 +12,10 @@ import AdvancedSettingsTab from './AdvancedSettingsTab';
 
 // Helper: create cropped image from canvas (supports rotation)
 const getCroppedImg = (imageSrc, pixelCrop, rotation = 0) => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const image = new Image();
         image.crossOrigin = 'anonymous';
+        image.onerror = () => reject(new Error('Failed to load image for cropping'));
         image.onload = () => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');

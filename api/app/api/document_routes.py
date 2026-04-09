@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import os
+from pathlib import Path
 
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
@@ -122,11 +122,12 @@ def delete_document_endpoint(
             if deleted_count == 0:
                 raise HTTPException(status_code=404, detail=f"Source '{document_name}' not found.")
 
-            file_path = os.path.normpath(os.path.join(DOCUMENTS_DIR, document_name))
-            if not file_path.startswith(os.path.normpath(DOCUMENTS_DIR) + os.sep):
+            base_dir = Path(DOCUMENTS_DIR).resolve()
+            file_path = (base_dir / document_name).resolve()
+            if not file_path.is_relative_to(base_dir):
                 raise HTTPException(status_code=403, detail="Invalid document path.")
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            if file_path.exists():
+                file_path.unlink()
                 logger.info(f"Deleted file from disk: {file_path}")
 
             logger.info(f"Deleted {deleted_count} chunks for document '{document_name}' (client {client_id})")
@@ -193,9 +194,10 @@ def ingest_documents(
         file_buffers.append((file.filename, content))
 
     # ── Phase 2: All files validated — write to disk ──
+    base_dir = Path(DOCUMENTS_DIR).resolve()
     for filename, content in file_buffers:
-        file_path = os.path.normpath(os.path.join(DOCUMENTS_DIR, filename))
-        if not file_path.startswith(os.path.normpath(DOCUMENTS_DIR) + os.sep):
+        file_path = (base_dir / filename).resolve()
+        if not file_path.is_relative_to(base_dir):
             logger.warning(f"Blocked path traversal attempt in upload: {filename}")
             continue
         try:
