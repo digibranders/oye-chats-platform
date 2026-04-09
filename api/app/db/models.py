@@ -65,6 +65,8 @@ class Bot(Base):
     name = Column(String, default="AI Assistant", server_default="AI Assistant")
     system_prompt = Column(Text, nullable=True)
     brand_tone = Column(Text, nullable=True)  # Auto-extracted or manually set brand voice/tone description
+    company_name = Column(String, nullable=True)  # Auto-extracted or manually set company/brand name
+    company_description = Column(Text, nullable=True)  # Auto-extracted or manually set company description
     website = Column(String, nullable=True)
     bot_logo = Column(Text, nullable=True)
     launcher_name = Column(String, default="Have Questions?", server_default="Have Questions?")

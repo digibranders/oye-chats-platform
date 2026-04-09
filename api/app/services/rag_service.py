@@ -1,13 +1,16 @@
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import re
 
 import litellm
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import joinedload
 
 from app.config import LLM_FALLBACKS, LLM_MODEL
+from app.core.cache import QA_RESPONSE_TTL, cache_get, cache_set, qa_response_key
 from app.core.langfuse_client import get_langfuse
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
@@ -133,9 +136,29 @@ def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
     return [docs[doc_id] for doc_id, _ in ranked]
 
 
-def _trim_results(results: list, top_k: int = 5) -> list:
+def _trim_results(results: list, top_k: int = 7) -> list:
     """Keep top-k results from RRF-ranked list."""
     return results[:top_k]
+
+
+# ─── Company-related query expansion ────────────────────────────────────────
+
+_COMPANY_SYNONYMS = {"company", "organization", "agency", "firm", "business", "brand"}
+
+
+def _expand_company_query(question: str, company_name: str | None) -> str:
+    """Append the actual company name when the question uses generic company terms.
+
+    This dramatically improves both vector and keyword search for identity
+    questions like "what is this company about?" by adding the real name
+    (e.g. "Fynix Digital") to the search query.
+    """
+    if not company_name:
+        return question
+    q_lower = question.lower()
+    if any(term in q_lower for term in _COMPANY_SYNONYMS):
+        return f"{question} {company_name}"
+    return question
 
 
 def _framework_dimensions(config: dict | None) -> list[str]:
@@ -432,6 +455,9 @@ def build_hybrid_prompt(
     live_chat_enabled: bool = True,
     custom_system_prompt: str | None = None,
     brand_tone: str | None = None,
+    company_name: str | None = None,
+    company_description: str | None = None,
+    bot_name: str | None = None,
 ) -> str:
     """Construct the Hybrid RAG system prompt with BANT qualification support."""
 
@@ -518,16 +544,33 @@ SUPPORT REQUESTS: If the user asks for a person, warmly direct them to the conta
         custom_prompt_section = ""
     tone_section = f"\n\nBRAND TONE: {brand_tone[:300]}" if brand_tone else ""
 
-    hybrid_system_prompt = f"""You are **{client.name}**'s support assistant. Answer visitor questions using ONLY the knowledge base context below.
+    # Resolve display name: prefer company_name over bot name
+    display_name = company_name or client.name
+    resolved_bot_name = bot_name or client.name
+
+    # Build company context section if a description is available
+    company_section = ""
+    if company_description:
+        company_section = f"\n\nCOMPANY CONTEXT:\n{company_description[:500]}"
+
+    hybrid_system_prompt = f"""You are the AI assistant for **{display_name}**. You represent {display_name} and speak on its behalf.
+
+VOICE:
+- Always use first person ("we", "our", "us") when referring to the company, its services, products, or team.
+- Never refer to {display_name} in the third person ("they", "them", "their").
+- Your name is {resolved_bot_name} but you are NOT the company — **{display_name}** is the company you represent.
+- When asked about the company, organization, agency, or "who are you", describe **{display_name}** using the knowledge base context.
+
+Answer visitor questions using ONLY the knowledge base context below.
 
 RULES:
 1. Answer directly in 1-3 sentences. Up to 5 for complex topics. Never exceed 80 words unless listing items.
 2. Bullet points for 3+ items. Keep each bullet to a few words — no descriptions after bullets.
-3. Bold only: **{client.name}**, product/service names, and prices. No other bold.
+3. Bold only: **{display_name}**, product/service names, and prices. No other bold.
 4. Tone: like a knowledgeable colleague replying in chat — friendly but direct. Never start with "Great question!", "Absolutely!", "I'd be happy to help!" or "Thank you for asking!". Never say "Based on the information provided". Just answer naturally.
 5. If the context doesn't contain the answer, say so honestly. {handoff_offer}
 6. Only ask a follow-up question if the user's query is genuinely ambiguous.
-7. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".{custom_prompt_section}{tone_section}
+7. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".{custom_prompt_section}{tone_section}{company_section}
 {qualification_section}
 {handoff_section}
 
@@ -643,16 +686,27 @@ def rag_pipeline(
 
     def _run_pipeline():
         with get_session() as session:
-            bot = session.query(Bot).get(bid) if bid else (client if isinstance(client, Bot) else None)
+            bot = (
+                session.query(Bot).options(joinedload(Bot.client)).get(bid)
+                if bid
+                else (client if isinstance(client, Bot) else None)
+            )
+
+            # Resolve company identity: prefer bot-level (auto-extracted from website)
+            # over client-level (typed at registration)
+            _company_name = None
+            _company_desc = None
+            _bot_name = None
+            if bot:
+                _bot_name = bot.name
+                _company_desc = getattr(bot, "company_description", None)
+                _company_name = getattr(bot, "company_name", None)
+                if not _company_name and bot.client:
+                    _company_name = bot.client.company_name
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
-            chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
-            current_bant = _build_bant_state(chat_session)
 
-            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-            search_query = rewrite_query(session_id, question, history)
-            query_embedding = embed_chunks([search_query])[0]
-
+            # Save user message first (always persisted, even on cache hit)
             add_chat_message(
                 session,
                 session_id,
@@ -664,6 +718,32 @@ def rag_pipeline(
                 bot_id=bid,
             )
 
+            # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
+            _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
+            _cache_key = qa_response_key(bid, _q_hash) if bid else None
+            if _cache_key:
+                cached_qa = cache_get(_cache_key)
+                if cached_qa:
+                    logger.info(f"QA cache hit | bot_id={bid} | session={session_id}")
+                    bot_msg = add_chat_message(
+                        session, session_id, client_id=cid, role="bot", content=cached_qa["answer"], bot_id=bid
+                    )
+                    session.commit()
+                    return {
+                        "answer": cached_qa["answer"],
+                        "sources": cached_qa.get("sources", []),
+                        "session_id": session_id,
+                        "message_id": bot_msg.id,
+                    }
+
+            # Expensive steps: query rewriting (LLM call) + embedding (API call)
+            chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+            current_bant = _build_bant_state(chat_session)
+            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+            search_query = rewrite_query(session_id, question, history)
+            search_query = _expand_company_query(search_query, _company_name)
+            query_embedding = embed_chunks([search_query])[0]
+
             vector_results = search_similar_documents(
                 session, client_id=cid, query_embedding=query_embedding, k=15, bot_id=bid
             )
@@ -673,6 +753,9 @@ def rag_pipeline(
             final_results = _trim_results(final_results)
 
             context_parts = []
+            # Inject company identity so "about the company" queries always have context
+            if _company_name:
+                context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
             for i, doc in enumerate(final_results, 1):
                 # Truncate per-chunk to prevent prompt token overflow on large documents
                 chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
@@ -694,6 +777,9 @@ def rag_pipeline(
                 live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
                 custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
                 brand_tone=getattr(bot, "brand_tone", None) if bot else None,
+                company_name=_company_name,
+                company_description=_company_desc,
+                bot_name=_bot_name,
             )
 
             answer = generate_response(
@@ -728,12 +814,18 @@ def rag_pipeline(
                     bot_msg.id,
                 )
 
-            return {
+            result = {
                 "answer": answer,
                 "sources": [doc.document_name for doc in final_results],
                 "session_id": session_id,
                 "message_id": bot_msg.id,
             }
+
+            # Cache the answer for identical future questions
+            if _cache_key:
+                cache_set(_cache_key, {"answer": answer, "sources": result["sources"]}, QA_RESPONSE_TTL)
+
+            return result
 
     if lf:
         from langfuse import propagate_attributes
@@ -790,24 +882,27 @@ async def rag_pipeline_stream(
 
     full_answer = ""
     with get_session() as session:
-        bot = session.query(Bot).get(bid) if bid else (client if isinstance(client, Bot) else None)
+        bot = (
+            session.query(Bot).options(joinedload(Bot.client)).get(bid)
+            if bid
+            else (client if isinstance(client, Bot) else None)
+        )
+
+        # Resolve company identity: prefer bot-level (auto-extracted from website)
+        # over client-level (typed at registration)
+        _company_name = None
+        _company_desc = None
+        _bot_name = None
+        if bot:
+            _bot_name = bot.name
+            _company_desc = getattr(bot, "company_description", None)
+            _company_name = getattr(bot, "company_name", None)
+            if not _company_name and bot.client:
+                _company_name = bot.client.company_name
 
         ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
-        chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
-        current_bant = _build_bant_state(chat_session)
 
-        history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-
-        handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
-        search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
-        query_embedding = (await embed_chunks_async([search_query]))[0]
-
-        try:
-            suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
-        except TimeoutError:
-            suggest_handoff = False
-            logger.warning(f"Handoff intent detection timed out for session {session_id}")
-
+        # Save user message first (always persisted, even on cache hit)
         add_chat_message(
             session,
             session_id,
@@ -818,6 +913,37 @@ async def rag_pipeline_stream(
             device=device,
             bot_id=bid,
         )
+
+        # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
+        _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
+        _cache_key = qa_response_key(bid, _q_hash) if bid else None
+        if _cache_key:
+            cached_qa = cache_get(_cache_key)
+            if cached_qa:
+                logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
+                cached_answer = cached_qa["answer"]
+                cached_sources = cached_qa.get("sources", [])
+                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': cached_sources})}\n"
+                yield cached_answer
+                add_chat_message(session, session_id, client_id=cid, role="bot", content=cached_answer, bot_id=bid)
+                session.commit()
+                return
+
+        # Expensive steps: handoff detection, query rewriting (LLM), embedding (API)
+        chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+        current_bant = _build_bant_state(chat_session)
+        history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+
+        handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+        search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
+        search_query = _expand_company_query(search_query, _company_name)
+        query_embedding = (await embed_chunks_async([search_query]))[0]
+
+        try:
+            suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
+        except TimeoutError:
+            suggest_handoff = False
+            logger.warning(f"Handoff intent detection timed out for session {session_id}")
 
         vector_results, keyword_results = await asyncio.gather(
             asyncio.to_thread(_vector_search, cid, bid, query_embedding),
@@ -830,17 +956,14 @@ async def rag_pipeline_stream(
 
         yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
 
-        context_text = (
-            "\n---\n".join(
-                [
-                    f"[Source {i}] {doc.document_name}\nContent:\n"
-                    + (doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content)
-                    for i, doc in enumerate(final_results, 1)
-                ]
-            )
-            if final_results
-            else "No relevant documents found."
-        )
+        # Build context with company identity injection
+        context_parts = []
+        if _company_name:
+            context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
+        for i, doc in enumerate(final_results, 1):
+            chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
+            context_parts.append(f"[Source {i}] {doc.document_name}\nContent:\n{chunk_content}\n")
+        context_text = "\n---\n".join(context_parts) if context_parts else "No relevant documents found."
         history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
         is_bant_enabled = getattr(client, "bant_enabled", True)
@@ -857,6 +980,9 @@ async def rag_pipeline_stream(
             live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
             custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
             brand_tone=getattr(bot, "brand_tone", None) if bot else None,
+            company_name=_company_name,
+            company_description=_company_desc,
+            bot_name=_bot_name,
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -891,6 +1017,10 @@ async def rag_pipeline_stream(
                 bot_msg.trace_id = lf.get_current_trace_id()
 
         session.commit()
+
+        # Cache the answer for identical future questions
+        if _cache_key and full_answer:
+            cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
 
         if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
             submit_background(

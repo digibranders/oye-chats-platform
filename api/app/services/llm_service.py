@@ -79,6 +79,73 @@ Return ONLY the tone description, nothing else."""
         return None
 
 
+def extract_company_context(content_sample: str, *, metadata: dict | None = None) -> dict | None:
+    """Analyze scraped website content and extract the company name and description.
+
+    Returns ``{"name": "Acme Corp", "description": "Acme Corp is a ..."}``
+    or *None* if extraction fails.
+    """
+    if not OPENAI_API_KEY or not content_sample.strip():
+        return None
+    try:
+        prompt = f"""Analyze this website content and extract two things:
+
+1. COMPANY NAME: The exact official company/brand name (e.g., "Fynix Digital", "Acme Corp").
+2. COMPANY DESCRIPTION: A 2-3 sentence factual description of what the company does, its core services/products, and industry. Write in third person.
+
+Respond in EXACTLY this format (two lines, no extra text):
+NAME: <company name>
+DESCRIPTION: <company description>
+
+Example:
+NAME: Fynix Digital
+DESCRIPTION: Fynix Digital is a branding and marketing agency based in India. They specialize in brand strategy, UI/UX design, website development, SEO, and paid advertising for businesses of all sizes.
+
+Website content:
+{content_sample[:4000]}"""
+
+        response = litellm.completion(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=250,
+            metadata=metadata or {"generation_name": "company-context-extraction"},
+            fallbacks=LLM_FALLBACKS,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            return None
+
+        # Parse structured response
+        name = None
+        description = None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.upper().startswith("NAME:"):
+                name = line[5:].strip().strip('"')
+            elif line.upper().startswith("DESCRIPTION:"):
+                description = line[12:].strip().strip('"')
+
+        if not name and not description and len(text) < 1000:
+            # Fallback: treat entire response as description
+            description = text
+
+        result = {}
+        if name and 2 <= len(name) <= 100:
+            result["name"] = name
+        if description and len(description) < 1000:
+            result["description"] = description
+
+        if result:
+            logger.info(
+                f"Company context extracted: name={result.get('name')}, desc={result.get('description', '')[:60]}..."
+            )
+            return result
+        return None
+    except Exception as e:
+        logger.warning(f"Company context extraction failed (non-blocking): {e}")
+        return None
+
+
 _STREAM_CHUNK_TIMEOUT_S = 30
 
 

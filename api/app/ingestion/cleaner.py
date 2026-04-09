@@ -4,6 +4,7 @@ import re
 def clean_text(text: str) -> str:
     """
     Cleans text by removing markdown noise (images, navigation links) and normalizing whitespace.
+    Preserves bullet lists that contain substantive text (not just links).
     """
     # 1. Remove Markdown Images: ![Alt](URL)
     text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
@@ -18,11 +19,16 @@ def clean_text(text: str) -> str:
             continue
 
         # 3. Filter Navigation & Menu Items
-        # Remove lines that start with typical menu patterns like "* [Link]" or "| Link"
-        if line.startswith(("* [", "- [", "|")):
+        # Only remove lines that are PURELY a navigation link (no descriptive text).
+        # e.g., "* [Home](/)" is stripped, but "* [Learn more](/pricing) — our flexible plans" is kept.
+        if re.match(r"^[*\-]\s*\[.*?\]\(.*?\)\s*$", line):
             continue
 
-        # Remove lines that are JUST a link "[Link](Url)"
+        # Remove lines that start with "|" (table separators / nav bars)
+        if line.startswith("|"):
+            continue
+
+        # Remove lines that are JUST a standalone link "[Link](Url)"
         if re.match(r"^\[.*?\]\(.*?\)$", line):
             continue
 

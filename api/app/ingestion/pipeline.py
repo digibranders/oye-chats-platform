@@ -1,11 +1,13 @@
 import hashlib
 import logging
 import os
+import re
 import shutil
 from datetime import datetime
 from typing import Any
 
 from app.config import ARCHIVE_DIR
+from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.db.repository import insert_documents, is_document_processed
 from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
@@ -14,6 +16,20 @@ from app.ingestion.embedder import embed_chunks
 from app.ingestion.extraction import load_docx, load_pdf, load_txt
 
 logger = logging.getLogger(__name__)
+
+_TITLE_PATTERN = re.compile(r"^#\s+(.+)", re.MULTILINE)
+
+
+def _extract_title_from_markdown(content: str) -> str | None:
+    """Extract the first top-level heading from markdown content as a page title."""
+    match = _TITLE_PATTERN.search(content[:500])
+    if match:
+        title = match.group(1).strip()
+        # Ignore overly long or noisy "titles" (likely not a real heading)
+        if 3 <= len(title) <= 120:
+            return title
+    return None
+
 
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
@@ -70,6 +86,9 @@ def _ingest_document(
                 session, client_id, source_name, file_hash, chunk_contents, embeddings, chunk_metadatas, bot_id=bot_id
             )
             session.commit()
+            # Invalidate cached QA responses — knowledge base has changed
+            if bot_id:
+                cache_delete_prefix(qa_prefix_for_bot(bot_id))
         except Exception as e:
             session.rollback()
             raise e
@@ -135,9 +154,15 @@ def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int | None
     logger.info(f"Processing URL: {url} for client {client_id}, bot {bot_id}")
 
     try:
+        # Extract page title from markdown content
+        title = _extract_title_from_markdown(content)
+        meta = {"page": 1, "url": url}
+        if title:
+            meta["title"] = title
+
         # Wrap content in the expected format for chunking
         # We treat the whole page as a single "page" of text
-        pages_data = [{"text": content, "metadata": {"page": 1, "url": url}}]
+        pages_data = [{"text": content, "metadata": meta}]
 
         chunks_count = _ingest_document(client_id, url, content, pages_data, bot_id=bot_id)
         logger.info(f"Web ingestion complete for {url}. Chunks: {chunks_count}")
@@ -182,8 +207,12 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
                 logger.info(f"Skipping {url} (already processed)")
                 continue
 
-            # Chunk this page
-            pages_data = [{"text": content, "metadata": {"page": 1, "url": url}}]
+            # Extract page title and chunk this page
+            title = _extract_title_from_markdown(content)
+            page_meta = {"page": 1, "url": url}
+            if title:
+                page_meta["title"] = title
+            pages_data = [{"text": content, "metadata": page_meta}]
             chunks = chunk_text(pages_data, document_name=url)
 
             if not chunks:
@@ -250,6 +279,10 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
                 logger.error(f"Failed to insert chunks for {boundary['url']}: {e}")
                 session.rollback()
                 continue
+
+    # Invalidate cached QA responses — knowledge base has changed
+    if total > 0 and bot_id:
+        cache_delete_prefix(qa_prefix_for_bot(bot_id))
 
     logger.info(f"Batch ingestion complete: {total} chunks from {len(page_boundaries)} pages")
     return total

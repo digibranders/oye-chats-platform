@@ -83,6 +83,8 @@ export default function Settings() {
 
     // Tone & Personality
     const [brandTone, setBrandTone] = useState('');
+    const [companyName, setCompanyName] = useState('');
+    const [companyDescription, setCompanyDescription] = useState('');
     const [systemPrompt, setSystemPrompt] = useState('');
     const [savingTone, setSavingTone] = useState(false);
 
@@ -100,6 +102,8 @@ export default function Settings() {
         setBotId(selectedBot.id);
         setFlags({ ...DEFAULT_FLAGS, ...(selectedBot.feature_flags || {}) });
         setBrandTone(selectedBot.brand_tone || '');
+        setCompanyName(selectedBot.company_name || '');
+        setCompanyDescription(selectedBot.company_description || '');
         setSystemPrompt(selectedBot.system_prompt || '');
         if (selectedBot.business_hours) {
             setBusinessHours({ ...DEFAULT_BUSINESS_HOURS, ...selectedBot.business_hours });
@@ -156,6 +160,8 @@ export default function Settings() {
         try {
             await updateBot(botId, {
                 brand_tone: brandTone || null,
+                company_name: companyName || null,
+                company_description: companyDescription || null,
                 system_prompt: systemPrompt || null,
             });
             showToast('success', 'Tone settings saved.');
@@ -165,7 +171,7 @@ export default function Settings() {
             setSavingTone(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [botId, brandTone, systemPrompt]);
+    }, [botId, brandTone, companyName, companyDescription, systemPrompt]);
 
     const handleSendFeedback = (e) => {
         e.preventDefault();
@@ -292,6 +298,63 @@ export default function Settings() {
                                 />
                                 <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
                                     Describes your brand&apos;s voice. Auto-filled when you crawl your website, or customize manually.
+                                </p>
+                            </div>
+
+                            {/* Company Name */}
+                            <div>
+                                <label className="text-sm font-medium text-surface-800 dark:text-surface-200 flex items-center gap-2 mb-2">
+                                    Company Name
+                                    {companyName && (
+                                        <span className="text-xs font-normal text-primary-600 dark:text-primary-400 flex items-center gap-1">
+                                            <Sparkles size={10} />
+                                            Auto-detected
+                                        </span>
+                                    )}
+                                </label>
+                                <input
+                                    type="text"
+                                    value={companyName}
+                                    onChange={(e) => setCompanyName(e.target.value)}
+                                    className={cn(
+                                        'w-full px-4 py-3 rounded-xl border border-surface-200 dark:border-surface-600',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
+                                        'outline-none transition-all text-sm'
+                                    )}
+                                    placeholder='e.g., "Fynix Digital"'
+                                />
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
+                                    Your official company/brand name. Auto-filled when you crawl your website. The chatbot uses this to identify your company.
+                                </p>
+                            </div>
+
+                            {/* Company Description */}
+                            <div>
+                                <label className="text-sm font-medium text-surface-800 dark:text-surface-200 flex items-center gap-2 mb-2">
+                                    Company Description
+                                    {companyDescription && (
+                                        <span className="text-xs font-normal text-primary-600 dark:text-primary-400 flex items-center gap-1">
+                                            <Sparkles size={10} />
+                                            Auto-detected
+                                        </span>
+                                    )}
+                                </label>
+                                <textarea
+                                    value={companyDescription}
+                                    onChange={(e) => setCompanyDescription(e.target.value)}
+                                    className={cn(
+                                        'w-full px-4 py-3 rounded-xl border border-surface-200 dark:border-surface-600',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
+                                        'outline-none transition-all resize-none h-24 text-sm'
+                                    )}
+                                    placeholder='e.g., "Acme Corp is a digital marketing agency specializing in brand strategy, web design, and SEO for growing businesses."'
+                                />
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
+                                    Describes your company. Auto-filled when you crawl your website. The chatbot uses this to answer &quot;What does your company do?&quot; questions.
                                 </p>
                             </div>
 

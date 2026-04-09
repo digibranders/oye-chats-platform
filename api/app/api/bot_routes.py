@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
+from app.core.cache import bot_config_key, cache_delete
 from app.db.models import Bot, BotGrowthEvent
 from app.db.session import get_session
 
@@ -56,6 +57,8 @@ class UpdateBotRequest(BaseModel):
     # max_length matches _MAX_CUSTOM_PROMPT_CHARS in rag_service — enforced at API boundary
     system_prompt: str | None = Field(None, max_length=2000)
     brand_tone: str | None = Field(None, max_length=500)
+    company_name: str | None = Field(None, max_length=100)
+    company_description: str | None = Field(None, max_length=1000)
     website: str | None = None
     bot_logo: str | None = None
     launcher_name: str | None = None
@@ -929,6 +932,8 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 setattr(bot, key, value)
 
             session.commit()
+            # Invalidate cached bot config so widget picks up changes immediately
+            cache_delete(bot_config_key(bot.bot_key))
             logger.info(f"Bot {bot_id} settings saved successfully by workspace {auth['client_id']}")
             return {"message": "Bot settings updated successfully"}
     except HTTPException:
@@ -945,7 +950,9 @@ def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
     with get_session() as session:
         bot = _get_workspace_bot(session, bot_id, auth["client_id"])
 
+        bot_key_val = bot.bot_key
         session.delete(bot)
         session.commit()
+        cache_delete(bot_config_key(bot_key_val))
         logger.info(f"Bot {bot_id} deleted by workspace {auth['client_id']}")
         return {"message": "Bot deleted successfully"}
