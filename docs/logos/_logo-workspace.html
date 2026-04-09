@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OyeChats Logo Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@svgdotjs/svg.js@3.0/dist/svg.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 48px;
+      padding: 48px 32px 80px;
+      min-height: 100vh;
+      background: #e8e8e8;
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+    h2 { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #666; margin-bottom: 12px; }
+    .preview { background: white; box-shadow: 0 4px 24px rgba(0,0,0,0.12); }
+    .preview-dark { background: #030D1F; box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+    .combo-wrap { width: min(1100px, calc(100vw - 64px)); }
+    .size-row { display: flex; gap: 24px; align-items: flex-end; }
+    .size-item { text-align: center; }
+    .size-label { font-size: 11px; color: #888; margin-bottom: 6px; }
+    .section { display: flex; flex-direction: column; align-items: center; }
+    textarea#svg-icon, textarea#svg-logo, textarea#svg-mono {
+      position: fixed; bottom: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== LOGO 1: ICON MARK ===== -->
+  <div class="section">
+    <h2>Logo 1 — Icon Mark (512×512)</h2>
+    <div id="icon-canvas" class="preview"></div>
+    <div style="margin-top:24px;">
+      <div class="size-row">
+        <div class="size-item"><div class="size-label">128px</div><div id="icon-128" class="preview"></div></div>
+        <div class="size-item"><div class="size-label">64px</div><div id="icon-64" class="preview"></div></div>
+        <div class="size-item"><div class="size-label">32px</div><div id="icon-32" class="preview"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LOGO 2: COMBINATION MARK ===== -->
+  <div class="section">
+    <h2>Logo 2 — Combination Mark (Light)</h2>
+    <div id="logo-canvas" class="preview combo-wrap"></div>
+  </div>
+
+  <!-- ===== LOGO 3: COMBINATION MARK (DARK) ===== -->
+  <div class="section">
+    <h2>Logo 3 — Combination Mark (Dark Background)</h2>
+    <div id="logo-dark-canvas" class="preview-dark combo-wrap"></div>
+  </div>
+
+  <!-- ===== LOGO 4: MONOCHROME ===== -->
+  <div class="section">
+    <h2>Logo 4 — Monochrome</h2>
+    <div id="logo-mono-canvas" class="preview combo-wrap"></div>
+  </div>
+
+  <textarea id="svg-icon"></textarea>
+  <textarea id="svg-logo"></textarea>
+  <textarea id="svg-mono"></textarea>
+
+<script>
+// ============================================================
+// ICON MARK — 512×512
+// Signal arcs: 3 concentric arcs from anchor point, sweeping upward
+// Design: like a broadcast/greeting signal (WiFi rotated)
+// ============================================================
+(function() {
+  var draw = SVG().addTo('#icon-canvas').size(512, 512).viewbox(0, 0, 512, 512);
+
+  // White background
+  draw.rect(512, 512).fill('#ffffff');
+
+  // Gradient: bottom=Indigo → top=Electric Blue
+  var grad = draw.gradient('linear', function(add) {
+    add.stop(0, '#4F46E5');
+    add.stop(1, '#2563EB');
+  });
+  grad.attr({
+    x1: '256', y1: '370', x2: '256', y2: '165',
+    gradientUnits: 'userSpaceOnUse'
+  });
+
+  var cx = 256, cy = 370;
+  var a1 = 225 * Math.PI / 180;
+  var a2 = 315 * Math.PI / 180;
+
+  function drawArc(r, sw) {
+    var x1 = cx + r * Math.cos(a1);
+    var y1 = cy + r * Math.sin(a1);
+    var x2 = cx + r * Math.cos(a2);
+    var y2 = cy + r * Math.sin(a2);
+    draw.path('M ' + x1.toFixed(2) + ',' + y1.toFixed(2) +
+              ' A ' + r + ',' + r + ' 0 0,1 ' + x2.toFixed(2) + ',' + y2.toFixed(2))
+        .fill('none')
+        .attr('stroke', 'url(#' + grad.id() + ')')
+        .attr('stroke-width', sw)
+        .attr('stroke-linecap', 'round');
+  }
+
+  drawArc(70,  42);  // inner
+  drawArc(135, 37);  // middle
+  drawArc(200, 32);  // outer
+
+  // Anchor dot
+  draw.circle(48).center(cx, cy)
+      .attr('fill', 'url(#' + grad.id() + ')');
+
+  // Scale previews
+  var iconSVG = draw.node.outerHTML;
+  [128, 64, 32].forEach(function(s) {
+    var el = document.getElementById('icon-' + s);
+    el.innerHTML = iconSVG;
+    var svg = el.querySelector('svg');
+    svg.setAttribute('width', s);
+    svg.setAttribute('height', s);
+  });
+
+  // Export
+  var svgEl = draw.node;
+  svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  var out = svgEl.outerHTML
+    .replace(/\s*svgjs:data="[^"]*"/g, '')
+    .replace(/\s*class="[^"]*"/g, '');
+  document.getElementById('svg-icon').value = out;
+})();
+
+// ============================================================
+// COMBINATION MARK LIGHT — icon + "OyeChats" wordmark
+// ============================================================
+(function() {
+  // Use raw SVG for the combination mark (text + icon together)
+  // viewBox: 1100 × 240
+  var vw = 1100, vh = 240;
+  var cx = 95, cy = 138;
+
+  // Calculate arc points
+  function arcPoints(cx, cy, r) {
+    var a1 = 225 * Math.PI / 180;
+    var a2 = 315 * Math.PI / 180;
+    return {
+      x1: (cx + r * Math.cos(a1)).toFixed(2),
+      y1: (cy + r * Math.sin(a1)).toFixed(2),
+      x2: (cx + r * Math.cos(a2)).toFixed(2),
+      y2: (cy + r * Math.sin(a2)).toFixed(2)
+    };
+  }
+
+  var r1 = 30, r2 = 57, r3 = 84;
+  var p1 = arcPoints(cx, cy, r1);
+  var p2 = arcPoints(cx, cy, r2);
+  var p3 = arcPoints(cx, cy, r3);
+
+  // Gradient spans from cy (bottom) to top of outer arc
+  var gradTop = cy - r3;
+
+  var svgStr = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + vw + ' ' + vh + '" style="width:100%;height:auto;display:block">',
+    '  <title>OyeChats</title>',
+    '  <defs>',
+    '    <linearGradient id="icg" x1="' + cx + '" y1="' + cy + '" x2="' + cx + '" y2="' + gradTop + '" gradientUnits="userSpaceOnUse">',
+    '      <stop offset="0%" stop-color="#4F46E5"/>',
+    '      <stop offset="100%" stop-color="#2563EB"/>',
+    '    </linearGradient>',
+    '  </defs>',
+    '  <!-- Inner arc -->',
+    '  <path d="M ' + p1.x1 + ',' + p1.y1 + ' A ' + r1 + ',' + r1 + ' 0 0,1 ' + p1.x2 + ',' + p1.y2 + '"',
+    '        fill="none" stroke="url(#icg)" stroke-width="17" stroke-linecap="round"/>',
+    '  <!-- Middle arc -->',
+    '  <path d="M ' + p2.x1 + ',' + p2.y1 + ' A ' + r2 + ',' + r2 + ' 0 0,1 ' + p2.x2 + ',' + p2.y2 + '"',
+    '        fill="none" stroke="url(#icg)" stroke-width="14" stroke-linecap="round"/>',
+    '  <!-- Outer arc -->',
+    '  <path d="M ' + p3.x1 + ',' + p3.y1 + ' A ' + r3 + ',' + r3 + ' 0 0,1 ' + p3.x2 + ',' + p3.y2 + '"',
+    '        fill="none" stroke="url(#icg)" stroke-width="11" stroke-linecap="round"/>',
+    '  <!-- Dot -->',
+    '  <circle cx="' + cx + '" cy="' + cy + '" r="10" fill="url(#icg)"/>',
+    '  <!-- Wordmark -->',
+    '  <text x="183" y="' + (vh / 2) + '"',
+    '        font-family="\'Inter\', \'Helvetica Neue\', Arial, sans-serif"',
+    '        font-size="128" font-weight="700" fill="#0F172A"',
+    '        dominant-baseline="middle" letter-spacing="-3">OyeChats</text>',
+    '</svg>'
+  ].join('\n');
+
+  document.getElementById('logo-canvas').innerHTML = svgStr;
+  document.getElementById('svg-logo').value = svgStr;
+})();
+
+// ============================================================
+// COMBINATION MARK DARK
+// ============================================================
+(function() {
+  var vw = 1100, vh = 240;
+  var cx = 95, cy = 138;
+
+  function arcPoints(cx, cy, r) {
+    var a1 = 225 * Math.PI / 180;
+    var a2 = 315 * Math.PI / 180;
+    return {
+      x1: (cx + r * Math.cos(a1)).toFixed(2),
+      y1: (cy + r * Math.sin(a1)).toFixed(2),
+      x2: (cx + r * Math.cos(a2)).toFixed(2),
+      y2: (cy + r * Math.sin(a2)).toFixed(2)
+    };
+  }
+
+  var r1 = 30, r2 = 57, r3 = 84;
+  var p1 = arcPoints(cx, cy, r1);
+  var p2 = arcPoints(cx, cy, r2);
+  var p3 = arcPoints(cx, cy, r3);
+  var gradTop = cy - r3;
+
+  var svgStr = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + vw + ' ' + vh + '" style="width:100%;height:auto;display:block">',
+    '  <title>OyeChats</title>',
+    '  <defs>',
+    '    <linearGradient id="idg" x1="' + cx + '" y1="' + cy + '" x2="' + cx + '" y2="' + gradTop + '" gradientUnits="userSpaceOnUse">',
+    '      <stop offset="0%" stop-color="#818CF8"/>',
+    '      <stop offset="100%" stop-color="#60A5FA"/>',
+    '    </linearGradient>',
+    '  </defs>',
+    '  <path d="M ' + p1.x1 + ',' + p1.y1 + ' A ' + r1 + ',' + r1 + ' 0 0,1 ' + p1.x2 + ',' + p1.y2 + '"',
+    '        fill="none" stroke="url(#idg)" stroke-width="17" stroke-linecap="round"/>',
+    '  <path d="M ' + p2.x1 + ',' + p2.y1 + ' A ' + r2 + ',' + r2 + ' 0 0,1 ' + p2.x2 + ',' + p2.y2 + '"',
+    '        fill="none" stroke="url(#idg)" stroke-width="14" stroke-linecap="round"/>',
+    '  <path d="M ' + p3.x1 + ',' + p3.y1 + ' A ' + r3 + ',' + r3 + ' 0 0,1 ' + p3.x2 + ',' + p3.y2 + '"',
+    '        fill="none" stroke="url(#idg)" stroke-width="11" stroke-linecap="round"/>',
+    '  <circle cx="' + cx + '" cy="' + cy + '" r="10" fill="url(#idg)"/>',
+    '  <text x="183" y="' + (vh / 2) + '"',
+    '        font-family="\'Inter\', \'Helvetica Neue\', Arial, sans-serif"',
+    '        font-size="128" font-weight="700" fill="#F8FAFC"',
+    '        dominant-baseline="middle" letter-spacing="-3">OyeChats</text>',
+    '</svg>'
+  ].join('\n');
+
+  document.getElementById('logo-dark-canvas').innerHTML = svgStr;
+})();
+
+// ============================================================
+// MONOCHROME COMBINATION MARK
+// ============================================================
+(function() {
+  var vw = 1100, vh = 240;
+  var cx = 95, cy = 138;
+
+  function arcPoints(cx, cy, r) {
+    var a1 = 225 * Math.PI / 180;
+    var a2 = 315 * Math.PI / 180;
+    return {
+      x1: (cx + r * Math.cos(a1)).toFixed(2),
+      y1: (cy + r * Math.sin(a1)).toFixed(2),
+      x2: (cx + r * Math.cos(a2)).toFixed(2),
+      y2: (cy + r * Math.sin(a2)).toFixed(2)
+    };
+  }
+
+  var r1 = 30, r2 = 57, r3 = 84;
+  var p1 = arcPoints(cx, cy, r1);
+  var p2 = arcPoints(cx, cy, r2);
+  var p3 = arcPoints(cx, cy, r3);
+
+  var svgStr = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + vw + ' ' + vh + '" style="width:100%;height:auto;display:block">',
+    '  <title>OyeChats</title>',
+    '  <path d="M ' + p1.x1 + ',' + p1.y1 + ' A ' + r1 + ',' + r1 + ' 0 0,1 ' + p1.x2 + ',' + p1.y2 + '"',
+    '        fill="none" stroke="#0F172A" stroke-width="17" stroke-linecap="round"/>',
+    '  <path d="M ' + p2.x1 + ',' + p2.y1 + ' A ' + r2 + ',' + r2 + ' 0 0,1 ' + p2.x2 + ',' + p2.y2 + '"',
+    '        fill="none" stroke="#0F172A" stroke-width="14" stroke-linecap="round"/>',
+    '  <path d="M ' + p3.x1 + ',' + p3.y1 + ' A ' + r3 + ',' + r3 + ' 0 0,1 ' + p3.x2 + ',' + p3.y2 + '"',
+    '        fill="none" stroke="#0F172A" stroke-width="11" stroke-linecap="round"/>',
+    '  <circle cx="' + cx + '" cy="' + cy + '" r="10" fill="#0F172A"/>',
+    '  <text x="183" y="' + (vh / 2) + '"',
+    '        font-family="\'Inter\', \'Helvetica Neue\', Arial, sans-serif"',
+    '        font-size="128" font-weight="700" fill="#0F172A"',
+    '        dominant-baseline="middle" letter-spacing="-3">OyeChats</text>',
+    '</svg>'
+  ].join('\n');
+
+  document.getElementById('logo-mono-canvas').innerHTML = svgStr;
+  document.getElementById('svg-mono').value = svgStr;
+})();
+</script>
+</body>
+</html>
