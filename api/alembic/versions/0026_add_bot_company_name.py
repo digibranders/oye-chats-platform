@@ -5,8 +5,6 @@ Revises: 0025_add_company_description
 Create Date: 2026-04-09
 """
 
-import sqlalchemy as sa
-
 from alembic import op
 
 revision = "0026_add_bot_company_name"
@@ -16,7 +14,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("bots", sa.Column("company_name", sa.String(), nullable=True))
+    # Use raw DDL so the migration is idempotent — safe to run even if the
+    # column already exists in production (e.g. added manually or by a prior run).
+    op.execute("ALTER TABLE bots ADD COLUMN IF NOT EXISTS company_name VARCHAR")
 
 
 def downgrade() -> None:
