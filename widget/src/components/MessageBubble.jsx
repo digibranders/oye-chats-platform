@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import BotAvatar from './BotAvatar';
 
 const SafeLink = ({ href, ...props }) => {
     // Block javascript:, data:, vbscript: and other dangerous URI schemes
@@ -17,10 +18,13 @@ const MessageBubble = ({
     settings,
 }) => {
     if (msg.sender === 'bot') {
-        // AI message — plain text, NO bubble
+        // AI message — avatar + plain text, NO bubble
         return (
-            <div className="flex flex-col items-start w-full">
-                <div className="w-full">
+            <div className="flex items-start gap-2 w-full">
+                <div className="flex-shrink-0 mt-1">
+                    <BotAvatar settings={settings || {}} size="xs" />
+                </div>
+                <div className="min-w-0 flex-1">
                     <div className={`text-[14px] ${currentTheme.botText}`}>
                         <div className="prose prose-sm max-w-none break-words font-light">
                             <ReactMarkdown

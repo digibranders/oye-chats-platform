@@ -963,60 +963,69 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             {/* ── Header ── */}
             <div className={currentTheme.header}>
                 {renderHeader() || <div />}
-                <div className="flex items-center gap-1 relative" ref={headerMenuRef}>
-                    {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
-                        <button
-                            onClick={handleNewChat}
-                            className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                            title="Start New Chat"
-                        >
-                            <Plus className="w-4 h-4" />
-                        </button>
-                    )}
-                    <button
-                        onClick={() => setShowHeaderMenu(prev => !prev)}
-                        className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
-                        title="More options"
-                    >
-                        <MoreHorizontal className="w-4 h-4" />
-                    </button>
-                    <button
-                        onClick={handleHeaderClose}
-                        className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
-                        title="Close"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
-
-                    {showHeaderMenu && (
-                        <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
-                            {settings.feature_flags?.email_transcript !== false && messages.length > 0 && (
+                {(() => {
+                    const showTranscriptOption = settings.feature_flags?.email_transcript !== false && messages.length > 0;
+                    const showLeaveMessageOption = !settings.live_chat_enabled && chatMode === 'bot';
+                    const hasMenuOptions = showTranscriptOption || showLeaveMessageOption;
+                    return (
+                        <div className="flex items-center gap-1 relative" ref={headerMenuRef}>
+                            {chatMode === 'bot' && (isReturningUser || messages.filter(m => m.sender === 'user').length > 0) && (
                                 <button
-                                    onClick={handleSendTranscript}
-                                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                    onClick={handleNewChat}
+                                    className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
+                                    title="Start New Chat"
                                 >
-                                    <Mail className="w-4 h-4 text-gray-400" />
-                                    Send transcript
+                                    <Plus className="w-4 h-4" />
                                 </button>
                             )}
-                            {!settings.live_chat_enabled && chatMode === 'bot' && (
+                            {hasMenuOptions && (
                                 <button
-                                    onClick={() => {
-                                        setShowHeaderMenu(false);
-                                        if (showWelcome) exitWelcome();
-                                        setChatMode('unavailable');
-                                    }}
-                                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                    onClick={() => setShowHeaderMenu(prev => !prev)}
+                                    className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-400 hover:text-gray-600"
+                                    title="More options"
                                 >
-                                    <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
-                                    </svg>
-                                    Leave a message
+                                    <MoreHorizontal className="w-4 h-4" />
                                 </button>
+                            )}
+                            <button
+                                onClick={handleHeaderClose}
+                                className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                                title="Close"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+
+                            {showHeaderMenu && hasMenuOptions && (
+                                <div className="absolute top-full right-0 mt-1 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50 min-w-[180px]" style={{ animation: 'fadeUp 0.15s ease-out' }}>
+                                    {showTranscriptOption && (
+                                        <button
+                                            onClick={handleSendTranscript}
+                                            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                        >
+                                            <Mail className="w-4 h-4 text-gray-400" />
+                                            Send transcript
+                                        </button>
+                                    )}
+                                    {showLeaveMessageOption && (
+                                        <button
+                                            onClick={() => {
+                                                setShowHeaderMenu(false);
+                                                if (showWelcome) exitWelcome();
+                                                setChatMode('unavailable');
+                                            }}
+                                            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-[#16202C] hover:bg-gray-50 transition-colors"
+                                        >
+                                            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                                            </svg>
+                                            Leave a message
+                                        </button>
+                                    )}
+                                </div>
                             )}
                         </div>
-                    )}
-                </div>
+                    );
+                })()}
             </div>
 
             {/* ── Floating agent badge (always on top of messages area) ── */}
@@ -1596,7 +1605,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     placeholder="your@email.com"
                                     required
                                     autoFocus
-                                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-3"
+                                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 mb-3"
                                 />
                                 {transcriptError && (
                                     <p className="text-xs text-red-500 mb-3">{transcriptError}</p>
