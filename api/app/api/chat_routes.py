@@ -29,6 +29,15 @@ from app.services.rag_service import rag_pipeline, rag_pipeline_stream
 from app.services.sdr_service import run_sdr_qualification
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+_SAFE_URL_SCHEME = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def _sanitize_url(url: str | None, max_len: int = 2000) -> str | None:
+    """Return a truncated URL only if it uses http(s), else None."""
+    if not url:
+        return None
+    url = url.strip()[:max_len]
+    return url if _SAFE_URL_SCHEME.match(url) else None
 
 
 def _redact_email(email: str | None) -> str:
@@ -321,10 +330,12 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
             ).scalar_one()
 
             # Store page context on the session (first call wins for URL/referrer)
-            if body.page_url and not chat_session.page_url:
-                chat_session.page_url = body.page_url[:2000]
-            if body.referrer and not chat_session.referrer:
-                chat_session.referrer = body.referrer[:2000]
+            safe_page_url = _sanitize_url(body.page_url)
+            if safe_page_url and not chat_session.page_url:
+                chat_session.page_url = safe_page_url
+            safe_referrer = _sanitize_url(body.referrer)
+            if safe_referrer and not chat_session.referrer:
+                chat_session.referrer = safe_referrer
             if body.utm_params and not chat_session.utm_params:
                 chat_session.utm_params = body.utm_params
 
@@ -333,13 +344,13 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
                 chat_session.visit_count = max(chat_session.visit_count, 2)
 
             # Record visitor events
-            if body.page_url:
+            if safe_page_url:
                 session.add(
                     VisitorEvent(
                         session_id=body.session_id,
                         bot_id=bot.id,
                         event_type="page_view",
-                        event_data={"url": body.page_url[:2000]},
+                        event_data={"url": safe_page_url},
                     )
                 )
             if body.utm_params and any(body.utm_params.values()):
