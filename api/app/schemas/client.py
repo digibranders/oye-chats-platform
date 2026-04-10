@@ -50,6 +50,10 @@ class DocumentPagesResponse(BaseModel):
 class CrawlRequest(BaseModel):
     url: str
     max_pages: int | None = Field(default=None, ge=1, le=100)
+    use_js: bool = Field(
+        default=False,
+        description="Enable JavaScript (browser) mode for all pages. Required for Next.js, React, and other SPA sites.",
+    )
 
     @field_validator("url")
     @classmethod

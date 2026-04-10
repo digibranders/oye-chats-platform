@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink } from 'lucide-react';
+import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { uploadDocuments, crawlWebsite, getDocuments, deleteDocument } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
@@ -23,6 +23,7 @@ export default function KnowledgeBase() {
   const fileInputRef = useRef(null);
 
   const [url, setUrl] = useState(localStorage.getItem('company_website') || '');
+  const [useJs, setUseJs] = useState(false);
   const [isCrawling, setIsCrawling] = useState(false);
   const [crawlStatus, setCrawlStatus] = useState(null);
   const [scanningUrls, setScanningUrls] = useState([]);
@@ -127,7 +128,7 @@ export default function KnowledgeBase() {
     setIsCrawling(true); setCrawlStatus(null);
     startScanSimulation(url);
     try {
-      const result = await crawlWebsite(url, selectedBot?.id);
+      const result = await crawlWebsite(url, selectedBot?.id, useJs);
       stopScanSimulation(result);
       setCrawlStatus({ type: 'success', message: `Crawled ${result.pages_processed || 0} pages and ingested ${result.chunks_processed || 0} chunks.` });
       showToast('success', `Crawling done! ${result.pages_processed || 0} pages.`);
@@ -277,6 +278,40 @@ export default function KnowledgeBase() {
                   />
                 </div>
               </div>
+
+              {/* JavaScript mode toggle */}
+              <button
+                type="button"
+                onClick={() => setUseJs(prev => !prev)}
+                disabled={isCrawling}
+                className={cn(
+                  'w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-sm',
+                  useJs
+                    ? 'border-violet-400 dark:border-violet-500 bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                    : 'border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-600 dark:text-surface-400 hover:border-surface-300 dark:hover:border-surface-600'
+                )}
+              >
+                <div className={cn(
+                  'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
+                  useJs ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-300' : 'bg-surface-100 dark:bg-surface-700 text-surface-400'
+                )}>
+                  <Zap size={15} />
+                </div>
+                <div className="flex-1 text-left">
+                  <p className="font-medium leading-tight">JavaScript Mode</p>
+                  <p className="text-xs opacity-70 mt-0.5">Required for Next.js, React &amp; other SPA sites</p>
+                </div>
+                <div className={cn(
+                  'w-10 h-5 rounded-full transition-all relative shrink-0',
+                  useJs ? 'bg-violet-500' : 'bg-surface-300 dark:bg-surface-600'
+                )}>
+                  <div className={cn(
+                    'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all',
+                    useJs ? 'left-[22px]' : 'left-0.5'
+                  )} />
+                </div>
+              </button>
+
               <button
                 type="submit"
                 disabled={isCrawling || !url}
@@ -328,7 +363,8 @@ export default function KnowledgeBase() {
                 <ul className="list-disc pl-5 space-y-1 text-sky-600/80 dark:text-sky-400/80 text-xs">
                   <li>We fetch the main page and follow internal links</li>
                   <li>Content is stripped of HTML and chunked for AI ingestion</li>
-                  <li>Make sure the site allows bots (check robots.txt)</li>
+                  <li>Next.js / React / SPA sites are auto-detected and crawled with JavaScript mode</li>
+                  <li>Enable <strong>JavaScript Mode</strong> manually if pages are missing</li>
                 </ul>
               </div>
             )}

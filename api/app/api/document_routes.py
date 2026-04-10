@@ -38,9 +38,17 @@ def _get_crawl_lock(client_id: int) -> asyncio.Lock:
 
 
 def _check_memory():
-    """Raise if memory usage is too high to safely run a crawl."""
+    """Raise if memory usage is too high to safely run a crawl.
+
+    Threshold is configurable via CRAWL_MEMORY_THRESHOLD env var (default 90).
+    Raise the default on local dev machines where >70% is normal; lower it
+    on memory-constrained production servers if needed.
+    """
+    import os
+
+    threshold = int(os.getenv("CRAWL_MEMORY_THRESHOLD", "90"))
     mem = psutil.virtual_memory()
-    if mem.percent > 70:
+    if mem.percent > threshold:
         raise HTTPException(
             status_code=503,
             detail="Server memory too high for crawling. Please try again later.",
@@ -268,7 +276,11 @@ async def crawl_endpoint(
     await lock.acquire()
     try:
         logger.info(f"Crawling URL recursively: {crawl_request.url} for client {client_id}, bot_id={bot_id}")
-        crawl_data = await crawl_website(crawl_request.url, max_pages=crawl_request.max_pages)
+        crawl_data = await crawl_website(
+            crawl_request.url,
+            max_pages=crawl_request.max_pages,
+            use_js=crawl_request.use_js,
+        )
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])

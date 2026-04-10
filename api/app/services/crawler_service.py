@@ -14,7 +14,7 @@ class CrawlerError(RuntimeError):
     """Raised when the crawler subprocess fails or produces invalid output."""
 
 
-async def crawl_website(url: str, max_pages: int | None = None) -> dict:
+async def crawl_website(url: str, max_pages: int | None = None, use_js: bool = False) -> dict:
     """Run the crawler subprocess and return parsed results.
 
     The crawler runs as a separate Python process to isolate Playwright's
@@ -26,6 +26,11 @@ async def crawl_website(url: str, max_pages: int | None = None) -> dict:
         url: The seed URL to crawl.
         max_pages: Optional page limit (capped at 100). When *None*, the
             subprocess falls back to the ``MAX_CRAWL_PAGES`` env default.
+        use_js: When True, forces JavaScript (browser/Playwright) mode for
+            all pages. Required for Next.js, React, and other SPAs where
+            content or links are rendered client-side. The crawler also
+            auto-detects SPAs from the seed page HTML, so this flag is
+            mainly for explicit override.
 
     Returns:
         A dict with ``results`` (list of page dicts) and
@@ -34,14 +39,16 @@ async def crawl_website(url: str, max_pages: int | None = None) -> dict:
     Raises:
         CrawlerError: On subprocess failure, timeout, or unparseable output.
     """
-    logger.info("Starting subprocess crawl for %s (max_pages=%s)", url, max_pages)
+    logger.info("Starting subprocess crawl for %s (max_pages=%s, use_js=%s)", url, max_pages, use_js)
 
     script_path = os.path.join(os.path.dirname(__file__), "crawler_script.py")
 
-    # Pass max_pages via env so the subprocess picks it up
+    # Pass settings via env so the subprocess picks them up
     env = {**os.environ}
     if max_pages is not None:
         env["MAX_CRAWL_PAGES"] = str(min(max(max_pages, 1), 100))
+    if use_js:
+        env["CRAWLER_JS_ALL_PAGES"] = "true"
 
     try:
         process = await asyncio.create_subprocess_exec(

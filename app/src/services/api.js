@@ -163,12 +163,14 @@ export const uploadDocuments = async (files, botId) => {
 /**
  * Submits a URL to be crawled and ingested.
  * @param {string} url - The root URL to start crawling
+ * @param {number|undefined} botId - Optional bot ID to scope the crawl
+ * @param {boolean} useJs - Enable JavaScript mode for Next.js / React / SPA sites
  * @returns {Promise<Object>} The API response with crawling results
  */
-export const crawlWebsite = async (url, botId) => {
+export const crawlWebsite = async (url, botId, useJs = false) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
-        const response = await api.post(endpoint, { url }, { timeout: 300000 });
+        const response = await api.post(endpoint, { url, use_js: useJs }, { timeout: 300000 });
         return response.data;
     } catch (error) {
         console.error('API Error during website crawl:', error);
