@@ -1080,9 +1080,10 @@ async def rag_pipeline_stream(
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
+        _stream_error = False
         try:
             chunk_count = 0
-            for chunk in generate_response_stream(
+            async for chunk in generate_response_stream(
                 prompt,
                 metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
             ):
@@ -1098,59 +1099,74 @@ async def rag_pipeline_stream(
         except Exception as e:
             logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
             yield " [I encountered an error. Please try again.]"
+            _stream_error = True
 
         # Strip CTA marker from response before saving
         full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)
 
-        bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=full_answer, bot_id=bid)
+        # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
+        # Build it inside a try/finally so even a DB failure sends the frame.
+        bot_msg_id = None
+        final_meta: dict = {}
+        try:
+            if not _stream_error or full_answer:
+                bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=full_answer, bot_id=bid
+                )
 
-        lf = get_langfuse()
-        if lf and hasattr(bot_msg, "trace_id"):
+                lf = get_langfuse()
+                if lf and hasattr(bot_msg, "trace_id"):
+                    with contextlib.suppress(Exception):
+                        bot_msg.trace_id = lf.get_current_trace_id()
+
+                session.commit()
+                bot_msg_id = bot_msg.id
+
+                # Cache the answer for identical future questions
+                if _cache_key and full_answer:
+                    cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
+
+                if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
+                    submit_background(
+                        _background_bant_extraction,
+                        session_id,
+                        cid,
+                        bid,
+                        history_context,
+                        question,
+                        full_answer,
+                        current_bant,
+                        bot,
+                        bant_config,
+                        bot_msg_id,
+                    )
+
+                live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
+                final_meta = {"message_id": bot_msg_id}
+                if suggest_handoff and live_chat_on:
+                    final_meta["suggest_handoff"] = True
+                if cta_data:
+                    final_meta["cta"] = cta_data
+                if (
+                    bot
+                    and getattr(bot, "meeting_booking_enabled", False)
+                    and getattr(bot, "calendly_url", None)
+                    and (chat_session.bant_tier or "unqualified") == "sql"
+                ):
+                    has_booking = (
+                        session.query(MeetingBooking)
+                        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
+                        .first()
+                        is not None
+                    )
+                    if not has_booking:
+                        final_meta["show_booking"] = True
+                        final_meta["calendly_url"] = bot.calendly_url
+        except Exception as cleanup_err:
+            logger.error(f"Post-stream cleanup failed for session {session_id}: {cleanup_err}", exc_info=True)
             with contextlib.suppress(Exception):
-                bot_msg.trace_id = lf.get_current_trace_id()
-
-        session.commit()
-
-        # Cache the answer for identical future questions
-        if _cache_key and full_answer:
-            cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
-
-        if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
-            submit_background(
-                _background_bant_extraction,
-                session_id,
-                cid,
-                bid,
-                history_context,
-                question,
-                full_answer,
-                current_bant,
-                bot,
-                bant_config,
-                bot_msg.id,
-            )
-
-        live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
-        final_meta: dict = {"message_id": bot_msg.id}
-        if suggest_handoff and live_chat_on:
-            final_meta["suggest_handoff"] = True
-        if cta_data:
-            final_meta["cta"] = cta_data
-        if (
-            bot
-            and getattr(bot, "meeting_booking_enabled", False)
-            and getattr(bot, "calendly_url", None)
-            and (chat_session.bant_tier or "unqualified") == "sql"
-        ):
-            has_booking = (
-                session.query(MeetingBooking)
-                .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
-                .first()
-                is not None
-            )
-            if not has_booking:
-                final_meta["show_booking"] = True
-                final_meta["calendly_url"] = bot.calendly_url
-        yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
+                session.rollback()
+        finally:
+            yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
 
         logger.info(f"Hybrid RAG stream finished for session: {session_id}")
