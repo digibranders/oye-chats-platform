@@ -1119,11 +1119,16 @@ async def rag_pipeline_stream(
                     with contextlib.suppress(Exception):
                         bot_msg.trace_id = lf.get_current_trace_id()
 
-                session.commit()
+                # Flush first to execute the INSERT and populate bot_msg.id.
+                # This lets us capture the id before commit so FINAL_METADATA
+                # always carries message_id even if the commit later fails.
+                session.flush()
                 bot_msg_id = bot_msg.id
+                session.commit()
 
-                # Cache the answer for identical future questions
-                if _cache_key and full_answer:
+                # Only cache a real LLM answer — never cache the zero-chunk
+                # fallback string, which would poison the QA cache.
+                if _cache_key and full_answer and chunk_count > 0:
                     cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
 
                 if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
@@ -1142,7 +1147,7 @@ async def rag_pipeline_stream(
                     )
 
                 live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
-                final_meta = {"message_id": bot_msg_id}
+                final_meta = {"message_id": bot_msg_id} if bot_msg_id else {}
                 if suggest_handoff and live_chat_on:
                     final_meta["suggest_handoff"] = True
                 if cta_data:
