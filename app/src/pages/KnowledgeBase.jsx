@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadDocuments, crawlWebsite, getDocuments, deleteDocument } from '../services/api';
+import { uploadDocuments, crawlWebsite, getCrawlProgress, getDocuments, deleteDocument } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -53,6 +53,19 @@ export default function KnowledgeBase() {
     if (activeTab === 'list') fetchDocuments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedBot?.id]);
+
+  // Poll real-time crawl progress every 3 s while a crawl is running.
+  // Each poll is a trivial file-read on the server — negligible overhead.
+  useEffect(() => {
+    if (!isCrawling) return;
+    const interval = setInterval(async () => {
+      const data = await getCrawlProgress();
+      if (data.urls && data.urls.length > 0) {
+        setScanningUrls(data.urls.map(u => ({ url: u, status: 'scanning' })));
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isCrawling]);
 
   if (!botsLoading && bots.length === 0) {
     return <EmptyState title="Sources" description="Create a chatbot first, then upload documents and URLs to build its knowledge base." actionLabel="Create Chatbot" actionTo="/chatbot" />;
@@ -341,7 +354,7 @@ export default function KnowledgeBase() {
                         : `${scanningUrls.filter(u => u.status === 'done').length} pages`}
                     </span>
                   </div>
-                  <div className="max-h-64 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800">
+                  <div className="max-h-96 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800">
                     {scanningUrls.map((item, i) => (
                       <div key={i} className="flex items-center gap-3 px-4 py-2.5">
                         {item.status === 'scanning' ? (

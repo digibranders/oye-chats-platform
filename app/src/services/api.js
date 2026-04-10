@@ -161,6 +161,20 @@ export const uploadDocuments = async (files, botId) => {
 };
 
 /**
+ * Poll the current crawl progress (URLs discovered so far).
+ * Lightweight — just a temp-file read on the server, no DB.
+ * @returns {Promise<{urls: string[]}>}
+ */
+export const getCrawlProgress = async () => {
+    try {
+        const response = await api.get('/crawl/progress');
+        return response.data;
+    } catch {
+        return { urls: [] };
+    }
+};
+
+/**
  * Submits a URL to be crawled and ingested.
  * @param {string} url - The root URL to start crawling
  * @param {number|undefined} botId - Optional bot ID to scope the crawl

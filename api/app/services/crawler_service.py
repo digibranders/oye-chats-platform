@@ -1,8 +1,10 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import sys
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +16,31 @@ class CrawlerError(RuntimeError):
     """Raised when the crawler subprocess fails or produces invalid output."""
 
 
-async def crawl_website(url: str, max_pages: int | None = None, use_js: bool = False) -> dict:
+# Maps client_id → path of the temp progress file for an in-progress crawl.
+# Written by the subprocess; read by get_crawl_progress() via the progress endpoint.
+_progress_files: dict[int, str] = {}
+
+
+def get_crawl_progress(client_id: int) -> list[str]:
+    """Return URLs discovered so far for an in-progress crawl.
+
+    Returns an empty list when no crawl is running or the file hasn't been
+    written yet.  Safe to call at any time; never raises.
+    """
+    path = _progress_files.get(client_id)
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("urls", [])
+    except Exception:
+        return []
+
+
+async def crawl_website(
+    url: str, max_pages: int | None = None, use_js: bool = False, client_id: int | None = None
+) -> dict:
     """Run the crawler subprocess and return parsed results.
 
     The crawler runs as a separate Python process to isolate Playwright's
@@ -31,6 +57,9 @@ async def crawl_website(url: str, max_pages: int | None = None, use_js: bool = F
             content or links are rendered client-side. The crawler also
             auto-detects SPAs from the seed page HTML, so this flag is
             mainly for explicit override.
+        client_id: When provided, real-time progress is written to a temp
+            file so the ``/crawl/progress`` endpoint can stream discovered
+            URLs to the frontend while the crawl is running.
 
     Returns:
         A dict with ``results`` (list of page dicts) and
@@ -50,11 +79,19 @@ async def crawl_website(url: str, max_pages: int | None = None, use_js: bool = F
     if use_js:
         env["CRAWLER_JS_ALL_PAGES"] = "true"
 
+    # Create a temp file for real-time progress updates from the subprocess
+    progress_fd, progress_path = tempfile.mkstemp(suffix=".json", prefix="oyecrawl_")
+    os.close(progress_fd)
+    if client_id is not None:
+        _progress_files[client_id] = progress_path
+
     try:
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             script_path,
             url,
+            "--progress-file",
+            progress_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
@@ -109,3 +146,9 @@ async def crawl_website(url: str, max_pages: int | None = None, use_js: bool = F
     except Exception as e:
         logger.error("Subprocess exception: %s", e)
         raise CrawlerError(str(e)) from e
+    finally:
+        # Always clean up: remove progress file and deregister client
+        if client_id is not None:
+            _progress_files.pop(client_id, None)
+        with contextlib.suppress(OSError):
+            os.unlink(progress_path)

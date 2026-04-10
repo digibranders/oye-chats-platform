@@ -693,7 +693,24 @@ async def _crawl_seed_with_browser(
 # ---------------------------------------------------------------------------
 
 
-async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | None = None) -> None:
+def _write_progress(path: str, results: list[dict]) -> None:
+    """Atomically write discovered URLs to the progress file.
+
+    Called after every successfully crawled page so the FastAPI process
+    can read incremental progress while the subprocess is still running.
+    """
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"urls": [r["url"] for r in results]}, f)
+        os.replace(tmp, path)  # Atomic on POSIX; avoids partial reads
+    except Exception:
+        pass  # Progress is best-effort — never crash the crawler
+
+
+async def crawl_recursive(
+    start_url: str, max_depth: int = 3, max_pages: int | None = None, progress_file: str | None = None
+) -> None:
     # Read config from env
     if max_pages is None:
         max_pages = int(os.getenv("MAX_CRAWL_PAGES", "50"))
@@ -814,6 +831,8 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
                 if result and hasattr(result, "markdown") and result.markdown:
                     pages_crawled += 1
                     results.append({"url": norm_seed, "content": result.markdown})
+                    if progress_file:
+                        _write_progress(progress_file, results)
 
                     # Extract colors from JS execution
                     if hasattr(result, "js_execution_result") and result.js_execution_result:
@@ -984,6 +1003,8 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
                         pages_crawled += 1
                         session_count += 1
                         results.append({"url": norm_url, "content": markdown})
+                        if progress_file:
+                            _write_progress(progress_file, results)
                         print(
                             json.dumps(
                                 {
@@ -1072,6 +1093,8 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
 
                         pages_crawled += 1
                         results.append({"url": info["norm_url"], "content": crawl_result["markdown"]})
+                        if progress_file:
+                            _write_progress(progress_file, results)
 
                         # Discover new links if not at max depth
                         if info["depth"] < max_depth and crawl_result["html"]:
@@ -1101,4 +1124,11 @@ if __name__ == "__main__":
     if "--js-all-pages" in sys.argv:
         os.environ["CRAWLER_JS_ALL_PAGES"] = "true"
 
-    asyncio.run(crawl_recursive(url, max_pages=max_pages))
+    # Parse --progress-file <path> for real-time URL streaming to the API process
+    progress_file: str | None = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--progress-file" and i + 1 < len(sys.argv):
+            progress_file = sys.argv[i + 1]
+            break
+
+    asyncio.run(crawl_recursive(url, max_pages=max_pages, progress_file=progress_file))

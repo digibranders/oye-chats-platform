@@ -14,7 +14,7 @@ from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
 from app.schemas.client import CrawlRequest, DocumentPagesResponse
-from app.services.crawler_service import CrawlerError, crawl_website
+from app.services.crawler_service import CrawlerError, crawl_website, get_crawl_progress
 from app.services.llm_service import extract_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
@@ -253,6 +253,17 @@ def ingest_documents(
     }
 
 
+@router.get("/crawl/progress")
+def crawl_progress_endpoint(auth: dict = Depends(get_current_client_or_operator)):
+    """Return URLs discovered so far for the caller's in-progress crawl.
+
+    Polled by the frontend every few seconds to show real-time crawl progress.
+    The response is a trivial file read — no DB queries, negligible server load.
+    Returns an empty list when no crawl is running or hasn't started yet.
+    """
+    return {"urls": get_crawl_progress(auth["client_id"])}
+
+
 @router.post("/crawl")
 @limiter.limit("3/hour", key_func=key_from_api_key)
 async def crawl_endpoint(
@@ -280,6 +291,7 @@ async def crawl_endpoint(
             crawl_request.url,
             max_pages=crawl_request.max_pages,
             use_js=crawl_request.use_js,
+            client_id=client_id,
         )
 
         results = crawl_data.get("results")
