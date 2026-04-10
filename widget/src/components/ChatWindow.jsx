@@ -166,7 +166,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         (m) => m.type === 'handoff_form' && m.status !== 'submitted'
     );
 
-    // ── Mobile keyboard push-up ──────────────────────────────────────────────────
+    // ── Mobile viewport sizing (keyboard + iOS safe area) ──────────────────────
     useEffect(() => {
         const vv = window.visualViewport;
         if (!vv) return;
@@ -177,27 +177,24 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             if (!isMobile() || !containerRef.current) return;
             const container = containerRef.current;
 
-            if (Math.abs(vv.height - window.innerHeight) < 50) {
-                // Keyboard closed — reset to CSS-driven layout
-                container.style.height = '';
-                container.style.top = '';
-                container.style.bottom = '';
-                return;
-            }
-
-            // Set height to visual viewport height (excludes keyboard)
+            // Always use visualViewport.height as the canonical size on mobile.
+            // This correctly handles:
+            // - iOS Safari where body position:fixed breaks h-full/100%
+            // - Keyboard open/close (vv.height excludes keyboard)
+            // - URL bar show/hide on iOS (dvh handles this but JS is the fallback)
             container.style.height = `${vv.height}px`;
-            // Offset the container to match the visual viewport's top position
-            // This counteracts iOS Safari's viewport shift when keyboard opens
             container.style.top = `${vv.offsetTop}px`;
             container.style.bottom = 'auto';
         };
 
         const handleScroll = () => {
-            // visualViewport fires 'scroll' when the viewport pans (iOS keyboard push)
             if (!isMobile() || !containerRef.current) return;
             containerRef.current.style.top = `${vv.offsetTop}px`;
         };
+
+        // Set initial size immediately — covers iOS where dvh may not be supported
+        // or where body scroll lock (position: fixed) breaks CSS height resolution
+        syncViewport();
 
         vv.addEventListener('resize', syncViewport);
         vv.addEventListener('scroll', handleScroll);
@@ -1041,7 +1038,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             className={`${currentTheme.container} ${isAnimating === true ? 'widget-open' : isAnimating === false ? 'widget-close' : isAnimating === 'done' ? 'widget-visible' : 'widget-hidden'}`}
         >
             {/* ── Header ── */}
-            <div className={currentTheme.header}>
+            <div className={`${currentTheme.header} oyechats-safe-top`}>
                 {renderHeader() || <div />}
                 {(() => {
                     const showTranscriptOption = settings.feature_flags?.email_transcript !== false && messages.length > 0;
