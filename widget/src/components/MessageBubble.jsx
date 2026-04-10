@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import BotAvatar from './BotAvatar';
+import { sanitizeColor } from '../services/sanitize';
 
 const SafeLink = ({ href, ...props }) => {
     // Block javascript:, data:, vbscript: and other dangerous URI schemes
@@ -50,7 +51,7 @@ const MessageBubble = ({
             <div className="flex justify-end w-full">
                 <div
                     className={`max-w-[85%] px-4 py-3 text-[14px] ${currentTheme.userBubble}`}
-                    style={{ backgroundColor: settings?.user_bubble_color || currentTheme.userBubbleDefaultBg || '#DBE9FF' }}
+                    style={{ backgroundColor: sanitizeColor(settings?.user_bubble_color, currentTheme.userBubbleDefaultBg || '#DBE9FF') }}
                 >
                     <div className="prose prose-sm max-w-none break-words">
                         <ReactMarkdown

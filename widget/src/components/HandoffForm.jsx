@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Mail, ArrowRight, Headphones, Building2, ArrowLeft, ChevronDown } from 'lucide-react';
 import { getDepartments } from '../services/api';
+import { sanitizeColor } from '../services/sanitize';
 
 const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 'pending' }) => {
     const hasName = !!(existingLeadInfo?.name?.trim());
@@ -18,7 +19,7 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
     const autoSubmitAttemptedRef = useRef(false);
 
     const isSubmitting = status === 'submitting';
-    const primaryColor = settings.primary_color || '#3A0CA3';
+    const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
 
     useEffect(() => {
         getDepartments().then((data) => {
