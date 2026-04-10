@@ -225,12 +225,37 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const preventHostScroll = (e) => {
             // Re-evaluate on every event so orientation changes are handled
             if (window.innerWidth >= 768) return;
-            if (messagesArea && messagesArea.contains(e.target)) return;
+
+            // Allow scrolling inside the messages area, but block over-scroll at boundaries
+            if (messagesArea && messagesArea.contains(e.target)) {
+                const { scrollTop, scrollHeight, clientHeight } = messagesArea;
+                const atTop = scrollTop <= 0;
+                const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+                const isScrollingUp = e.touches[0]?.clientY > (preventHostScroll._lastY || 0);
+
+                preventHostScroll._lastY = e.touches[0]?.clientY;
+
+                // Block if at boundary and swiping further in that direction
+                if ((atTop && isScrollingUp) || (atBottom && !isScrollingUp)) {
+                    e.preventDefault();
+                }
+                return;
+            }
+
+            // Block all touch scrolling on non-messages areas (header, input, etc.)
             e.preventDefault();
         };
 
+        const trackTouchStart = (e) => {
+            preventHostScroll._lastY = e.touches[0]?.clientY;
+        };
+
+        container.addEventListener('touchstart', trackTouchStart, { passive: true });
         container.addEventListener('touchmove', preventHostScroll, { passive: false });
-        return () => container.removeEventListener('touchmove', preventHostScroll);
+        return () => {
+            container.removeEventListener('touchstart', trackTouchStart);
+            container.removeEventListener('touchmove', preventHostScroll);
+        };
     }, []);
 
     const scrollToBottom = () => {
