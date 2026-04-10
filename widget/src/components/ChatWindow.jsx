@@ -16,7 +16,7 @@ import QualificationCTA from './QualificationCTA';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
-const FALLBACK_PATTERNS = /connect.*with.*(team|support|human)|don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
 
 // Strip trailing orphaned markdown tokens that ReactMarkdown would render as raw text
 // e.g. a stream interrupted mid-bold: "Here is **important" → "Here is"
@@ -793,7 +793,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, []);
 
     const checkBotFallback = useCallback((botText) => {
-        const fallbackPatterns = /connect.*with.*(team|support|human)|don't have.*specific information|I'm not sure about that|couldn't find.*specific information|not contained in/i;
+        const fallbackPatterns = /don't have.*specific information|I'm not sure about that|couldn't find.*specific information|not contained in/i;
         return fallbackPatterns.test(botText);
     }, []);
 
