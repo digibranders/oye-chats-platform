@@ -1,8 +1,8 @@
 export const themeConfigs = {
     classic: {
-        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-full md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-[#F8F8F8] md:rounded-2xl shadow-xl flex flex-col overflow-hidden border border-[#BBE7FF]/30 z-[9999]",
+        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-full md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-[#F8F8F8] md:rounded-2xl shadow-xl flex flex-col overflow-hidden border border-[#BBE7FF]/30 z-[9999] overscroll-behavior-none touch-action-none md:touch-action-auto",
         header: "bg-[#F8F8F8] px-5 py-2 flex items-center justify-between shrink-0",
-        messagesArea: "flex-1 overflow-y-auto px-5 py-4 bg-[#F8F8F8] flex flex-col gap-5",
+        messagesArea: "flex-1 overflow-y-auto px-5 py-4 bg-[#F8F8F8] flex flex-col gap-5 overscroll-behavior-contain touch-action-pan-y",
         userBubble: "text-[#16202C] rounded-2xl",
         userBubbleDefaultBg: "#DBE9FF",
         botText: "text-[#16202C] leading-relaxed",
@@ -12,9 +12,9 @@ export const themeConfigs = {
         sendBtnActive: "text-[#16202C]",
     },
     modern: {
-        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-full md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-[#0F172A]/95 backdrop-blur-xl md:rounded-2xl shadow-[0_0_50px_-12px_rgba(37,99,235,0.4)] flex flex-col overflow-hidden border border-white/10 z-[9999]",
+        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-full md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-[#0F172A]/95 backdrop-blur-xl md:rounded-2xl shadow-[0_0_50px_-12px_rgba(37,99,235,0.4)] flex flex-col overflow-hidden border border-white/10 z-[9999] overscroll-behavior-none touch-action-none md:touch-action-auto",
         header: "bg-[#0F172A] px-5 py-2 flex items-center justify-between shrink-0 border-b border-white/10",
-        messagesArea: "flex-1 overflow-y-auto px-5 py-4 bg-transparent flex flex-col gap-5",
+        messagesArea: "flex-1 overflow-y-auto px-5 py-4 bg-transparent flex flex-col gap-5 overscroll-behavior-contain touch-action-pan-y",
         userBubble: "text-white rounded-2xl",
         userBubbleDefaultBg: "#2563EB",
         botText: "text-gray-200 leading-relaxed",
@@ -24,9 +24,9 @@ export const themeConfigs = {
         sendBtnActive: "text-white",
     },
     minimalist: {
-        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-full md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-white md:rounded-2xl shadow-lg flex flex-col overflow-hidden border border-gray-200 z-[9999]",
+        container: "fixed top-0 left-0 right-0 bottom-0 md:inset-auto md:right-6 md:bottom-6 w-full h-full md:w-[380px] md:h-[580px] md:max-h-[calc(100vh-100px)] bg-white md:rounded-2xl shadow-lg flex flex-col overflow-hidden border border-gray-200 z-[9999] overscroll-behavior-none touch-action-none md:touch-action-auto",
         header: "bg-white px-5 py-2 flex items-center justify-between shrink-0 border-b border-gray-200",
-        messagesArea: "flex-1 overflow-y-auto px-5 py-4 bg-white flex flex-col gap-6",
+        messagesArea: "flex-1 overflow-y-auto px-5 py-4 bg-white flex flex-col gap-6 overscroll-behavior-contain touch-action-pan-y",
         userBubble: "text-white rounded-2xl",
         userBubbleDefaultBg: "#111827",
         botText: "text-gray-700 leading-relaxed",

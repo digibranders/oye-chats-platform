@@ -85,12 +85,52 @@ const ChatWidget = () => {
     fetchSettings();
   }, []);
 
-  // Cleanup timer on unmount
+  // ── Mobile body scroll lock ──────────────────────────────────────────────────
+  // When the widget opens full-screen on mobile, freeze the host page body
+  // to prevent it from scrolling underneath (causes shake/jitter).
+  const savedBodyStyles = useRef(null);
+
+  const lockBodyScroll = useCallback(() => {
+    if (window.innerWidth >= 768) return;
+    const { body } = document;
+    const { documentElement } = document;
+    savedBodyStyles.current = {
+      overflow: body.style.overflow,
+      position: body.style.position,
+      top: body.style.top,
+      width: body.style.width,
+      height: body.style.height,
+      htmlOverflow: documentElement.style.overflow,
+      scrollY: window.scrollY,
+    };
+    body.style.overflow = 'hidden';
+    body.style.position = 'fixed';
+    body.style.top = `-${savedBodyStyles.current.scrollY}px`;
+    body.style.width = '100%';
+    documentElement.style.overflow = 'hidden';
+  }, []);
+
+  const unlockBodyScroll = useCallback(() => {
+    if (!savedBodyStyles.current) return;
+    const { body } = document;
+    const { documentElement } = document;
+    const scrollY = savedBodyStyles.current.scrollY;
+    body.style.overflow = savedBodyStyles.current.overflow;
+    body.style.position = savedBodyStyles.current.position;
+    body.style.top = savedBodyStyles.current.top;
+    body.style.width = savedBodyStyles.current.width;
+    documentElement.style.overflow = savedBodyStyles.current.htmlOverflow;
+    savedBodyStyles.current = null;
+    window.scrollTo(0, scrollY);
+  }, []);
+
+  // Cleanup timer + body scroll lock on unmount
   useEffect(() => {
     return () => {
       if (closeTimer.current) clearTimeout(closeTimer.current);
+      unlockBodyScroll();
     };
-  }, []);
+  }, [unlockBodyScroll]);
 
   const openChat = useCallback(() => {
     if (closeTimer.current) {
@@ -98,21 +138,23 @@ const ChatWidget = () => {
       closeTimer.current = null;
     }
     setIsVisible(true);
+    lockBodyScroll();
     // Allow React to paint widget-hidden state, then trigger open animation
     setTimeout(() => {
       setIsAnimating(true);
       // After open animation completes, use static class so component switches don't re-trigger animation
       setTimeout(() => setIsAnimating('done'), OPEN_DURATION);
     }, 20);
-  }, []);
+  }, [lockBodyScroll]);
 
   const closeChat = useCallback(() => {
     setIsAnimating(false); // triggers close animation
     closeTimer.current = setTimeout(() => {
       setIsVisible(false); // unmount after animation
       closeTimer.current = null;
+      unlockBodyScroll();
     }, CLOSE_DURATION);
-  }, []);
+  }, [unlockBodyScroll]);
 
   const toggleChat = useCallback(() => {
     if (isVisible && (isAnimating === true || isAnimating === 'done')) {
