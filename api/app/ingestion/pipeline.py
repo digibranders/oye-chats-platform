@@ -8,7 +8,7 @@ from typing import Any
 
 from app.config import ARCHIVE_DIR
 from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
-from app.db.repository import insert_documents, is_document_processed
+from app.db.repository import delete_chunks_for_url, insert_documents, is_document_processed
 from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
 from app.ingestion.cleaner import clean_text
@@ -278,6 +278,10 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
             page_metas = all_chunk_metadatas[start : start + count]
 
             try:
+                # Remove stale chunks for this URL before inserting fresh ones.
+                # Makes ingestion idempotent per-URL: content changes never
+                # produce duplicates; hash dedup still skips unchanged pages above.
+                delete_chunks_for_url(session, boundary["url"], bot_id=bot_id, client_id=client_id)
                 insert_documents(
                     session,
                     client_id,

@@ -33,6 +33,7 @@ export default function KnowledgeBase() {
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
   const [deletingDoc, setDeletingDoc] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(null);
+  const [confirmingRecrawl, setConfirmingRecrawl] = useState(null);
   const [recrawlingDoc, setRecrawlingDoc] = useState(null);
   const [drawerSource, setDrawerSource] = useState(null);
 
@@ -110,15 +111,26 @@ export default function KnowledgeBase() {
 
   const handleRecrawl = async (docName) => {
     setRecrawlingDoc(docName);
+    const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
+    // Normalize to root domain so the backend knows what stale chunks to sweep after success
+    const replaceSource = docName.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+
     try {
-      await deleteDocument(docName, selectedBot?.id);
-      const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
-      const result = await crawlWebsite(crawlUrl, selectedBot?.id);
-      showToast('success', `Recrawled! ${result.pages_processed || 0} pages processed.`);
+      setIsCrawling(true);
+      startScanSimulation(crawlUrl);
+
+      const result = await crawlWebsite(crawlUrl, selectedBot?.id, false, replaceSource);
+
+      stopScanSimulation(result);
+      showToast('success', `Recrawled! ${result.pages_processed || 0} pages updated.`);
       fetchDocuments();
     } catch (err) {
+      stopScanSimulation(null);
       showToast('error', `Recrawl failed: ${err?.detail || err?.message || err}`);
-    } finally { setRecrawlingDoc(null); }
+    } finally {
+      setRecrawlingDoc(null);
+      setIsCrawling(false);
+    }
   };
 
   const startScanSimulation = (rootUrl) => {
@@ -465,7 +477,23 @@ export default function KnowledgeBase() {
                           </td>
                           <td className="px-5 py-3.5 text-sm text-surface-400 text-right">{dateStr}</td>
                           <td className="px-5 py-3.5 text-right">
-                            {confirmingDelete === doc.name ? (
+                            {confirmingRecrawl === doc.name ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className="text-[10px] text-surface-400">Re-crawl?</span>
+                                <button
+                                  onClick={() => { setConfirmingRecrawl(null); handleRecrawl(doc.name); }}
+                                  className="p-1.5 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors"
+                                >
+                                  <Check size={12} />
+                                </button>
+                                <button
+                                  onClick={() => setConfirmingRecrawl(null)}
+                                  className="p-1.5 rounded-lg bg-surface-100 dark:bg-surface-800 text-surface-500 transition-colors"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ) : confirmingDelete === doc.name ? (
                               <div className="flex items-center justify-end gap-1.5">
                                 <span className="text-[10px] text-surface-400">Sure?</span>
                                 <button onClick={() => handleDelete(doc.name)} disabled={deletingDoc === doc.name} className="p-1.5 rounded-lg bg-rose-500 text-white hover:bg-rose-600 transition-colors">
@@ -476,13 +504,33 @@ export default function KnowledgeBase() {
                             ) : (
                               <div className="flex items-center justify-end gap-1">
                                 {isUrl && (
-                                  <button onClick={() => handleRecrawl(doc.name)} disabled={recrawlingDoc === doc.name} className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors">
-                                    {recrawlingDoc === doc.name ? <Loader2 size={14} className="animate-spin text-primary-500" /> : <RefreshCw size={14} />}
-                                  </button>
+                                  <div className="relative group">
+                                    <button
+                                      onClick={() => setConfirmingRecrawl(doc.name)}
+                                      disabled={recrawlingDoc === doc.name}
+                                      className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                                    >
+                                      {recrawlingDoc === doc.name
+                                        ? <Loader2 size={14} className="animate-spin text-primary-500" />
+                                        : <RefreshCw size={14} />}
+                                    </button>
+                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-surface-900 dark:bg-surface-700 text-white whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+                                      Re-crawl
+                                    </span>
+                                  </div>
                                 )}
-                                <button onClick={() => setConfirmingDelete(doc.name)} disabled={recrawlingDoc === doc.name} className="p-1.5 rounded-lg text-surface-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors">
-                                  <Trash2 size={14} />
-                                </button>
+                                <div className="relative group">
+                                  <button
+                                    onClick={() => setConfirmingDelete(doc.name)}
+                                    disabled={recrawlingDoc === doc.name}
+                                    className="p-1.5 rounded-lg text-surface-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                  <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-surface-900 dark:bg-surface-700 text-white whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+                                    Delete
+                                  </span>
+                                </div>
                               </div>
                             )}
                           </td>

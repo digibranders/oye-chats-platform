@@ -54,6 +54,12 @@ class CrawlRequest(BaseModel):
         default=False,
         description="Enable JavaScript (browser) mode for all pages. Required for Next.js, React, and other SPA sites.",
     )
+    replace_source: str | None = Field(
+        default=None,
+        description="Root domain to atomically replace after a successful crawl (e.g. 'fynix.digital'). "
+        "Old chunks for this source are deleted only after new ingestion succeeds — "
+        "so the bot always has knowledge during the recrawl.",
+    )
 
     @field_validator("url")
     @classmethod

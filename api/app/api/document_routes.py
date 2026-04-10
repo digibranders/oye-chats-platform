@@ -309,6 +309,35 @@ async def crawl_endpoint(
             lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
         )
 
+        # Atomic swap: delete old-generation chunks only after new ingestion succeeded.
+        # This guarantees the bot always has knowledge during a recrawl — old data
+        # serves RAG queries right up until the moment fresh data is fully ready.
+        # Any pages that existed in the previous crawl but were NOT re-crawled this
+        # time (e.g. pages removed from the site) are cleaned up here.
+        if crawl_request.replace_source and total_chunks > 0:
+            with get_session() as del_session:
+                from sqlalchemy import func as sa_func
+
+                domain_expr = sa_func.coalesce(
+                    sa_func.replace(
+                        sa_func.substring(Document.document_name, r"^(https?://[^/]+)"),
+                        "www.",
+                        "",
+                    ),
+                    Document.document_name,
+                )
+                owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
+                deleted = (
+                    del_session.query(Document)
+                    .filter(domain_expr == crawl_request.replace_source, owner_filter)
+                    .delete(synchronize_session=False)
+                )
+                del_session.commit()
+                logger.info(
+                    f"Atomic swap: removed {deleted} stale chunks for '{crawl_request.replace_source}' "
+                    f"after successful re-crawl ({total_chunks} fresh chunks ingested)"
+                )
+
         # Extract brand tone and company context from crawled content (non-blocking, best-effort)
         brand_tone = None
         company_context = None  # dict with "name" and "description" keys
