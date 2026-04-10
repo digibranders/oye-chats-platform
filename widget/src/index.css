@@ -159,7 +159,7 @@
 /* Chat Markdown Styles — clean, readable */
 .prose {
   line-height: 1.7;
-  font-weight: 100;
+  font-weight: 300;
 }
 
 .prose ul {
