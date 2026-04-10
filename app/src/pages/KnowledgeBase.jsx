@@ -119,7 +119,8 @@ export default function KnowledgeBase() {
     } else {
       setScanningUrls(prev => prev.map(u => ({ ...u, status: 'done' })));
     }
-    setTimeout(() => setScanningUrls([]), 5000);
+    // Keep visible for 60 s so users can read all discovered URLs
+    setTimeout(() => setScanningUrls([]), 60000);
   };
 
   const handleCrawlSubmit = async (e) => {
@@ -330,11 +331,17 @@ export default function KnowledgeBase() {
                   className="border border-surface-200 dark:border-surface-800 rounded-xl overflow-hidden"
                 >
                   <div className="px-4 py-3 bg-surface-50 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 flex items-center gap-2">
-                    <Globe size={14} className="text-primary-500" />
-                    <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">Scanning URLs</span>
-                    <span className="text-[10px] text-surface-400 ml-auto">{scanningUrls.filter(u => u.status === 'done').length} found</span>
+                    <Globe size={14} className={isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500'} />
+                    <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">
+                      {isCrawling ? 'Crawling website…' : 'Pages discovered'}
+                    </span>
+                    <span className={cn('text-[10px] ml-auto font-medium', isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500')}>
+                      {isCrawling
+                        ? 'in progress'
+                        : `${scanningUrls.filter(u => u.status === 'done').length} pages`}
+                    </span>
                   </div>
-                  <div className="max-h-52 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800">
+                  <div className="max-h-64 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800">
                     {scanningUrls.map((item, i) => (
                       <div key={i} className="flex items-center gap-3 px-4 py-2.5">
                         {item.status === 'scanning' ? (
@@ -343,11 +350,11 @@ export default function KnowledgeBase() {
                           <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />
                         )}
                         <ExternalLink size={11} className="text-surface-400 shrink-0" />
-                        <span className={cn('text-xs font-mono truncate', item.status === 'scanning' ? 'text-primary-600 dark:text-primary-400' : 'text-surface-500')}>
+                        <span className={cn('text-xs font-mono truncate', item.status === 'scanning' ? 'text-primary-600 dark:text-primary-400' : 'text-surface-600 dark:text-surface-400')}>
                           {item.url}
                         </span>
                         {item.status === 'scanning' && (
-                          <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-primary-500 animate-pulse">Scanning...</span>
+                          <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-primary-500 animate-pulse shrink-0">Crawling…</span>
                         )}
                       </div>
                     ))}
