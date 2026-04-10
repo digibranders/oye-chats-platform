@@ -161,16 +161,32 @@ export const uploadDocuments = async (files, botId) => {
 };
 
 /**
+ * Poll the current crawl progress (URLs discovered so far).
+ * Lightweight — just a temp-file read on the server, no DB.
+ * @returns {Promise<{urls: string[]}>}
+ */
+export const getCrawlProgress = async () => {
+    try {
+        const response = await api.get('/crawl/progress');
+        return response.data;
+    } catch {
+        return { urls: [] };
+    }
+};
+
+/**
  * Submits a URL to be crawled and ingested.
  * @param {string} url - The root URL to start crawling
  * @param {number|undefined} botId - Optional bot ID to scope the crawl
  * @param {boolean} useJs - Enable JavaScript mode for Next.js / React / SPA sites
  * @returns {Promise<Object>} The API response with crawling results
  */
-export const crawlWebsite = async (url, botId, useJs = false) => {
+export const crawlWebsite = async (url, botId, useJs = false, replaceSource = null) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
-        const response = await api.post(endpoint, { url, use_js: useJs }, { timeout: 300000 });
+        const body = { url, use_js: useJs };
+        if (replaceSource) body.replace_source = replaceSource;
+        const response = await api.post(endpoint, body, { timeout: 300000 });
         return response.data;
     } catch (error) {
         console.error('API Error during website crawl:', error);

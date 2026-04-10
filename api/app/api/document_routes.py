@@ -14,7 +14,7 @@ from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
 from app.schemas.client import CrawlRequest, DocumentPagesResponse
-from app.services.crawler_service import CrawlerError, crawl_website
+from app.services.crawler_service import CrawlerError, crawl_website, get_crawl_progress
 from app.services.llm_service import extract_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
@@ -253,6 +253,17 @@ def ingest_documents(
     }
 
 
+@router.get("/crawl/progress")
+def crawl_progress_endpoint(auth: dict = Depends(get_current_client_or_operator)):
+    """Return URLs discovered so far for the caller's in-progress crawl.
+
+    Polled by the frontend every few seconds to show real-time crawl progress.
+    The response is a trivial file read — no DB queries, negligible server load.
+    Returns an empty list when no crawl is running or hasn't started yet.
+    """
+    return {"urls": get_crawl_progress(auth["client_id"])}
+
+
 @router.post("/crawl")
 @limiter.limit("3/hour", key_func=key_from_api_key)
 async def crawl_endpoint(
@@ -280,6 +291,7 @@ async def crawl_endpoint(
             crawl_request.url,
             max_pages=crawl_request.max_pages,
             use_js=crawl_request.use_js,
+            client_id=client_id,
         )
 
         results = crawl_data.get("results")
@@ -296,6 +308,44 @@ async def crawl_endpoint(
             None,
             lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
         )
+
+        # Orphan sweep: after a successful recrawl, delete chunks for pages that
+        # existed in the previous crawl but were NOT visited this time — i.e. pages
+        # that have been removed from the site since the last crawl.
+        #
+        # Fix 1 (delete_chunks_for_url inside batch_web_ingestion) already replaced
+        # the chunks for every page that WAS crawled.  This sweep handles the ones
+        # that weren't visited at all this run — we must NOT delete the fresh chunks
+        # we just inserted, so we exclude document_name IN newly_crawled_urls.
+        if crawl_request.replace_source and total_chunks > 0:
+            newly_crawled_urls = [p["url"] for p in valid_pages]
+            with get_session() as del_session:
+                from sqlalchemy import func as sa_func
+
+                domain_expr = sa_func.coalesce(
+                    sa_func.replace(
+                        sa_func.substring(Document.document_name, r"^(https?://[^/]+)"),
+                        "www.",
+                        "",
+                    ),
+                    Document.document_name,
+                )
+                owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
+                deleted = (
+                    del_session.query(Document)
+                    .filter(
+                        domain_expr == crawl_request.replace_source,
+                        owner_filter,
+                        Document.document_name.notin_(newly_crawled_urls),
+                    )
+                    .delete(synchronize_session=False)
+                )
+                del_session.commit()
+                logger.info(
+                    f"Orphan sweep: removed {deleted} stale chunks for '{crawl_request.replace_source}' "
+                    f"(pages removed from site since last crawl). "
+                    f"{total_chunks} fresh chunks retained."
+                )
 
         # Extract brand tone and company context from crawled content (non-blocking, best-effort)
         brand_tone = None

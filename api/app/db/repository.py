@@ -330,6 +330,26 @@ def insert_documents(
         )
 
 
+def delete_chunks_for_url(
+    session,
+    document_name: str,
+    bot_id: int | None = None,
+    client_id: int | None = None,
+) -> int:
+    """Delete all existing chunks for a specific page URL.
+
+    Called before insert_documents() inside batch_web_ingestion to make per-URL
+    ingestion idempotent. Prevents duplicate chunks when a page's content has
+    changed between crawls (hash-based dedup alone would leave stale chunks).
+    """
+    filters = [Document.document_name == document_name]
+    if bot_id:
+        filters.append(Document.bot_id == bot_id)
+    elif client_id:
+        filters.append(Document.client_id == client_id)
+    return session.query(Document).filter(*filters).delete(synchronize_session=False)
+
+
 def is_document_processed(session, client_id: int = None, file_hash: str = "", bot_id: int = None) -> bool:
     """Check if a document with the given hash already exists."""
     stmt = select(Document.id).where(Document.file_hash == file_hash)

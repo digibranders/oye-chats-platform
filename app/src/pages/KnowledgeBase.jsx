@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadDocuments, crawlWebsite, getDocuments, deleteDocument } from '../services/api';
+import { uploadDocuments, crawlWebsite, getCrawlProgress, getDocuments, deleteDocument } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -33,6 +33,7 @@ export default function KnowledgeBase() {
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
   const [deletingDoc, setDeletingDoc] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(null);
+  const [confirmingRecrawl, setConfirmingRecrawl] = useState(null);
   const [recrawlingDoc, setRecrawlingDoc] = useState(null);
   const [drawerSource, setDrawerSource] = useState(null);
 
@@ -53,6 +54,19 @@ export default function KnowledgeBase() {
     if (activeTab === 'list') fetchDocuments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedBot?.id]);
+
+  // Poll real-time crawl progress every 3 s while a crawl is running.
+  // Each poll is a trivial file-read on the server — negligible overhead.
+  useEffect(() => {
+    if (!isCrawling) return;
+    const interval = setInterval(async () => {
+      const data = await getCrawlProgress();
+      if (data.urls && data.urls.length > 0) {
+        setScanningUrls(data.urls.map(u => ({ url: u, status: 'scanning' })));
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isCrawling]);
 
   if (!botsLoading && bots.length === 0) {
     return <EmptyState title="Sources" description="Create a chatbot first, then upload documents and URLs to build its knowledge base." actionLabel="Create Chatbot" actionTo="/chatbot" />;
@@ -97,15 +111,31 @@ export default function KnowledgeBase() {
 
   const handleRecrawl = async (docName) => {
     setRecrawlingDoc(docName);
+    const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
+    // Normalize to root domain so the backend knows what stale chunks to sweep after success
+    const replaceSource = docName.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+
     try {
-      await deleteDocument(docName, selectedBot?.id);
-      const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
-      const result = await crawlWebsite(crawlUrl, selectedBot?.id);
-      showToast('success', `Recrawled! ${result.pages_processed || 0} pages processed.`);
+      // Switch to Website Scan tab so the live URL progress panel is visible
+      setActiveTab('urls');
+      setIsCrawling(true);
+      startScanSimulation(crawlUrl);
+
+      const result = await crawlWebsite(crawlUrl, selectedBot?.id, false, replaceSource);
+
+      stopScanSimulation(result);
+      showToast('success', `Recrawled! ${result.pages_processed || 0} pages updated.`);
+      // Return to All Sources tab so user sees the refreshed source list
+      setActiveTab('list');
       fetchDocuments();
     } catch (err) {
+      stopScanSimulation(null);
       showToast('error', `Recrawl failed: ${err?.detail || err?.message || err}`);
-    } finally { setRecrawlingDoc(null); }
+      setActiveTab('list');
+    } finally {
+      setRecrawlingDoc(null);
+      setIsCrawling(false);
+    }
   };
 
   const startScanSimulation = (rootUrl) => {
@@ -119,7 +149,8 @@ export default function KnowledgeBase() {
     } else {
       setScanningUrls(prev => prev.map(u => ({ ...u, status: 'done' })));
     }
-    setTimeout(() => setScanningUrls([]), 5000);
+    // Keep visible for 60 s so users can read all discovered URLs
+    setTimeout(() => setScanningUrls([]), 60000);
   };
 
   const handleCrawlSubmit = async (e) => {
@@ -330,11 +361,17 @@ export default function KnowledgeBase() {
                   className="border border-surface-200 dark:border-surface-800 rounded-xl overflow-hidden"
                 >
                   <div className="px-4 py-3 bg-surface-50 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 flex items-center gap-2">
-                    <Globe size={14} className="text-primary-500" />
-                    <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">Scanning URLs</span>
-                    <span className="text-[10px] text-surface-400 ml-auto">{scanningUrls.filter(u => u.status === 'done').length} found</span>
+                    <Globe size={14} className={isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500'} />
+                    <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">
+                      {isCrawling ? 'Crawling website…' : 'Pages discovered'}
+                    </span>
+                    <span className={cn('text-[10px] ml-auto font-medium', isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500')}>
+                      {isCrawling
+                        ? 'in progress'
+                        : `${scanningUrls.filter(u => u.status === 'done').length} pages`}
+                    </span>
                   </div>
-                  <div className="max-h-52 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800">
+                  <div className="max-h-96 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800">
                     {scanningUrls.map((item, i) => (
                       <div key={i} className="flex items-center gap-3 px-4 py-2.5">
                         {item.status === 'scanning' ? (
@@ -343,11 +380,11 @@ export default function KnowledgeBase() {
                           <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />
                         )}
                         <ExternalLink size={11} className="text-surface-400 shrink-0" />
-                        <span className={cn('text-xs font-mono truncate', item.status === 'scanning' ? 'text-primary-600 dark:text-primary-400' : 'text-surface-500')}>
+                        <span className={cn('text-xs font-mono truncate', item.status === 'scanning' ? 'text-primary-600 dark:text-primary-400' : 'text-surface-600 dark:text-surface-400')}>
                           {item.url}
                         </span>
                         {item.status === 'scanning' && (
-                          <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-primary-500 animate-pulse">Scanning...</span>
+                          <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-primary-500 animate-pulse shrink-0">Crawling…</span>
                         )}
                       </div>
                     ))}
@@ -445,7 +482,23 @@ export default function KnowledgeBase() {
                           </td>
                           <td className="px-5 py-3.5 text-sm text-surface-400 text-right">{dateStr}</td>
                           <td className="px-5 py-3.5 text-right">
-                            {confirmingDelete === doc.name ? (
+                            {confirmingRecrawl === doc.name ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className="text-[10px] text-surface-400">Re-crawl?</span>
+                                <button
+                                  onClick={() => { setConfirmingRecrawl(null); handleRecrawl(doc.name); }}
+                                  className="p-1.5 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors"
+                                >
+                                  <Check size={12} />
+                                </button>
+                                <button
+                                  onClick={() => setConfirmingRecrawl(null)}
+                                  className="p-1.5 rounded-lg bg-surface-100 dark:bg-surface-800 text-surface-500 transition-colors"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ) : confirmingDelete === doc.name ? (
                               <div className="flex items-center justify-end gap-1.5">
                                 <span className="text-[10px] text-surface-400">Sure?</span>
                                 <button onClick={() => handleDelete(doc.name)} disabled={deletingDoc === doc.name} className="p-1.5 rounded-lg bg-rose-500 text-white hover:bg-rose-600 transition-colors">
@@ -456,13 +509,33 @@ export default function KnowledgeBase() {
                             ) : (
                               <div className="flex items-center justify-end gap-1">
                                 {isUrl && (
-                                  <button onClick={() => handleRecrawl(doc.name)} disabled={recrawlingDoc === doc.name} className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors">
-                                    {recrawlingDoc === doc.name ? <Loader2 size={14} className="animate-spin text-primary-500" /> : <RefreshCw size={14} />}
-                                  </button>
+                                  <div className="relative group">
+                                    <button
+                                      onClick={() => setConfirmingRecrawl(doc.name)}
+                                      disabled={recrawlingDoc === doc.name}
+                                      className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                                    >
+                                      {recrawlingDoc === doc.name
+                                        ? <Loader2 size={14} className="animate-spin text-primary-500" />
+                                        : <RefreshCw size={14} />}
+                                    </button>
+                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-surface-900 dark:bg-surface-700 text-white whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+                                      Re-crawl
+                                    </span>
+                                  </div>
                                 )}
-                                <button onClick={() => setConfirmingDelete(doc.name)} disabled={recrawlingDoc === doc.name} className="p-1.5 rounded-lg text-surface-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors">
-                                  <Trash2 size={14} />
-                                </button>
+                                <div className="relative group">
+                                  <button
+                                    onClick={() => setConfirmingDelete(doc.name)}
+                                    disabled={recrawlingDoc === doc.name}
+                                    className="p-1.5 rounded-lg text-surface-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                  <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-surface-900 dark:bg-surface-700 text-white whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+                                    Delete
+                                  </span>
+                                </div>
                               </div>
                             )}
                           </td>
