@@ -566,22 +566,26 @@ SUPPORT REQUESTS: If the user asks for a person, warmly direct them to the conta
     hybrid_system_prompt = f"""You are the AI assistant for **{display_name}**. You represent {display_name} and speak on its behalf.
 
 VOICE:
-- Always use first person ("we", "our", "us") when referring to the company, its services, products, or team.
+- Use "I" when speaking as the assistant ("I'd be happy to help!"). Use "we", "our", "us" when speaking as the company ("We offer branding and development services").
 - Never refer to {display_name} in the third person ("they", "them", "their").
 - Your name is {resolved_bot_name} but you are NOT the company — **{display_name}** is the company you represent.
 - When asked about the company, organization, agency, or "who are you", describe **{display_name}** using the information provided below.
+- You are a confident, warm representative of this company — never a search interface or FAQ bot.
+- Never expose internal limitations to visitors ("I don't have information", "no data available", "not in my knowledge base", "I don't have that information right now").
+- When you lack specific details, be resourceful: share general truths about the company from the company context, pivot to what you DO know, and offer to connect the visitor with the team for specifics.
+- Match the energy of whoever you're talking to — casual if they're casual, professional if they're formal.
 
-Answer visitor questions using ONLY the information provided below.
+Answer visitor questions using the information provided below.
 
 RULES:
 1. Answer ONLY what was specifically asked — nothing more. If asked about the CEO, mention only the CEO, not the entire team. Keep answers to 1-3 sentences. Up to 5 for complex topics. For listings (services, team, features), up to 150 words is acceptable. Never pad or repeat yourself.
 2. Bullet points for 3+ items. Keep each bullet to a few words — no descriptions after bullets.
 3. Bold only: **{display_name}**, product/service names, and prices. No other bold.
 4. Tone: like a knowledgeable colleague replying in chat — friendly but direct. Never start with "Great question!", "Absolutely!", "I'd be happy to help!" or "Thank you for asking!". Never say "Based on the information provided". Just answer naturally.
-5. If you don't have the information to answer, say so naturally without mentioning any internal systems, documents, or databases. {handoff_offer}
+5. Never say "I don't have that information" or "No information is available." You ARE the company — speak with confidence. If specific details aren't in the reference material, pivot gracefully: share what you DO know from the company context, then offer to connect the visitor with the team for specifics. Example: instead of "We don't have information about our clients", say "We've had the pleasure of working with businesses across various industries. I'd love to share more details — would you like to connect with our team?" {handoff_offer}
 6. Only ask a follow-up question if the user's query is genuinely ambiguous.
 7. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
-8. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. If you lack information, simply say you don't have that information right now.{custom_prompt_section}{tone_section}{company_section}
+8. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. Never tell visitors that information is "unavailable" or "not available right now" — always pivot to what you know and offer a path forward.{custom_prompt_section}{tone_section}{company_section}
 {qualification_section}
 {handoff_section}
 
@@ -792,8 +796,9 @@ def rag_pipeline(
                     _gate_score,
                     session_id,
                 )
+                _cn = _company_name or "our company"
                 return {
-                    "answer": "I can only answer questions related to this business. Could you ask me something I can help with?",
+                    "answer": f"That's a bit outside what I can help with — I'm here to assist with everything related to {_cn}! Is there anything about our services, team, or how we work that I can help you with?",
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -810,7 +815,7 @@ def rag_pipeline(
             context_text = (
                 "\n---\n".join(context_parts)
                 if context_parts
-                else "No specific information is available on this topic."
+                else "No detailed reference material on this specific topic. Use the company context, brand tone, and your role as a confident company representative to craft a helpful, natural answer. Do NOT tell the visitor that information is unavailable — share what you know and offer to connect them with the team for specifics."
             )
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
@@ -1034,8 +1039,9 @@ async def rag_pipeline_stream(
                 _gate_score,
                 session_id,
             )
+            _cn = _company_name or "our company"
             yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield "I can only answer questions related to this business. Could you ask me something I can help with?"
+            yield f"That's a bit outside what I can help with — I'm here to assist with everything related to {_cn}! Is there anything about our services, team, or how we work that I can help you with?"
             return
 
         yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
@@ -1048,7 +1054,9 @@ async def rag_pipeline_stream(
             chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
             context_parts.append(f"[Source {i}] {doc.document_name}\nContent:\n{chunk_content}\n")
         context_text = (
-            "\n---\n".join(context_parts) if context_parts else "No specific information is available on this topic."
+            "\n---\n".join(context_parts)
+            if context_parts
+            else "No detailed reference material on this specific topic. Use the company context, brand tone, and your role as a confident company representative to craft a helpful, natural answer. Do NOT tell the visitor that information is unavailable — share what you know and offer to connect them with the team for specifics."
         )
         history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
