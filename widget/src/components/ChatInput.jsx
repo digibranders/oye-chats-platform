@@ -33,6 +33,8 @@ const ChatInput = ({
     fileSharing = false,
     isReconnecting = false,
     uploadProgress = null,
+    // Mobile keyboard
+    onInputFocus,
 }) => {
     const messages = settings?.widget_messages || {};
     const inputPlaceholder = messages.input_placeholder || placeholder || 'Write a message...';
@@ -40,6 +42,16 @@ const ChatInput = ({
 
     const isWaiting = chatMode === 'waiting';
     const isLive = chatMode === 'live';
+
+    const handleFocus = () => {
+        // Wait for keyboard animation to settle, then scroll messages to bottom
+        // so the input stays visible above the keyboard.
+        // We call onInputFocus (passed from ChatWindow) instead of scrollIntoView
+        // because scrollIntoView escapes the Shadow DOM and scrolls the host page.
+        setTimeout(() => {
+            onInputFocus?.();
+        }, 350);
+    };
 
     const handleChange = (e) => {
         setInputText(e.target.value);
@@ -121,6 +133,7 @@ const ChatInput = ({
                             value={inputText}
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
+                            onFocus={handleFocus}
                             placeholder={isWaiting ? 'Connecting you with the support team...' : inputPlaceholder}
                             aria-label="Chat message input"
                             className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"

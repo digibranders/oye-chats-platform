@@ -168,15 +168,69 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // ── Mobile keyboard push-up ──────────────────────────────────────────────────
     useEffect(() => {
-        const viewport = window.visualViewport;
-        if (!viewport || window.innerWidth >= 768) return;
-        const handleResize = () => {
-            if (containerRef.current) {
-                containerRef.current.style.height = `${viewport.height}px`;
+        const vv = window.visualViewport;
+        if (!vv) return;
+
+        const isMobile = () => window.innerWidth < 768;
+
+        const syncViewport = () => {
+            if (!isMobile() || !containerRef.current) return;
+            const container = containerRef.current;
+
+            if (Math.abs(vv.height - window.innerHeight) < 50) {
+                // Keyboard closed — reset to CSS-driven layout
+                container.style.height = '';
+                container.style.top = '';
+                container.style.bottom = '';
+                return;
+            }
+
+            // Set height to visual viewport height (excludes keyboard)
+            container.style.height = `${vv.height}px`;
+            // Offset the container to match the visual viewport's top position
+            // This counteracts iOS Safari's viewport shift when keyboard opens
+            container.style.top = `${vv.offsetTop}px`;
+            container.style.bottom = 'auto';
+        };
+
+        const handleScroll = () => {
+            // visualViewport fires 'scroll' when the viewport pans (iOS keyboard push)
+            if (!isMobile() || !containerRef.current) return;
+            containerRef.current.style.top = `${vv.offsetTop}px`;
+        };
+
+        vv.addEventListener('resize', syncViewport);
+        vv.addEventListener('scroll', handleScroll);
+
+        const containerEl = containerRef.current;
+        return () => {
+            vv.removeEventListener('resize', syncViewport);
+            vv.removeEventListener('scroll', handleScroll);
+            if (containerEl) {
+                containerEl.style.height = '';
+                containerEl.style.top = '';
+                containerEl.style.bottom = '';
             }
         };
-        viewport.addEventListener('resize', handleResize);
-        return () => viewport.removeEventListener('resize', handleResize);
+    }, []);
+
+    // ── Prevent host page scroll-through on mobile ────────────────────────────────
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        // Cache the messages area element once — it never changes after mount
+        const messagesArea = container.querySelector('[data-messages-area]');
+
+        const preventHostScroll = (e) => {
+            // Re-evaluate on every event so orientation changes are handled
+            if (window.innerWidth >= 768) return;
+            if (messagesArea && messagesArea.contains(e.target)) return;
+            e.preventDefault();
+        };
+
+        container.addEventListener('touchmove', preventHostScroll, { passive: false });
+        return () => container.removeEventListener('touchmove', preventHostScroll);
     }, []);
 
     const scrollToBottom = () => {
@@ -1039,6 +1093,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             {/* ── Unified messages area — one scroll, always visible ── */}
             <div
                 className={`${currentTheme.messagesArea} relative`}
+                data-messages-area
                 style={{
                     backgroundColor: (settings.background_color && settings.background_color !== '#ffffff') ? sanitizeColor(settings.background_color, '#ffffff') : undefined,
                     paddingTop: !isInitializing && !showLeadForm ? 24 : undefined,
@@ -1535,6 +1590,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     fileSharing={settings?.feature_flags?.file_sharing === true}
                     isReconnecting={isLiveReconnecting}
                     uploadProgress={uploadProgress}
+                    onInputFocus={scrollToBottom}
                 />
             )}
 
