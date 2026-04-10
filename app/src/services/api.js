@@ -211,6 +211,24 @@ export const deleteDocument = async (documentName, botId) => {
 
 
 /**
+ * Fetches all crawled page URLs for a website source.
+ * @param {string} source - Normalized root domain (e.g. "fynix.digital")
+ * @param {number|null} botId - Optional bot ID
+ * @returns {Promise<Object>} { domain, total_pages, total_chunks, pages: [...] }
+ */
+export const getDocumentPages = async (source, botId) => {
+    try {
+        const params = new URLSearchParams({ source });
+        if (botId) params.set('bot_id', botId);
+        const response = await api.get(`/documents/pages?${params.toString()}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching document pages:', error);
+        throw buildApiError(error, 'Failed to load source pages');
+    }
+};
+
+/**
  * Fetches aggregate statistics for the admin dashboard.
  * @returns {Promise<Object>} Object containing total counts
  */

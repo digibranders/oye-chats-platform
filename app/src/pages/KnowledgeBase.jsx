@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { uploadDocuments, crawlWebsite, getDocuments, deleteDocument } from '../services/api';
+import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
@@ -32,6 +33,7 @@ export default function KnowledgeBase() {
   const [deletingDoc, setDeletingDoc] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(null);
   const [recrawlingDoc, setRecrawlingDoc] = useState(null);
+  const [drawerSource, setDrawerSource] = useState(null);
 
   const fetchDocuments = async () => {
     setIsLoadingDocs(true);
@@ -384,7 +386,17 @@ export default function KnowledgeBase() {
                               <div className={cn('p-1.5 rounded-lg shrink-0', isUrl ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-500' : 'bg-rose-50 dark:bg-rose-500/10 text-rose-500')}>
                                 <Icon size={14} />
                               </div>
-                              <span className="text-sm font-medium text-surface-900 dark:text-white truncate max-w-[280px]">{doc.name}</span>
+                              {isUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setDrawerSource(doc.name)}
+                                  className="text-sm font-medium text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 hover:underline truncate max-w-[280px] text-left cursor-pointer transition-colors duration-150"
+                                >
+                                  {doc.name}
+                                </button>
+                              ) : (
+                                <span className="text-sm font-medium text-surface-900 dark:text-white truncate max-w-[280px]">{doc.name}</span>
+                              )}
                             </div>
                           </td>
                           <td className="px-5 py-3.5">
@@ -428,6 +440,12 @@ export default function KnowledgeBase() {
           </div>
         )}
       </div>
+
+      <SourcePagesDrawer
+        sourceUrl={drawerSource}
+        botId={selectedBot?.id}
+        onClose={() => setDrawerSource(null)}
+      />
     </div>
   );
 }

@@ -10,10 +10,10 @@ from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.core.rate_limit import key_from_api_key, limiter
 from app.db.models import Bot, Client, Document
-from app.db.repository import get_ingested_documents
+from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
-from app.schemas.client import CrawlRequest
+from app.schemas.client import CrawlRequest, DocumentPagesResponse
 from app.services.crawler_service import CrawlerError, crawl_website
 from app.services.llm_service import extract_brand_tone, extract_company_context
 
@@ -79,6 +79,23 @@ def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depend
     except Exception as e:
         logger.error(f"Failed to fetch documents: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch documents.") from e
+
+
+@router.get("/documents/pages", response_model=DocumentPagesResponse)
+def get_document_pages_endpoint(
+    source: str = Query(..., description="Normalized root domain (e.g. fynix.digital)"),
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Return all crawled page URLs for a website source, with per-page chunk counts and titles."""
+    _verify_bot_ownership(bot_id, auth["client_id"])
+    try:
+        with get_session() as session:
+            result = get_pages_for_source(session, source=source, bot_id=bot_id, client_id=auth["client_id"])
+            return result
+    except Exception as e:
+        logger.error(f"Failed to fetch pages for source '{source}': {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch source pages.") from e
 
 
 @router.delete("/documents/{document_name:path}")
