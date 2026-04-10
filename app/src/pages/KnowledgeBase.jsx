@@ -116,6 +116,8 @@ export default function KnowledgeBase() {
     const replaceSource = docName.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
 
     try {
+      // Switch to Website Scan tab so the live URL progress panel is visible
+      setActiveTab('urls');
       setIsCrawling(true);
       startScanSimulation(crawlUrl);
 
@@ -123,10 +125,13 @@ export default function KnowledgeBase() {
 
       stopScanSimulation(result);
       showToast('success', `Recrawled! ${result.pages_processed || 0} pages updated.`);
+      // Return to All Sources tab so user sees the refreshed source list
+      setActiveTab('list');
       fetchDocuments();
     } catch (err) {
       stopScanSimulation(null);
       showToast('error', `Recrawl failed: ${err?.detail || err?.message || err}`);
+      setActiveTab('list');
     } finally {
       setRecrawlingDoc(null);
       setIsCrawling(false);
