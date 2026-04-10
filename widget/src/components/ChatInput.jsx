@@ -89,7 +89,7 @@ const ChatInput = ({
     const sendDisabled = !hasText || isTyping || isWaiting;
 
     return (
-        <div className={currentTheme.inputArea}>
+        <div className={`${currentTheme.inputArea} oyechats-safe-bottom`}>
             {/* End chat link — live mode only */}
             {isLive && (
                 <div className="flex items-center justify-center mb-1.5">

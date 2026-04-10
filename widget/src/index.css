@@ -8,6 +8,16 @@
   color-scheme: light;
 }
 
+/* iOS safe area support — prevents content from going behind notch/home indicator */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .oyechats-safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .oyechats-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
 /*
  * Tailwind v4 @property declarations are ignored inside Shadow DOM (browser limitation).
  * Explicitly initialize all required Tailwind CSS custom properties so borders,
