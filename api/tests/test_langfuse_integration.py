@@ -4,7 +4,8 @@ These tests mock the LiteLLM SDK and Langfuse client to test
 instrumentation logic without requiring real API keys or connections.
 """
 
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestLangfuseClient:
@@ -126,15 +127,30 @@ class TestLLMService:
             chunk.choices[0].delta.content = text
             chunks.append(chunk)
 
+        class _AsyncIter:
+            def __init__(self, items):
+                self._items = iter(items)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+        async def _collect():
+            from app.services.llm_service import generate_response_stream  # noqa: PLC0415
+
+            return [c async for c in generate_response_stream("test")]
+
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
             patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
-            mock_litellm.completion.return_value = iter(chunks)
-
-            from app.services.llm_service import generate_response_stream
-
-            result = list(generate_response_stream("test"))
+            mock_litellm.acompletion = AsyncMock(return_value=_AsyncIter(chunks))
+            result = asyncio.run(_collect())
             assert result == ["Hello ", "world", "!"]
 
     def test_generate_response_stream_skips_none(self):
@@ -146,15 +162,30 @@ class TestLLMService:
             chunk.choices[0].delta.content = text
             chunks.append(chunk)
 
+        class _AsyncIter:
+            def __init__(self, items):
+                self._items = iter(items)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+        async def _collect():
+            from app.services.llm_service import generate_response_stream  # noqa: PLC0415
+
+            return [c async for c in generate_response_stream("test")]
+
         with (
             patch("app.services.llm_service.litellm") as mock_litellm,
             patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
         ):
-            mock_litellm.completion.return_value = iter(chunks)
-
-            from app.services.llm_service import generate_response_stream
-
-            result = list(generate_response_stream("test"))
+            mock_litellm.acompletion = AsyncMock(return_value=_AsyncIter(chunks))
+            result = asyncio.run(_collect())
             assert result == ["Hello ", "world"]
 
     def test_generate_response_no_api_key(self):

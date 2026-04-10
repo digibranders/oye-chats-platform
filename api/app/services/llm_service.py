@@ -1,5 +1,5 @@
+import asyncio
 import logging
-import time
 
 import litellm
 
@@ -146,8 +146,13 @@ Website content:
 _STREAM_CHUNK_TIMEOUT_S = 30
 
 
-def _stream_from_model(model: str, prompt: str, max_tokens: int | None, metadata: dict | None):
-    """Inner generator: stream chunks from ``model``, enforcing per-chunk timeout.
+async def _stream_from_model(model: str, prompt: str, max_tokens: int | None, metadata: dict | None):
+    """Async inner generator: stream chunks from ``model``, enforcing per-chunk timeout.
+
+    Uses ``litellm.acompletion`` so the event loop is never blocked waiting for
+    the next chunk. Each chunk read is wrapped in ``asyncio.wait_for`` so a
+    stalled upstream connection (TCP open but no bytes flowing) raises
+    ``TimeoutError`` within ``_STREAM_CHUNK_TIMEOUT_S`` seconds.
 
     Raises on connection / API error so the caller can fall back to another model.
     """
@@ -159,28 +164,34 @@ def _stream_from_model(model: str, prompt: str, max_tokens: int | None, metadata
     }
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
-    response = litellm.completion(**kwargs)
-    deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
-    for chunk in response:
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"LLM streaming timed out after {_STREAM_CHUNK_TIMEOUT_S}s")
+    response = await litellm.acompletion(**kwargs)
+    response_iter = response.__aiter__()
+    while True:
+        try:
+            chunk = await asyncio.wait_for(
+                response_iter.__anext__(),
+                timeout=_STREAM_CHUNK_TIMEOUT_S,
+            )
+        except StopAsyncIteration:
+            break
+        except TimeoutError as exc:
+            raise TimeoutError(f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled") from exc
         content = chunk.choices[0].delta.content
         if content:
-            # Reset deadline on each received chunk so slow-but-live streams aren't killed
-            deadline = time.monotonic() + _STREAM_CHUNK_TIMEOUT_S
             yield content
 
 
-def generate_response_stream(prompt: str, *, max_tokens: int | None = None, metadata: dict | None = None):
-    """Generate a streaming response via LiteLLM. Yields text chunks.
+async def generate_response_stream(prompt: str, *, max_tokens: int | None = None, metadata: dict | None = None):
+    """Async generator: stream text chunks via LiteLLM.
 
     Fallback chain:
     1. Primary model (``LLM_MODEL`` — default: OpenAI gpt-5.4-mini)
     2. Fallback model (``FALLBACK_MODEL`` — default: Gemini 2.5 Flash) if primary raises
     3. Generic error message if both fail
 
-    Enforces a per-chunk wall-clock timeout of ``_STREAM_CHUNK_TIMEOUT_S`` so
-    a stalled upstream connection never hangs the client forever.
+    Each chunk read uses ``asyncio.wait_for`` so a stalled upstream TCP connection
+    raises ``TimeoutError`` within ``_STREAM_CHUNK_TIMEOUT_S`` seconds instead of
+    blocking the event loop forever.
     """
     if not PRIMARY_MODEL_KEY_SET:
         logger.error(f"Cannot stream response: API key for primary model '{LLM_MODEL}' is not set.")
@@ -189,7 +200,8 @@ def generate_response_stream(prompt: str, *, max_tokens: int | None = None, meta
 
     logger.info(f"Starting LLM stream | model={LLM_MODEL} | prompt_length={len(prompt)}")
     try:
-        yield from _stream_from_model(LLM_MODEL, prompt, max_tokens, metadata)
+        async for chunk in _stream_from_model(LLM_MODEL, prompt, max_tokens, metadata):
+            yield chunk
         return
     except TimeoutError as e:
         logger.error(str(e))
@@ -209,7 +221,8 @@ def generate_response_stream(prompt: str, *, max_tokens: int | None = None, meta
 
     try:
         logger.info(f"LLM stream fallback | model={FALLBACK_MODEL}")
-        yield from _stream_from_model(FALLBACK_MODEL, prompt, max_tokens, metadata)
+        async for chunk in _stream_from_model(FALLBACK_MODEL, prompt, max_tokens, metadata):
+            yield chunk
     except TimeoutError as e:
         logger.error(f"Fallback stream timed out: {e}")
         yield " [Response timed out. Please try again.]"

@@ -38,6 +38,23 @@ export const sendMessage = async (message, sessionId = null) => {
     }
 };
 
+// Wrap reader.read() in a race against a timeout so a stalled stream
+// (backend hung, TCP open but no bytes flowing) never freezes the UI forever.
+// 35s = 30s server-side chunk timeout + 5s network RTT buffer.
+const _STREAM_READ_TIMEOUT_MS = 35_000;
+
+const _readWithTimeout = (reader) =>
+    new Promise((resolve, reject) => {
+        const tid = setTimeout(
+            () => reject(new Error(`Stream read timed out after ${_STREAM_READ_TIMEOUT_MS / 1000}s`)),
+            _STREAM_READ_TIMEOUT_MS,
+        );
+        reader.read().then(
+            (result) => { clearTimeout(tid); resolve(result); },
+            (err)    => { clearTimeout(tid); reject(err); },
+        );
+    });
+
 export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError }) => {
     try {
         const response = await fetch(`${API_URL}/chat/stream`, {
@@ -59,7 +76,14 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         let metadataReceived = false;
 
         while (true) {
-            const { done, value } = await reader.read();
+            let done, value;
+            try {
+                ({ done, value } = await _readWithTimeout(reader));
+            } catch (readErr) {
+                // Timed out or aborted — cancel the stream and surface the error
+                reader.cancel().catch(() => {});
+                throw readErr;
+            }
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });

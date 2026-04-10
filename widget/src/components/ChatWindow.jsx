@@ -4,6 +4,7 @@ import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, g
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
+import { sanitizeColor } from '../services/sanitize';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
@@ -809,7 +810,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             );
         }
         if (chatMode === 'live' && operatorName) {
-            const primaryColor = settings.primary_color || '#3A0CA3';
+            const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
             const isReconnecting = liveConnectionStatus === 'reconnecting';
             return (
                 <div className="flex items-center gap-2.5">
@@ -846,7 +847,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {isLive ? (
                     <div
                         className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                        style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                     >
                         {operatorName?.charAt(0)?.toUpperCase() || 'S'}
                     </div>
@@ -868,8 +869,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // ── Inline live message renderer ─────────────────────────────────────────────
     const renderLiveMessage = (msg) => {
-        const userBubbleBg = settings.user_bubble_color || '#DBE9FF';
-        const primaryColor = settings.primary_color || '#3A0CA3';
+        const userBubbleBg = sanitizeColor(settings.user_bubble_color, '#DBE9FF');
+        const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
 
         if (msg.sender === 'user') {
             return (
@@ -1039,7 +1040,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             <div
                 className={`${currentTheme.messagesArea} relative`}
                 style={{
-                    backgroundColor: (settings.background_color && settings.background_color !== '#ffffff') ? settings.background_color : undefined,
+                    backgroundColor: (settings.background_color && settings.background_color !== '#ffffff') ? sanitizeColor(settings.background_color, '#ffffff') : undefined,
                     paddingTop: !isInitializing && !showLeadForm ? 24 : undefined,
                 }}
                 aria-live="polite"
@@ -1052,7 +1053,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         className="absolute inset-0 z-10 flex flex-col items-start justify-end px-5 pb-4 pointer-events-auto"
                         style={{
                             backgroundColor: (settings.background_color && settings.background_color !== '#ffffff')
-                                ? settings.background_color
+                                ? sanitizeColor(settings.background_color, '#F8F8F8')
                                 : '#F8F8F8',
                         }}
                     >
@@ -1222,9 +1223,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {isOperatorTyping && (
                     <div className="flex justify-start px-5">
                         <div className="flex gap-1.5 px-1 py-2">
-                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
-                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
-                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: settings.primary_color || '#3A0CA3', opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '0ms', backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3'), opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '150ms', backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3'), opacity: 0.6 }} />
+                            <span className="w-2 h-2 rounded-full animate-bounce" style={{ animationDelay: '300ms', backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3'), opacity: 0.6 }} />
                         </div>
                     </div>
                 )}
@@ -1234,7 +1235,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     <div className="flex flex-col items-center py-4 px-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                         <div
                             className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin mb-2"
-                            style={{ borderColor: `${settings.primary_color || '#3A0CA3'}40`, borderTopColor: settings.primary_color || '#3A0CA3' }}
+                            style={{ borderColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}40`, borderTopColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                         />
                         <p
                             className="text-[13px] text-gray-500 text-center"
@@ -1247,7 +1248,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             <button
                                 onClick={() => setChatMode('unavailable')}
                                 className="mt-2 text-[12px] font-medium hover:underline transition-colors"
-                                style={{ color: settings.primary_color || '#3A0CA3' }}
+                                style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                             >
                                 Leave a message instead
                             </button>
@@ -1278,7 +1279,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <button
                                     onClick={() => setOfflineError(false)}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                    style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                                 >
                                     Try Again
                                 </button>
@@ -1294,7 +1295,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 <button
                                     onClick={handleReturnToBot}
                                     className="w-full py-2 rounded-xl text-white text-[13px] font-medium"
-                                    style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                                    style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                                 >
                                     Continue chatting with AI
                                 </button>
@@ -1333,7 +1334,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </div>
                                     <button type="submit" disabled={offlineSubmitting}
                                         className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
-                                        style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}>
+                                        style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}>
                                         {offlineSubmitting
                                             ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                                             : 'Send Message'}
@@ -1350,7 +1351,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center"
                         style={{ animation: 'fadeUp 0.4s ease-out' }}
                     >
-                        <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: settings.primary_color || '#3A0CA3' }} />
+                        <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
                         <p className="text-[13px] font-semibold text-[#16202C] mb-0.5">Chat ended</p>
 
                         {/* Step 1: Was your issue resolved? */}
@@ -1452,9 +1453,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         >
                             <div
                                 className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center"
-                                style={{ backgroundColor: `${settings.primary_color || '#3A0CA3'}15` }}
+                                style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
                             >
-                                <LogOut className="w-5 h-5" style={{ color: settings.primary_color || '#3A0CA3' }} />
+                                <LogOut className="w-5 h-5" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
                             </div>
                             <p id="end-chat-title" className="text-[14px] font-semibold text-[#16202C] mb-0.5">
                                 End conversation?
@@ -1524,7 +1525,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     settings={settings}
                     onHandoff={!isInitializing && chatMode === 'bot' && settings.live_chat_enabled !== false ? triggerHandoff : undefined}
                     showProminentHandoff={showProminentHandoff}
-                    primaryColor={settings.primary_color}
+                    primaryColor={sanitizeColor(settings.primary_color)}
                     showBranding={settings?.feature_flags?.show_branding !== false}
                     chatMode={chatMode}
                     onLiveSend={handleLiveSend}
@@ -1614,7 +1615,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     type="submit"
                                     disabled={transcriptSending || !transcriptEmail.trim()}
                                     className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-colors disabled:opacity-50"
-                                    style={{ backgroundColor: settings.primary_color || '#2563eb' }}
+                                    style={{ backgroundColor: sanitizeColor(settings.primary_color, '#2563eb') }}
                                 >
                                     {transcriptSending ? 'Sending...' : 'Send'}
                                 </button>

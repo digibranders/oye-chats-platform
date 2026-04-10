@@ -212,6 +212,49 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
     ]
 
 
+def get_pages_for_source(session, source: str, bot_id: int = None, client_id: int = None) -> dict:
+    """Return all unique crawled page URLs for a given root domain.
+
+    ``source`` is the normalized root domain string returned by
+    ``get_ingested_documents`` (e.g. ``"fynix.digital"``).  We reuse the same
+    PostgreSQL expression so the filter matches the same rows.
+    """
+    root_name_expr = func.coalesce(
+        func.replace(func.substring(Document.document_name, r"^(https?://[^/]+)"), "www.", ""),
+        Document.document_name,
+    )
+
+    stmt = (
+        select(
+            Document.document_name.label("url"),
+            func.max(Document.created_at).label("ingested_at"),
+            func.count().label("chunk_count"),
+            func.max(Document.metadata_info["title"].astext).label("title"),
+        )
+        .where(root_name_expr == source)
+        .where(_owner_filter(Document, bot_id, client_id))
+        .group_by(Document.document_name)
+        .order_by(Document.document_name)
+    )
+
+    rows = session.execute(stmt).all()
+    pages = [
+        {
+            "url": r.url,
+            "title": r.title,
+            "chunk_count": r.chunk_count,
+            "ingested_at": r.ingested_at.isoformat() if r.ingested_at else None,
+        }
+        for r in rows
+    ]
+    return {
+        "domain": source,
+        "total_pages": len(pages),
+        "total_chunks": sum(p["chunk_count"] for p in pages),
+        "pages": pages,
+    }
+
+
 def count_documents_for_bot(session, bot_id: int = None, client_id: int = None) -> int:
     """Return the total number of stored chunks for a bot.
 
@@ -333,23 +376,31 @@ def search_similar_documents(
     else:
         emb_str = str(query_embedding)
 
-    # Execute raw SQL — bypasses pgvector Python type processor entirely
+    # Execute raw SQL — bypasses pgvector Python type processor entirely.
+    # Use separate static SQL strings (never interpolate into SQL text).
     if bot_id:
-        where_clause = "WHERE bot_id = :owner_id"
+        sql = text(
+            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+                      embedding <-> CAST(:emb AS vector) AS distance
+               FROM documents
+               WHERE bot_id = :owner_id AND embedding <-> CAST(:emb AS vector) < :max_dist
+               ORDER BY distance
+               LIMIT :k"""
+        )
         owner_id = bot_id
     else:
-        where_clause = "WHERE client_id = :owner_id"
+        sql = text(
+            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+                      embedding <-> CAST(:emb AS vector) AS distance
+               FROM documents
+               WHERE client_id = :owner_id AND embedding <-> CAST(:emb AS vector) < :max_dist
+               ORDER BY distance
+               LIMIT :k"""
+        )
         owner_id = client_id
 
     results = session.execute(
-        text(
-            f"""SELECT id, client_id, bot_id, document_name, content, metadata_info,
-                       embedding <-> CAST(:emb AS vector) AS distance
-                FROM documents
-                {where_clause} AND embedding <-> CAST(:emb AS vector) < :max_dist
-                ORDER BY distance
-                LIMIT :k"""
-        ),
+        sql,
         {"emb": emb_str, "owner_id": owner_id, "max_dist": max_distance, "k": k},
     ).fetchall()
 

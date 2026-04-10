@@ -100,6 +100,31 @@ TRACKING_PARAMS: frozenset[str] = frozenset(
 
 _HTTP_USER_AGENT = "OyeChats-Bot/1.0 (+https://oyechats.com)"
 
+# Scroll preamble — dispatches scroll events to wake Intersection Observers
+# and trigger lazy-loaded React/Next.js components before link extraction.
+# Synchronous scrollTo calls are intentional: they fire scroll events
+# synchronously, which is enough to mark IO entries as "intersecting" so
+# React can schedule their render on the next frame.
+_JS_SCROLL_PREAMBLE: str = """
+(function () {
+    var total = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+    var step = Math.ceil(total / 6) || 300;
+    for (var i = 1; i <= 6; i++) {
+        window.scrollTo(0, step * i);
+    }
+    window.scrollTo(0, total);
+})();
+"""
+
+
+def _is_spa(html: str) -> bool:
+    """Return True if the page is a Next.js / Nuxt / Angular / Gatsby SPA.
+
+    Checked against common fingerprints injected into the HTML at build time.
+    """
+    markers = ("__NEXT_DATA__", "/_next/", "__NUXT__", "window.__nuxt__", "ng-version=", "__gatsby")
+    return any(m in html for m in markers)
+
 
 # ---------------------------------------------------------------------------
 # URL normalization & filtering
@@ -641,7 +666,10 @@ async def _crawl_seed_with_browser(
         screenshot=False,
         pdf=False,
         exclude_all_images=True,
-        js_code=_JS_COLOR_EXTRACTION,
+        # Scroll first to trigger Intersection Observers / lazy components,
+        # then extract brand colors.  Two IIFEs: first returns undefined
+        # (discarded), second returns the colors array (captured).
+        js_code=_JS_SCROLL_PREAMBLE + _JS_COLOR_EXTRACTION,
     )
 
     try:
@@ -686,6 +714,9 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
 
     # Priority queue: (priority, counter, url, depth)
     pq: list[tuple[int, int, str, int]] = []
+
+    # Raw HTML from seed page — used for SPA fingerprint detection after Phase 1
+    _seed_html: str = ""
 
     def push_url(url: str, depth: int, *, from_sitemap: bool = False) -> None:
         nonlocal counter
@@ -778,6 +809,8 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
                                     push_url(href, seed_depth + 1)
             else:
                 result = seed_result["result"]
+                # Capture raw HTML for SPA fingerprint detection (used after Phase 1)
+                _seed_html = (getattr(result, "html", "") or "") if result else ""
                 if result and hasattr(result, "markdown") and result.markdown:
                     pages_crawled += 1
                     results.append({"url": norm_seed, "content": result.markdown})
@@ -850,6 +883,13 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
     js_all_pages = os.getenv("CRAWLER_JS_ALL_PAGES", "false").lower() in ("1", "true", "yes")
     recycle_every = int(os.getenv("CRAWLER_BROWSER_RECYCLE", "10"))
 
+    # Auto-detect Next.js / Nuxt / Angular SPAs from seed page HTML.
+    # If detected and JS mode wasn't already requested, enable it automatically
+    # so that client-side rendered links and lazy-loaded content are discovered.
+    if not js_all_pages and _seed_html and _is_spa(_seed_html):
+        print(json.dumps({"log": "[OyeChats] SPA detected — enabling JavaScript mode for all pages"}))
+        js_all_pages = True
+
     # Check crawl4ai availability when JS mode is requested
     if js_all_pages:
         try:
@@ -873,10 +913,16 @@ async def crawl_recursive(start_url: str, max_depth: int = 3, max_pages: int | N
                 text_mode=True,  # Text only — no CSS/images needed
             )
             run_config_p2 = CrawlerRunConfig(  # type: ignore[name-defined]
-                wait_until="domcontentloaded",
+                # networkidle waits until there are no network requests for 500ms,
+                # which gives React/Next.js time to finish hydration and data
+                # fetching before we extract the rendered HTML and links.
+                wait_until="networkidle",
                 screenshot=False,
                 pdf=False,
                 exclude_all_images=True,
+                # Scroll each page to trigger Intersection Observers so that
+                # lazy-loaded portfolio grids, footer links, etc. are rendered.
+                js_code=_JS_SCROLL_PREAMBLE,
             )
             h2t_p2 = _make_html2text()
             semaphore_p2 = asyncio.Semaphore(1)
@@ -1050,4 +1096,9 @@ if __name__ == "__main__":
 
     url = sys.argv[1]
     max_pages = int(os.getenv("MAX_CRAWL_PAGES", "50"))
+
+    # Allow explicit JS mode override via CLI flag (useful for manual testing)
+    if "--js-all-pages" in sys.argv:
+        os.environ["CRAWLER_JS_ALL_PAGES"] = "true"
+
     asyncio.run(crawl_recursive(url, max_pages=max_pages))

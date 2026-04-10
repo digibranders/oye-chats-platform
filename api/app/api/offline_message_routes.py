@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.sql import func
 
@@ -27,12 +27,12 @@ router = APIRouter(prefix="/offline-messages", tags=["offline-messages"])
 
 
 class SubmitOfflineMessageRequest(BaseModel):
-    bot_key: str
-    name: str
-    email: str
-    phone: str | None = None
-    message: str
-    session_id: str | None = None
+    bot_key: str = Field(..., max_length=100)
+    name: str = Field(..., min_length=1, max_length=200)
+    email: str = Field(..., max_length=320)
+    phone: str | None = Field(None, max_length=30)
+    message: str = Field(..., min_length=1, max_length=5000)
+    session_id: str | None = Field(None, max_length=100)
     department_id: int | None = None
 
     @field_validator("email")

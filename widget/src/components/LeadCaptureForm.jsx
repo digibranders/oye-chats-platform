@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, User, Mail, Phone, Building2, ArrowRight } from 'lucide-react';
 import BotAvatar from './BotAvatar';
+import { sanitizeColor } from '../services/sanitize';
 
 const FIELD_CONFIG = {
     name: { label: 'Your Name', icon: User, type: 'text', placeholder: 'John Doe' },
@@ -67,7 +68,7 @@ const LeadCaptureForm = ({ settings, currentTheme, onClose, onSubmit, isAnimatin
             {/* Form Content */}
             <div
                 className="flex-1 flex flex-col items-center justify-center overflow-auto px-5 py-6"
-                style={{ backgroundColor: settings.background_color || '#ffffff' }}
+                style={{ backgroundColor: sanitizeColor(settings.background_color, '#ffffff') }}
             >
                 <div className="w-full max-w-sm" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                     {/* Avatar glow */}
@@ -78,7 +79,7 @@ const LeadCaptureForm = ({ settings, currentTheme, onClose, onSubmit, isAnimatin
                                 width: 70,
                                 height: 70,
                                 borderRadius: '50%',
-                                background: `radial-gradient(circle, ${settings.primary_color || '#2B66BC'}20 0%, transparent 70%)`,
+                                background: `radial-gradient(circle, ${sanitizeColor(settings.primary_color)}20 0%, transparent 70%)`,
                                 filter: 'blur(8px)',
                             }}
                         />
@@ -133,7 +134,7 @@ const LeadCaptureForm = ({ settings, currentTheme, onClose, onSubmit, isAnimatin
                             type="submit"
                             disabled={submitting}
                             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-medium transition-all hover:opacity-90 disabled:opacity-60"
-                            style={{ backgroundColor: settings.primary_color || '#3A0CA3' }}
+                            style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
                         >
                             {submitting ? (
                                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />

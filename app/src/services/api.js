@@ -163,12 +163,14 @@ export const uploadDocuments = async (files, botId) => {
 /**
  * Submits a URL to be crawled and ingested.
  * @param {string} url - The root URL to start crawling
+ * @param {number|undefined} botId - Optional bot ID to scope the crawl
+ * @param {boolean} useJs - Enable JavaScript mode for Next.js / React / SPA sites
  * @returns {Promise<Object>} The API response with crawling results
  */
-export const crawlWebsite = async (url, botId) => {
+export const crawlWebsite = async (url, botId, useJs = false) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
-        const response = await api.post(endpoint, { url }, { timeout: 300000 });
+        const response = await api.post(endpoint, { url, use_js: useJs }, { timeout: 300000 });
         return response.data;
     } catch (error) {
         console.error('API Error during website crawl:', error);
@@ -209,6 +211,24 @@ export const deleteDocument = async (documentName, botId) => {
     }
 };
 
+
+/**
+ * Fetches all crawled page URLs for a website source.
+ * @param {string} source - Normalized root domain (e.g. "fynix.digital")
+ * @param {number|null} botId - Optional bot ID
+ * @returns {Promise<Object>} { domain, total_pages, total_chunks, pages: [...] }
+ */
+export const getDocumentPages = async (source, botId) => {
+    try {
+        const params = new URLSearchParams({ source });
+        if (botId) params.set('bot_id', botId);
+        const response = await api.get(`/documents/pages?${params.toString()}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching document pages:', error);
+        throw buildApiError(error, 'Failed to load source pages');
+    }
+};
 
 /**
  * Fetches aggregate statistics for the admin dashboard.
