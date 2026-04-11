@@ -1,8 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
+/**
+ * Return the URL only if it uses https and points to calendly.com.
+ * Blocks arbitrary or internal URLs from being loaded in the iframe.
+ */
+const validateCalendlyUrl = (url) => {
+    if (!url || typeof url !== 'string') return null;
+    try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:') return null;
+        const host = parsed.hostname.toLowerCase();
+        if (host !== 'calendly.com' && !host.endsWith('.calendly.com')) return null;
+        return url;
+    } catch {
+        return null;
+    }
+};
+
 const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss }) => {
     const [collapsed, setCollapsed] = useState(false);
+    const safeUrl = validateCalendlyUrl(calendlyUrl);
 
     useEffect(() => {
         const handleMessage = (event) => {
@@ -24,7 +42,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss }) => {
         return () => window.removeEventListener('message', handleMessage);
     }, [calendlyUrl, onBooked, sessionId]);
 
-    if (!calendlyUrl) return null;
+    if (!safeUrl) return null;
 
     return (
         <div className="mx-3 mb-3 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -50,7 +68,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss }) => {
             {!collapsed && (
                 <iframe
                     title="Calendly Booking"
-                    src={calendlyUrl}
+                    src={safeUrl}
                     width="100%"
                     height="350"
                     frameBorder="0"

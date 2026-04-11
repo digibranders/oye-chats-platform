@@ -215,6 +215,20 @@ def read_root():
 
 _ALLOWED_FILE_PREFIXES = ("logos/", "chat-files/")
 
+# MIME types safe to serve inline (browsers won't execute these as code).
+_INLINE_SAFE_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/heic",
+        "image/heif",
+        "image/avif",
+        "application/pdf",
+    }
+)
+
 
 @app.get("/files/{file_path:path}")
 def serve_b2_file(file_path: str):
@@ -240,9 +254,15 @@ def serve_b2_file(file_path: str):
         logger.error(f"Unexpected error serving {file_path}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
+    # Force download for non-image/non-PDF types to prevent stored XSS.
+    # A text/plain file with HTML content could be MIME-sniffed and executed
+    # by the browser if served inline without nosniff.
+    disposition = "inline" if content_type in _INLINE_SAFE_TYPES else "attachment"
+
     headers = {
         "Cache-Control": "public, max-age=86400, immutable",
-        "Content-Disposition": "inline",
+        "Content-Disposition": disposition,
+        "X-Content-Type-Options": "nosniff",
     }
 
     return StreamingResponse(content=body, media_type=content_type, headers=headers)
