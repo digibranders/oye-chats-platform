@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Target, Download, X, Loader2, User, Mail, Phone, Building2, MapPin, Monitor, MessageCircle, Search, ChevronRight } from 'lucide-react';
+import { Target, Download, X, Loader2, User, Mail, Phone, Building2, MapPin, Monitor, MessageCircle, Search, ChevronRight, Tag, FileText, CheckSquare, Square, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { RadialBarChart, RadialBar, ResponsiveContainer, Tooltip as ReTooltip } from 'recharts';
 import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -35,6 +36,15 @@ export default function Leads() {
     const [leadDetail, setLeadDetail] = useState(null);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [notesByLead, setNotesByLead] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('lead_notes') || '{}'); } catch { return {}; }
+    });
+    const [tagsByLead, setTagsByLead] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('lead_tags') || '{}'); } catch { return {}; }
+    });
+    const [noteInput, setNoteInput] = useState('');
+    const [tagInput, setTagInput] = useState('');
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -86,6 +96,48 @@ export default function Leads() {
     };
 
     const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+
+    const saveNote = (sessionId) => {
+        const updated = { ...notesByLead, [sessionId]: { text: noteInput, ts: new Date().toISOString() } };
+        setNotesByLead(updated);
+        localStorage.setItem('lead_notes', JSON.stringify(updated));
+    };
+
+    const saveTags = (sessionId, raw) => {
+        const tags = raw.split(',').map(t => t.trim()).filter(Boolean);
+        const updated = { ...tagsByLead, [sessionId]: tags };
+        setTagsByLead(updated);
+        localStorage.setItem('lead_tags', JSON.stringify(updated));
+    };
+
+    const toggleSelect = (id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const exportSelected = async () => {
+        const ids = Array.from(selectedIds);
+        const selectedLeads = leads.filter(l => ids.includes(l.session_id));
+        const csv = ['Session ID,Name,Email,Score,Status,Location,Last Active']
+            .concat(selectedLeads.map(l => [
+                l.session_id,
+                l.contact?.name || '',
+                l.contact?.email || '',
+                l.score,
+                l.status,
+                (l.location || '').replace(/,/g, ''),
+                formatDate(l.last_active_at),
+            ].join(',')))
+            .join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'selected-leads.csv'; a.click();
+        URL.revokeObjectURL(url);
+        setSelectedIds(new Set());
+    };
 
     const filtered = leads.filter(l => {
         if (statusFilter) {
@@ -158,6 +210,32 @@ export default function Leads() {
                 />
             </div>
 
+            {/* Bulk action toolbar */}
+            <AnimatePresence>
+                {selectedIds.size > 0 && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        className="flex items-center gap-3 p-3.5 bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30 rounded-xl"
+                    >
+                        <span className="text-sm font-medium text-primary-700 dark:text-primary-300">{selectedIds.size} selected</span>
+                        <button
+                            onClick={exportSelected}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white dark:bg-surface-900 border border-primary-300 dark:border-primary-500/40 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                        >
+                            <Download size={13} /> Export selected
+                        </button>
+                        <button
+                            onClick={() => setSelectedIds(new Set())}
+                            className="ml-auto text-xs text-primary-500 dark:text-primary-400 hover:underline"
+                        >
+                            Clear
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Leads Table */}
             <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
                 {isLoading ? (
@@ -170,6 +248,13 @@ export default function Leads() {
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-surface-100 dark:border-surface-800">
+                                <th className="px-4 py-3 w-10">
+                                    <button onClick={() => setSelectedIds(selectedIds.size === filtered.length ? new Set() : new Set(filtered.map(l => l.session_id)))}>
+                                        {selectedIds.size === filtered.length && filtered.length > 0
+                                            ? <CheckSquare size={15} className="text-primary-500" />
+                                            : <Square size={15} className="text-surface-400 dark:text-surface-500" />}
+                                    </button>
+                                </th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Contact</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Score</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Status</th>
@@ -186,9 +271,13 @@ export default function Leads() {
                                     <tr
                                         key={lead.session_id}
                                         className="border-b border-surface-50 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 cursor-pointer transition-colors"
-                                        onClick={() => handleViewLead(lead.session_id)}
                                     >
-                                        <td className="px-4 py-3">
+                                        <td className="px-4 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(lead.session_id); }}>
+                                            {selectedIds.has(lead.session_id)
+                                                ? <CheckSquare size={15} className="text-primary-500" />
+                                                : <Square size={15} className="text-surface-400 dark:text-surface-500" />}
+                                        </td>
+                                        <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
                                             <div>
                                                 <p className="font-medium text-surface-900 dark:text-surface-100">
                                                     {lead.contact?.name || 'Anonymous'}
@@ -198,7 +287,7 @@ export default function Leads() {
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3">
+                                        <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
                                             <div className="flex items-center gap-2">
                                                 <div className="w-12 h-2 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
                                                     <div
@@ -217,12 +306,12 @@ export default function Leads() {
                                                 </span>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3">
+                                        <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
                                             <span className={cn('px-2.5 py-1 rounded-full text-[11px] font-bold', sc.color)}>
                                                 {sc.label}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3">
+                                        <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
                                             <div className="flex gap-1">
                                                 {Object.entries(BANT_LABELS).map(([key, label]) => (
                                                     <span
@@ -240,10 +329,10 @@ export default function Leads() {
                                                 ))}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-[12px] text-surface-600 dark:text-surface-400 max-w-[120px] truncate">
+                                        <td className="px-4 py-3 text-[12px] text-surface-600 dark:text-surface-400 max-w-[120px] truncate" onClick={() => handleViewLead(lead.session_id)}>
                                             {(lead.location || '').replace(/\s*\|.*$/, '') || '—'}
                                         </td>
-                                        <td className="px-4 py-3 text-[12px] text-surface-500 dark:text-surface-400">
+                                        <td className="px-4 py-3 text-[12px] text-surface-500 dark:text-surface-400" onClick={() => handleViewLead(lead.session_id)}>
                                             {formatDate(lead.last_active_at)}
                                         </td>
                                         <td className="px-4 py-3">
@@ -302,26 +391,72 @@ export default function Leads() {
                                         </div>
                                     </div>
 
-                                    {/* Score + Status */}
+                                    {/* Score + Status with RadialBar gauge */}
                                     <div className="flex items-center gap-4">
-                                        <div className="flex-1">
-                                            <p className="text-[12px] font-bold text-surface-500 dark:text-surface-400 mb-1">Lead Score</p>
-                                            <div className="flex items-center gap-3">
-                                                <div className="flex-1 h-3 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
-                                                    <div
-                                                        className="h-full rounded-full transition-all"
-                                                        style={{
-                                                            width: `${leadDetail.score}%`,
-                                                            backgroundColor: leadDetail.score >= 75 ? '#22c55e' : leadDetail.score >= 50 ? '#f97316' : leadDetail.score >= 25 ? '#eab308' : '#94a3b8',
-                                                        }}
-                                                    />
-                                                </div>
-                                                <span className="text-lg font-bold text-surface-900 dark:text-surface-100">{leadDetail.score}</span>
-                                            </div>
+                                        <div className="w-24 h-24 shrink-0">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="100%" data={[{ value: leadDetail.score, fill: leadDetail.score >= 75 ? '#22c55e' : leadDetail.score >= 50 ? '#f97316' : leadDetail.score >= 25 ? '#eab308' : '#94a3b8' }]} startAngle={90} endAngle={-270}>
+                                                    <RadialBar dataKey="value" cornerRadius={6} background={{ fill: 'rgba(148,163,184,0.15)' }} />
+                                                </RadialBarChart>
+                                            </ResponsiveContainer>
                                         </div>
-                                        <span className={cn('px-3 py-1.5 rounded-full text-[12px] font-bold', STATUS_CONFIG[leadDetail.status]?.color)}>
-                                            {STATUS_CONFIG[leadDetail.status]?.label}
-                                        </span>
+                                        <div className="flex-1">
+                                            <p className="text-[12px] font-bold text-surface-500 dark:text-surface-400 mb-1">BANT Score</p>
+                                            <p className="text-3xl font-bold text-surface-900 dark:text-surface-100 leading-none">{leadDetail.score}<span className="text-sm text-surface-400 font-normal">/100</span></p>
+                                            <span className={cn('inline-block mt-2 px-3 py-1 rounded-full text-[12px] font-bold', STATUS_CONFIG[leadDetail.status]?.color)}>
+                                                {STATUS_CONFIG[leadDetail.status]?.label}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Tags */}
+                                    <div className="space-y-2">
+                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 flex items-center gap-1.5">
+                                            <Tag size={12} /> Tags
+                                        </h3>
+                                        <div className="flex flex-wrap gap-1.5 mb-2">
+                                            {(tagsByLead[selectedLead] || []).map(tag => (
+                                                <span key={tag} className="px-2.5 py-0.5 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 text-[11px] font-medium rounded-full border border-primary-200 dark:border-primary-500/30">
+                                                    {tag}
+                                                </span>
+                                            ))}
+                                        </div>
+                                        <input
+                                            type="text"
+                                            placeholder="Add tags (comma-separated)"
+                                            value={tagInput}
+                                            onChange={(e) => setTagInput(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') { saveTags(selectedLead, tagInput); setTagInput(''); } }}
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400"
+                                        />
+                                        <p className="text-[10px] text-surface-400">Press Enter to save</p>
+                                    </div>
+
+                                    {/* Notes */}
+                                    <div className="space-y-2">
+                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400 flex items-center gap-1.5">
+                                            <FileText size={12} /> Notes
+                                        </h3>
+                                        {notesByLead[selectedLead] && (
+                                            <div className="p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg text-xs text-surface-700 dark:text-surface-300 mb-2">
+                                                <p>{notesByLead[selectedLead].text}</p>
+                                                <p className="text-[10px] text-surface-400 mt-1">{new Date(notesByLead[selectedLead].ts).toLocaleDateString()}</p>
+                                            </div>
+                                        )}
+                                        <textarea
+                                            rows={3}
+                                            placeholder="Add a note about this lead..."
+                                            value={noteInput}
+                                            onChange={(e) => setNoteInput(e.target.value)}
+                                            className="w-full px-3 py-2 text-xs bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:outline-none focus:border-primary-400 resize-none"
+                                        />
+                                        <button
+                                            onClick={() => { saveNote(selectedLead); setNoteInput(''); }}
+                                            disabled={!noteInput.trim()}
+                                            className="px-3 py-1.5 text-xs font-medium bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-40"
+                                        >
+                                            Save note
+                                        </button>
                                     </div>
 
                                     {/* BANT Breakdown */}
