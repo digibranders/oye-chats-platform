@@ -274,11 +274,12 @@ export const getLeadInfo = async (sessionId) => {
 
 export const submitOfflineMessage = async (formData) => {
     try {
+        const botKey = window.OYECHATS_BOT_KEY || '';
         const response = await fetch(`${API_URL}/offline-messages`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getHeaders(),
             body: JSON.stringify({
-                bot_key: window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || '',
+                bot_key: botKey,
                 name: formData.name,
                 email: formData.email,
                 phone: formData.phone || null,
