@@ -576,6 +576,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                 },
                 onFinalMetadata: (finalMeta) => {
+                    // Flush any buffered chunks to state BEFORE processing metadata.
+                    // Prevents the handoff form from appearing while text is still
+                    // waiting in the rAF buffer (race condition: truncated response).
+                    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+                    if (chunkBufferRef.current && placeholderId !== null) {
+                        const remaining = chunkBufferRef.current;
+                        chunkBufferRef.current = '';
+                        setMessages(prev => prev.map(msg =>
+                            msg.id === placeholderId ? { ...msg, text: msg.text + remaining } : msg
+                        ));
+                    }
+
                     if (finalMeta.message_id && placeholderId !== null) {
                         setMessages(prev => prev.map(msg =>
                             msg.id === placeholderId ? { ...msg, id: finalMeta.message_id } : msg
