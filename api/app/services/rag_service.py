@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import joinedload
 
 from app.config import LLM_FALLBACKS, LLM_MODEL
-from app.core.cache import QA_RESPONSE_TTL, cache_get, cache_set, qa_response_key
+from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.langfuse_client import get_langfuse
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
@@ -739,17 +739,27 @@ def rag_pipeline(
             if _cache_key:
                 cached_qa = cache_get(_cache_key)
                 if cached_qa:
-                    logger.info(f"QA cache hit | bot_id={bid} | session={session_id}")
-                    bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=cached_qa["answer"], bot_id=bid
-                    )
-                    session.commit()
-                    return {
-                        "answer": cached_qa["answer"],
-                        "sources": cached_qa.get("sources", []),
-                        "session_id": session_id,
-                        "message_id": bot_msg.id,
-                    }
+                    # Detect handoff intent even on cache hit
+                    _cached_handoff = detect_handoff_intent(question)
+                    live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
+
+                    if _cached_handoff and live_chat_on:
+                        # Handoff requested — invalidate cache and fall through
+                        # so the LLM generates a proper handoff response.
+                        cache_delete(_cache_key)
+                        logger.info(f"QA cache invalidated (handoff detected) | bot_id={bid}")
+                    else:
+                        logger.info(f"QA cache hit | bot_id={bid} | session={session_id}")
+                        bot_msg = add_chat_message(
+                            session, session_id, client_id=cid, role="bot", content=cached_qa["answer"], bot_id=bid
+                        )
+                        session.commit()
+                        return {
+                            "answer": cached_qa["answer"],
+                            "sources": cached_qa.get("sources", []),
+                            "session_id": session_id,
+                            "message_id": bot_msg.id,
+                        }
 
             # Expensive steps: query rewriting (LLM call) + embedding (API call)
             chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -760,6 +770,9 @@ def rag_pipeline(
             _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
             _total_chunks = count_documents_for_bot(session, bot_id=bid, client_id=cid) if bid or cid else 0
             _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
+
+            # Detect handoff intent (run alongside retrieval steps)
+            suggest_handoff = detect_handoff_intent(question)
 
             if _use_cag_lite:
                 logger.info(f"CAG-lite mode: injecting all {_total_chunks} chunks (bot_id={bid})")
@@ -869,15 +882,20 @@ def rag_pipeline(
                     bot_msg.id,
                 )
 
+            live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
             result = {
                 "answer": answer,
                 "sources": [doc.document_name for doc in final_results],
                 "session_id": session_id,
                 "message_id": bot_msg.id,
             }
+            if suggest_handoff and live_chat_on:
+                result["suggest_handoff"] = True
 
-            # Cache the answer for identical future questions
-            if _cache_key:
+            # Cache the answer for identical future questions.
+            # Skip caching when handoff was suggested — the response only
+            # makes sense alongside the suggest_handoff flag.
+            if _cache_key and not suggest_handoff:
                 cache_set(_cache_key, {"answer": answer, "sources": result["sources"]}, QA_RESPONSE_TTL)
 
             return result
@@ -975,14 +993,31 @@ async def rag_pipeline_stream(
         if _cache_key:
             cached_qa = cache_get(_cache_key)
             if cached_qa:
-                logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
-                cached_answer = cached_qa["answer"]
-                cached_sources = cached_qa.get("sources", [])
-                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': cached_sources})}\n"
-                yield cached_answer
-                add_chat_message(session, session_id, client_id=cid, role="bot", content=cached_answer, bot_id=bid)
-                session.commit()
-                return
+                # Run handoff detection even on cache hit so the widget can
+                # trigger the handoff form when appropriate.
+                _cached_handoff = await asyncio.to_thread(detect_handoff_intent, question)
+                live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
+
+                if _cached_handoff and live_chat_on:
+                    # Handoff requested — invalidate cache and fall through to
+                    # the full pipeline so the LLM generates a proper handoff
+                    # response with the suggest_handoff flag.
+                    cache_delete(_cache_key)
+                    logger.info(f"QA cache invalidated (handoff detected) | bot_id={bid}")
+                else:
+                    logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
+                    cached_answer = cached_qa["answer"]
+                    cached_sources = cached_qa.get("sources", [])
+                    yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': cached_sources})}\n"
+                    yield cached_answer
+                    bot_msg = add_chat_message(
+                        session, session_id, client_id=cid, role="bot", content=cached_answer, bot_id=bid
+                    )
+                    session.flush()
+                    _cached_msg_id = bot_msg.id
+                    session.commit()
+                    yield f"\nFINAL_METADATA:{json.dumps({'message_id': _cached_msg_id})}\n"
+                    return
 
         # Expensive steps: handoff detection, query rewriting (LLM), embedding (API)
         chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
@@ -1128,7 +1163,10 @@ async def rag_pipeline_stream(
 
                 # Only cache a real LLM answer — never cache the zero-chunk
                 # fallback string, which would poison the QA cache.
-                if _cache_key and full_answer and chunk_count > 0:
+                # Also skip caching when handoff was suggested: the response
+                # (e.g. "I'm connecting you…") only makes sense when
+                # accompanied by the suggest_handoff flag in FINAL_METADATA.
+                if _cache_key and full_answer and chunk_count > 0 and not suggest_handoff:
                     cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
 
                 if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
