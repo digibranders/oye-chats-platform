@@ -8,7 +8,13 @@ from app.config import FALLBACK_MODEL, FALLBACK_MODEL_KEY_SET, LLM_FALLBACKS, LL
 logger = logging.getLogger(__name__)
 
 
-def generate_response(prompt: str, *, max_tokens: int | None = None, metadata: dict | None = None) -> str:
+def generate_response(
+    prompt: str,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    metadata: dict | None = None,
+) -> str:
     """Generate a non-streaming response via LiteLLM."""
     if not PRIMARY_MODEL_KEY_SET:
         logger.error(f"Cannot generate response: API key for primary model '{LLM_MODEL}' is not set.")
@@ -23,6 +29,8 @@ def generate_response(prompt: str, *, max_tokens: int | None = None, metadata: d
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         response = litellm.completion(**kwargs)
         content = response.choices[0].message.content
         if content:

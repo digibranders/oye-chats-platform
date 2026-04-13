@@ -15,7 +15,7 @@ Query: "{question}"
 
 Respond with ONLY 'YES' or 'NO'."""
 
-    response = generate_response(prompt, metadata={"generation_name": "intent-detection"})
+    response = generate_response(prompt, temperature=0, metadata={"generation_name": "intent-detection"})
     result = response.strip().upper()
     has_intent = "YES" in result
     logger.info(f"Intent Detection for '{question}': {result}")
@@ -39,14 +39,14 @@ def _detect_handoff_intent_raw(question: str) -> bool:
     """Detect human handoff intent via LLM. Same pattern as sales intent detection."""
     prompt = f"""Determine if the user wants to speak with a human agent or support representative instead of continuing with AI.
 
-Handoff indicators: "talk to someone", "real person", "connect me with support", "speak to your team", "I want a human", "get me an agent", "let me talk to support", asking to escalate beyond the chatbot.
+Handoff indicators: "talk to someone", "real person", "connect me with support", "speak to your team", "I want a human", "get me an agent", "let me talk to support", "connect with the team", "connect with support", "reach your team", "talk to a person", "speak with someone", "help from a human", "get in touch with", "contact support", "contact the team", "need a real person", "can I talk to someone", asking to escalate beyond the chatbot.
 
 ONLY return YES if the user explicitly wants a human instead of AI. General help requests, product questions, pricing questions, small talk, or greetings = NO.
 
 User message: "{question}"
 
 Respond with ONLY 'YES' or 'NO'."""
-    response = generate_response(prompt, metadata={"generation_name": "handoff-intent-detection"})
+    response = generate_response(prompt, temperature=0, metadata={"generation_name": "handoff-intent-detection"})
     result = response.strip().upper()
     has_intent = "YES" in result
     logger.info(f"Handoff Intent Detection for '{question}': {result}")
