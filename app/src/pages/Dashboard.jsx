@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Sparkles, Clock } from 'lucide-react';
+import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Sparkles, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { getDashboardStats, getTopQuestions } from '../services/api';
+import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
+import { getDashboardStats, getTopQuestions, getLeadStats, getFeedbackData, getOfflineMessages } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import StatCard from '../components/ui/StatCard';
@@ -29,6 +30,8 @@ export default function Dashboard() {
   const { showToast } = useToast();
   const [stats, setStats] = useState(null);
   const [topQuestions, setTopQuestions] = useState([]);
+  const [leadStats, setLeadStats] = useState(null);
+  const [recentActivity, setRecentActivity] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dateRange, setDateRange] = useState(null);
   const navigate = useNavigate();
@@ -43,12 +46,34 @@ export default function Dashboard() {
     const fetchData = async () => {
       setIsLoading(true);
       try {
-        const [statsData, questionsData] = await Promise.all([
+        const [statsData, questionsData, leadsData, feedbackData, offlineData] = await Promise.all([
           getDashboardStats(selectedBot.id, dateRange),
           getTopQuestions(selectedBot.id),
+          getLeadStats(selectedBot.id).catch(() => null),
+          getFeedbackData(selectedBot.id).catch(() => []),
+          getOfflineMessages({ limit: 5, status: 'new' }).catch(() => ({ messages: [] })),
         ]);
         setStats(statsData);
         setTopQuestions(questionsData);
+        setLeadStats(leadsData);
+
+        // Build recent activity feed (last 5 items combined, sorted by date)
+        const feedbackItems = (feedbackData || []).slice(0, 5).map(f => ({
+          type: 'feedback',
+          positive: f.feedback === 1,
+          text: f.question,
+          time: f.created_at,
+        }));
+        const offlineItems = ((offlineData?.messages) || []).slice(0, 5).map(m => ({
+          type: 'offline',
+          text: m.visitor_name || 'Visitor',
+          subtext: m.message_body,
+          time: m.created_at,
+        }));
+        const combined = [...feedbackItems, ...offlineItems]
+          .sort((a, b) => new Date(b.time) - new Date(a.time))
+          .slice(0, 6);
+        setRecentActivity(combined);
       } catch (error) {
         console.error('Failed to fetch dashboard data', error);
         showToast('error', error.message || 'Failed to load dashboard data');
@@ -182,6 +207,127 @@ export default function Dashboard() {
             <ArrowRight size={14} className="text-surface-600 dark:text-surface-300 group-hover:text-primary-500 group-hover:translate-x-0.5 transition-all" />
           </button>
         ))}
+      </motion.div>
+
+      {/* Lead Funnel + Activity Feed row */}
+      <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Lead Funnel Mini */}
+        <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
+              <Target size={18} className="text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-surface-900 dark:text-white">Lead Funnel</h2>
+              <p className="text-xs text-surface-500">Qualification stages</p>
+            </div>
+            <button onClick={() => navigate('/leads')} className="ml-auto text-xs text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1">
+              View all <ArrowRight size={12} />
+            </button>
+          </div>
+          {leadStats ? (
+            <div className="flex items-center gap-6">
+              <div className="w-28 h-28 shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={[
+                      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0 },
+                      { name: 'MQL', value: leadStats.warm || leadStats.mql || 0 },
+                      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0 },
+                      { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0 },
+                    ].filter(d => d.value > 0)} cx="50%" cy="50%" innerRadius={28} outerRadius={50} paddingAngle={2} dataKey="value">
+                      {['#94a3b8', '#38bdf8', '#f97316', '#22c55e'].map((color, i) => (
+                        <Cell key={i} fill={color} />
+                      ))}
+                    </Pie>
+                    <ReTooltip
+                      contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px' }}
+                      labelStyle={{ color: 'var(--text)' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-2 flex-1">
+                {[
+                  { label: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'bg-surface-400' },
+                  { label: 'MQL', value: leadStats.warm || leadStats.mql || 0, color: 'bg-sky-400' },
+                  { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'bg-orange-400' },
+                  { label: 'SQL', value: leadStats.qualified || leadStats.sql || 0, color: 'bg-emerald-500' },
+                ].map(item => (
+                  <div key={item.label} className="flex items-center gap-2">
+                    <div className={cn('w-2 h-2 rounded-full shrink-0', item.color)} />
+                    <span className="text-xs text-surface-500 dark:text-surface-400 flex-1">{item.label}</span>
+                    <span className="text-xs font-bold text-surface-900 dark:text-white">{item.value}</span>
+                  </div>
+                ))}
+                <div className="pt-1 border-t border-surface-100 dark:border-surface-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-surface-400">Total</span>
+                    <span className="text-sm font-bold text-surface-900 dark:text-white">{leadStats.total || 0}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-28 text-surface-400 dark:text-surface-500 text-sm">
+              No lead data yet
+            </div>
+          )}
+        </div>
+
+        {/* Recent Activity Feed */}
+        <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-9 h-9 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
+              <Activity size={18} className="text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-surface-900 dark:text-white">Recent Activity</h2>
+              <p className="text-xs text-surface-500">Feedback & offline messages</p>
+            </div>
+          </div>
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map(i => <div key={i} className="h-10 bg-surface-100 dark:bg-surface-800 rounded-lg animate-pulse" />)}
+            </div>
+          ) : recentActivity.length === 0 ? (
+            <div className="flex items-center justify-center h-28 text-surface-400 dark:text-surface-500 text-sm">
+              No recent activity
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {recentActivity.map((item, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.04 }}
+                  className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors"
+                >
+                  <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5',
+                    item.type === 'feedback'
+                      ? item.positive ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-rose-50 dark:bg-rose-500/10'
+                      : 'bg-blue-50 dark:bg-blue-500/10'
+                  )}>
+                    {item.type === 'feedback'
+                      ? item.positive
+                        ? <ThumbsUp size={12} className="text-emerald-500" />
+                        : <ThumbsDown size={12} className="text-rose-500" />
+                      : <Inbox size={12} className="text-blue-500 dark:text-blue-400" />
+                    }
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-surface-900 dark:text-surface-100 truncate">{item.text}</p>
+                    {item.subtext && <p className="text-[11px] text-surface-500 dark:text-surface-400 truncate">{item.subtext}</p>}
+                  </div>
+                  <span className="text-[10px] text-surface-400 dark:text-surface-500 shrink-0">
+                    {item.time ? new Date(item.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+                  </span>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </div>
       </motion.div>
 
       {/* Top Questions */}

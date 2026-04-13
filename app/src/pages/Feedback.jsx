@@ -1,12 +1,83 @@
 import { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getFeedbackData } from '../services/api';
-import { ThumbsUp, ThumbsDown, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, MessageSquare, ChevronDown, ChevronUp, Download, Clock } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { useBotContext } from '../context/BotContext';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
+
+const DATE_FILTERS = [
+    { label: '7d', days: 7 },
+    { label: '30d', days: 30 },
+    { label: 'All', days: 0 },
+];
+
+function buildTrendData(feedback, days) {
+    const cutoff = days ? new Date(Date.now() - days * 86400000) : null;
+    const filtered = cutoff ? feedback.filter(f => new Date(f.created_at) >= cutoff) : feedback;
+
+    const buckets = {};
+    filtered.forEach(f => {
+        const date = new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (!buckets[date]) buckets[date] = { date, positive: 0, total: 0 };
+        buckets[date].total++;
+        if (f.feedback === 1) buckets[date].positive++;
+    });
+
+    return Object.values(buckets).slice(-14).map(b => ({
+        date: b.date,
+        rate: b.total > 0 ? Math.round((b.positive / b.total) * 100) : 0,
+        total: b.total,
+    }));
+}
+
+function buildCategoryData(feedback) {
+    const CATEGORIES = {
+        'Pricing': ['price', 'cost', 'expensive', 'cheap', 'affordable', 'plan', 'subscription'],
+        'Support': ['help', 'support', 'assist', 'guide', 'how to', 'problem', 'issue'],
+        'Features': ['feature', 'function', 'capability', 'can it', 'does it', 'able to'],
+        'General': [],
+    };
+
+    const counts = { Pricing: 0, Support: 0, Features: 0, General: 0 };
+    feedback.forEach(f => {
+        const q = (f.question || '').toLowerCase();
+        let matched = false;
+        for (const [cat, keywords] of Object.entries(CATEGORIES)) {
+            if (cat === 'General') continue;
+            if (keywords.some(kw => q.includes(kw))) {
+                counts[cat]++;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) counts.General++;
+    });
+
+    const COLORS = ['#6366f1', '#22c55e', '#f97316', '#94a3b8'];
+    return Object.entries(counts)
+        .filter(([, v]) => v > 0)
+        .map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
+}
+
+function exportFeedbackCsv(feedback) {
+    const rows = ['Date,User,Type,Question,Answer']
+        .concat(feedback.map(f => [
+            new Date(f.created_at).toLocaleDateString(),
+            (f.user || '').replace(/,/g, ''),
+            f.feedback === 1 ? 'Positive' : 'Negative',
+            (f.question || '').replace(/,/g, '').replace(/"/g, '""'),
+            (f.answer || '').replace(/,/g, '').replace(/"/g, '""'),
+        ].map(v => `"${v}"`).join(',')))
+        .join('\n');
+    const blob = new Blob([rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'feedback.csv'; a.click();
+    URL.revokeObjectURL(url);
+}
 
 export default function Feedback({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
@@ -15,6 +86,7 @@ export default function Feedback({ embedded = false }) {
     const [error, setError] = useState('');
     const [filter, setFilter] = useState('all');
     const [expandedId, setExpandedId] = useState(null);
+    const [dateFilter, setDateFilter] = useState(0);
 
     useEffect(() => {
         const fetchFeedback = async () => {
@@ -26,19 +98,28 @@ export default function Feedback({ embedded = false }) {
         fetchFeedback();
     }, [selectedBot?.id]);
 
+    const dateFiltered = useMemo(() => {
+        if (!dateFilter) return feedback;
+        const cutoff = new Date(Date.now() - dateFilter * 86400000);
+        return feedback.filter(f => new Date(f.created_at) >= cutoff);
+    }, [feedback, dateFilter]);
+
     const filtered = useMemo(() => {
-        if (filter === 'positive') return feedback.filter(f => f.feedback === 1);
-        if (filter === 'negative') return feedback.filter(f => f.feedback !== 1);
-        return feedback;
-    }, [feedback, filter]);
+        if (filter === 'positive') return dateFiltered.filter(f => f.feedback === 1);
+        if (filter === 'negative') return dateFiltered.filter(f => f.feedback !== 1);
+        return dateFiltered;
+    }, [dateFiltered, filter]);
 
     const stats = useMemo(() => {
-        const total = feedback.length;
-        const positive = feedback.filter(f => f.feedback === 1).length;
+        const total = dateFiltered.length;
+        const positive = dateFiltered.filter(f => f.feedback === 1).length;
         const negative = total - positive;
         const rate = total > 0 ? Math.round((positive / total) * 100) : 0;
         return { total, positive, negative, rate };
-    }, [feedback]);
+    }, [dateFiltered]);
+
+    const trendData = useMemo(() => buildTrendData(feedback, dateFilter), [feedback, dateFilter]);
+    const categoryData = useMemo(() => buildCategoryData(dateFiltered), [dateFiltered]);
 
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Feedback" description="Create a chatbot first to start collecting user feedback on responses." actionLabel="Create Chatbot" actionTo="/chatbot" />;
@@ -59,7 +140,37 @@ export default function Feedback({ embedded = false }) {
             transition={{ duration: 0.35, ease: 'easeOut' }}
             className="space-y-6"
         >
-            {!embedded && <PageHeader title="Response Feedback" subtitle="See how users rate your chatbot's responses" />}
+            {!embedded && (
+                <div className="flex items-center justify-between">
+                    <PageHeader title="Response Feedback" subtitle="See how users rate your chatbot's responses" />
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 bg-surface-100 dark:bg-surface-800 rounded-lg p-0.5">
+                            {DATE_FILTERS.map(df => (
+                                <button
+                                    key={df.days}
+                                    onClick={() => setDateFilter(df.days)}
+                                    className={cn(
+                                        'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+                                        dateFilter === df.days
+                                            ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm'
+                                            : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200'
+                                    )}
+                                >
+                                    {df.label}
+                                </button>
+                            ))}
+                        </div>
+                        {feedback.length > 0 && (
+                            <button
+                                onClick={() => exportFeedbackCsv(filtered)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                            >
+                                <Download size={13} /> Export CSV
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {error && (
                 <div className="bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 p-3 rounded-xl border border-rose-500/20 text-sm font-medium">
@@ -94,10 +205,66 @@ export default function Feedback({ embedded = false }) {
                                 <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{stats.rate}%</span>
                                 <span className="text-xs text-surface-400 dark:text-surface-500">positive</span>
                             </div>
+                            <div className="flex items-center gap-2">
+                                <ThumbsDown size={16} className="text-rose-500" />
+                                <span className="text-sm font-bold text-rose-600 dark:text-rose-400">{stats.negative}</span>
+                                <span className="text-xs text-surface-400 dark:text-surface-500">negative</span>
+                            </div>
                         </div>
                         <div className="w-full sm:w-48 h-2 bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
                             <div className="h-full bg-emerald-500 rounded-full transition-all duration-700" style={{ width: `${stats.rate}%` }} />
                         </div>
+                    </div>
+
+                    {/* Charts row */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* CSAT Trend Line */}
+                        {trendData.length > 1 && (
+                            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
+                                <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200 mb-4">Satisfaction Trend</h3>
+                                <ResponsiveContainer width="100%" height={160}>
+                                    <LineChart data={trendData}>
+                                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                                        <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} width={32} />
+                                        <ReTooltip
+                                            contentStyle={{ background: 'var(--color-surface-900, #0f172a)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: 8, fontSize: 11 }}
+                                            formatter={(v) => [`${v}%`, 'Positive rate']}
+                                        />
+                                        <Line type="monotone" dataKey="rate" stroke="#22c55e" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        )}
+
+                        {/* Category Donut */}
+                        {categoryData.length > 0 && (
+                            <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
+                                <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200 mb-4">Question Categories</h3>
+                                <div className="flex items-center gap-4">
+                                    <ResponsiveContainer width="50%" height={160}>
+                                        <PieChart>
+                                            <Pie data={categoryData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" strokeWidth={0}>
+                                                {categoryData.map((entry, i) => (
+                                                    <Cell key={i} fill={entry.fill} />
+                                                ))}
+                                            </Pie>
+                                            <ReTooltip
+                                                contentStyle={{ background: 'var(--color-surface-900, #0f172a)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: 8, fontSize: 11 }}
+                                            />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                    <div className="flex-1 space-y-2">
+                                        {categoryData.map(cat => (
+                                            <div key={cat.name} className="flex items-center gap-2">
+                                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cat.fill }} />
+                                                <span className="text-xs text-surface-600 dark:text-surface-400 flex-1">{cat.name}</span>
+                                                <span className="text-xs font-bold text-surface-800 dark:text-surface-200">{cat.value}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Filter Tabs */}
@@ -159,6 +326,17 @@ export default function Feedback({ embedded = false }) {
                                                         <p className="text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500 mb-1">Bot Answer</p>
                                                         <p className="text-sm text-surface-600 dark:text-surface-300">{item.answer}</p>
                                                     </div>
+                                                    {!isPositive && (
+                                                        <button
+                                                            onClick={() => {
+                                                                const text = `Issue: Poor chatbot response\n\nQuestion: ${item.question}\n\nBot Answer: ${item.answer}\n\nFeedback: Negative (thumbs down)`;
+                                                                navigator.clipboard.writeText(text);
+                                                            }}
+                                                            className="w-full py-1.5 px-3 text-xs font-medium border border-rose-200 dark:border-rose-500/30 text-rose-600 dark:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors"
+                                                        >
+                                                            Copy issue to clipboard
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </motion.div>
                                         )}

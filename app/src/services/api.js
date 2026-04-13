@@ -842,6 +842,19 @@ export const loginOperator = async (email, password) => {
     }
 };
 
+export const operatorChangePassword = async (currentPassword, newPassword) => {
+    try {
+        const response = await api.post('/auth/operator-change-password', {
+            current_password: currentPassword,
+            new_password: newPassword,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error operator change password:', error);
+        throw buildApiError(error, 'Failed to change password');
+    }
+};
+
 // ── Operator Management ──
 
 export const getOperators = async () => {

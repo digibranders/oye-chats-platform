@@ -216,11 +216,60 @@ body {
   background: rgba(28, 25, 23, 0.5);
 }
 
-/* ── Gradient mesh for auth pages ── */
+/* ── Gradient mesh for auth pages — website blue theme ── */
 .gradient-mesh {
-  background: linear-gradient(-45deg, #6366f1, #8b5cf6, #4f46e5, #3730a3, #6366f1);
+  background: linear-gradient(-45deg, #0a2d96, #1d4ed8, #0369a1, #1e40af, #1d4ed8);
   background-size: 400% 400%;
   animation: gradient-shift 15s ease infinite;
+}
+
+/* ── Auth page dark panel (matches website #010812 void) ── */
+.auth-dark-panel {
+  background: linear-gradient(135deg, #010812 0%, #030D1F 50%, #040f20 100%);
+}
+
+/* ── Glass card — matches website glass-2 style ── */
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.glass-card-light {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.dark .glass-card-light {
+  background: rgba(12, 10, 9, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* ── Gradient border for active states ── */
+.gradient-border {
+  position: relative;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(37,99,235,0.5), rgba(99,102,241,0.3), rgba(6,182,212,0.4));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ── Glow utility ── */
+.glow-blue {
+  box-shadow: 0 0 30px rgba(37, 99, 235, 0.15), 0 0 60px rgba(37, 99, 235, 0.08);
+}
+.glow-blue-sm {
+  box-shadow: 0 0 15px rgba(37, 99, 235, 0.2);
 }
 
 /* ── Noise texture overlay ── */

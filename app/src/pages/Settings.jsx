@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
     MessageSquareWarning, Paperclip, Star, Award, AlignLeft, Clock, Mail, Loader2,
-    Sparkles
+    Sparkles, KeyRound, Eye, EyeOff, Check,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
 import { getAuthState } from '../utils/auth';
-import { updateBot } from '../services/api';
+import { updateBot, operatorChangePassword } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -74,6 +74,32 @@ export default function Settings() {
     const { isOperator, operatorRole, isBotManager } = getAuthState();
     const { selectedBot, loading: botsLoading } = useBotContext();
     const [feedback, setFeedback] = useState('');
+
+    // Operator password change
+    const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
+    const [pwShow, setPwShow] = useState({ current: false, next: false });
+    const [pwSaving, setPwSaving] = useState(false);
+    const [pwError, setPwError] = useState('');
+    const [pwSuccess, setPwSuccess] = useState(false);
+
+    const handleChangePassword = async (e) => {
+        e.preventDefault();
+        setPwError('');
+        setPwSuccess(false);
+        if (pwForm.next !== pwForm.confirm) { setPwError('New passwords do not match.'); return; }
+        if (pwForm.next.length < 8) { setPwError('New password must be at least 8 characters.'); return; }
+        setPwSaving(true);
+        try {
+            await operatorChangePassword(pwForm.current, pwForm.next);
+            setPwSuccess(true);
+            setPwForm({ current: '', next: '', confirm: '' });
+            showToast('success', 'Password changed successfully');
+        } catch (err) {
+            setPwError(err.message || 'Failed to change password');
+        } finally {
+            setPwSaving(false);
+        }
+    };
 
     // Bot data
     const [botId, setBotId] = useState(null);
@@ -565,6 +591,112 @@ export default function Settings() {
                     )}
                 </div>
             </div>
+
+            {/* ── Change Password (operators only) ──────────────────────── */}
+            {isOperator && (
+                <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+                    <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50 mb-1 flex items-center gap-2">
+                        <KeyRound size={16} className="text-primary-600 dark:text-primary-400" />
+                        Change Password
+                    </h2>
+                    <p className="text-sm text-surface-500 dark:text-surface-400 mb-4">
+                        Update your login password. Must be at least 8 characters with a letter and a number.
+                    </p>
+
+                    {pwSuccess && (
+                        <div className="flex items-center gap-2 p-3 mb-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 rounded-xl text-sm text-emerald-700 dark:text-emerald-400">
+                            <Check size={15} /> Password updated successfully.
+                        </div>
+                    )}
+                    {pwError && (
+                        <div className="p-3 mb-4 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-xl text-sm text-rose-600 dark:text-rose-400">
+                            {pwError}
+                        </div>
+                    )}
+
+                    <form onSubmit={handleChangePassword} className="space-y-3">
+                        {/* Current password */}
+                        <div>
+                            <label className="text-xs font-medium text-surface-500 dark:text-surface-400 mb-1 block">Current Password</label>
+                            <div className="relative">
+                                <input
+                                    type={pwShow.current ? 'text' : 'password'}
+                                    required
+                                    value={pwForm.current}
+                                    onChange={(e) => setPwForm(p => ({ ...p, current: e.target.value }))}
+                                    placeholder="Your current password"
+                                    className={cn(
+                                        'w-full px-3 py-2 pr-10 rounded-xl border border-surface-200 dark:border-surface-600 text-sm',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all'
+                                    )}
+                                />
+                                <button type="button" onClick={() => setPwShow(p => ({ ...p, current: !p.current }))}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600 dark:text-surface-500 dark:hover:text-surface-300">
+                                    {pwShow.current ? <EyeOff size={15} /> : <Eye size={15} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* New password */}
+                        <div>
+                            <label className="text-xs font-medium text-surface-500 dark:text-surface-400 mb-1 block">New Password</label>
+                            <div className="relative">
+                                <input
+                                    type={pwShow.next ? 'text' : 'password'}
+                                    required
+                                    minLength={8}
+                                    value={pwForm.next}
+                                    onChange={(e) => setPwForm(p => ({ ...p, next: e.target.value }))}
+                                    placeholder="At least 8 chars, letter + number"
+                                    className={cn(
+                                        'w-full px-3 py-2 pr-10 rounded-xl border border-surface-200 dark:border-surface-600 text-sm',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all'
+                                    )}
+                                />
+                                <button type="button" onClick={() => setPwShow(p => ({ ...p, next: !p.next }))}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-400 hover:text-surface-600 dark:text-surface-500 dark:hover:text-surface-300">
+                                    {pwShow.next ? <EyeOff size={15} /> : <Eye size={15} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Confirm new password */}
+                        <div>
+                            <label className="text-xs font-medium text-surface-500 dark:text-surface-400 mb-1 block">Confirm New Password</label>
+                            <input
+                                type="password"
+                                required
+                                value={pwForm.confirm}
+                                onChange={(e) => setPwForm(p => ({ ...p, confirm: e.target.value }))}
+                                placeholder="Repeat new password"
+                                className={cn(
+                                    'w-full px-3 py-2 rounded-xl border text-sm transition-all outline-none',
+                                    pwForm.confirm && pwForm.confirm !== pwForm.next
+                                        ? 'border-rose-400 dark:border-rose-500 focus:ring-2 focus:ring-rose-500/20'
+                                        : 'border-surface-200 dark:border-surface-600 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
+                                    'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500'
+                                )}
+                            />
+                            {pwForm.confirm && pwForm.confirm !== pwForm.next && (
+                                <p className="text-xs text-rose-500 mt-1">Passwords do not match</p>
+                            )}
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={pwSaving || !pwForm.current || !pwForm.next || !pwForm.confirm}
+                            className="flex items-center gap-2 py-2.5 px-5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {pwSaving ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+                            Change Password
+                        </button>
+                    </form>
+                </div>
+            )}
 
             {/* ── Feedback ─────────────────────────────────────────────────── */}
             <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">

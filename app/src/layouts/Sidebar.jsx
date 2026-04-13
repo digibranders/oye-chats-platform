@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { getAuthState } from '../utils/auth';
+import { getOfflineMessages, getLeadStats } from '../services/api';
 import Avatar from '../components/ui/Avatar';
 import { cn } from '../lib/utils';
 
@@ -18,6 +19,29 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const navigate = useNavigate();
   const { isOperator: isOperatorRole, isBotManager } = getAuthState();
   const adminName = localStorage.getItem('admin_name') || 'User';
+  const [unreadMsgs, setUnreadMsgs] = useState(0);
+  const [newLeads, setNewLeads] = useState(0);
+
+  useEffect(() => {
+    const fetchBadges = async () => {
+      try {
+        const [offlineData, leadsData] = await Promise.allSettled([
+          getOfflineMessages({ status: 'new', limit: 1 }),
+          getLeadStats(selectedBot?.id),
+        ]);
+        if (offlineData.status === 'fulfilled') setUnreadMsgs(offlineData.value?.total || 0);
+        if (leadsData.status === 'fulfilled') {
+          const s = leadsData.value;
+          setNewLeads((s?.cold || 0) + (s?.unqualified || 0));
+        }
+      } catch {
+        // badges are non-critical
+      }
+    };
+    fetchBadges();
+    const interval = setInterval(fetchBadges, 60000);
+    return () => clearInterval(interval);
+  }, [selectedBot?.id]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -31,13 +55,13 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const handleCreateBot = () => { setDropdownOpen(false); navigate('/chatbot?create=true'); };
 
   const mainItems = isOperatorRole
-    ? [{ path: '/support', name: 'Support', icon: Headphones }]
+    ? [{ path: '/support', name: 'Support', icon: Headphones, badge: unreadMsgs }]
     : [
         { path: '/', name: 'Overview', icon: LayoutDashboard },
         { path: '/knowledge', name: 'Sources', icon: BookOpen },
         { path: '/insights', name: 'Insights', icon: BarChart3 },
-        { path: '/support', name: 'Support', icon: Headphones },
-        { path: '/leads', name: 'Leads', icon: Target },
+        { path: '/support', name: 'Support', icon: Headphones, badge: unreadMsgs },
+        { path: '/leads', name: 'Leads', icon: Target, badge: newLeads },
         { path: '/qualification', name: 'Qualification', icon: Crosshair },
         { path: '/integrations', name: 'Integrations', icon: Plug },
       ];
@@ -56,6 +80,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const renderLink = (item, index) => {
     const Icon = item.icon;
     const active = isActive(item);
+    const hasBadge = item.badge > 0;
     return (
       <motion.div
         key={item.path}
@@ -83,15 +108,29 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
               transition={{ type: 'spring', stiffness: 500, damping: 30 }}
             />
           )}
-          <Icon
-            size={18}
-            className={cn(
-              'flex-shrink-0 transition-colors',
-              active ? 'text-primary-500 dark:text-primary-400' : 'text-surface-400 dark:text-surface-500 group-hover:text-surface-600 dark:group-hover:text-surface-300'
+          <div className="relative flex-shrink-0">
+            <Icon
+              size={18}
+              className={cn(
+                'transition-colors',
+                active ? 'text-primary-500 dark:text-primary-400' : 'text-surface-400 dark:text-surface-500 group-hover:text-surface-600 dark:group-hover:text-surface-300'
+              )}
+            />
+            {hasBadge && !isOpen && (
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 rounded-full text-[8px] text-white flex items-center justify-center font-bold leading-none">
+                {item.badge > 9 ? '9+' : item.badge}
+              </span>
             )}
-          />
+          </div>
           {isOpen && (
-            <span className="truncate text-[13px] font-medium">{item.name}</span>
+            <>
+              <span className="truncate text-[13px] font-medium flex-1">{item.name}</span>
+              {hasBadge && (
+                <span className="ml-auto min-w-[18px] h-[18px] px-1 bg-rose-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold leading-none">
+                  {item.badge > 99 ? '99+' : item.badge}
+                </span>
+              )}
+            </>
           )}
         </NavLink>
       </motion.div>

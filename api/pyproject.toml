@@ -50,6 +50,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
     "ruff>=0.6.0",
 ]
 
@@ -68,3 +69,4 @@ known-first-party = ["app"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=15"

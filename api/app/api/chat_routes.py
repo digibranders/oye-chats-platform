@@ -492,7 +492,7 @@ def chat_sdr_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(ge
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
     try:
-        session_id = body.session_id or str(uuid.uuid4())
+        session_id = _resolve_session_id(body.session_id, bot.id)
 
         with get_session() as session:
             ensure_chat_session(session, session_id, client_id=None, bot_id=bot.id)

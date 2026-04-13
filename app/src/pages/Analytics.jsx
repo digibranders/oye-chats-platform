@@ -1,16 +1,24 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Activity, BarChart3, Zap, MessageSquare, Star, CheckCircle2, XCircle } from 'lucide-react';
+import { TrendingUp, Activity, BarChart3, Zap, MessageSquare, Star, CheckCircle2, XCircle, Target, Users } from 'lucide-react';
 import {
     AreaChart,
     Area,
+    BarChart,
+    Bar,
     XAxis,
     YAxis,
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
+    RadialBarChart,
+    RadialBar,
+    PieChart,
+    Pie,
+    Cell,
+    Legend,
 } from 'recharts';
 import { motion } from 'framer-motion';
-import { getActivityStats, getTopQuestions, getRatingsSummary, getResolutionSummary } from '../services/api';
+import { getActivityStats, getTopQuestions, getRatingsSummary, getResolutionSummary, getLeadStats } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
@@ -33,18 +41,21 @@ export default function Analytics({ embedded = false }) {
     const [topQuestions, setTopQuestions] = useState([]);
     const [ratingsSummary, setRatingsSummary] = useState(null);
     const [resolutionSummary, setResolutionSummary] = useState(null);
+    const [leadStats, setLeadStats] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [timeRange, setTimeRange] = useState('all');
+    const [activeTab, setActiveTab] = useState('overview');
 
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             try {
-                const [activity, questions, ratings, resolution] = await Promise.all([
+                const [activity, questions, ratings, resolution, leads] = await Promise.all([
                     getActivityStats(selectedBot?.id),
                     getTopQuestions(selectedBot?.id),
                     getRatingsSummary(selectedBot?.id),
                     getResolutionSummary(selectedBot?.id),
+                    getLeadStats(selectedBot?.id).catch(() => null),
                 ]);
 
                 const activityMap = {};
@@ -89,6 +100,7 @@ export default function Analytics({ embedded = false }) {
                 setTopQuestions(questions);
                 setRatingsSummary(ratings);
                 setResolutionSummary(resolution);
+                setLeadStats(leads);
             } catch (error) {
                 console.error('Failed to load analytics data', error);
                 showToast('error', error.message || 'Failed to load analytics data');
@@ -148,16 +160,230 @@ export default function Analytics({ embedded = false }) {
         >
             {!embedded && <PageHeader title="Analytics" subtitle="Understand how your chatbot performs" />}
 
+            {/* Tab Navigation */}
+            {!embedded && (
+                <motion.div variants={fadeUp} className="flex gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit">
+                    {[
+                        { id: 'overview', label: 'Overview', icon: Activity },
+                        { id: 'messages', label: 'Messages', icon: MessageSquare },
+                        { id: 'leads', label: 'Leads', icon: Target },
+                        { id: 'satisfaction', label: 'Satisfaction', icon: Star },
+                    ].map(tab => {
+                        const Icon = tab.icon;
+                        return (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={cn(
+                                    'flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg transition-all',
+                                    activeTab === tab.id
+                                        ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-white shadow-sm'
+                                        : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'
+                                )}
+                            >
+                                <Icon size={13} />
+                                {tab.label}
+                            </button>
+                        );
+                    })}
+                </motion.div>
+            )}
+
             {/* Metric Cards */}
-            {!isLoading && (
+            {!isLoading && activeTab === 'overview' && (
                 <motion.div variants={fadeUp} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <StatCard icon={Activity} label="Total Messages" value={metrics.total.toLocaleString()} trendLabel="selected period" />
                     <StatCard icon={BarChart3} label="Daily Average" value={`~${metrics.average.toLocaleString()}`} trendLabel="per day" />
                     <StatCard icon={Zap} label="Peak Traffic" value={metrics.peak.toLocaleString()} trendLabel={metrics.peakDate} />
                 </motion.div>
             )}
+            {!isLoading && activeTab === 'leads' && leadStats && (
+                <motion.div variants={fadeUp} className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {[
+                        { label: 'Total Leads', value: leadStats.total || 0, icon: Users, color: 'text-surface-700 dark:text-surface-200' },
+                        { label: 'MQL', value: leadStats.warm || leadStats.mql || 0, icon: Target, color: 'text-sky-600 dark:text-sky-400' },
+                        { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, icon: TrendingUp, color: 'text-orange-500 dark:text-orange-400' },
+                        { label: 'SQL (Qualified)', value: leadStats.qualified || leadStats.sql || 0, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400' },
+                    ].map(s => (
+                        <StatCard key={s.label} icon={s.icon} label={s.label} value={s.value} />
+                    ))}
+                </motion.div>
+            )}
 
-            {/* Chart */}
+            {/* Messages Tab — BarChart */}
+            {activeTab === 'messages' && (
+                <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                        <div>
+                            <h2 className="text-lg font-bold text-surface-900 dark:text-white flex items-center gap-2">
+                                <MessageSquare size={18} className="text-primary-600 dark:text-primary-400" />
+                                Daily Message Volume
+                            </h2>
+                            <p className="text-sm text-surface-500 mt-0.5">Messages per day over time</p>
+                        </div>
+                        <div className="flex items-center gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-lg">
+                            {ranges.map((r) => (
+                                <button key={r.id} onClick={() => setTimeRange(r.id)}
+                                    className={cn('px-3 py-1.5 text-xs font-medium rounded-md transition-all',
+                                        timeRange === r.id ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-white shadow-sm' : 'text-surface-500 hover:text-surface-700 dark:hover:text-surface-300'
+                                    )}>
+                                    {r.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    {isLoading ? (
+                        <div className="h-72 bg-surface-100 dark:bg-surface-800 rounded-xl animate-pulse" />
+                    ) : filteredData.length === 0 ? (
+                        <div className="h-72 flex items-center justify-center border-2 border-dashed border-surface-200 dark:border-surface-800 rounded-xl">
+                            <p className="text-surface-500 text-sm">No data for this range</p>
+                        </div>
+                    ) : (
+                        <ResponsiveContainer width="100%" height={300}>
+                            <BarChart data={filteredData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" strokeOpacity={0.4} />
+                                <XAxis dataKey="displayDate" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} dy={8} />
+                                <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} width={35} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="messages" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    )}
+                </motion.div>
+            )}
+
+            {/* Leads Tab — Funnel + BANT distribution */}
+            {activeTab === 'leads' && (
+                <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                        <h2 className="text-base font-bold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
+                            <Target size={16} className="text-emerald-500" /> Lead Stage Distribution
+                        </h2>
+                        {leadStats ? (
+                            <ResponsiveContainer width="100%" height={220}>
+                                <BarChart layout="vertical" data={[
+                                    { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, fill: '#94a3b8' },
+                                    { name: 'MQL', value: leadStats.warm || leadStats.mql || 0, fill: '#38bdf8' },
+                                    { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, fill: '#f97316' },
+                                    { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0, fill: '#22c55e' },
+                                ]} margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+                                    <XAxis type="number" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} />
+                                    <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} width={70} />
+                                    <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px' }} />
+                                    <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={24}>
+                                        {[{ fill: '#94a3b8' }, { fill: '#38bdf8' }, { fill: '#f97316' }, { fill: '#22c55e' }].map((e, i) => (
+                                            <Cell key={i} fill={e.fill} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No lead data</div>}
+                    </div>
+                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                        <h2 className="text-base font-bold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
+                            <CheckCircle2 size={16} className="text-primary-500" /> Conversion Funnel
+                        </h2>
+                        {leadStats && leadStats.total > 0 ? (
+                            <div className="space-y-3">
+                                {[
+                                    { label: 'Total Leads', value: leadStats.total, pct: 100, color: 'bg-surface-400 dark:bg-surface-500' },
+                                    { label: 'MQL+', value: (leadStats.warm || 0) + (leadStats.hot || 0) + (leadStats.qualified || 0), pct: Math.round(((((leadStats.warm || 0) + (leadStats.hot || 0) + (leadStats.qualified || 0)) / leadStats.total) * 100)), color: 'bg-sky-400' },
+                                    { label: 'SAL+', value: (leadStats.hot || 0) + (leadStats.qualified || 0), pct: Math.round(((((leadStats.hot || 0) + (leadStats.qualified || 0)) / leadStats.total) * 100)), color: 'bg-orange-400' },
+                                    { label: 'SQL', value: leadStats.qualified || 0, pct: Math.round(((leadStats.qualified || 0) / leadStats.total) * 100), color: 'bg-emerald-500' },
+                                ].map(row => (
+                                    <div key={row.label}>
+                                        <div className="flex justify-between text-xs mb-1">
+                                            <span className="text-surface-600 dark:text-surface-300 font-medium">{row.label}</span>
+                                            <span className="text-surface-500 dark:text-surface-400">{row.value} ({row.pct}%)</span>
+                                        </div>
+                                        <div className="h-2 bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
+                                            <motion.div className={cn('h-full rounded-full', row.color)} initial={{ width: 0 }} animate={{ width: `${row.pct}%` }} transition={{ duration: 0.8, delay: 0.1 }} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No lead data</div>}
+                    </div>
+                </motion.div>
+            )}
+
+            {/* Satisfaction Tab — Radial rings */}
+            {activeTab === 'satisfaction' && (
+                <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                        <h2 className="text-base font-bold text-surface-900 dark:text-white mb-1 flex items-center gap-2">
+                            <Star size={16} className="text-amber-500" /> Rating Distribution
+                        </h2>
+                        <p className="text-xs text-surface-500 mb-4">Post-chat satisfaction ratings</p>
+                        {isLoading ? (
+                            <div className="h-48 bg-surface-100 dark:bg-surface-800 rounded-xl animate-pulse" />
+                        ) : ratingsSummary && ratingsSummary.total > 0 ? (
+                            <div className="space-y-2.5">
+                                {[5, 4, 3, 2, 1].map((star) => {
+                                    const count = ratingsSummary?.distribution?.[star] ?? 0;
+                                    const pct = ratingsSummary?.total > 0 ? Math.round((count / ratingsSummary.total) * 100) : 0;
+                                    const barColor = star >= 4 ? 'bg-emerald-400' : star === 3 ? 'bg-amber-400' : 'bg-rose-400';
+                                    return (
+                                        <div key={star} className="flex items-center gap-3">
+                                            <span className="text-xs font-medium text-surface-500 dark:text-surface-400 w-8 shrink-0 flex items-center gap-0.5">
+                                                {star}<Star size={10} className="text-amber-400 fill-amber-400 inline" />
+                                            </span>
+                                            <div className="flex-1 h-4 bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
+                                                <motion.div className={cn('h-full rounded-full', barColor)} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.7, delay: 0.1 }} />
+                                            </div>
+                                            <span className="text-xs font-medium text-surface-500 dark:text-surface-400 w-10 text-right shrink-0">{pct}%</span>
+                                        </div>
+                                    );
+                                })}
+                                <div className="pt-2 border-t border-surface-100 dark:border-surface-800 flex items-baseline gap-1.5">
+                                    <span className="text-3xl font-bold text-surface-900 dark:text-white">{ratingsSummary.avg}</span>
+                                    <span className="text-sm text-surface-400">/ 5</span>
+                                    <span className="text-xs text-surface-400 ml-1">({ratingsSummary.total} ratings)</span>
+                                </div>
+                            </div>
+                        ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No ratings yet</div>}
+                    </div>
+                    <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
+                        <h2 className="text-base font-bold text-surface-900 dark:text-white mb-1 flex items-center gap-2">
+                            <CheckCircle2 size={16} className="text-emerald-500" /> Resolution Rate
+                        </h2>
+                        <p className="text-xs text-surface-500 mb-4">Were visitor issues resolved?</p>
+                        {isLoading ? (
+                            <div className="h-48 bg-surface-100 dark:bg-surface-800 rounded-xl animate-pulse" />
+                        ) : resolutionSummary && resolutionSummary.total > 0 ? (
+                            <>
+                                <div className="flex justify-center mb-4">
+                                    <ResponsiveContainer width={180} height={180}>
+                                        <PieChart>
+                                            <Pie data={[
+                                                { name: 'Resolved', value: resolutionSummary.resolved },
+                                                { name: 'Unresolved', value: resolutionSummary.unresolved },
+                                            ]} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={3}>
+                                                <Cell fill="#22c55e" />
+                                                <Cell fill="#fb7185" />
+                                            </Pie>
+                                            <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px' }} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div className="flex gap-4 justify-center">
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                                        <span className="text-surface-600 dark:text-surface-300">Resolved ({resolutionSummary.rate}%)</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <div className="w-3 h-3 rounded-full bg-rose-400" />
+                                        <span className="text-surface-600 dark:text-surface-300">Unresolved</span>
+                                    </div>
+                                </div>
+                            </>
+                        ) : <div className="h-48 flex items-center justify-center text-surface-400 text-sm">No resolution data yet</div>}
+                    </div>
+                </motion.div>
+            )}
+
+            {/* Overview Tab — Original charts */}
+            {(embedded || activeTab === 'overview') && (<>
             <motion.div variants={fadeUp} className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <div>
@@ -387,6 +613,7 @@ export default function Analytics({ embedded = false }) {
                     )}
                 </motion.div>
             )}
+            </>)}
         </motion.div>
     );
 }
