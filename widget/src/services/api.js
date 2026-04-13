@@ -38,7 +38,7 @@ export const sendMessage = async (message, sessionId = null) => {
     }
 };
 
-// Wrap reader.read() in a race against a timeout so a stalled stream
+// Wrap reader.read() in a race against a timeout so a stalled stream 
 // (backend hung, TCP open but no bytes flowing) never freezes the UI forever.
 // 35s = 30s server-side chunk timeout + 5s network RTT buffer.
 const _STREAM_READ_TIMEOUT_MS = 35_000;
@@ -51,7 +51,7 @@ const _readWithTimeout = (reader) =>
         );
         reader.read().then(
             (result) => { clearTimeout(tid); resolve(result); },
-            (err)    => { clearTimeout(tid); reject(err); },
+            (err) => { clearTimeout(tid); reject(err); },
         );
     });
 
@@ -81,7 +81,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                 ({ done, value } = await _readWithTimeout(reader));
             } catch (readErr) {
                 // Timed out or aborted — cancel the stream and surface the error
-                reader.cancel().catch(() => {});
+                reader.cancel().catch(() => { });
                 throw readErr;
             }
             if (done) break;

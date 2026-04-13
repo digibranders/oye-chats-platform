@@ -89,7 +89,7 @@ def mock_bot():
 
 @pytest.fixture()
 def mock_chat_session():
-    """A SimpleNamespace representing a ChatSession row."""
+    """A SimpleNamespace representing a ChatSession row ."""
     return SimpleNamespace(
         id="session-abc-123",
         bot_id=1,
