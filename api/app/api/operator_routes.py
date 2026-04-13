@@ -269,6 +269,14 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
     """Create a new operator with login credentials."""
     _require_team_management_access(auth)
     client_id = auth["client_id"]
+
+    # ── Plan enforcement: check live_chat feature and operator limit ──
+    from app.services.usage_service import enforce_feature
+
+    with get_session() as db:
+        enforce_feature(db, client_id, "live_chat")
+        db.commit()
+
     with get_session() as session:
         # Check for duplicate email — scoped to this workspace only
         existing = session.execute(

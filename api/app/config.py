@@ -118,6 +118,32 @@ else:
     logger.info("Redis not configured — caching disabled, rate limiter uses in-memory backend")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Billing (Stripe + Razorpay)
+# ─────────────────────────────────────────────────────────────────────────────
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+STRIPE_ENABLED = bool(STRIPE_SECRET_KEY)
+
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
+RAZORPAY_ENABLED = bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
+
+# Frontend URL for Stripe checkout redirects
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
+
+if STRIPE_ENABLED:
+    logger.info("Stripe billing enabled")
+else:
+    logger.info("Stripe billing disabled (no STRIPE_SECRET_KEY)")
+
+if RAZORPAY_ENABLED:
+    logger.info("Razorpay billing enabled")
+else:
+    logger.info("Razorpay billing disabled (no RAZORPAY_KEY_ID)")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler
 # ─────────────────────────────────────────────────────────────────────────────
 DOCUMENTS_DIR = "documents"

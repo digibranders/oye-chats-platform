@@ -1036,3 +1036,92 @@ export const uploadOperatorChatFile = async (file, sessionId) => {
         throw buildApiError(error, 'Failed to upload file');
     }
 };
+
+// --- SUBSCRIPTION & BILLING ENDPOINTS ---
+
+export const getSubscriptionPlans = async () => {
+    try {
+        const response = await api.get('/subscriptions/plans');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load plans');
+    }
+};
+
+export const getCurrentSubscription = async () => {
+    try {
+        const response = await api.get('/subscriptions/current');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load subscription');
+    }
+};
+
+export const getSubscriptionUsage = async () => {
+    try {
+        const response = await api.get('/subscriptions/usage');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load usage data');
+    }
+};
+
+export const getInvoices = async () => {
+    try {
+        const response = await api.get('/subscriptions/invoices');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load invoices');
+    }
+};
+
+export const createCheckoutSession = async (planId, billingCycle = 'monthly') => {
+    try {
+        const response = await api.post('/subscriptions/checkout', {
+            plan_id: planId,
+            billing_cycle: billingCycle,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to create checkout session');
+    }
+};
+
+export const changePlan = async (planId, billingCycle = null) => {
+    try {
+        const response = await api.post('/subscriptions/change-plan', {
+            plan_id: planId,
+            billing_cycle: billingCycle,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to change plan');
+    }
+};
+
+export const cancelSubscription = async (reason = null) => {
+    try {
+        const response = await api.post('/subscriptions/cancel', { reason });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to cancel subscription');
+    }
+};
+
+export const resumeSubscription = async () => {
+    try {
+        const response = await api.post('/subscriptions/resume');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to resume subscription');
+    }
+};
+
+export const getBillingPortalUrl = async () => {
+    try {
+        const response = await api.post('/subscriptions/portal');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to open billing portal');
+    }
+};

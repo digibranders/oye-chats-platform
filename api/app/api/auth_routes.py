@@ -378,6 +378,14 @@ def register(request: Request, body: RegisterRequest):
             session.flush()  # Get the client ID
             logger.info(f"Client INSERT flushed: id={new_client.id}, email={new_client.email}")
 
+            # Auto-assign the default (free) plan to the new client
+            try:
+                from app.services.plan_service import assign_default_plan_to_client
+
+                assign_default_plan_to_client(session, new_client.id)
+            except Exception as plan_err:
+                logger.warning(f"Could not assign default plan to client {new_client.id}: {plan_err}")
+
             session.commit()
             logger.info(f"Transaction committed successfully for client {new_client.id}")
 

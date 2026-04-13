@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
-  Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, Sparkles,
+  Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, Sparkles, CreditCard,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { getAuthState } from '../utils/auth';
@@ -71,6 +71,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     : [
         { path: '/chatbot', name: 'My Bots', icon: Bot },
         { path: '/team', name: 'Team', icon: UsersRound },
+        { path: '/subscription', name: 'Billing', icon: CreditCard },
       ];
 
   const isActive = (item) =>

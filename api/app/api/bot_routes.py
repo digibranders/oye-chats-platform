@@ -778,6 +778,32 @@ def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_ope
     """Create a new bot for the authenticated workspace."""
     _require_bot_management_access(auth)
     with get_session() as session:
+        # ── Plan enforcement: check bot count limit ──
+        from app.services.plan_service import UNLIMITED, get_client_plan, get_plan_limit
+
+        plan = get_client_plan(session, auth["client_id"])
+        bot_limit = get_plan_limit(plan, "bots")
+        if bot_limit != UNLIMITED:
+            current_bots = (
+                session.execute(
+                    select(Bot).where(Bot.client_id == auth["client_id"], Bot.is_active.is_(True))
+                )
+                .scalars()
+                .all()
+            )
+            if len(current_bots) >= bot_limit:
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "plan_limit_exceeded",
+                        "metric": "bots",
+                        "used": len(current_bots),
+                        "limit": bot_limit,
+                        "message": f"You have reached your plan's bot limit ({bot_limit}). "
+                        "Please upgrade your plan to create more bots.",
+                    },
+                )
+
         new_bot = Bot(
             client_id=auth["client_id"],
             bot_key=f"bot-{uuid.uuid4().hex[:12]}",

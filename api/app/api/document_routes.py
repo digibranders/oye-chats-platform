@@ -192,6 +192,13 @@ def ingest_documents(
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
     _verify_bot_ownership(bot_id, client_id)
+
+    # ── Plan enforcement: check storage limit ──
+    from app.services.usage_service import enforce_limit
+
+    with get_session() as db:
+        enforce_limit(db, client_id, "knowledge_pages")
+        db.commit()
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
@@ -277,6 +284,13 @@ async def crawl_endpoint(
     client_id = auth["client_id"]
     _verify_bot_ownership(bot_id, client_id)
     _check_memory()
+
+    # ── Plan enforcement: check URL scan limit ──
+    from app.services.usage_service import enforce_limit
+
+    with get_session() as db:
+        enforce_limit(db, client_id, "url_scans")
+        db.commit()
 
     # Per-client lock: each customer can run one crawl at a time.
     # Other customers are not blocked.

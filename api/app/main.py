@@ -27,7 +27,10 @@ from app.api.document_routes import router as document_router
 from app.api.lead_routes import router as lead_router
 from app.api.offline_message_routes import router as offline_message_router
 from app.api.operator_routes import router as operator_router
+from app.api.subscription_routes import router as subscription_router
+from app.api.superadmin_plan_routes import router as superadmin_plan_router
 from app.api.superadmin_routes import router as superadmin_router
+from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
@@ -85,6 +88,9 @@ app.include_router(canned_response_router)
 app.include_router(ws_router)
 app.include_router(client_router)
 app.include_router(webhook_router)
+app.include_router(subscription_router)
+app.include_router(superadmin_plan_router)
+app.include_router(webhook_billing_router)
 
 # --- Exception Handlers ---
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
