@@ -529,6 +529,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         try {
             let placeholderId = null;
+            let accumulatedText = '';
             chunkBufferRef.current = '';
             if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
@@ -546,6 +547,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                 },
                 onChunk: (chunk) => {
+                    accumulatedText += chunk;
                     if (placeholderId === null) {
                         placeholderId = Date.now() + 1;
                         setIsTyping(false);
@@ -606,7 +608,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setCalendlyUrl(finalMeta.calendly_url);
                         setShowBooking(true);
                     }
-                    if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
+                    // Detect handoff: explicit flag OR bot response text matching
+                    let shouldHandoff = !!finalMeta.suggest_handoff;
+                    if (!shouldHandoff && settings.live_chat_enabled !== false && accumulatedText) {
+                        shouldHandoff = /\b(?:connecting you with|i'm connecting you|transferring you to)\b/i.test(accumulatedText);
+                    }
+                    if (shouldHandoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
                         const delay = (settings.handoff_delay_seconds || 0) * 1000 || 600;
                         setTimeout(() => {
@@ -730,9 +737,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             handoffFormInjectedRef.current = false;
             setChatMode('waiting');
         } catch {
-            setMessages(prev => prev.map(m =>
-                m.type === 'handoff_form' ? { ...m, status: 'pending' } : m
-            ));
+            setMessages(prev => [
+                ...prev.map(m =>
+                    m.type === 'handoff_form' ? { ...m, status: 'pending' } : m
+                ),
+                {
+                    id: `sys-handoff-err-${Date.now()}`,
+                    type: 'system',
+                    text: 'Unable to connect with the support team right now. Please try again.',
+                    timestamp: new Date().toISOString(),
+                },
+            ]);
             handoffFormInjectedRef.current = false;
         } finally {
             setIsSubmittingHandoff(false);

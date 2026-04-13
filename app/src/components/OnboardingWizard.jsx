@@ -51,12 +51,14 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
 
     const handleCreateBot = async () => {
         if (!botName.trim()) return;
+        const website = botWebsite.trim();
+        const normalizedWebsite = website && !/^https?:\/\//i.test(website) ? `https://${website}` : website;
         setIsCreating(true); setError('');
         try {
-            const result = await createBot({ name: botName.trim(), website: botWebsite.trim() || undefined });
+            const result = await createBot({ name: botName.trim(), website: normalizedWebsite || undefined });
             setCreatedBot(result);
-            if (botWebsite.trim()) {
-                crawlWebsite(botWebsite.trim(), result.bot_id).catch(() => { });
+            if (normalizedWebsite) {
+                crawlWebsite(normalizedWebsite, result.bot_id).catch(() => { });
             }
             if (onRefreshBots) await onRefreshBots();
             goToStep(2);
@@ -178,7 +180,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
                                         <div>
                                             <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Website</label>
                                             <input
-                                                type="url"
+                                                type="text"
                                                 value={botWebsite}
                                                 onChange={(e) => setBotWebsite(e.target.value)}
                                                 placeholder="https://yourwebsite.com"
