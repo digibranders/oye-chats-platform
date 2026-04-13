@@ -94,7 +94,7 @@ def list_webhooks(
                 "url": webhook.url,
                 "events": webhook.events or [],
                 "is_active": webhook.is_active,
-                "secret": f"{(webhook.secret or '')[:8]}...",
+                "secret": "••••••••" if webhook.secret else None,
                 "created_at": webhook.created_at,
             }
             for webhook in webhooks

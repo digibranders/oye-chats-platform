@@ -1,8 +1,10 @@
 import asyncio
 import heapq
+import ipaddress
 import json
 import os
 import re
+import socket
 import sys
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
@@ -456,6 +458,43 @@ def extract_colors_from_html(html_content: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# SSRF protection for redirect targets
+# ---------------------------------------------------------------------------
+
+
+def _is_url_safe(url: str) -> bool:
+    """Return False if *url* resolves to a private/internal/loopback address.
+
+    Used to validate the final URL after HTTP redirects so that an attacker
+    cannot redirect the crawler to internal services (e.g. cloud metadata at
+    169.254.169.254 or localhost).
+    """
+    hostname = urlparse(str(url)).hostname
+    if not hostname:
+        return False
+
+    # Check literal IP addresses first
+    try:
+        ip = ipaddress.ip_address(hostname)
+        return not (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local)
+    except ValueError:
+        pass
+
+    # Hostname — resolve DNS and verify every address is public
+    try:
+        infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+        if not infos:
+            return False
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+                return False
+        return True
+    except socket.gaierror:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Lightweight HTTP crawl (depths 1+)
 # ---------------------------------------------------------------------------
 
@@ -481,6 +520,18 @@ async def crawl_single_http(
                     total=page_timeout if attempt == 0 else int(page_timeout * 1.5),
                 )
                 async with http_session.get(url, timeout=timeout, allow_redirects=True) as resp:
+                    # SSRF guard: validate the final URL after redirects to
+                    # block redirects to internal/private addresses.
+                    final_url = str(resp.url)
+                    if final_url != url and not _is_url_safe(final_url):
+                        return {
+                            "url": url,
+                            "depth": depth,
+                            "html": None,
+                            "markdown": None,
+                            "error": "redirect to internal address blocked (SSRF protection)",
+                        }
+
                     if resp.status != 200:
                         return {
                             "url": url,
