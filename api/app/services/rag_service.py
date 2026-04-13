@@ -1135,6 +1135,7 @@ async def rag_pipeline_stream(
             logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
             yield " [I encountered an error. Please try again.]"
             _stream_error = True
+            suggest_handoff = False  # Don't suggest handoff on errored/partial responses
 
         # Strip CTA marker from response before saving
         full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)

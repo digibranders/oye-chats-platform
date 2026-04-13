@@ -102,6 +102,12 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                         metadataReceived = true;
                     } catch { /* ignore parse errors */ }
                 } else if (line.startsWith('FINAL_METADATA:')) {
+                    // Flush any pending partial buffer BEFORE triggering final metadata
+                    // so all streamed text is delivered before handoff can fire.
+                    if (buffer && !buffer.startsWith('METADATA:') && !buffer.startsWith('FINAL_METADATA:')) {
+                        onChunk?.(buffer);
+                        buffer = '';
+                    }
                     try {
                         const finalMeta = JSON.parse(line.slice(15));
                         onFinalMetadata?.(finalMeta);
