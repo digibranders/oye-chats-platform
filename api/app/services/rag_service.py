@@ -1049,7 +1049,7 @@ async def rag_pipeline_stream(
                 cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
 
             try:
-                suggest_handoff = await asyncio.wait_for(handoff_task, timeout=3.0)
+                suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
             except TimeoutError:
                 # LLM timed out — fall back to keyword signal.
                 suggest_handoff = detect_handoff_intent_keywords(question)

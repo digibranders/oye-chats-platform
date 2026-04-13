@@ -15,7 +15,7 @@ import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import Tabs from '../components/ui/Tabs';
 import Interface from './Interface';
-import { cn } from '../lib/utils';
+import { cn, normalizeUrl } from '../lib/utils';
 
 const botPageTabs = [
     { id: 'bots', label: 'Bots', icon: Bot },
@@ -79,8 +79,7 @@ export default function Chatbot() {
     const handleCreate = async (e) => {
         e.preventDefault();
         if (!newBotName.trim()) return;
-        const website = newBotWebsite.trim();
-        const normalizedWebsite = website && !/^https?:\/\//i.test(website) ? `https://${website}` : website;
+        const normalizedWebsite = normalizeUrl(newBotWebsite);
         setError(''); setIsSubmitting(true);
         try {
             const result = await createBot({ name: newBotName.trim(), website: normalizedWebsite || undefined });

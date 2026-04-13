@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bot, BookOpen, Code2, Check, ArrowRight, ArrowLeft, Loader2, Sparkles, X } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, normalizeUrl } from '../lib/utils';
 import { createBot, crawlWebsite } from '../services/api';
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from './PlatformSelector';
@@ -51,8 +51,7 @@ export default function OnboardingWizard({ onComplete, onRefreshBots }) {
 
     const handleCreateBot = async () => {
         if (!botName.trim()) return;
-        const website = botWebsite.trim();
-        const normalizedWebsite = website && !/^https?:\/\//i.test(website) ? `https://${website}` : website;
+        const normalizedWebsite = normalizeUrl(botWebsite);
         setIsCreating(true); setError('');
         try {
             const result = await createBot({ name: botName.trim(), website: normalizedWebsite || undefined });

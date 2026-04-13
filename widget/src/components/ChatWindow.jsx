@@ -529,7 +529,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         try {
             let placeholderId = null;
-            let accumulatedText = '';
             chunkBufferRef.current = '';
             if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
@@ -547,7 +546,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                 },
                 onChunk: (chunk) => {
-                    accumulatedText += chunk;
                     if (placeholderId === null) {
                         placeholderId = Date.now() + 1;
                         setIsTyping(false);
@@ -608,12 +606,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setCalendlyUrl(finalMeta.calendly_url);
                         setShowBooking(true);
                     }
-                    // Detect handoff: explicit flag OR bot response text matching
-                    let shouldHandoff = !!finalMeta.suggest_handoff;
-                    if (!shouldHandoff && settings.live_chat_enabled !== false && accumulatedText) {
-                        shouldHandoff = /\b(?:connecting you with|i'm connecting you|transferring you to)\b/i.test(accumulatedText);
-                    }
-                    if (shouldHandoff && !handoffTriggeredRef.current) {
+                    if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
                         const delay = (settings.handoff_delay_seconds || 0) * 1000 || 600;
                         setTimeout(() => {
