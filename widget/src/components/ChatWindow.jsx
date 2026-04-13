@@ -730,9 +730,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             handoffFormInjectedRef.current = false;
             setChatMode('waiting');
         } catch {
-            setMessages(prev => prev.map(m =>
-                m.type === 'handoff_form' ? { ...m, status: 'pending' } : m
-            ));
+            setMessages(prev => [
+                ...prev.map(m =>
+                    m.type === 'handoff_form' ? { ...m, status: 'pending' } : m
+                ),
+                {
+                    id: `sys-handoff-err-${Date.now()}`,
+                    type: 'system',
+                    text: 'Unable to connect with the support team right now. Please try again.',
+                    timestamp: new Date().toISOString(),
+                },
+            ]);
             handoffFormInjectedRef.current = false;
         } finally {
             setIsSubmittingHandoff(false);

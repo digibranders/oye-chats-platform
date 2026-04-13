@@ -15,7 +15,7 @@ import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import Tabs from '../components/ui/Tabs';
 import Interface from './Interface';
-import { cn } from '../lib/utils';
+import { cn, normalizeUrl } from '../lib/utils';
 
 const botPageTabs = [
     { id: 'bots', label: 'Bots', icon: Bot },
@@ -79,11 +79,12 @@ export default function Chatbot() {
     const handleCreate = async (e) => {
         e.preventDefault();
         if (!newBotName.trim()) return;
+        const normalizedWebsite = normalizeUrl(newBotWebsite);
         setError(''); setIsSubmitting(true);
         try {
-            const result = await createBot({ name: newBotName.trim(), website: newBotWebsite.trim() || undefined });
-            if (newBotWebsite.trim()) {
-                crawlWebsite(newBotWebsite.trim(), result.bot_id).catch((err) => {
+            const result = await createBot({ name: newBotName.trim(), website: normalizedWebsite || undefined });
+            if (normalizedWebsite) {
+                crawlWebsite(normalizedWebsite, result.bot_id).catch((err) => {
                     console.error('Background website crawl failed:', err);
                     showToast('error', err.message || 'Failed to crawl website');
                 });
@@ -386,7 +387,7 @@ export default function Chatbot() {
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Website</label>
-                                    <input type="url" value={newBotWebsite} onChange={(e) => setNewBotWebsite(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-400/30 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500" placeholder="https://yourwebsite.com" />
+                                    <input type="text" value={newBotWebsite} onChange={(e) => setNewBotWebsite(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-400/30 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500" placeholder="https://yourwebsite.com" />
                                 </div>
                                 <div className="flex gap-3 pt-2">
                                     <button type="button" onClick={() => { setIsCreateOpen(false); setError(''); setNewBotName(''); setNewBotWebsite(''); }} className="flex-1 py-2.5 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700">Cancel</button>

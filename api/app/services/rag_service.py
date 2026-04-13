@@ -28,7 +28,7 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.services.email_service import send_qualified_lead_email
-from app.services.intent_service import detect_handoff_intent
+from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import generate_response, generate_response_stream
 from app.services.qualification_service import get_framework_config, get_tier
 from app.services.relevance_gate import check_relevance
@@ -1051,8 +1051,13 @@ async def rag_pipeline_stream(
             try:
                 suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
             except TimeoutError:
-                suggest_handoff = False
-                logger.warning(f"Handoff intent detection timed out for session {session_id}")
+                # LLM timed out — fall back to keyword signal.
+                suggest_handoff = detect_handoff_intent_keywords(question)
+                logger.warning(
+                    "Handoff LLM timed out for session %s, keyword fallback=%s",
+                    session_id,
+                    "YES" if suggest_handoff else "NO",
+                )
 
             vector_results, keyword_results = await asyncio.gather(
                 asyncio.to_thread(_vector_search, cid, bid, query_embedding),
