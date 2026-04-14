@@ -140,6 +140,15 @@ class UpdateOperatorRequest(BaseModel):
             raise ValueError("Please enter a valid email address.")
         return v
 
+    @field_validator("role")
+    @classmethod
+    def valid_role(cls, v):
+        if v is None:
+            return v
+        if v not in ("owner", "admin", "operator"):
+            raise ValueError("Role must be owner, admin, or operator.")
+        return v
+
 
 class CreateDepartmentRequest(BaseModel):
     name: str
@@ -385,6 +394,16 @@ async def update_operator(
                 raise HTTPException(status_code=409, detail="An operator with this email already exists.")
             operator.email = request.email  # already normalized by field_validator
         if request.role is not None:
+            # Only workspace owners (client login or owner-role operators) can
+            # assign the "owner" role.  Admins can assign admin/operator but not
+            # escalate to owner.
+            if request.role == "owner" and auth["type"] != "client":
+                caller_role = getattr(auth["entity"], "role", "operator")
+                if caller_role != "owner":
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Only workspace owners can assign the owner role.",
+                    )
             operator.role = request.role
         if request.department_id is not None:
             # Track department change for dynamic WS update
