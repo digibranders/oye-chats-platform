@@ -43,6 +43,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Don't delete the user — just remove superadmin flag
-    op.execute(
-        f"UPDATE clients SET is_superadmin = false WHERE email = '{_SUPERADMIN_EMAIL}'"
-    )
+    op.execute(f"UPDATE clients SET is_superadmin = false WHERE email = '{_SUPERADMIN_EMAIL}'")

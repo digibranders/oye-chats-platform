@@ -70,6 +70,7 @@ class _ExecuteResult:
 class TestCreateBot:
     def test_creates_bot(self, monkeypatch):
         from app.api import bot_routes
+        from app.services.plan_service import UNLIMITED
 
         session = MagicMock()
         added = []
@@ -79,7 +80,11 @@ class TestCreateBot:
         app = _build_app(auth_override=_client_auth())
         tc = TestClient(app)
 
-        response = tc.post("/bots", json={"name": "My Bot", "website": "https://mysite.com"})
+        with (
+            patch("app.services.plan_service.get_client_plan", return_value=None),
+            patch("app.services.plan_service.get_plan_limit", return_value=UNLIMITED),
+        ):
+            response = tc.post("/bots", json={"name": "My Bot", "website": "https://mysite.com"})
 
         assert response.status_code == 201
         data = response.json()
@@ -273,6 +278,7 @@ class TestBotAccessControl:
 
     def test_admin_operator_can_create(self, monkeypatch):
         from app.api import bot_routes
+        from app.services.plan_service import UNLIMITED
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
@@ -280,11 +286,16 @@ class TestBotAccessControl:
 
         app = _build_app(auth_override=_operator_auth(role="admin"))
         tc = TestClient(app)
-        response = tc.post("/bots", json={"name": "Bot"})
+        with (
+            patch("app.services.plan_service.get_client_plan", return_value=None),
+            patch("app.services.plan_service.get_plan_limit", return_value=UNLIMITED),
+        ):
+            response = tc.post("/bots", json={"name": "Bot"})
         assert response.status_code == 201
 
     def test_owner_operator_can_create(self, monkeypatch):
         from app.api import bot_routes
+        from app.services.plan_service import UNLIMITED
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
@@ -292,7 +303,11 @@ class TestBotAccessControl:
 
         app = _build_app(auth_override=_operator_auth(role="owner"))
         tc = TestClient(app)
-        response = tc.post("/bots", json={"name": "Bot"})
+        with (
+            patch("app.services.plan_service.get_client_plan", return_value=None),
+            patch("app.services.plan_service.get_plan_limit", return_value=UNLIMITED),
+        ):
+            response = tc.post("/bots", json={"name": "Bot"})
         assert response.status_code == 201
 
 

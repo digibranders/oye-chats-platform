@@ -785,9 +785,7 @@ def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_ope
         bot_limit = get_plan_limit(plan, "bots")
         if bot_limit != UNLIMITED:
             current_bots = (
-                session.execute(
-                    select(Bot).where(Bot.client_id == auth["client_id"], Bot.is_active.is_(True))
-                )
+                session.execute(select(Bot).where(Bot.client_id == auth["client_id"], Bot.is_active.is_(True)))
                 .scalars()
                 .all()
             )
