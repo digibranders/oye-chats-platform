@@ -132,6 +132,13 @@ def get_current_operator(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Operator Key.",
             )
+        # Block deactivated operators
+        if not getattr(operator, "is_active", True):
+            logger.warning(f"Deactivated operator {operator.id} attempted authentication.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This operator account has been deactivated.",
+            )
         # Eagerly access attributes before session closes
         _ = (
             operator.id,
@@ -142,6 +149,7 @@ def get_current_operator(
             operator.department_id,
             operator.operator_api_key,
             operator.is_online,
+            getattr(operator, "is_active", True),
         )
         session.expunge(operator)
         return operator
@@ -199,6 +207,35 @@ def get_current_client_or_operator(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Missing authentication. Provide X-API-Key or X-Operator-Key header.",
     )
+
+
+def get_current_client_strict(
+    api_key: str = Security(api_key_header),
+):
+    """
+    Dependency: Authenticate a Client via X-API-Key ONLY.
+    Does NOT fall back to X-Bot-Key or X-Operator-Key.
+    Use this for admin-only endpoints (billing, subscription, sensitive account settings)
+    where operator access must be explicitly blocked.
+    """
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-API-Key header. This endpoint requires client (admin) authentication.",
+        )
+
+    with get_session() as session:
+        stmt = select(Client).where(Client.api_key == api_key)
+        client = session.execute(stmt).scalars().first()
+        if not client:
+            logger.warning("Failed strict authentication attempt with invalid API Key.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API Key.",
+            )
+        _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
+        session.expunge(client)
+        return client
 
 
 def get_superadmin(client: Client = Depends(get_current_client)):

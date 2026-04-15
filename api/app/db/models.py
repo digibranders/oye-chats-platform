@@ -394,6 +394,7 @@ class Operator(Base):
     # Auth credentials (for separate operator login)
     hashed_password = Column(String, nullable=True)
     operator_api_key = Column(String, unique=True, index=True, nullable=True)
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
 
     # Role & department
     role = Column(String, default="operator", server_default="operator", nullable=False)  # owner|admin|operator

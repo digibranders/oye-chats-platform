@@ -539,6 +539,70 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
     return {"success": True, "status": "waiting"}
 
 
+@router.post("/cancel-handoff/{session_id}")
+async def cancel_handoff(session_id: str, bot: Bot = Depends(get_current_bot)):
+    """Visitor cancels a waiting handoff request, returning session to bot mode.
+
+    Called by the widget when the visitor clicks "Cancel and return to AI chat"
+    while still in the waiting state, especially if the WebSocket hasn't connected yet.
+    """
+    with get_session() as session:
+        chat_session = session.execute(
+            select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id == bot.id)
+        ).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        if chat_session.status != "waiting":
+            return {"success": True, "status": chat_session.status}
+
+        chat_session.status = "bot"
+        chat_session.assigned_operator_id = None
+        session.add(ChatAuditLog(session_id=session_id, action="visitor_cancelled"))
+        session.commit()
+
+    # Also clean up in-memory state
+    if session_id in manager.waiting_queue:
+        manager.waiting_queue.remove(session_id)
+    manager._cancel_timeout(session_id)
+    manager._session_departments.pop(session_id, None)
+    manager._session_metadata.pop(session_id, None)
+
+    # Notify operators of updated queue
+    for oid in list(manager.operator_connections.keys()):
+        await manager._notify_operator_queue(oid)
+
+    return {"success": True, "status": "bot"}
+
+
+@router.get("/session-status/{session_id}")
+def get_session_live_status(session_id: str, bot: Bot = Depends(get_current_bot)):
+    """Get the current live chat status for a session.
+
+    Called by the widget on mount to restore chatMode across page navigations.
+    Returns the session status and operator name if assigned.
+    """
+    with get_session() as session:
+        chat_session = session.execute(
+            select(ChatSession).where(ChatSession.id == session_id, ChatSession.bot_id == bot.id)
+        ).scalar_one_or_none()
+        if not chat_session:
+            return {"status": "bot", "operator_name": None}
+
+        operator_name = None
+        if chat_session.assigned_operator_id:
+            operator = session.execute(
+                select(Operator).where(Operator.id == chat_session.assigned_operator_id)
+            ).scalar_one_or_none()
+            if operator:
+                operator_name = operator.name
+
+        return {
+            "status": chat_session.status,
+            "operator_name": operator_name,
+        }
+
+
 @router.get("/queue")
 def get_queue(auth=Depends(get_current_client_or_operator)):
     """Get waiting chat queue from DB source-of-truth with visitor info."""
@@ -657,9 +721,15 @@ async def accept_chat(
         operator_name = operator.name
         operator_id = operator.id
 
+    # DB already committed status='live' — the in-memory manager is secondary.
+    # If accept_chat returns False (already assigned in memory to another operator),
+    # that means DB and memory diverged. Force-sync memory to match DB truth.
     accepted = await manager.accept_chat(session_id, operator_id, operator_name)
     if not accepted:
-        raise HTTPException(status_code=409, detail="Chat was already accepted by another operator")
+        logger.warning(
+            f"DB accepted chat {session_id} for operator {operator_id} but in-memory "
+            f"state shows a different assignee. DB is authoritative — proceeding."
+        )
 
     return {"success": True, "status": "live", "operator_name": operator_name}
 
@@ -805,22 +875,52 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
         return {"success": True, "transferred_to_department": dept_name}
 
 
+@router.get("/me/status")
+def get_my_operator_status(auth=Depends(get_current_client_or_operator)):
+    """Get the current operator's online status. Used by the admin dashboard on mount."""
+    with get_session() as session:
+        if auth["type"] == "operator":
+            operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
+        else:
+            client = auth["entity"]
+            operator = session.execute(
+                select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
+            ).scalar_one_or_none()
+
+        if not operator:
+            return {"is_online": False, "operator_name": None, "operator_id": None}
+
+        return {
+            "is_online": operator.is_online,
+            "operator_name": operator.name,
+            "operator_id": operator.id,
+        }
+
+
+class SetStatusRequest(BaseModel):
+    is_online: bool
+
+
 @router.post("/status")
-def toggle_operator_status(auth=Depends(get_current_client_or_operator)):
-    """Toggle operator online/offline status."""
+def set_operator_status(
+    request: SetStatusRequest | None = None,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Set operator online/offline status explicitly.
+
+    Accepts ``{"is_online": true/false}`` in the request body.
+    Falls back to toggle behavior (backward compat) when no body is provided.
+    """
     with get_session() as session:
         if auth["type"] == "operator":
             operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
             if not operator:
                 raise HTTPException(status_code=404, detail="Operator not found.")
-            operator.is_online = not operator.is_online
+            operator.is_online = request.is_online if request is not None else (not operator.is_online)
             session.commit()
             return {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
 
         # Client: find or create the owner's operator record.
-        # Filter by role='owner' to avoid matching sub-operators for the same client.
-        import uuid as _uuid
-
         client = auth["entity"]
         operator = session.execute(
             select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
@@ -833,14 +933,14 @@ def toggle_operator_status(auth=Depends(get_current_client_or_operator)):
                 email=client.email,
                 is_online=True,
                 role="owner",
-                operator_api_key=_uuid.uuid4().hex,
+                operator_api_key=uuid.uuid4().hex,
             )
             session.add(operator)
             session.commit()
             session.refresh(operator)
             return {"is_online": True, "operator_name": operator.name, "operator_id": operator.id}
 
-        operator.is_online = not operator.is_online
+        operator.is_online = request.is_online if request is not None else (not operator.is_online)
         session.commit()
         return {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
 
@@ -961,7 +1061,7 @@ async def upload_chat_file_route(
     key = upload_chat_file(file_data, file.filename or "file", file.content_type)
     url = _build_public_url(key)
 
-    return {"url": url, "filename": file.filename, "content_type": file.content_type, "size": len(file_data)}
+    return {"file_url": url, "filename": file.filename, "content_type": file.content_type, "size": len(file_data)}
 
 
 # ── Post-chat visitor satisfaction rating ──

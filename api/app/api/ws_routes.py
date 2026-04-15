@@ -1,7 +1,9 @@
 """WebSocket endpoints for live chat between visitors and operators."""
 
 import asyncio
+import ipaddress
 import logging
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
@@ -13,9 +15,67 @@ from app.services.live_chat_service import manager
 
 logger = logging.getLogger(__name__)
 
+
+def _is_safe_file_url(url: str) -> bool:
+    """Validate that a file URL is safe (HTTPS only, no private IPs)."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    if parsed.scheme != "https":
+        return False
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    # Block private/reserved IP ranges (SSRF protection)
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+            return False
+    except ValueError:
+        # Not an IP — it's a hostname, which is fine
+        pass
+
+    # Block known internal hostnames
+    return hostname not in ("localhost", "0.0.0.0", "127.0.0.1", "[::]", "[::1]")
+
+
 router = APIRouter(tags=["websocket"])
 
 _HEARTBEAT_INTERVAL = 30  # seconds
+
+# ── Per-connection rate limiting ──
+_VISITOR_MSG_LIMIT = 30  # max messages per window
+_OPERATOR_MSG_LIMIT = 60  # operators type faster / manage multiple chats
+_RATE_WINDOW_SECONDS = 60.0
+
+
+class _RateLimiter:
+    """Simple sliding-window rate limiter for WebSocket messages."""
+
+    __slots__ = ("_timestamps", "_limit", "_window")
+
+    def __init__(self, limit: int, window: float = _RATE_WINDOW_SECONDS):
+        self._timestamps: list[float] = []
+        self._limit = limit
+        self._window = window
+
+    def allow(self) -> bool:
+        """Return True if the message is allowed, False if rate-limited."""
+        import time
+
+        now = time.monotonic()
+        # Prune expired timestamps
+        cutoff = now - self._window
+        while self._timestamps and self._timestamps[0] < cutoff:
+            self._timestamps.pop(0)
+        if len(self._timestamps) >= self._limit:
+            return False
+        self._timestamps.append(now)
+        return True
 
 
 async def _heartbeat(ws: WebSocket) -> None:
@@ -121,6 +181,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
 
     await manager.connect_visitor(session_id, ws, subprotocol=accepted_subprotocol)
     heartbeat_task = asyncio.create_task(_heartbeat(ws))
+    rate_limiter = _RateLimiter(_VISITOR_MSG_LIMIT)
 
     try:
         while True:
@@ -131,6 +192,9 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 await ws.send_json({"type": "pong"})
 
             elif msg_type == "message":
+                if not rate_limiter.allow():
+                    await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
+                    continue
                 content = data.get("content", "").strip()
                 if not content or len(content) > 10000:
                     continue
@@ -145,7 +209,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 file_url = data.get("file_url", "").strip()
                 filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]
                 content_type = data.get("content_type", "")
-                if not file_url or not file_url.startswith(("https://", "http://")):
+                if not file_url or not _is_safe_file_url(file_url):
                     continue
 
                 # Save as a message with file metadata
@@ -287,6 +351,7 @@ async def operator_websocket(
     )
 
     heartbeat_task = asyncio.create_task(_heartbeat(ws))
+    rate_limiter = _RateLimiter(_OPERATOR_MSG_LIMIT)
 
     try:
         # Queue snapshot is already sent by connect_operator() via _notify_operator_queue.
@@ -299,6 +364,9 @@ async def operator_websocket(
                 await ws.send_json({"type": "pong"})
 
             elif msg_type == "message":
+                if not rate_limiter.allow():
+                    await ws.send_json({"type": "error", "message": "Rate limit exceeded."})
+                    continue
                 target_session = data.get("session_id")
                 content = data.get("content", "").strip()
                 if not target_session or not content:
@@ -331,7 +399,7 @@ async def operator_websocket(
                 file_url = data.get("file_url", "").strip()
                 filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]
                 content_type_val = data.get("content_type", "")
-                if not target_session or not file_url or not file_url.startswith(("https://", "http://")):
+                if not target_session or not file_url or not _is_safe_file_url(file_url):
                     continue
 
                 with get_session() as session:

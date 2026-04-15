@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.db.models import ChatSession, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
+from app.services.session_state_machine import InvalidTransitionError, transition_session
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ class ConnectionManager:
                 stale_ids = set(session_ids) - active_ids
                 for sid in stale_ids:
                     self.assignments.pop(sid, None)
+                    self._accept_locks.pop(sid, None)
                     self._session_departments.pop(sid, None)
                     self._session_metadata.pop(sid, None)
                     self._disconnect_tasks.pop(sid, None)
@@ -251,14 +253,15 @@ class ConnectionManager:
             task.cancel()
 
     def _mark_session_closed(self, session_id: str):
-        """Persist session closure to DB."""
+        """Persist session closure to DB via the state machine."""
         try:
-            with get_session() as session:
-                chat_session = session.get(ChatSession, session_id)
-                if chat_session and chat_session.status == "live":
-                    chat_session.status = "bot"
-                    chat_session.assigned_operator_id = None
-                    session.commit()
+            transition_session(
+                session_id,
+                "bot",
+                audit_action="visitor_disconnected",
+            )
+        except (InvalidTransitionError, ValueError) as e:
+            logger.warning(f"State machine rejected session closure for {session_id}: {e}")
         except Exception as e:
             logger.warning(f"Failed to persist session closure for {session_id}: {e}")
 
@@ -533,6 +536,7 @@ class ConnectionManager:
     async def close_chat(self, session_id: str, bot_name: str = "AI Assistant"):
         """Operator closes a live chat, returns to bot mode."""
         operator_id = self.assignments.pop(session_id, None)
+        self._accept_locks.pop(session_id, None)
         self._cancel_timeout(session_id)
         self._cancel_disconnect_task(session_id)
         self._session_departments.pop(session_id, None)
@@ -838,14 +842,15 @@ class ConnectionManager:
     def _mark_session_waiting_exit(self, session_id: str):
         """Persist queue exit for waiting sessions to avoid stale DB-backed queues."""
         try:
-            with get_session() as session:
-                chat_session = session.get(ChatSession, session_id)
-                if chat_session and chat_session.status == "waiting":
-                    chat_session.status = "bot"
-                    chat_session.assigned_operator_id = None
-                    session.commit()
+            transition_session(
+                session_id,
+                "bot",
+                expected_current="waiting",
+                audit_action="timeout",
+            )
+        except (InvalidTransitionError, ValueError):
+            pass  # Session already transitioned — safe to ignore
         except Exception as e:
-            # Queue correctness degrades if this fails, but websocket flow should continue.
             logger.warning(f"Failed to persist waiting-exit state for {session_id}: {e}")
 
     async def _restore_visitor_state(self, session_id: str) -> None:

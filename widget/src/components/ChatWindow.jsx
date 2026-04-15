@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -17,6 +17,14 @@ import QualificationCTA from './QualificationCTA';
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
+
+// Chat mode state machine — valid transitions
+const _VALID_TRANSITIONS = {
+    bot: ['waiting'],
+    waiting: ['live', 'bot', 'unavailable'],
+    live: ['bot', 'unavailable'],
+    unavailable: ['bot'],
+};
 
 // Strip trailing orphaned markdown tokens that ReactMarkdown would render as raw text
 // e.g. a stream interrupted mid-bold: "Here is **important" → "Here is"
@@ -87,8 +95,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showWelcome, setShowWelcome] = useState(isOnline);
     const [welcomeExiting, setWelcomeExiting] = useState(false);
     const [showLeadForm, setShowLeadForm] = useState(false);
-    // bot | waiting | live | unavailable
-    const [chatMode, setChatMode] = useState(isOnline ? 'bot' : 'unavailable');
+    const [chatMode, setChatModeRaw] = useState(isOnline ? 'bot' : 'unavailable');
+    const setChatMode = useCallback((next) => {
+        setChatModeRaw(prev => {
+            const allowed = _VALID_TRANSITIONS[prev];
+            if (allowed && allowed.includes(next)) return next;
+            console.warn(`[OyeChats] Invalid chatMode transition: ${prev} → ${next}`);
+            return prev;
+        });
+    }, []);
     const [operatorName, setOperatorName] = useState(null);
     const [operatorDepartment, setOperatorDepartment] = useState(null);
     const [streamingId, setStreamingId] = useState(null);
@@ -142,6 +157,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const wsSendRef = useRef(null);
     const wsTypingRef = useRef(null);
     const wsFilePickRef = useRef(null);
+    const wsPasteRef = useRef(null);
     const wsEndChatRef = useRef(null);
 
     // Prevent double handoff form injection
@@ -340,6 +356,19 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     const leadData = await getLeadInfo(sessionId);
                     if (leadData) setExistingLeadInfo(leadData);
                 } catch { /* non-critical */ }
+
+                // Restore chatMode if session was in waiting/live state (e.g., page navigation)
+                try {
+                    const sessionStatus = await getSessionStatus(sessionId);
+                    if (sessionStatus && sessionStatus.status === 'waiting') {
+                        setChatModeRaw('waiting');
+                    } else if (sessionStatus && sessionStatus.status === 'live') {
+                        setChatModeRaw('live');
+                        if (sessionStatus.operator_name) {
+                            setOperatorName(sessionStatus.operator_name);
+                        }
+                    }
+                } catch { /* non-critical */ }
             }
             setIsInitializing(false);
 
@@ -389,12 +418,20 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         prevOperatorNameRef.current = operatorName;
     }, [operatorName, operatorDepartment]);
 
-    // Waiting timer
+    // Waiting timer + auto-timeout
+    const WAITING_TIMEOUT_SECONDS = settings.operator_timeout_seconds || 300; // 5 min default
     useEffect(() => {
         if (chatMode === 'waiting') {
             setWaitingSeconds(0);
             waitingTimerRef.current = setInterval(() => {
-                setWaitingSeconds(prev => prev + 1);
+                setWaitingSeconds(prev => {
+                    if (prev + 1 >= WAITING_TIMEOUT_SECONDS) {
+                        clearInterval(waitingTimerRef.current);
+                        waitingTimerRef.current = null;
+                        setChatMode('unavailable');
+                    }
+                    return prev + 1;
+                });
             }, 1000);
         } else {
             if (waitingTimerRef.current) {
@@ -405,7 +442,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         return () => {
             if (waitingTimerRef.current) clearInterval(waitingTimerRef.current);
         };
-    }, [chatMode]);
+    }, [chatMode, setChatMode, WAITING_TIMEOUT_SECONDS]);
 
     const getWaitingMessage = () => {
         if (waitingSeconds >= 45) return "Taking a bit longer than usual — you can leave a message if you'd prefer";
@@ -851,7 +888,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             timestamp: new Date().toISOString(),
             feedback: null,
         }]);
-    }, []);
+    }, [setChatMode]);
 
     const handleChatEnded = useCallback(() => {
         if (settings?.feature_flags?.post_chat_rating === false) {
@@ -904,10 +941,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // ── WS callbacks exposed from LiveChatMode ───────────────────────────────────
-    const handleWsReady = useCallback(({ send, typing, triggerFilePick, endChat }) => {
+    const handleWsReady = useCallback(({ send, typing, triggerFilePick, handlePaste, endChat }) => {
         wsSendRef.current = send;
         wsTypingRef.current = typing;
         wsFilePickRef.current = triggerFilePick;
+        wsPasteRef.current = handlePaste;
         wsEndChatRef.current = endChat;
     }, []);
 
@@ -1387,8 +1425,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         )}
                         <button
                             onClick={() => {
-                                if (wsEndChatRef.current) wsEndChatRef.current();
-                                setChatMode('bot');
+                                // Try WS first, fall back to REST for when WS hasn't connected yet
+                                if (wsEndChatRef.current) {
+                                    wsEndChatRef.current();
+                                } else if (sessionId) {
+                                    cancelHandoff(sessionId);
+                                }
+                                setChatModeRaw('bot');
                                 setOperatorName(null);
                             }}
                             className="mt-1 text-[12px] text-gray-400 hover:text-gray-600 transition-colors"
@@ -1664,6 +1707,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onLiveTyping={() => wsTypingRef.current?.()}
                     onEndChat={() => setShowEndConfirm(true)}
                     onFilePick={() => wsFilePickRef.current?.()}
+                    onPaste={(e) => wsPasteRef.current?.(e)}
                     fileSharing={settings?.feature_flags?.file_sharing === true}
                     isReconnecting={isLiveReconnecting}
                     uploadProgress={uploadProgress}

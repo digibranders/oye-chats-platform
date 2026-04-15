@@ -236,18 +236,44 @@ export const requestHandoff = async (sessionId, formData) => {
         });
         if (!response.ok) throw new Error('Handoff request failed');
 
-        // Also save lead info if provided
+        // Save lead info fire-and-forget — handoff success should not
+        // depend on lead capture success.
         if (formData.name || formData.email) {
-            await submitLeadCapture(sessionId, {
+            submitLeadCapture(sessionId, {
                 name: formData.name,
                 email: formData.email,
-            });
+            }).catch(err => console.warn('[OyeChats] Lead capture failed (non-fatal):', err));
         }
 
         return await response.json();
     } catch (error) {
         console.error("Error requesting handoff:", error);
         throw error;
+    }
+};
+
+export const cancelHandoff = async (sessionId) => {
+    try {
+        const response = await fetch(`${API_URL}/operators/cancel-handoff/${sessionId}`, {
+            method: 'POST',
+            headers: getHeaders(),
+        });
+        if (!response.ok) throw new Error('Cancel handoff failed');
+        return await response.json();
+    } catch (error) {
+        console.warn('[OyeChats] Cancel handoff failed (non-fatal):', error);
+    }
+};
+
+export const getSessionStatus = async (sessionId) => {
+    try {
+        const response = await fetch(`${API_URL}/operators/session-status/${sessionId}`, {
+            headers: getHeaders(),
+        });
+        if (!response.ok) return null;
+        return await response.json();
+    } catch {
+        return null;
     }
 };
 

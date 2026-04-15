@@ -5,7 +5,7 @@ import {
     Users, Info, Phone, Building2, Clock, Paperclip,
 } from 'lucide-react';
 import {
-    acceptChat, closeOperatorChat, toggleOperatorStatus, getChatHistory,
+    acceptChat, closeOperatorChat, toggleOperatorStatus, getMyOperatorStatus, getChatHistory,
     getCannedResponses, transferChat, getOperators, getDepartments, getSessionDetails, getOperatorQueue,
     uploadOperatorChatFile,
 } from '../services/api';
@@ -15,12 +15,29 @@ import { useBotContext } from '../context/BotContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
+/** Parse a history message, extracting file_url/filename/content_type from markdown file syntax. */
+const FILE_RE = /^\[File:\s*(.+?)\]\((.+?)\)$/;
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+const parseHistoryMessage = (m, i) => {
+    const base = { id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp };
+    const match = m.content?.match(FILE_RE);
+    if (match) {
+        const filename = match[1];
+        const ext = filename.split('.').pop()?.toLowerCase() || '';
+        base.file_url = match[2];
+        base.filename = filename;
+        base.content_type = IMAGE_EXTS.has(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : (ext === 'pdf' ? 'application/pdf' : 'text/plain');
+    }
+    return base;
+};
+
 export default function LiveChat({ embedded = false }) {
     const { bots, loading: botsLoading } = useBotContext();
 
     // Core operator state
     const [isOnline, setIsOnline] = useState(false);
     const [operatorName, setOperatorName] = useState('');
+    const [duplicateTabDetected, setDuplicateTabDetected] = useState(false);
     // operatorId is needed for owner accounts (auth_type='client') to pin REST calls
     // to the exact operator record rather than using the fragile .limit(1) DB fallback.
     const operatorIdRef = useRef(
@@ -69,9 +86,19 @@ export default function LiveChat({ embedded = false }) {
     const [reconnectCount, setReconnectCount] = useState(0);
     const [connectionLost, setConnectionLost] = useState(false);
 
-    // End Chat error banner (auto-dismisses after 4s)
+    // Separate error states for different contexts (replaces single closeChatError)
     const [closeChatError, setCloseChatError] = useState(null);
+    const [sendError, setSendError] = useState(null);
+    const [fileError, setFileError] = useState(null);
     const closeChatErrorTimerRef = useRef(null);
+    const sendErrorTimerRef = useRef(null);
+    const fileErrorTimerRef = useRef(null);
+
+    // Custom confirmation modal (replaces window.confirm)
+    const [confirmModal, setConfirmModal] = useState(null); // { title, message, onConfirm }
+
+    // Chat history cache: session_id → messages array (avoids re-fetching on every click)
+    const chatHistoryCacheRef = useRef({});
 
     // File upload
     const fileInputRef = useRef(null);
@@ -121,6 +148,20 @@ export default function LiveChat({ embedded = false }) {
         if ('Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission().catch(() => {});
         }
+    }, []);
+
+    // Restore operator online status from server on mount (prevents forced manual "Go Online" on refresh)
+    useEffect(() => {
+        getMyOperatorStatus().then(status => {
+            if (status && status.is_online) {
+                setIsOnline(true);
+                if (status.operator_name) setOperatorName(status.operator_name);
+                if (status.operator_id) {
+                    operatorIdRef.current = status.operator_id;
+                    localStorage.setItem('operator_id', String(status.operator_id));
+                }
+            }
+        });
     }, []);
 
     const playNotification = useCallback(() => {
@@ -263,18 +304,25 @@ export default function LiveChat({ embedded = false }) {
 
                 case 'message': {
                     const currentSelected = selectedChatRef.current;
+                    // Use server-assigned ID for deduplication when available
+                    const msgId = data.id ? `srv-${data.id}` : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
                     // Track last message preview for sidebar
                     setLastMessages(prev => ({
                         ...prev,
                         [data.session_id]: data.content?.slice(0, 60) || '',
                     }));
                     if (data.session_id === currentSelected) {
-                        setMessages(prev => [...prev, {
-                            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-                            role: data.role,
-                            content: data.content,
-                            timestamp: data.timestamp,
-                        }]);
+                        setMessages(prev => {
+                            // Deduplicate: skip if server ID already exists (echo of own message)
+                            if (data.id && prev.some(m => m.dbId === data.id)) return prev;
+                            return [...prev, {
+                                id: msgId,
+                                dbId: data.id || null,
+                                role: data.role,
+                                content: data.content,
+                                timestamp: data.timestamp,
+                            }];
+                        });
                         setIsTyping(false);
                     } else {
                         setUnreadCounts(prev => ({
@@ -335,6 +383,12 @@ export default function LiveChat({ embedded = false }) {
                     setChatNames(prev => ({ ...prev, [data.session_id]: chatNameEntry }));
                     setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
                     removeSessionFromQueue(data.session_id);
+                    // Notify operator of new/transferred chat
+                    playNotification();
+                    sendBrowserNotification(
+                        'Chat assigned',
+                        `${data.visitor_name || 'A visitor'} is now connected`
+                    );
                     break;
                 }
 
@@ -384,9 +438,7 @@ export default function LiveChat({ embedded = false }) {
                         if (currentSel) {
                             getChatHistory(currentSel)
                                 .then(history => {
-                                    setMessages(history.map((m, i) => ({
-                                        id: m.id ?? `restored-${i}`, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
-                                    })));
+                                    setMessages(history.map(parseHistoryMessage));
                                     setHasMoreMessages(history.length === 50);
                                 })
                                 .catch(() => {});
@@ -431,6 +483,7 @@ export default function LiveChat({ embedded = false }) {
             // Closed because another tab connected (code 4001) — don't reconnect
             if (event.code === 4001) {
                 setConnectionLost(true);
+                setDuplicateTabDetected(true);
                 manualCloseRef.current = true;
                 return;
             }
@@ -554,25 +607,16 @@ export default function LiveChat({ embedded = false }) {
         getCannedResponses().then(data => setCannedResponses(data.responses || [])).catch(() => {});
     }, []);
 
-    const handleToggleStatus = async () => {
-        if (isOnline && activeChats.length > 0) {
-            if (!window.confirm(`You have ${activeChats.length} active chat(s). Going offline will disconnect them. Continue?`)) {
-                return;
-            }
-        }
+    const executeToggleStatus = async () => {
         try {
             const result = await toggleOperatorStatus();
             setIsOnline(result.is_online);
             setOperatorName(result.operator_name);
-            // Persist the resolved operator_id so acceptChat can use it directly.
-            // Critical for owner accounts where auth_type='client' — the backend
-            // returns the correct operator_id regardless of how it was resolved.
             if (result.operator_id) {
                 operatorIdRef.current = result.operator_id;
                 localStorage.setItem('operator_id', String(result.operator_id));
             }
             if (!result.is_online) {
-                // Going offline — close WS without triggering reconnect
                 manualCloseRef.current = true;
                 clearInterval(pingIntervalRef.current);
                 clearTimeout(reconnectTimerRef.current);
@@ -584,11 +628,24 @@ export default function LiveChat({ embedded = false }) {
                 setVisitorStatus({});
                 queueSnapshotRef.current = new Set();
                 setConnectionLost(false);
+                setDuplicateTabDetected(false);
                 reconnectAttemptsRef.current = 0;
             }
         } catch (e) {
             console.error('Failed to toggle status:', e);
         }
+    };
+
+    const handleToggleStatus = () => {
+        if (isOnline && activeChats.length > 0) {
+            setConfirmModal({
+                title: 'Go Offline',
+                message: `You have ${activeChats.length} active chat(s). Going offline will disconnect them. Continue?`,
+                onConfirm: () => { setConfirmModal(null); executeToggleStatus(); },
+            });
+            return;
+        }
+        executeToggleStatus();
     };
 
     const handleAcceptChat = async (sessionId, visitorName, reason) => {
@@ -607,9 +664,7 @@ export default function LiveChat({ embedded = false }) {
             removeSessionFromQueue(sessionId);
             try {
                 const history = await getChatHistory(sessionId);
-                setMessages(history.map((m, i) => ({
-                    id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
-                })));
+                setMessages(history.map(parseHistoryMessage));
                 setHasMoreMessages(history.length === 50);
             } catch { setMessages([]); setHasMoreMessages(false); }
         } catch (e) {
@@ -627,16 +682,28 @@ export default function LiveChat({ embedded = false }) {
     const handleSelectChat = async (sessionId) => {
         setSelectedChat(sessionId);
         setHasMoreMessages(false);
+
+        // Use cached history for instant switching; fetch fresh in background
+        const cached = chatHistoryCacheRef.current[sessionId];
+        if (cached) {
+            setMessages(cached);
+            setHasMoreMessages(cached.length >= 50);
+        }
+
         try {
             const history = await getChatHistory(sessionId);
-            setMessages(history.map((m, i) => ({
+            const mapped = history.map((m, i) => ({
                 id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
-            })));
+            }));
+            chatHistoryCacheRef.current[sessionId] = mapped;
+            setMessages(mapped);
             setHasMoreMessages(history.length === 50);
             if (history.length > 0) {
                 setLastMessages(prev => ({ ...prev, [sessionId]: history[history.length - 1].content?.slice(0, 60) || '' }));
             }
-        } catch { setMessages([]); setHasMoreMessages(false); }
+        } catch {
+            if (!cached) { setMessages([]); setHasMoreMessages(false); }
+        }
     };
 
     const handleLoadEarlier = async () => {
@@ -646,9 +713,7 @@ export default function LiveChat({ embedded = false }) {
         try {
             const earlier = await getChatHistory(selectedChat, { beforeId: firstDbId });
             setMessages(prev => [
-                ...earlier.map((m, i) => ({
-                    id: m.id ?? `earlier-${i}`, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp,
-                })),
+                ...earlier.map(parseHistoryMessage),
                 ...prev,
             ]);
             setHasMoreMessages(earlier.length === 50);
@@ -661,6 +726,7 @@ export default function LiveChat({ embedded = false }) {
         try {
             await closeOperatorChat(sessionId);
             setActiveChats(prev => prev.filter(id => id !== sessionId));
+            delete chatHistoryCacheRef.current[sessionId];
             if (selectedChat === sessionId) {
                 setSelectedChat(null);
                 setMessages([]);
@@ -740,9 +806,9 @@ export default function LiveChat({ embedded = false }) {
         try {
             socket.send(JSON.stringify({ type: 'message', session_id: selectedChat, content: inputText }));
         } catch {
-            setCloseChatError('Failed to send message. Check your connection.');
-            clearTimeout(closeChatErrorTimerRef.current);
-            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            setSendError('Failed to send message. Check your connection.');
+            clearTimeout(sendErrorTimerRef.current);
+            sendErrorTimerRef.current = setTimeout(() => setSendError(null), 4000);
             return;
         }
         setMessages(prev => [...prev, {
@@ -761,15 +827,15 @@ export default function LiveChat({ embedded = false }) {
             'application/pdf', 'text/plain',
         ];
         if (!ALLOWED_TYPES.includes(file.type)) {
-            setCloseChatError('Unsupported file type. Allowed: images, PDF, TXT.');
-            clearTimeout(closeChatErrorTimerRef.current);
-            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            setFileError('Unsupported file type. Allowed: images, PDF, TXT.');
+            clearTimeout(fileErrorTimerRef.current);
+            fileErrorTimerRef.current = setTimeout(() => setFileError(null), 4000);
             return;
         }
         if (file.size > 10 * 1024 * 1024) {
-            setCloseChatError('File must be under 10 MB.');
-            clearTimeout(closeChatErrorTimerRef.current);
-            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            setFileError('File must be under 10 MB.');
+            clearTimeout(fileErrorTimerRef.current);
+            fileErrorTimerRef.current = setTimeout(() => setFileError(null), 4000);
             return;
         }
         const isImage = file.type.startsWith('image/');
@@ -862,9 +928,9 @@ export default function LiveChat({ embedded = false }) {
                 setLastMessages((prev) => ({ ...prev, [selectedChat]: `📎 ${filename}` }));
             }
         } catch {
-            setCloseChatError('File upload failed. Please try again.');
-            clearTimeout(closeChatErrorTimerRef.current);
-            closeChatErrorTimerRef.current = setTimeout(() => setCloseChatError(null), 4000);
+            setFileError('File upload failed. Please try again.');
+            clearTimeout(fileErrorTimerRef.current);
+            fileErrorTimerRef.current = setTimeout(() => setFileError(null), 4000);
         } finally {
             setFileUploading(false);
         }
@@ -909,14 +975,34 @@ export default function LiveChat({ embedded = false }) {
                     {operatorName && <span className="text-sm text-surface-500 dark:text-surface-400">{operatorName}</span>}
                     {connectionLost && (
                         <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-1 rounded-lg">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            Reconnecting...
-                            <button
-                                onClick={() => { reconnectAttemptsRef.current = 0; setReconnectCount(c => c + 1); }}
-                                className="ml-1 underline hover:text-amber-900 dark:hover:text-amber-300"
-                            >
-                                Retry now
-                            </button>
+                            {duplicateTabDetected ? (
+                                <>
+                                    <X className="w-3 h-3" />
+                                    Opened in another tab
+                                    <button
+                                        onClick={() => {
+                                            setDuplicateTabDetected(false);
+                                            manualCloseRef.current = false;
+                                            reconnectAttemptsRef.current = 0;
+                                            setReconnectCount(c => c + 1);
+                                        }}
+                                        className="ml-1 underline hover:text-amber-900 dark:hover:text-amber-300"
+                                    >
+                                        Take over here
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    Reconnecting...
+                                    <button
+                                        onClick={() => { reconnectAttemptsRef.current = 0; setReconnectCount(c => c + 1); }}
+                                        className="ml-1 underline hover:text-amber-900 dark:hover:text-amber-300"
+                                    >
+                                        Retry now
+                                    </button>
+                                </>
+                            )}
                         </span>
                     )}
                     <button
@@ -1087,11 +1173,23 @@ export default function LiveChat({ embedded = false }) {
                                     </div>
                                 </div>
 
-                                {/* End Chat error banner */}
+                                {/* Error banners — contextual */}
                                 {closeChatError && (
                                     <div className="mx-4 mt-2 flex items-center gap-2 px-3 py-2 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-lg text-xs text-rose-700 dark:text-rose-400">
                                         <X className="w-3.5 h-3.5 flex-shrink-0" />
                                         {closeChatError}
+                                    </div>
+                                )}
+                                {sendError && (
+                                    <div className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg text-xs text-amber-700 dark:text-amber-400">
+                                        <X className="w-3.5 h-3.5 flex-shrink-0" />
+                                        {sendError}
+                                    </div>
+                                )}
+                                {fileError && (
+                                    <div className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 bg-orange-50 dark:bg-orange-500/10 border border-orange-200 dark:border-orange-500/30 rounded-lg text-xs text-orange-700 dark:text-orange-400">
+                                        <X className="w-3.5 h-3.5 flex-shrink-0" />
+                                        {fileError}
                                     </div>
                                 )}
 
@@ -1577,6 +1675,30 @@ export default function LiveChat({ embedded = false }) {
                                     Send
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Confirm modal (replaces window.confirm) ── */}
+            {confirmModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" role="dialog" aria-modal="true">
+                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
+                        <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">{confirmModal.title}</h3>
+                        <p className="text-sm text-surface-600 dark:text-surface-400 mb-5">{confirmModal.message}</p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setConfirmModal(null)}
+                                className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmModal.onConfirm}
+                                className="flex-1 py-2.5 text-sm font-medium rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                            >
+                                Continue
+                            </button>
                         </div>
                     </div>
                 </div>

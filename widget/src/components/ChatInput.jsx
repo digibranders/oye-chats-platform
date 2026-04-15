@@ -30,6 +30,7 @@ const ChatInput = ({
     onLiveTyping,
     onEndChat,
     onFilePick,
+    onPaste,
     fileSharing = false,
     isReconnecting = false,
     uploadProgress = null,
@@ -143,6 +144,7 @@ const ChatInput = ({
                             value={inputText}
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
+                            onPaste={onPaste}
                             onFocus={handleFocus}
                             onBlur={handleBlur}
                             placeholder={isWaiting ? 'Connecting you with the support team...' : inputPlaceholder}

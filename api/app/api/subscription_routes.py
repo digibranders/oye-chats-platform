@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.auth import get_current_client
+from app.api.auth import get_current_client_strict as get_current_client
 from app.db.models import Client, Invoice
 from app.db.session import get_session
 from app.services.plan_service import get_active_plans, get_client_plan, get_client_subscription
