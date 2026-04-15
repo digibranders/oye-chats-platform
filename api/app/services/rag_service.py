@@ -41,6 +41,27 @@ _EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 
 _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 
+# Safety-net regex: detect handoff language in the LLM's generated response.
+# When the intent classifier misses a handoff (timeout, typo, etc.) but the
+# main LLM still produces a handoff-style response (because the system prompt
+# told it to), this regex catches it and ensures suggest_handoff is set.
+_HANDOFF_RESPONSE_RE = re.compile(
+    r"(?i)("
+    r"team.{0,20}(?:will be with you|will (?:assist|help|get back|reach out|connect))"
+    r"|connect(?:ing)? you (?:with|to)"
+    r"|(?:right|be) with you (?:shortly|soon|momentarily|in a moment)"
+    r"|team member will (?:be with|assist|help|contact|reach out)"
+    r"|transfer(?:ring)? you to"
+    r"|(?:let me|i'll|i will|allow me to) connect you"
+    r")"
+)
+
+
+def _response_suggests_handoff(text: str) -> bool:
+    """Safety net: detect handoff language in the LLM's generated response."""
+    return bool(_HANDOFF_RESPONSE_RE.search(text))
+
+
 # Prompt injection guard — patterns that attempt to override the system prompt
 _INJECTION_PATTERNS = re.compile(
     r"(ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context))|"
@@ -859,6 +880,17 @@ def rag_pipeline(
             # Strip CTA marker before saving
             answer, _cta = _strip_cta_marker(answer, bant_config)
 
+            # Safety net: if the intent classifier missed handoff but the LLM
+            # still produced a handoff-style response, override suggest_handoff.
+            if not suggest_handoff:
+                _live = getattr(bot, "live_chat_enabled", True) if bot else True
+                if _live and _response_suggests_handoff(answer):
+                    suggest_handoff = True
+                    logger.info(
+                        "Handoff safety net triggered (non-stream) for session %s",
+                        session_id,
+                    )
+
             bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=answer, bot_id=bid)
 
             if lf and hasattr(bot_msg, "trace_id"):
@@ -1144,6 +1176,17 @@ async def rag_pipeline_stream(
 
         # Strip CTA marker from response before saving
         full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)
+
+        # Safety net: if the intent classifier missed handoff but the LLM
+        # still produced a handoff-style response, override suggest_handoff.
+        if not suggest_handoff and not _stream_error:
+            _live = getattr(bot, "live_chat_enabled", True) if bot else True
+            if _live and _response_suggests_handoff(full_answer):
+                suggest_handoff = True
+                logger.info(
+                    "Handoff safety net triggered (stream) for session %s",
+                    session_id,
+                )
 
         # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
         # Build it inside a try/finally so even a DB failure sends the frame.
