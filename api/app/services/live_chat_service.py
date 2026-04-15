@@ -157,8 +157,8 @@ class ConnectionManager:
 
     # ── Visitor connections ──
 
-    async def connect_visitor(self, session_id: str, ws: WebSocket):
-        await ws.accept()
+    async def connect_visitor(self, session_id: str, ws: WebSocket, subprotocol: str | None = None):
+        await ws.accept(subprotocol=subprotocol)
         self._ensure_background_tasks()
         self.visitor_connections[session_id] = ws
         logger.info(f"Visitor connected: {session_id}")
