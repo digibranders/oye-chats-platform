@@ -96,6 +96,19 @@ const initWidget = () => {
     console.log('[OyeChats] Root container already exists');
   }
 
+  // Take the widget host out of document flow to prevent mobile layout interference.
+  // Inline !important styles override any host-page CSS regardless of specificity.
+  container.style.cssText = [
+    'position:fixed !important',
+    'top:0 !important',
+    'left:0 !important',
+    'width:0 !important',
+    'height:0 !important',
+    'overflow:visible !important',
+    'z-index:2147483647 !important',
+    'pointer-events:none !important',
+  ].join(';');
+
   if (container) {
     // Reuse existing shadow root when re-initialized to avoid attachShadow crashes.
     const shadow = container.shadowRoot || container.attachShadow({ mode: 'open' });
@@ -122,6 +135,8 @@ const initWidget = () => {
       renderTarget.id = RENDER_TARGET_ID;
       shadow.appendChild(renderTarget);
     }
+    // Re-enable pointer events inside the shadow so the widget UI is interactive.
+    renderTarget.style.pointerEvents = 'auto';
 
     // Skip duplicate mounts when script executes more than once.
     if (renderTarget.dataset.oyechatsMounted === 'true' || renderTarget.hasChildNodes()) {
