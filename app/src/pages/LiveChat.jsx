@@ -498,9 +498,9 @@ export default function LiveChat({ embedded = false }) {
         };
     }, [isOnline]);
 
-    // Fallback polling — only runs when WS is disconnected.
-    // When WS is connected, real-time queue_update events are sufficient.
-    // This prevents stale REST data from flickering over fresh WS state.
+    // Queue polling — always runs as a safety net so lost WS messages
+    // don't leave the operator with a stale (empty) queue view.
+    // Faster cadence (8s) when WS is down; slower (20s) when connected.
     useEffect(() => {
         clearInterval(queuePollIntervalRef.current);
 
@@ -509,11 +509,9 @@ export default function LiveChat({ embedded = false }) {
             return undefined;
         }
 
-        // Only poll via REST when WebSocket is not connected
-        if (connectionLost) {
-            fetchQueueSnapshot();
-            queuePollIntervalRef.current = setInterval(fetchQueueSnapshot, 8000);
-        }
+        const pollInterval = connectionLost ? 8000 : 20000;
+        fetchQueueSnapshot();
+        queuePollIntervalRef.current = setInterval(fetchQueueSnapshot, pollInterval);
 
         return () => {
             clearInterval(queuePollIntervalRef.current);

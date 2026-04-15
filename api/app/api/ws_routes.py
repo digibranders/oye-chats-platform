@@ -96,6 +96,16 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
         return
     bot_key = resolved_key
 
+    # Determine the subprotocol to echo back so browsers don't reject the WS.
+    # When the client sends Sec-WebSocket-Protocol, the server MUST respond with
+    # one of the offered values or browsers may close the connection immediately.
+    accepted_subprotocol: str | None = None
+    for proto in ws.headers.get("sec-websocket-protocol", "").split(","):
+        proto = proto.strip()
+        if proto.startswith("bot-key."):
+            accepted_subprotocol = proto
+            break
+
     with get_session() as session:
         bot = session.execute(select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))).scalar_one_or_none()
         if not bot:
@@ -109,7 +119,7 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             await ws.close(code=4003, reason="Session does not belong to this bot")
             return
 
-    await manager.connect_visitor(session_id, ws)
+    await manager.connect_visitor(session_id, ws, subprotocol=accepted_subprotocol)
     heartbeat_task = asyncio.create_task(_heartbeat(ws))
 
     try:
@@ -279,7 +289,8 @@ async def operator_websocket(
     heartbeat_task = asyncio.create_task(_heartbeat(ws))
 
     try:
-        await _send_initial_waiting_queue(ws, client_id, department_id)
+        # Queue snapshot is already sent by connect_operator() via _notify_operator_queue.
+        # No additional send needed here — the manager is the single source of truth.
         while True:
             data = await ws.receive_json()
             msg_type = data.get("type")
