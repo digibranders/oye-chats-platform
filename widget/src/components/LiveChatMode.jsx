@@ -89,8 +89,9 @@ const LiveChatMode = ({
 
         const connect = () => {
             const wsUrlObj = new URL(`${wsUrl}/ws/chat/${sessionId}`);
-            wsUrlObj.searchParams.set('bot_key', botKey);
-            const socket = new WebSocket(wsUrlObj.toString());
+            // Use Sec-WebSocket-Protocol header instead of query params to avoid
+            // leaking the bot key in server access logs and browser history.
+            const socket = new WebSocket(wsUrlObj.toString(), [`bot-key.${botKey}`]);
 
             socket.onopen = () => {
                 console.log('[OyeChats] Live chat WebSocket connected');
