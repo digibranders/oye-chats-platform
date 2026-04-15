@@ -72,8 +72,42 @@ async def crawl_website(
 
     script_path = os.path.join(os.path.dirname(__file__), "crawler_script.py")
 
-    # Pass settings via env so the subprocess picks them up
-    env = {**os.environ}
+    # Build a minimal env for the subprocess.  The old code copied **all**
+    # parent env vars (including DB_URL, OPENAI_API_KEY, STRIPE_SECRET_KEY,
+    # etc.).  If a malicious website exploited the Playwright browser, those
+    # secrets would be accessible.  We now whitelist only what the crawler
+    # script actually reads plus the minimum required for Python/Playwright.
+    _SAFE_ENV_KEYS = {
+        # System essentials for Python / Playwright / OS
+        "PATH",
+        "HOME",
+        "USER",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "SHELL",
+        "PYTHONPATH",
+        "PYTHONHASHSEED",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_EXE",
+        # Playwright needs these
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "DISPLAY",
+        "XDG_RUNTIME_DIR",
+        # Crawler-specific settings
+        "MAX_CRAWL_PAGES",
+        "CRAWL_CONCURRENCY",
+        "CRAWL_PAGE_TIMEOUT",
+        "MAX_CRAWL_DEPTH",
+        "CRAWLER_JS_ALL_PAGES",
+        "CRAWLER_BROWSER_RECYCLE",
+    }
+    env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
     if max_pages is not None:
         env["MAX_CRAWL_PAGES"] = str(min(max(max_pages, 1), 100))
     if use_js:
