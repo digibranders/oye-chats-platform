@@ -21,6 +21,7 @@ _HANDOFF_KEYWORDS_RE = re.compile(
     r"|(?:i want|i need|i'd like) (?:a |to talk to |to speak (?:to|with) )?(?:a )?(?:human|person|agent|representative|support)"
     r"|escalate"
     r"|transfer (?:me |us )?to"
+    r"|how (?:can|do) (?:i|we) (?:connect|talk|speak|chat) (?:to|with)"
     r")\b"
 )
 
@@ -72,23 +73,23 @@ def _detect_handoff_intent_raw(question: str) -> bool:
     """Detect human handoff intent via LLM. Same pattern as sales intent detection."""
     prompt = f"""You are a handoff-intent classifier for a customer-facing chatbot.
 
-TASK: Determine whether the user wants to IMMEDIATELY be connected to a live human operator in THIS conversation — not merely asking about how to reach someone later.
+TASK: Determine whether the user wants to be connected to a live human operator or support team member.
 
 CLASSIFY AS YES when the user:
-- Explicitly requests a human, agent, operator, or real person RIGHT NOW
+- Explicitly requests a human, agent, operator, or real person
+- Asks to connect with, reach, or get in touch with the team or support
 - Expresses frustration with the AI and demands human help
-- Asks to be transferred, escalated, or connected to support NOW
+- Asks to be transferred, escalated, or connected to support
 - Says they are done talking to the bot and want a person
+- Uses phrasing like "how can I connect with the team" or "I want to talk to someone"
 
 CLASSIFY AS NO when the user:
-- Asks for contact information (email, phone, address) — they want DATA, not a live transfer
-- Asks "how can I contact [company]?" — this is an informational question
+- Asks for specific contact DATA (email address, phone number, office address) without requesting a live connection
 - Asks general help, product, or pricing questions
 - Makes small talk, greetings, or thank-you messages
 - Mentions "support" or "team" in a non-transfer context (e.g., "does your support team work weekends?")
-- Uses words like "escalate", "transfer", or "contact" while asking ABOUT a process, not requesting one
 
-KEY DISTINCTION: "Connect me with support" = YES (immediate action request). "How do I contact support?" = NO (informational query). The difference is whether the user wants action NOW or information ABOUT how to act later.
+KEY RULE: When the message is ambiguous between wanting contact info and wanting a live connection, classify as YES. A false handoff offer is far less harmful than ignoring a connection request.
 
 User message: "{question}"
 
@@ -114,22 +115,31 @@ def detect_handoff_intent_keywords(question: str) -> bool:
 def detect_handoff_intent(question: str) -> bool:
     """Hybrid handoff detection: keyword signal + LLM decision.
 
-    Every message gets an LLM analysis — keywords only influence the
-    fallback behaviour when the LLM is unavailable.
-
     Flow:
         1. Keyword regex pre-screens (instant, zero cost).
-        2. LLM makes the final YES/NO decision for ALL messages.
-        3. If LLM fails:
-           - keyword match existed  → trust keywords  (user was explicit)
-           - no keyword match       → return False     (ambiguous, safe default)
+        2. LLM makes the final YES/NO decision.
+        3. If LLM says YES → return True.
+        4. If LLM says NO but keywords matched → trust the explicit
+           keyword signal (override). Users who type "connect me with
+           your team" should never be silently ignored.
+        5. If LLM fails → fall back to keyword result.
     """
     has_keyword = detect_handoff_intent_keywords(question)
     if has_keyword:
         logger.info("Handoff keywords matched for: '%s' — requesting LLM confirmation", question)
 
     try:
-        return _detect_handoff_intent_raw(question)
+        llm_result = _detect_handoff_intent_raw(question)
+        if llm_result:
+            return True
+        # LLM said NO — but if keywords matched, trust the explicit signal
+        if has_keyword:
+            logger.info(
+                "LLM declined handoff for '%s' but keywords matched — overriding to YES",
+                question,
+            )
+            return True
+        return False
     except Exception as e:
         if has_keyword:
             logger.error("Handoff LLM failed for '%s': %s — trusting keyword match", question, e)
