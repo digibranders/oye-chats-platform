@@ -167,24 +167,46 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     );
 
     // ── Mobile viewport sizing (keyboard + iOS safe area) ──────────────────────
+    // Exposed imperatively so ChatInput's onBlur can force a re-sync when iOS
+    // doesn't fire a reliable visualViewport.resize on keyboard dismiss.
+    const resyncViewport = useCallback(() => {
+        const vv = window.visualViewport;
+        if (!vv || window.innerWidth >= 768 || !containerRef.current) return;
+        const container = containerRef.current;
+        container.style.height = `${vv.height}px`;
+        container.style.width = `${vv.width}px`;
+        container.style.top = `${vv.offsetTop}px`;
+        container.style.left = '0';
+        container.style.bottom = 'auto';
+    }, []);
+
     useEffect(() => {
         const vv = window.visualViewport;
         if (!vv) return;
 
         const isMobile = () => window.innerWidth < 768;
+        let rafId = null;
+        let settleTimer = null;
 
         const syncViewport = () => {
             if (!isMobile() || !containerRef.current) return;
-            const container = containerRef.current;
 
-            // Always use visualViewport.height as the canonical size on mobile.
-            // This correctly handles:
-            // - iOS Safari where body position:fixed breaks h-full/100%
-            // - Keyboard open/close (vv.height excludes keyboard)
-            // - URL bar show/hide on iOS (dvh handles this but JS is the fallback)
-            container.style.height = `${vv.height}px`;
-            container.style.top = `${vv.offsetTop}px`;
-            container.style.bottom = 'auto';
+            // Coalesce rapid resize events (iOS keyboard animation fires many)
+            // into a single rAF, then do a final authoritative read after the
+            // animation settles to avoid intermediate height oscillation.
+            if (rafId) cancelAnimationFrame(rafId);
+            if (settleTimer) clearTimeout(settleTimer);
+
+            rafId = requestAnimationFrame(() => {
+                rafId = null;
+                resyncViewport();
+
+                // Final settle pass — re-read once iOS keyboard animation completes
+                settleTimer = setTimeout(() => {
+                    settleTimer = null;
+                    resyncViewport();
+                }, 150);
+            });
         };
 
         const handleScroll = () => {
@@ -194,7 +216,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         // Set initial size immediately — covers iOS where dvh may not be supported
         // or where body scroll lock (position: fixed) breaks CSS height resolution
-        syncViewport();
+        resyncViewport();
 
         vv.addEventListener('resize', syncViewport);
         vv.addEventListener('scroll', handleScroll);
@@ -203,13 +225,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         return () => {
             vv.removeEventListener('resize', syncViewport);
             vv.removeEventListener('scroll', handleScroll);
+            if (rafId) cancelAnimationFrame(rafId);
+            if (settleTimer) clearTimeout(settleTimer);
             if (containerEl) {
                 containerEl.style.height = '';
+                containerEl.style.width = '';
                 containerEl.style.top = '';
+                containerEl.style.left = '';
                 containerEl.style.bottom = '';
             }
         };
-    }, []);
+    }, [resyncViewport]);
 
     // ── Prevent host page scroll-through on mobile ────────────────────────────────
     useEffect(() => {
@@ -239,7 +265,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 return;
             }
 
-            // Block all touch scrolling on non-messages areas (header, input, etc.)
+            // Allow native touch behavior on the input area (text selection,
+            // cursor positioning) — blocking it interferes with iOS keyboard.
+            if (e.target.closest?.('form, textarea')) return;
+
+            // Block all other touch scrolling (header, etc.)
             e.preventDefault();
         };
 
@@ -255,9 +285,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         };
     }, []);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    };
+    const scrollToBottom = useCallback(() => {
+        // Use scrollTo on the messages container instead of scrollIntoView,
+        // which can escape the Shadow DOM and scroll the host page on iOS Safari.
+        const messagesArea = containerRef.current?.querySelector('[data-messages-area]');
+        if (messagesArea) {
+            messagesArea.scrollTo({ top: messagesArea.scrollHeight, behavior: 'smooth' });
+        }
+    }, []);
 
     // ── Initialization ───────────────────────────────────────────────────────────
     useEffect(() => {
@@ -336,7 +371,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // Scroll when messages or live messages change
     useEffect(() => {
         scrollToBottom();
-    }, [streamingId, isTyping, messages.length, liveMessages.length]);
+    }, [streamingId, isTyping, messages.length, liveMessages.length, scrollToBottom]);
 
     // Inject "operator joined" system message when operator first connects
     useEffect(() => {
@@ -1633,6 +1668,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     isReconnecting={isLiveReconnecting}
                     uploadProgress={uploadProgress}
                     onInputFocus={scrollToBottom}
+                    onInputBlur={resyncViewport}
                 />
             )}
 

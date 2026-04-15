@@ -65,10 +65,13 @@
 
 /* Widget open/close — Scale from launcher (desktop), slide (mobile) */
 
-/* Static visible state — after open animation completes, no re-trigger on component switch */
+/* Static visible state — after open animation completes, no re-trigger on component switch.
+   Deliberately avoids `transform` — even an identity transform (scale(1)) on a position:fixed
+   element triggers compositing-layer promotion on iOS Safari, which can cause sub-pixel
+   width rounding errors (content clipped on one edge). */
 .widget-visible {
   opacity: 1;
-  transform: translateY(0) scale(1);
+  transform: none;
 }
 
 /* Initial mount state: hidden, no animation fires */
