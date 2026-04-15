@@ -33,11 +33,11 @@
 ### Core Product (RAG Chat)
 - **`chat_endpoint`** (0.733, 29 nodes) -- The main product flow:
   `User question -> X-Bot-Key auth -> hybrid search (vector + keyword) -> context build -> LiteLLM streaming -> BANT extraction (background) -> streamed response`
-- Largest flow by node count. Touches: auth, rag_service, llm_service, repository, sdr_service
+- Largest flow by node count. Touches: auth, rag_service, llm_service, repository, qualification_service
 
 ### Lead Qualification (Newest)
 - **`behavioral_signals_endpoint`** (0.845) -- Highest criticality. Captures visitor behavior for scoring.
-- **`chat_sdr_endpoint`** (0.791) -- Runs BANT/custom framework scoring on chat sessions.
+- **`_background_bant_extraction`** -- Runs BANT/custom framework scoring inline after each chat response.
 - **`generate_sdr_stream`** (0.770) -- Streaming SDR qualification responses.
 - **`_background_bant_extraction`** (0.741, 14 nodes) -- Background task extracting BANT signals from conversations.
 - **`meeting_booked_endpoint`** (0.783) -- Confirms meeting bookings from qualified leads.
@@ -68,7 +68,7 @@ When modifying code, check which flows are affected:
 | `llm_service.py` | `chat_endpoint`, `generate_sdr_stream`, `_background_bant_extraction` |
 | `live_chat_service.py` | `connect_operator`, `connect_visitor`, `accept_chat`, `disconnect_*` |
 | `repository.py` | Nearly all flows (DB access layer) |
-| `sdr_service.py` | `chat_sdr_endpoint`, `_background_bant_extraction`, `behavioral_signals_endpoint` |
+| `qualification_service.py` | `_background_bant_extraction`, `behavioral_signals_endpoint` |
 | `ws_routes.py` | All WebSocket flows (visitor, operator, legacy) |
 | `pipeline.py` | `run_web_ingestion` |
 | `webhook_service.py` | `behavioral_signals_endpoint`, `meeting_booked_endpoint` |

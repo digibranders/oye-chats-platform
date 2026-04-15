@@ -80,6 +80,10 @@ const ChatInput = ({
 
     const handleSubmit = (e) => {
         e?.preventDefault();
+        // Guard against double-sends while bot is generating a response.
+        // The textarea is intentionally NOT disabled during isTyping so that
+        // the mobile keyboard stays open and users can type ahead.
+        if (isTyping || isWaiting) return;
         if (isLive) {
             const text = inputText.trim();
             if (!text) return;
@@ -151,7 +155,7 @@ const ChatInput = ({
                             aria-label="Chat message input"
                             className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"
                             style={{ border: 'none', margin: 0, scrollbarWidth: 'none' }}
-                            disabled={isTyping || isWaiting || isReconnecting}
+                            disabled={isWaiting || isReconnecting}
                             ref={inputRef}
                             rows={1}
                         />

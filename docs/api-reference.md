@@ -238,10 +238,6 @@ Submit a lead capture form from the widget. **Auth: `X-Bot-Key`**
 }
 ```
 
-### POST /chat/sdr
-
-Trigger BANT (Budget, Authority, Need, Timeline) sales qualification analysis. **Auth: `X-Bot-Key`**
-
 ### POST /chat/feedback/{message_id}
 
 Submit feedback on a bot response. **Auth: `X-Bot-Key`**

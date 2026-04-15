@@ -26,7 +26,6 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
-from app.services.sdr_service import run_sdr_qualification
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 _SAFE_URL_SCHEME = re.compile(r"^https?://", re.IGNORECASE)
@@ -492,33 +491,6 @@ def get_lead_info_endpoint(session_id: str, bot: Bot = Depends(get_current_bot))
     except Exception as e:
         logger.error(f"Failed to fetch lead info for session {session_id}: {e}")
         return {"lead_info": None}  # Always non-breaking for the widget
-
-
-@router.post("/chat/sdr")
-def chat_sdr_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
-    """
-    SDR Qualification Endpoint: Qualifies leads using BANT framework.
-    Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
-    """
-    try:
-        session_id = _resolve_session_id(body.session_id, bot.id)
-
-        with get_session() as session:
-            ensure_chat_session(session, session_id, client_id=None, bot_id=bot.id)
-            session.commit()
-
-        result = run_sdr_qualification(bot, body.question, session_id, bot_id=bot.id)
-
-        if "error" in result:
-            logger.error(f"SDR qualification error: {result['error']}")
-            raise HTTPException(status_code=500, detail="Chat request failed. Please try again.")
-
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"SDR Chat failed: {e}")
-        raise HTTPException(status_code=500, detail="Chat request failed. Please try again.") from e
 
 
 @router.post("/chat/feedback/{message_id}")

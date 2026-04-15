@@ -190,6 +190,6 @@ The widget's `sendMessageStream()` function in `widget/src/services/api.js` pars
 | Embedding generation | `api/app/ingestion/embedder.py` |
 | RAG query pipeline | `api/app/services/rag_service.py` |
 | LLM service | `api/app/services/llm_service.py` |
-| BANT service | `api/app/services/sdr_service.py` |
+| BANT service | `api/app/services/rag_service.py` (extraction) + `qualification_service.py` (frameworks) |
 | Web crawler | `api/app/services/crawler_service.py` |
 | Document DB queries | `api/app/db/repository.py` |

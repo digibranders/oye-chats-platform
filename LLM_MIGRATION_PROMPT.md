@@ -28,11 +28,10 @@ The platform makes **3-4 LLM calls per chat turn**, all via `google-genai` SDK c
 2. **RAG response generation** — streaming response from retrieved context (`rag_service.py:rag_pipeline_stream()`)
 3. **BANT extraction** — extracts sales qualification data from conversation (`rag_service.py:extract_bant_from_conversation()`)
 4. **Intent detection** — detects sales intent in user queries (`intent_service.py:detect_sales_intent()`)
-5. **SDR mode** — dedicated sales qualification flow with structured JSON output (`sdr_service.py`)
 
 ### Current LLM Features Used
 - **Streaming** — `client.models.generate_content_stream()`
-- **JSON structured output** — `response_mime_type: "application/json"` with `response_schema: SDRResponse` (Pydantic model) in `sdr_service.py:run_sdr_qualification()`
+- **JSON structured output** — used in `rag_service.py:extract_qualification_signals()` via LiteLLM `response_format`
 - **Langfuse manual wrappers** — `generate_response_observed()` and `generate_response_stream_observed()` in `llm_service.py` manually create Langfuse observation contexts
 - **No function calling, no vision, no audio**
 
@@ -51,11 +50,7 @@ The platform makes **3-4 LLM calls per chat turn**, all via `google-genai` SDK c
 
 **Change to:** Replace with LiteLLM `completion()` and `completion()` with `stream=True`. The `_observed` wrappers can be **deleted entirely** because LiteLLM auto-reports to Langfuse via callback (`litellm.success_callback = ["langfuse"]`). The function signatures (`generate_response()`, `generate_response_stream()`) should stay the same so callers don't need changes, but internals switch to LiteLLM.
 
-### 3. `api/app/services/sdr_service.py`
-**Current:** Imports `google.genai` directly and creates its own client. Uses Gemini-specific structured output (`response_mime_type: "application/json"`, `response_schema: SDRResponse`).
-**Change to:** Use LiteLLM `completion()` with OpenAI-style `response_format` for structured output. The `BANTState` and `SDRResponse` Pydantic models stay the same. Remove the direct `genai.Client` initialization. The `run_sdr_qualification()` function needs to switch from Gemini's `config={"response_mime_type": ..., "response_schema": ...}` to OpenAI's structured output format via LiteLLM.
-
-### 4. `api/app/services/intent_service.py`
+### 3. `api/app/services/intent_service.py`
 **Current:** Imports `google.genai` directly, creates its own client, has manual Langfuse observation wrapper.
 **Change to:** Use the shared `generate_response()` from `llm_service.py` (which will use LiteLLM). Remove the direct `genai.Client`. Delete the manual Langfuse wrapper — LiteLLM handles it.
 
@@ -130,14 +125,14 @@ def generate_response_stream(prompt: str):
             yield content
 ```
 
-### LiteLLM Structured Output (replacing Gemini's response_schema in sdr_service.py)
+### LiteLLM Structured Output (used in rag_service.py for BANT extraction)
 ```python
 from litellm import completion
 
 response = completion(
     model=LLM_MODEL,
     messages=[{"role": "user", "content": prompt}],
-    response_format=SDRResponse,  # Pydantic model — OpenAI Structured Outputs
+    response_format=QualificationExtractionResult,  # Pydantic model — OpenAI Structured Outputs
 )
 ```
 
@@ -150,7 +145,7 @@ The `chat_routes.py` feedback endpoint still uses `get_langfuse()` → `lf.creat
 2. **`generate_response_stream_observed()`** in `llm_service.py` — LiteLLM auto-traces
 3. **Manual Langfuse observation contexts** in `rag_service.py` (the `start_as_current_observation` wrappers around LLM calls)
 4. **Manual Langfuse observation contexts** in `intent_service.py`
-5. **Direct `genai.Client` initialization** in `sdr_service.py` and `intent_service.py`
+5. **Direct `genai.Client` initialization** in `intent_service.py`
 6. **`google-genai` dependency** from `pyproject.toml`
 
 ## What Gets Simplified
@@ -175,14 +170,13 @@ As part of this migration, act as a **senior software engineer** and perform a t
 
 After the review, fix any issues found and ensure the final Langfuse integration (via LiteLLM callbacks + any remaining manual calls) is production-grade. The goal is clean, complete observability with zero impact on response latency.
 
-Key files to review: `api/app/core/langfuse_client.py`, `api/app/services/llm_service.py`, `api/app/services/rag_service.py`, `api/app/services/sdr_service.py`, `api/app/services/intent_service.py`, `api/app/api/chat_routes.py`
+Key files to review: `api/app/core/langfuse_client.py`, `api/app/services/llm_service.py`, `api/app/services/rag_service.py`, `api/app/services/intent_service.py`, `api/app/api/chat_routes.py`
 
 ## Testing & Verification
 
 1. **Unit test each LLM function** — `generate_response()`, `generate_response_stream()` return correct format
 2. **Test streaming** — widget receives chunks via SSE correctly
-3. **Test structured output** — SDR mode returns valid `SDRResponse` JSON
-4. **Test BANT extraction** — returns valid JSON with need/timeline/authority/budget
+3. **Test BANT extraction** — returns valid `QualificationExtractionResult` JSON with signals
 5. **Test intent detection** — returns YES/NO correctly
 6. **Test Langfuse integration** — traces appear in Langfuse dashboard with model name, token usage, cost
 7. **Test user feedback** — thumbs up/down in widget creates Langfuse score

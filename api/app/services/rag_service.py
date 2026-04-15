@@ -213,7 +213,7 @@ def _should_skip_bant_extraction(question: str, current_bant: dict, framework_co
         return True
     dimensions = _framework_dimensions(framework_config) or ["need", "budget", "authority", "timeline"]
     scores = [int(current_bant.get(f"{dim}_score", 0) or 0) for dim in dimensions]
-    return all(s >= 15 for s in scores)
+    return all(s >= 20 for s in scores)
 
 
 def _build_bant_state(chat_session: ChatSession | None) -> dict:
@@ -297,7 +297,23 @@ INSTRUCTIONS:
 - For each new signal, provide the exact user quote, a structured summary, confidence level, and a score (0-25) based on the rubric options above.
 - Match the score to the closest rubric option that fits the user's statement.
 - If no new signals are found, return an empty signals list.
-- Only extract signals from the USER's messages, not the bot's responses."""
+- Only extract signals from the USER's messages, not the bot's responses.
+- If a statement is ambiguous or vague, use confidence "low" and assign a conservative score from the lower end of the rubric.
+- Do not infer qualification signals the user did not explicitly state. Stick to what was said.
+
+NEGATIVE EXAMPLES — Do NOT extract signals from these:
+- "Hi, how are you?" — greeting, no signal
+- "Thanks, that's helpful" — acknowledgment, no signal
+- "Can you tell me more about your product?" — product inquiry, not a qualification statement
+- "Interesting" / "I see" / "Okay" — filler, no signal
+- "What integrations do you support?" — feature question, not BANT
+- "Let me think about it" — non-committal, no new information
+
+POSITIVE EXAMPLES — These ARE signals:
+- "We need to solve this by Q3" — Timeline signal
+- "Our budget is around $5K per month" — Budget signal
+- "I'm the VP of Engineering and I'll make the final call" — Authority signal
+- "We're losing $50K/month due to this problem" — Need signal (urgent)"""
 
         response = litellm.completion(
             model=LLM_MODEL,

@@ -121,7 +121,7 @@ User Question
   → Hybrid Search (vector similarity + full-text TSVECTOR — rag_service.py)
   → Context Building (top chunks + chat history)
   → LLM Generation (Google Gemini 2.5 Flash, streaming — llm_service.py)
-  → BANT Tracking (optional sales qualification — sdr_service.py)
+  → BANT Tracking (optional sales qualification — rag_service.py)
   → Response → Widget
 ```
 

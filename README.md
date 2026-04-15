@@ -286,7 +286,7 @@ platform/
 │   │   ├── services/            # Business logic
 │   │   │   ├── rag_service.py   # Hybrid RAG (vector + keyword)
 │   │   │   ├── llm_service.py   # Google Gemini integration
-│   │   │   ├── sdr_service.py   # BANT sales qualification
+│   │   │   ├── qualification_service.py # BANT/MEDDIC/CHAMP qualification frameworks
 │   │   │   ├── intent_service.py # Intent classification
 │   │   │   ├── crawler_service.py # Web crawling (Playwright)
 │   │   │   └── b2_service.py    # Backblaze B2 storage
