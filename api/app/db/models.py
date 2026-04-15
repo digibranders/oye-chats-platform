@@ -475,3 +475,232 @@ class CannedResponse(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     client = relationship("Client")
+
+
+# ── Pricing, Subscriptions & Billing ──────────────────────────────────────────
+
+
+class Plan(Base):
+    """Pricing plan tier — fully configurable from the super admin panel."""
+
+    __tablename__ = "plans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)  # "Free", "Starter", "Standard", "Enterprise"
+    slug = Column(String, unique=True, index=True, nullable=False)  # "free", "starter", "standard", "enterprise"
+    description = Column(Text, nullable=True)
+
+    # Pricing (stored in cents to avoid floating-point issues)
+    pricing_model = Column(
+        String, default="per_operator", server_default="per_operator", nullable=False
+    )  # per_operator|flat|custom
+    monthly_price_cents = Column(Integer, default=0, server_default="0", nullable=False)
+    annual_price_cents = Column(Integer, default=0, server_default="0", nullable=False)  # total annual price
+    annual_discount_percent = Column(Integer, default=30, server_default="30", nullable=False)
+
+    # Trial
+    trial_days = Column(Integer, default=14, server_default="14", nullable=False)
+
+    # Usage limits — JSONB allows flexible addition of new limit types without migrations
+    limits = Column(
+        JSONB,
+        nullable=False,
+        server_default='{"ai_messages": 250, "url_scans": 50, "live_chat_messages": 0, "email_summaries": 0, "email_notifications": 0, "knowledge_pages": 50, "storage_mb": 5, "chat_history_days": 7}',
+    )
+
+    # Feature flags — which features are available on this plan
+    features = Column(
+        JSONB,
+        nullable=False,
+        server_default='{"live_chat": false, "bant": false, "branding_removable": false, "api_access": false, "webhooks": false, "sso": false, "advanced_analytics": false, "custom_sla": false, "dedicated_csm": false, "whitelabel": false}',
+    )
+
+    # Overage pricing (cents per AI message beyond limit; 0 = hard cutoff)
+    overage_rate_cents = Column(Integer, default=0, server_default="0", nullable=False)
+
+    # Stripe integration
+    stripe_product_id = Column(String, nullable=True)
+    stripe_monthly_price_id = Column(String, nullable=True)
+    stripe_annual_price_id = Column(String, nullable=True)
+
+    # Razorpay integration
+    razorpay_plan_id_monthly = Column(String, nullable=True)
+    razorpay_plan_id_annual = Column(String, nullable=True)
+
+    # Display & ordering
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    is_default = Column(Boolean, default=False, server_default="false", nullable=False)  # auto-assigned to new clients
+    sort_order = Column(Integer, default=0, server_default="0", nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    subscriptions = relationship("Subscription", back_populates="plan")
+
+
+class Subscription(Base):
+    """Links a Client to a Plan — tracks billing state and payment provider details."""
+
+    __tablename__ = "subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("plans.id", ondelete="RESTRICT"), nullable=False)
+
+    # Subscription state
+    status = Column(
+        String, default="trialing", server_default="trialing", nullable=False
+    )  # trialing|active|past_due|canceled|paused|expired
+    billing_cycle = Column(String, default="monthly", server_default="monthly", nullable=False)  # monthly|annual
+    operator_quantity = Column(Integer, default=1, server_default="1", nullable=False)  # for per-operator pricing
+
+    # Billing period
+    current_period_start = Column(DateTime(timezone=True), nullable=True)
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
+
+    # Trial tracking
+    trial_start = Column(DateTime(timezone=True), nullable=True)
+    trial_end = Column(DateTime(timezone=True), nullable=True)
+
+    # Cancellation
+    canceled_at = Column(DateTime(timezone=True), nullable=True)
+    cancel_reason = Column(Text, nullable=True)
+    cancel_at_period_end = Column(Boolean, default=False, server_default="false", nullable=False)
+
+    # Payment provider IDs
+    payment_provider = Column(
+        String, default="stripe", server_default="stripe", nullable=False
+    )  # stripe|razorpay|manual
+    stripe_subscription_id = Column(String, unique=True, index=True, nullable=True)
+    stripe_customer_id = Column(String, index=True, nullable=True)
+    razorpay_subscription_id = Column(String, unique=True, index=True, nullable=True)
+    razorpay_customer_id = Column(String, index=True, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    client = relationship("Client", backref="subscriptions")
+    plan = relationship("Plan", back_populates="subscriptions")
+    invoices = relationship("Invoice", back_populates="subscription", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        # Only one active/trialing subscription per client
+        Index(
+            "ix_subscriptions_client_active",
+            "client_id",
+            unique=True,
+            postgresql_where=sqlalchemy.text("status IN ('active', 'trialing', 'past_due')"),
+        ),
+    )
+
+
+class UsageRecord(Base):
+    """Monthly usage tracking per client — reset at the start of each billing period."""
+
+    __tablename__ = "usage_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("plans.id", ondelete="SET NULL"), nullable=True)
+
+    # Billing period this record covers
+    period_start = Column(DateTime(timezone=True), nullable=False)
+    period_end = Column(DateTime(timezone=True), nullable=False)
+
+    # Usage counters
+    ai_messages_used = Column(Integer, default=0, server_default="0", nullable=False)
+    ai_messages_limit = Column(Integer, default=0, server_default="0", nullable=False)
+    live_chat_messages_used = Column(Integer, default=0, server_default="0", nullable=False)
+    live_chat_messages_limit = Column(Integer, default=0, server_default="0", nullable=False)
+    url_scans_used = Column(Integer, default=0, server_default="0", nullable=False)
+    url_scans_limit = Column(Integer, default=0, server_default="0", nullable=False)
+    email_summaries_used = Column(Integer, default=0, server_default="0", nullable=False)
+    email_summaries_limit = Column(Integer, default=0, server_default="0", nullable=False)
+    email_notifications_used = Column(Integer, default=0, server_default="0", nullable=False)
+    email_notifications_limit = Column(Integer, default=0, server_default="0", nullable=False)
+
+    # Snapshot counters (current totals, not per-period)
+    bots_count = Column(Integer, default=0, server_default="0", nullable=False)
+    operators_count = Column(Integer, default=0, server_default="0", nullable=False)
+    storage_used_mb = Column(Integer, default=0, server_default="0", nullable=False)
+    storage_limit_mb = Column(Integer, default=0, server_default="0", nullable=False)
+
+    # Overage tracking
+    overage_messages = Column(Integer, default=0, server_default="0", nullable=False)
+    overage_amount_cents = Column(Integer, default=0, server_default="0", nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    client = relationship("Client")
+    plan = relationship("Plan")
+
+    __table_args__ = (
+        # One usage record per client per billing period
+        Index("ix_usage_records_client_period", "client_id", "period_start", unique=True),
+    )
+
+
+class Invoice(Base):
+    """Payment history — synced from Stripe/Razorpay via webhooks."""
+
+    __tablename__ = "invoices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    subscription_id = Column(Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True)
+
+    # Amount
+    amount_cents = Column(Integer, nullable=False)
+    currency = Column(String, default="usd", server_default="usd", nullable=False)
+    status = Column(String, default="pending", server_default="pending", nullable=False)  # paid|pending|failed|refunded
+
+    # Provider references
+    stripe_invoice_id = Column(String, unique=True, index=True, nullable=True)
+    razorpay_payment_id = Column(String, unique=True, index=True, nullable=True)
+
+    # Links
+    invoice_url = Column(String, nullable=True)  # Hosted invoice page URL
+    pdf_url = Column(String, nullable=True)  # PDF download URL
+
+    # Billing period this invoice covers
+    period_start = Column(DateTime(timezone=True), nullable=True)
+    period_end = Column(DateTime(timezone=True), nullable=True)
+
+    # Description for line items (e.g. "Starter Plan - Monthly" or "Overage: 500 messages")
+    description = Column(Text, nullable=True)
+
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    client = relationship("Client")
+    subscription = relationship("Subscription", back_populates="invoices")
+
+
+class PaymentMethod(Base):
+    """Stored payment methods for a client — synced from Stripe/Razorpay."""
+
+    __tablename__ = "payment_methods"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Provider
+    provider = Column(String, nullable=False)  # stripe|razorpay
+    type = Column(String, nullable=False)  # card|upi|bank
+    last4 = Column(String(4), nullable=True)
+    brand = Column(String, nullable=True)  # visa|mastercard|amex|etc
+    expiry_month = Column(Integer, nullable=True)
+    expiry_year = Column(Integer, nullable=True)
+
+    is_default = Column(Boolean, default=False, server_default="false", nullable=False)
+
+    # Provider references
+    stripe_payment_method_id = Column(String, unique=True, index=True, nullable=True)
+    razorpay_token_id = Column(String, unique=True, index=True, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    client = relationship("Client")

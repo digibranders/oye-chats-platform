@@ -141,7 +141,18 @@ def send_email_async(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ):
-    """Fire-and-forget raw HTML email. Non-blocking."""
+    """Fire-and-forget raw HTML email. Non-blocking.
+
+    When WORKER_ENABLED=true, enqueues to ARQ (durable, retryable).
+    Otherwise uses thread pool / threading fallback (fire-and-forget).
+    """
+    from app.worker.enqueue import WORKER_ENABLED
+
+    if WORKER_ENABLED:
+        from app.worker.enqueue import enqueue_sync
+
+        enqueue_sync("task_send_email", to_email, subject, html_body, reply_to, sender_name)
+        return
 
     def _send():
         _send_brevo_email(to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name)
@@ -163,7 +174,18 @@ def send_template_async(
     reply_to: str | None = None,
     sender_name: str | None = None,
 ):
-    """Fire-and-forget Brevo template email. Non-blocking."""
+    """Fire-and-forget Brevo template email. Non-blocking.
+
+    When WORKER_ENABLED=true, enqueues to ARQ (durable, retryable).
+    Otherwise uses thread pool / threading fallback (fire-and-forget).
+    """
+    from app.worker.enqueue import WORKER_ENABLED
+
+    if WORKER_ENABLED:
+        from app.worker.enqueue import enqueue_sync
+
+        enqueue_sync("task_send_template_email", to_email, template_id, params, reply_to, sender_name)
+        return
 
     def _send():
         _send_brevo_template(to_email, template_id, params, reply_to=reply_to, sender_name=sender_name)

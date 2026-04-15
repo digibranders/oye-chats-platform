@@ -1,0 +1,40 @@
+# OyeChats API — systemd service (Gunicorn + Uvicorn workers)
+#
+# Install:
+#   sudo cp oyechats-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now oyechats-api
+#
+# Logs:
+#   journalctl -u oyechats-api -f
+
+[Unit]
+Description=OyeChats API (Gunicorn)
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=notify
+User=root
+WorkingDirectory=/opt/oyechats/platform/api
+EnvironmentFile=/opt/oyechats/platform/api/.env
+ExecStart=/root/.local/bin/uv run gunicorn app.main:app -c gunicorn.conf.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Auto-restart on crash with 5s backoff
+Restart=always
+RestartSec=5
+
+# Watchdog: kill if no response in 30s (Gunicorn sends heartbeat via sd_notify)
+WatchdogSec=30
+
+# Resource limits
+LimitNOFILE=65535
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=oyechats-api
+
+[Install]
+WantedBy=multi-user.target

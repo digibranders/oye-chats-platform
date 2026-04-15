@@ -22,6 +22,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
+def _verify_bot_ownership(bot_id: int | None, client_id: int) -> None:
+    """Raise 404 if bot_id is provided but does not belong to client_id."""
+    if bot_id is None:
+        return
+    with get_session() as session:
+        owned = session.execute(select(Bot.id).where(Bot.id == bot_id, Bot.client_id == client_id)).scalar_one_or_none()
+        if not owned:
+            raise HTTPException(status_code=404, detail="Bot not found.")
+
+
 @router.get("/qualification-funnel")
 def get_qualification_funnel(
     bot_id: int = Query(...),
@@ -112,9 +122,12 @@ def get_dashboard_analytics_endpoint(
 ):
     """Retrieve live aggregate statistics for the admin dashboard."""
     try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             stats = get_dashboard_stats(session, client_id=auth["client_id"], bot_id=bot_id, days=days)
             return stats
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch dashboard stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to load dashboard statistics.") from e
@@ -127,9 +140,12 @@ def get_activity_analytics_endpoint(
 ):
     """Retrieve message activity over time for charts."""
     try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             activity = get_message_activity(session, client_id=auth["client_id"], bot_id=bot_id)
             return activity
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch activity stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to load activity data.") from e
@@ -142,9 +158,12 @@ def get_top_questions_endpoint(
 ):
     """Retrieve the most common user queries."""
     try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             top_questions = get_top_questions(session, client_id=auth["client_id"], bot_id=bot_id)
             return top_questions
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch top questions: {e}")
         raise HTTPException(status_code=500, detail="Failed to load top questions.") from e
@@ -157,6 +176,7 @@ def get_visitors_endpoint(
 ):
     """Retrieve all visitor sessions for the admin dashboard."""
     try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             data = get_visitor_data(session, client_id=auth["client_id"], bot_id=bot_id)
 
@@ -198,6 +218,8 @@ def get_visitors_endpoint(
 
             return sorted(result_list, key=lambda x: x["last_active_at"], reverse=True)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch visitors: {e}")
         raise HTTPException(status_code=500, detail="Failed to load visitor data.") from e
@@ -210,8 +232,11 @@ def get_ratings_summary_endpoint(
 ):
     """Retrieve post-chat visitor rating summary (avg, total, distribution)."""
     try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             return get_ratings_summary(session, client_id=auth["client_id"], bot_id=bot_id)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch ratings summary: {e}")
         raise HTTPException(status_code=500, detail="Failed to load ratings summary.") from e
@@ -224,8 +249,11 @@ def get_resolution_summary_endpoint(
 ):
     """Retrieve post-chat visitor resolution summary (resolved, unresolved, rate)."""
     try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             return get_resolution_summary(session, client_id=auth["client_id"], bot_id=bot_id)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch resolution summary: {e}")
         raise HTTPException(status_code=500, detail="Failed to load resolution summary.") from e
@@ -238,6 +266,7 @@ def get_feedback_endpoint(
 ):
     """Retrieve all feedback for the admin dashboard."""
     try:
+        _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
             data = get_feedback_data(session, client_id=auth["client_id"], bot_id=bot_id)
 
@@ -255,6 +284,8 @@ def get_feedback_endpoint(
 
             return sorted(data, key=lambda x: x["created_at"], reverse=True)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch feedback logs: {e}")
         raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e

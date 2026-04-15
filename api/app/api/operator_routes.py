@@ -32,6 +32,27 @@ def _require_team_management_access(auth: dict) -> None:
         )
 
 
+# Role hierarchy: higher index = higher privilege.
+_ROLE_RANK = {"operator": 0, "admin": 1, "owner": 2}
+
+
+def _prevent_role_escalation(auth: dict, target_role: str) -> None:
+    """Block an operator from assigning a role higher than their own.
+
+    Direct client logins (auth type "client") are unrestricted — they are the
+    workspace owner by definition.  Operator-authenticated callers may only
+    assign roles up to their own level (e.g. an admin cannot create an owner).
+    """
+    if auth["type"] == "client":
+        return
+    caller_role = getattr(auth["entity"], "role", "operator")
+    if _ROLE_RANK.get(target_role, -1) > _ROLE_RANK.get(caller_role, 0):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You cannot assign the '{target_role}' role — it exceeds your own privilege level.",
+        )
+
+
 # ── Request / Response Models ──
 
 
@@ -96,6 +117,15 @@ class UpdateOperatorRequest(BaseModel):
     avatar_url: str | None = None
     max_concurrent_chats: int | None = None
     notification_preferences: dict | None = None
+
+    @field_validator("role")
+    @classmethod
+    def valid_role(cls, v):
+        if v is None:
+            return v
+        if v not in ("owner", "admin", "operator"):
+            raise ValueError("Role must be owner, admin, or operator.")
+        return v
 
     @field_validator("email")
     @classmethod
@@ -268,7 +298,16 @@ def list_operators(auth=Depends(get_current_client_or_operator)):
 def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_client_or_operator)):
     """Create a new operator with login credentials."""
     _require_team_management_access(auth)
+    _prevent_role_escalation(auth, request.role)
     client_id = auth["client_id"]
+
+    # ── Plan enforcement: check live_chat feature and operator limit ──
+    from app.services.usage_service import enforce_feature
+
+    with get_session() as db:
+        enforce_feature(db, client_id, "live_chat")
+        db.commit()
+
     with get_session() as session:
         # Check for duplicate email — scoped to this workspace only
         existing = session.execute(
@@ -319,6 +358,8 @@ async def update_operator(
 ):
     """Update an operator's profile (owner/admin only)."""
     _require_team_management_access(auth)
+    if request.role is not None:
+        _prevent_role_escalation(auth, request.role)
     department_changed = False
     new_department_id = None
 
@@ -344,6 +385,16 @@ async def update_operator(
                 raise HTTPException(status_code=409, detail="An operator with this email already exists.")
             operator.email = request.email  # already normalized by field_validator
         if request.role is not None:
+            # Only workspace owners (client login or owner-role operators) can
+            # assign the "owner" role.  Admins can assign admin/operator but not
+            # escalate to owner.
+            if request.role == "owner" and auth["type"] != "client":
+                caller_role = getattr(auth["entity"], "role", "operator")
+                if caller_role != "owner":
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Only workspace owners can assign the owner role.",
+                    )
             operator.role = request.role
         if request.department_id is not None:
             # Track department change for dynamic WS update

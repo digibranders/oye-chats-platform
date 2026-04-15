@@ -35,11 +35,23 @@ def sign_payload(payload_bytes: bytes, secret: str) -> str:
 
 
 def queue_webhook_delivery(webhook_id: int, event_type: str, data: dict, attempt: int = 1) -> None:
-    """Queue a delivery attempt for exactly one webhook."""
+    """Queue a delivery attempt for exactly one webhook.
+
+    When WORKER_ENABLED=true, uses the ARQ task queue (durable, retryable).
+    Otherwise falls back to the in-process thread pool (fire-and-forget).
+    """
     if event_type not in SUPPORTED_EVENTS:
         logger.warning(f"Ignoring unsupported webhook event: {event_type}")
         return
-    submit_background(_deliver_webhook, webhook_id, event_type, data, attempt)
+
+    from app.worker.enqueue import WORKER_ENABLED
+
+    if WORKER_ENABLED:
+        from app.worker.enqueue import enqueue_sync
+
+        enqueue_sync("task_deliver_webhook", webhook_id, event_type, data, attempt)
+    else:
+        submit_background(_deliver_webhook, webhook_id, event_type, data, attempt)
 
 
 def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:

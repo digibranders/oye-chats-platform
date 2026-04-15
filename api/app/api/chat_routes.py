@@ -249,6 +249,15 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     Protocol: METADATA:{json} → text chunks → FINAL_METADATA:{json}
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
+    # ── Plan enforcement: check AI message limit ──
+    from app.services.usage_service import enforce_limit, increment_usage
+
+    with get_session() as db:
+        enforce_limit(db, bot.client_id, "ai_messages")
+        # Increment usage immediately (counts AI response about to be generated)
+        increment_usage(db, bot.client_id, "ai_messages")
+        db.commit()
+
     ip_address, formatted_device = _parse_request_context(request)
     location = f"IP: {ip_address}"
     session_id = _resolve_session_id(body.session_id, bot.id)

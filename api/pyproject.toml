@@ -42,8 +42,11 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "slowapi>=0.1.9",
     "redis[hiredis]>=5.0.0,<6.0.0",
+    "gunicorn>=22.0.0",
+    "arq>=0.26.0",
     "flashrank>=0.2.9",
     "trafilatura>=2.0.0",
+    "stripe>=11.0.0",
 ]
 
 [dependency-groups]

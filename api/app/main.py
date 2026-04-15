@@ -27,7 +27,10 @@ from app.api.document_routes import router as document_router
 from app.api.lead_routes import router as lead_router
 from app.api.offline_message_routes import router as offline_message_router
 from app.api.operator_routes import router as operator_router
+from app.api.subscription_routes import router as subscription_router
+from app.api.superadmin_plan_routes import router as superadmin_plan_router
 from app.api.superadmin_routes import router as superadmin_router
+from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
@@ -85,6 +88,9 @@ app.include_router(canned_response_router)
 app.include_router(ws_router)
 app.include_router(client_router)
 app.include_router(webhook_router)
+app.include_router(subscription_router)
+app.include_router(superadmin_plan_router)
+app.include_router(webhook_billing_router)
 
 # --- Exception Handlers ---
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
@@ -133,26 +139,65 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 @app.get("/health", tags=["system"])
 def health_check():
-    """Server health check with DB connectivity status. Used by deploy scripts and monitoring."""
+    """Full readiness check: DB + Redis + connection pool stats.
+
+    Returns 200 if all dependencies are reachable, 503 if any are degraded.
+    Used by deploy scripts, Nginx, and external uptime monitors.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app.core.cache import get_redis
+
+    # -- Database check --
     db_ok = False
+    pool_stats = {}
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
             db_ok = True
+        pool = engine.pool
+        pool_stats = {
+            "pool_size": pool.size(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+            "checked_in": pool.checkedin(),
+        }
     except Exception:
         pass
 
-    status_code = 200 if db_ok else 503
-    from fastapi.responses import JSONResponse
+    # -- Redis check --
+    redis_ok = False
+    try:
+        client = get_redis()
+        if client is not None:
+            client.ping()
+            redis_ok = True
+    except Exception:
+        pass
+
+    all_ok = db_ok and redis_ok
+    status_code = 200 if all_ok else 503
 
     return JSONResponse(
         status_code=status_code,
         content={
-            "status": "healthy" if db_ok else "degraded",
+            "status": "healthy" if all_ok else "degraded",
             "database": "connected" if db_ok else "unreachable",
+            "redis": "connected" if redis_ok else "unreachable",
+            "pool": pool_stats,
             "version": "1.0.0",
         },
     )
+
+
+@app.get("/health/live", tags=["system"])
+def liveness_probe():
+    """Ultra-lightweight liveness probe. No DB/Redis calls.
+
+    Returns 200 if the process is alive. Used by external uptime monitors
+    (BetterStack, UptimeRobot) where low-latency checks are preferred.
+    """
+    return {"alive": True}
 
 
 # --- Lifecycle Events ---
@@ -165,12 +210,15 @@ async def shutdown_services():
 
     await manager.shutdown()
 
-    try:
-        from app.services.webhook_service import stop_retry_worker
+    from app.worker.enqueue import WORKER_ENABLED as _WORKER_ON
 
-        stop_retry_worker()
-    except Exception as e:
-        logger.warning(f"Webhook retry worker shutdown skipped: {e}")
+    if not _WORKER_ON:
+        try:
+            from app.services.webhook_service import stop_retry_worker
+
+            stop_retry_worker()
+        except Exception as e:
+            logger.warning(f"Webhook retry worker shutdown skipped: {e}")
 
     from app.core.langfuse_client import flush_langfuse
     from app.core.thread_pool import shutdown_pool
@@ -197,12 +245,19 @@ def backfill_session_client_ids():
     except Exception as e:
         logger.warning(f"Session client_id backfill skipped: {e}")
 
-    try:
-        from app.services.webhook_service import start_retry_worker
+    # Start the in-process webhook retry poller only when the ARQ worker is
+    # NOT enabled. When WORKER_ENABLED=true, ARQ cron handles retries.
+    from app.worker.enqueue import WORKER_ENABLED as _WORKER_ON
 
-        start_retry_worker()
-    except Exception as e:
-        logger.warning(f"Webhook retry worker startup skipped: {e}")
+    if not _WORKER_ON:
+        try:
+            from app.services.webhook_service import start_retry_worker
+
+            start_retry_worker()
+        except Exception as e:
+            logger.warning(f"Webhook retry worker startup skipped: {e}")
+    else:
+        logger.info("Webhook retries handled by ARQ worker (skipping in-process poller)")
 
 
 # --- Root & File Serving ---

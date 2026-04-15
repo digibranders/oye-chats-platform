@@ -3,11 +3,10 @@
 Backend storage is chosen at startup:
 - If ``REDIS_URL`` env var is set, Redis is used for globally consistent limits
   across all uvicorn workers.
-- Otherwise, falls back to in-memory counters.  With N workers the effective
-  limit is ~N× the configured value; this is acceptable for single-server
-  deployments where the primary goal is protecting LLM API costs.
+- Otherwise, falls back to in-memory counters (development only).
 
-Upgrade path: set ``REDIS_URL=redis://localhost:6379`` in production .env.
+Redis is **required** in production (enforced by ``config.py``).  The in-memory
+fallback exists solely for local development convenience.
 """
 
 import logging
@@ -20,23 +19,18 @@ from starlette.requests import Request
 logger = logging.getLogger(__name__)
 
 _REDIS_URL = os.getenv("REDIS_URL")
+_APP_ENV = os.getenv("APP_ENV", "development")
 
 if _REDIS_URL:
     _storage_uri = _REDIS_URL
-    logger.info(f"Rate limiter: Redis backend ({_REDIS_URL})")
+    logger.info("Rate limiter: Redis backend")
 else:
     _storage_uri = "memory://"
-    import multiprocessing
-
-    _workers = int(os.getenv("WEB_CONCURRENCY", multiprocessing.cpu_count()))
-    if _workers > 1:
-        logger.warning(
-            f"Rate limiter: in-memory backend with {_workers} workers — "
-            f"effective limits are ~{_workers}× configured values. "
-            "Set REDIS_URL for global enforcement."
-        )
+    if _APP_ENV == "production":
+        # config.py should have already raised — this is a defensive guard.
+        logger.error("Rate limiter: in-memory backend in production — Redis should be required!")
     else:
-        logger.info("Rate limiter: in-memory backend (single worker)")
+        logger.info("Rate limiter: in-memory backend (dev mode)")
 
 
 def key_from_bot_key(request: Request) -> str:
