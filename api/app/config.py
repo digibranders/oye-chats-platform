@@ -107,15 +107,21 @@ else:
     logger.info("Email notifications disabled (no BREVO_API_KEY)")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Redis (optional — enables distributed rate limiting + caching)
+# Redis (required in production — enables distributed rate limiting + caching)
 # ─────────────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL")
 REDIS_ENABLED = bool(REDIS_URL)
 
+if APP_ENV == "production" and not REDIS_URL:
+    raise RuntimeError(
+        "REDIS_URL is required in production. "
+        "Set it in .env (e.g. REDIS_URL=rediss://...) or use APP_ENV=development for local dev."
+    )
+
 if REDIS_ENABLED:
     logger.info("Redis caching enabled (Upstash)")
 else:
-    logger.info("Redis not configured — caching disabled, rate limiter uses in-memory backend")
+    logger.info("Redis not configured — caching disabled, rate limiter uses in-memory backend (dev only)")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Billing (Stripe + Razorpay)

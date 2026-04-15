@@ -23,4 +23,10 @@ RUN uv run playwright install --with-deps chromium
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Copy gunicorn config
+COPY gunicorn.conf.py .
+
+# Use gunicorn with uvicorn workers for process management (auto-restart,
+# memory recycling). Worker count controlled via WEB_CONCURRENCY env var.
+# For bare-metal (no Nginx), override GUNICORN_BIND=0.0.0.0:8000.
+CMD ["uv", "run", "gunicorn", "app.main:app", "-c", "gunicorn.conf.py"]

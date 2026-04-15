@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any
 
-from app.config import REDIS_URL
+from app.config import APP_ENV, REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,12 @@ def get_redis():
         _redis_client.ping()
         logger.info("Redis connection established")
         return _redis_client
-    except Exception:
+    except Exception as exc:
+        if APP_ENV == "production":
+            logger.error("Redis connection failed in production — this is a critical dependency", exc_info=True)
+            raise RuntimeError(
+                "Redis connection failed in production. Check REDIS_URL and ensure Redis is reachable."
+            ) from exc
         logger.warning("Redis connection failed — caching disabled for this process", exc_info=True)
         _redis_unavailable = True
         _redis_client = None

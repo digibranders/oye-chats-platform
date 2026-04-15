@@ -252,12 +252,50 @@ def ingest_documents(
     logger.info(
         f"Starting background ingestion for {len(saved_files)} files for client {client_id}, bot_id={bot_id}..."
     )
-    background_tasks.add_task(_run_ingestion_background, client_id, DOCUMENTS_DIR, bot_id)
-    return {
+
+    # Use ARQ worker when enabled, otherwise fall back to FastAPI BackgroundTasks
+    from app.worker.enqueue import WORKER_ENABLED
+
+    job_id = None
+    if WORKER_ENABLED:
+        from app.worker.enqueue import enqueue_sync
+
+        job_id = enqueue_sync("task_ingest_documents", client_id, DOCUMENTS_DIR, bot_id)
+    else:
+        background_tasks.add_task(_run_ingestion_background, client_id, DOCUMENTS_DIR, bot_id)
+
+    response: dict = {
         "message": "Documents are being processed",
         "files_uploaded": saved_files,
         "status": "processing",
     }
+    if job_id:
+        response["job_id"] = job_id
+    return response
+
+
+@router.get("/ingest/status/{job_id}")
+async def ingest_status_endpoint(
+    job_id: str,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Poll the status of a background ingestion job.
+
+    Returns the job's current state: queued, in_progress, complete, or failed.
+    Only available when WORKER_ENABLED=true (ARQ task queue).
+    """
+    from app.worker.enqueue import WORKER_ENABLED
+
+    if not WORKER_ENABLED:
+        raise HTTPException(
+            status_code=501,
+            detail="Job status tracking requires WORKER_ENABLED=true",
+        )
+
+    from app.worker.enqueue import get_job_status
+
+    status = await get_job_status(job_id)
+    return status
 
 
 @router.get("/crawl/progress")

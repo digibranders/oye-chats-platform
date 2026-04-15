@@ -1,0 +1,36 @@
+# OyeChats Background Worker — systemd service (ARQ)
+#
+# Install:
+#   sudo cp oyechats-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now oyechats-worker
+#
+# Logs:
+#   journalctl -u oyechats-worker -f
+
+[Unit]
+Description=OyeChats Background Worker (ARQ)
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/oyechats/platform/api
+EnvironmentFile=/opt/oyechats/platform/api/.env
+ExecStart=/root/.local/bin/uv run arq app.worker.settings.WorkerSettings
+
+# Auto-restart on crash with 5s backoff
+Restart=always
+RestartSec=5
+
+# Resource limits
+LimitNOFILE=65535
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=oyechats-worker
+
+[Install]
+WantedBy=multi-user.target

@@ -79,6 +79,7 @@ jobs:
               "RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED}" \
               "CHUNK_ENRICHMENT_ENABLED=${CHUNK_ENRICHMENT_ENABLED}" \
               "CRAWLER_JS_ALL_PAGES=${CRAWLER_JS_ALL_PAGES}" \
+              "WORKER_ENABLED=true" \
               > api/.env
 
             # Sync dependencies
@@ -93,11 +94,21 @@ jobs:
             # Run migrations
             /root/.local/bin/uv run alembic upgrade head
 
-            # Restart service
+            # Restart services
             systemctl restart oyechats-api
 
+            # Restart background worker if service is installed
+            if systemctl is-enabled oyechats-worker 2>/dev/null; then
+              systemctl restart oyechats-worker
+            fi
+
+            # Reload Nginx if config exists (Phase 1 scalability: reverse proxy)
+            if [ -f /etc/nginx/sites-enabled/oyechats-api.conf ]; then
+              nginx -t && systemctl reload nginx
+            fi
+
             # Health check — wait for server startup then retry
-            # Server takes ~25s to start (2 uvicorn workers + Sentry + DB init)
+            # Server takes ~25s to start (Gunicorn + Sentry + DB init)
             echo "⏳ Waiting 15s for server startup..."
             sleep 15
             set +e  # Temporarily disable errexit for the retry loop
