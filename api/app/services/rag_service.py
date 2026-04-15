@@ -539,7 +539,7 @@ CURRENT QUALIFICATION STATE:
 
     if live_chat_enabled:
         handoff_section = """
-LIVE SUPPORT: If the user asks to speak with a person, respond warmly in 1-2 sentences and confirm they're being connected. Say "our team" — never "human team". Don't answer their question after they ask for a person."""
+LIVE SUPPORT: If the user asks to speak with a person or connect with the team, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly — do not say the connection is already established. Say "our team" — never "human team". Don't answer their question after they ask for a person."""
         handoff_offer = "Offer to connect with a team member."
     else:
         handoff_section = """

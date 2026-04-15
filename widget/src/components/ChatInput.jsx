@@ -35,6 +35,7 @@ const ChatInput = ({
     uploadProgress = null,
     // Mobile keyboard
     onInputFocus,
+    onInputBlur,
 }) => {
     const messages = settings?.widget_messages || {};
     const inputPlaceholder = messages.input_placeholder || placeholder || 'Write a message...';
@@ -51,6 +52,15 @@ const ChatInput = ({
         setTimeout(() => {
             onInputFocus?.();
         }, 350);
+    };
+
+    const handleBlur = () => {
+        // On iOS, visualViewport.resize doesn't always fire reliably when the
+        // keyboard is dismissed. Force a viewport re-sync after the keyboard
+        // dismiss animation completes so the widget restores to full height.
+        setTimeout(() => {
+            onInputBlur?.();
+        }, 400);
     };
 
     const handleChange = (e) => {
@@ -134,6 +144,7 @@ const ChatInput = ({
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
                             onFocus={handleFocus}
+                            onBlur={handleBlur}
                             placeholder={isWaiting ? 'Connecting you with the support team...' : inputPlaceholder}
                             aria-label="Chat message input"
                             className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"
