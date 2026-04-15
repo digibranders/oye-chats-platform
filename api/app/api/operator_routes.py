@@ -140,15 +140,6 @@ class UpdateOperatorRequest(BaseModel):
             raise ValueError("Please enter a valid email address.")
         return v
 
-    @field_validator("role")
-    @classmethod
-    def valid_role(cls, v):
-        if v is None:
-            return v
-        if v not in ("owner", "admin", "operator"):
-            raise ValueError("Role must be owner, admin, or operator.")
-        return v
-
 
 class CreateDepartmentRequest(BaseModel):
     name: str
