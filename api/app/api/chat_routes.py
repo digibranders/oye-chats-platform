@@ -1,5 +1,6 @@
 import contextlib
 import html as html_lib
+import ipaddress
 import json
 import logging
 import re
@@ -139,17 +140,29 @@ def _parse_request_context(fastapi_request: Request):
 def _resolve_and_update_location(session_id: str, ip_address: str):
     """Fire-and-forget: resolve geolocation from IP and update the session in DB."""
     try:
-        # Resolve public IP if local
-        is_local = ip_address in ("127.0.0.1", "localhost", "::1", "")
-        is_private = ip_address.startswith(("10.", "192.168.", "172."))
+        # Validate IP format to prevent SSRF via crafted X-Forwarded-For values.
+        # Without this, an attacker could inject arbitrary strings (e.g. path
+        # traversal, newlines for header injection) into the geolocation URLs.
+        ip_address = ip_address.strip()
+        try:
+            parsed_ip = ipaddress.ip_address(ip_address)
+        except ValueError:
+            logger.warning("Invalid IP address rejected: %r", ip_address[:100])
+            return
+
+        is_local = parsed_ip.is_loopback or ip_address == ""
+        is_private = parsed_ip.is_private
         if is_local or is_private:
             try:
                 with urllib.request.urlopen("https://api.ipify.org?format=json", timeout=2.0) as resp:
-                    ip_address = json.loads(resp.read().decode()).get("ip", ip_address)
-            except Exception:
+                    resolved = json.loads(resp.read().decode()).get("ip", "")
+                # Re-validate the resolved IP before using it in URLs
+                ipaddress.ip_address(resolved)
+                ip_address = resolved
+            except (Exception, ValueError):
                 return
 
-        if not ip_address or ip_address in ("127.0.0.1", "localhost", "::1"):
+        if not ip_address:
             return
 
         location = None
