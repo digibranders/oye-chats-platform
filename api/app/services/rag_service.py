@@ -505,6 +505,7 @@ def build_hybrid_prompt(
     company_name: str | None = None,
     company_description: str | None = None,
     bot_name: str | None = None,
+    meeting_booking_enabled: bool = False,
 ) -> str:
     """Construct the Hybrid RAG system prompt with BANT qualification support."""
 
@@ -583,6 +584,11 @@ LIVE SUPPORT: If the user asks to speak with a person or connect with the team, 
 SUPPORT REQUESTS: If the user asks for a person, warmly direct them to the contact form in the menu above. Say the team will follow up by email. Say "our team" — never "human team"."""
         handoff_offer = "Direct them to the contact form in the menu above."
 
+    meeting_section = ""
+    if meeting_booking_enabled:
+        meeting_section = """
+MEETING BOOKING: When the visitor expresses interest in scheduling a meeting, demo, call, or appointment, include the token [MEETING_CARD] on its own line at the end of your response. This will trigger an inline booking calendar in the chat. Only include [MEETING_CARD] once per conversation — do not repeat it if a booking was already offered."""
+
     # Build optional sections (truncate to prevent prompt bloat)
     if custom_system_prompt:
         sanitized_prompt = _sanitize_system_prompt(custom_system_prompt)
@@ -625,6 +631,7 @@ RULES:
 8. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. Never tell visitors that information is "unavailable" or "not available right now" — always pivot to what you know and offer a path forward.{custom_prompt_section}{tone_section}{company_section}
 {qualification_section}
 {handoff_section}
+{meeting_section}
 
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
@@ -886,6 +893,7 @@ def rag_pipeline(
                 company_name=_company_name,
                 company_description=_company_desc,
                 bot_name=_bot_name,
+                meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
             )
 
             answer = generate_response(
@@ -1165,6 +1173,7 @@ async def rag_pipeline_stream(
             company_name=_company_name,
             company_description=_company_desc,
             bot_name=_bot_name,
+            meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -1193,6 +1202,32 @@ async def rag_pipeline_stream(
         # Strip CTA marker from response before saving
         full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)
 
+        # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
+        # Build it inside a try/finally so even a DB failure sends the frame.
+        bot_msg_id = None
+        final_meta: dict = {}
+
+        # Detect [MEETING_CARD] token from the LLM response
+        _meeting_card_re = re.compile(r"\[MEETING_CARD\]")
+        if _meeting_card_re.search(full_answer):
+            full_answer = _meeting_card_re.sub("", full_answer).rstrip()
+            if bot and getattr(bot, "meeting_booking_enabled", False):
+                provider = getattr(bot, "meeting_provider", None) or "calendly"
+                active_url = (
+                    getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
+                )
+                if active_url:
+                    has_booking = (
+                        session.query(MeetingBooking)
+                        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
+                        .first()
+                        is not None
+                    )
+                    if not has_booking:
+                        final_meta["show_booking"] = True
+                        final_meta["calendly_url"] = active_url
+                        final_meta["meeting_provider"] = provider
+
         # Safety net: if the intent classifier missed handoff but the LLM
         # still produced a handoff-style response, override suggest_handoff.
         if not suggest_handoff and not _stream_error:
@@ -1203,11 +1238,6 @@ async def rag_pipeline_stream(
                     "Handoff safety net triggered (stream) for session %s",
                     session_id,
                 )
-
-        # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
-        # Build it inside a try/finally so even a DB failure sends the frame.
-        bot_msg_id = None
-        final_meta: dict = {}
         try:
             if not _stream_error or full_answer:
                 bot_msg = add_chat_message(
@@ -1255,21 +1285,23 @@ async def rag_pipeline_stream(
                     final_meta["suggest_handoff"] = True
                 if cta_data:
                     final_meta["cta"] = cta_data
-                if (
-                    bot
-                    and getattr(bot, "meeting_booking_enabled", False)
-                    and getattr(bot, "calendly_url", None)
-                    and (chat_session.bant_tier or "unqualified") == "sql"
-                ):
-                    has_booking = (
-                        session.query(MeetingBooking)
-                        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
-                        .first()
-                        is not None
+                if bot and getattr(bot, "meeting_booking_enabled", False):
+                    provider = getattr(bot, "meeting_provider", None) or "calendly"
+                    active_url = (
+                        getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
                     )
-                    if not has_booking:
-                        final_meta["show_booking"] = True
-                        final_meta["calendly_url"] = bot.calendly_url
+                    if active_url:
+                        show_for_sql = (chat_session.bant_tier or "unqualified") == "sql"
+                        has_booking = (
+                            session.query(MeetingBooking)
+                            .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
+                            .first()
+                            is not None
+                        )
+                        if show_for_sql and not has_booking:
+                            final_meta["show_booking"] = True
+                            final_meta["calendly_url"] = active_url
+                            final_meta["meeting_provider"] = provider
         except Exception as cleanup_err:
             logger.error(f"Post-stream cleanup failed for session {session_id}: {cleanup_err}", exc_info=True)
             with contextlib.suppress(Exception):
