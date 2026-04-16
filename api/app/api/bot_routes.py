@@ -105,6 +105,8 @@ class UpdateBotRequest(BaseModel):
     handoff_delay_seconds: int | None = None
     calendly_url: str | None = None
     meeting_booking_enabled: bool | None = None
+    meeting_provider: str | None = Field(None, pattern="^(calendly|zcal)$")
+    zcal_url: str | None = None
 
 
 class BotResponse(BaseModel):
@@ -151,6 +153,8 @@ class BotResponse(BaseModel):
     handoff_delay_seconds: int = 0
     calendly_url: str | None = None
     meeting_booking_enabled: bool = False
+    meeting_provider: str | None = None
+    zcal_url: str | None = None
     is_active: bool
     created_at: str
 
@@ -766,6 +770,8 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     handoff_delay_seconds=b.handoff_delay_seconds or 0,
                     calendly_url=b.calendly_url,
                     meeting_booking_enabled=b.meeting_booking_enabled,
+                    meeting_provider=b.meeting_provider,
+                    zcal_url=b.zcal_url,
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
                 )
@@ -898,6 +904,8 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             handoff_delay_seconds=bot.handoff_delay_seconds or 0,
             calendly_url=bot.calendly_url,
             meeting_booking_enabled=bot.meeting_booking_enabled,
+            meeting_provider=bot.meeting_provider,
+            zcal_url=bot.zcal_url,
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )
