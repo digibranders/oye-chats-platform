@@ -45,12 +45,21 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                 if (event.origin !== 'https://zcal.co') return;
                 const data = event?.data;
                 if (!data || typeof data !== 'object') return;
-                if (data.type === 'zcal:booking_confirmed' || data.event === 'zcal.booking_confirmed') {
+                // Zcal's postMessage API is not publicly documented.
+                // We check known patterns; if none match, any message from
+                // zcal.co origin with a truthy "booked"/"confirmed" signal
+                // is treated as a successful booking.
+                const isBooking =
+                    data.type === 'zcal:booking_confirmed' ||
+                    data.event === 'zcal.booking_confirmed' ||
+                    data.event === 'booking.confirmed' ||
+                    data.booked === true;
+                if (isBooking) {
                     onBooked?.({
                         session_id: sessionId,
-                        booking_url: data.payload?.booking_url || calendlyUrl,
-                        attendee_email: data.payload?.email || null,
-                        meeting_time: data.payload?.start_time || null,
+                        booking_url: data.payload?.booking_url || data.url || calendlyUrl,
+                        attendee_email: data.payload?.email || data.email || null,
+                        meeting_time: data.payload?.start_time || data.start_time || null,
                     });
                 }
             }
@@ -89,7 +98,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         width="100%"
                         height="100%"
                         frameBorder="0"
-                        sandbox="allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation allow-same-origin"
+                        sandbox={`allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation${provider === 'zcal' ? ' allow-same-origin' : ''}`}
                     />
                 </div>
             </div>

@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
@@ -107,6 +107,25 @@ class UpdateBotRequest(BaseModel):
     meeting_booking_enabled: bool | None = None
     meeting_provider: str | None = Field(None, pattern="^(calendly|zcal)$")
     zcal_url: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_meeting_urls(self):
+        """Ensure meeting URLs are HTTPS and point to the expected domain."""
+        allowed = {
+            "calendly_url": {"calendly.com"},
+            "zcal_url": {"zcal.co"},
+        }
+        for field_name, valid_domains in allowed.items():
+            value = getattr(self, field_name, None)
+            if value is None:
+                continue
+            parsed = urlparse(value)
+            if parsed.scheme != "https":
+                raise ValueError(f"{field_name} must use HTTPS")
+            host = (parsed.hostname or "").lower()
+            if not any(host == d or host.endswith(f".{d}") for d in valid_domains):
+                raise ValueError(f"{field_name} must point to {', '.join(valid_domains)}")
+        return self
 
 
 class BotResponse(BaseModel):
