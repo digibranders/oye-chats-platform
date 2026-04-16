@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
 /**
@@ -24,8 +24,28 @@ const validateMeetingUrl = (url, provider = 'calendly') => {
     }
 };
 
+const IFRAME_LOAD_TIMEOUT_MS = 15000;
+
 const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider = 'calendly' }) => {
     const safeUrl = validateMeetingUrl(calendlyUrl, provider);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+        if (!safeUrl) return;
+        const timer = setTimeout(() => {
+            setLoading((prev) => {
+                if (prev) setError(true);
+                return prev;
+            });
+        }, IFRAME_LOAD_TIMEOUT_MS);
+        return () => clearTimeout(timer);
+    }, [safeUrl]);
+
+    const handleRetry = () => {
+        setLoading(true);
+        setError(false);
+    };
 
     useEffect(() => {
         const handleMessage = (event) => {
@@ -91,14 +111,32 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         <X className="w-4 h-4" />
                     </button>
                 </div>
-                <div className="flex-1 overflow-hidden">
+                <div className="flex-1 overflow-hidden relative">
+                    {loading && !error && (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-white">
+                            <div className="w-8 h-8 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
+                        </div>
+                    )}
+                    {error && (
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white gap-3">
+                            <p className="text-sm text-gray-600">Could not load booking page</p>
+                            <button
+                                onClick={handleRetry}
+                                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600"
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    )}
                     <iframe
+                        key={error ? 'retry' : 'initial'}
                         title={`${provider === 'zcal' ? 'Zcal' : 'Calendly'} Booking`}
                         src={safeUrl}
                         width="100%"
                         height="100%"
                         frameBorder="0"
-                        sandbox={`allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation${provider === 'zcal' ? ' allow-same-origin' : ''}`}
+                        onLoad={() => setLoading(false)}
+                        sandbox="allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation allow-same-origin"
                     />
                 </div>
             </div>

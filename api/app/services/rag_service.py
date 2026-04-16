@@ -41,6 +41,34 @@ _EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 
 _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 
+_meeting_card_re = re.compile(r"\[MEETING_CARD\]")
+
+
+def _resolve_meeting_booking(bot, session, session_id: str, bot_id: int) -> dict:
+    """Resolve the active meeting provider URL and check for existing bookings.
+
+    Returns a dict with show_booking/calendly_url/meeting_provider keys if
+    booking should be shown, or an empty dict if not.
+    """
+    if not bot or not getattr(bot, "meeting_booking_enabled", False):
+        return {}
+    provider = getattr(bot, "meeting_provider", None) or "calendly"
+    active_url = getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
+    if not active_url:
+        return {}
+    has_booking = (
+        session.query(MeetingBooking)
+        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bot_id)
+        .first()
+        is not None
+    )
+    if has_booking:
+        logger.info("Meeting booking skipped (already booked) | session=%s bot_id=%d", session_id, bot_id)
+        return {}
+    logger.info("Meeting booking resolved | session=%s provider=%s", session_id, provider)
+    return {"show_booking": True, "calendly_url": active_url, "meeting_provider": provider}
+
+
 # Safety-net regex: detect handoff language in the LLM's generated response.
 # When the intent classifier misses a handoff (timeout, typo, etc.) but the
 # main LLM still produces a handoff-style response (because the system prompt
@@ -905,7 +933,6 @@ def rag_pipeline(
             answer, _cta = _strip_cta_marker(answer, bant_config)
 
             # Strip [MEETING_CARD] token from LLM response (non-streaming path)
-            _meeting_card_re = re.compile(r"\[MEETING_CARD\]")
             _meeting_card_detected = bool(_meeting_card_re.search(answer))
             if _meeting_card_detected:
                 answer = _meeting_card_re.sub("", answer).rstrip()
@@ -955,22 +982,10 @@ def rag_pipeline(
                 result["suggest_handoff"] = True
 
             # Meeting card: triggered by [MEETING_CARD] token from LLM
-            if _meeting_card_detected and bot and getattr(bot, "meeting_booking_enabled", False):
-                provider = getattr(bot, "meeting_provider", None) or "calendly"
-                active_url = (
-                    getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
-                )
-                if active_url:
-                    has_booking = (
-                        session.query(MeetingBooking)
-                        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
-                        .first()
-                        is not None
-                    )
-                    if not has_booking:
-                        result["show_booking"] = True
-                        result["calendly_url"] = active_url
-                        result["meeting_provider"] = provider
+            if _meeting_card_detected:
+                meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
+                if meeting_data:
+                    result.update(meeting_data)
 
             # Cache the answer for identical future questions.
             # Skip caching when handoff was suggested — the response only
@@ -1232,25 +1247,12 @@ async def rag_pipeline_stream(
         final_meta: dict = {}
 
         # Detect [MEETING_CARD] token from the LLM response
-        _meeting_card_re = re.compile(r"\[MEETING_CARD\]")
         if _meeting_card_re.search(full_answer):
             full_answer = _meeting_card_re.sub("", full_answer).rstrip()
-            if bot and getattr(bot, "meeting_booking_enabled", False):
-                provider = getattr(bot, "meeting_provider", None) or "calendly"
-                active_url = (
-                    getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
-                )
-                if active_url:
-                    has_booking = (
-                        session.query(MeetingBooking)
-                        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
-                        .first()
-                        is not None
-                    )
-                    if not has_booking:
-                        final_meta["show_booking"] = True
-                        final_meta["calendly_url"] = active_url
-                        final_meta["meeting_provider"] = provider
+            logger.info("Meeting card token detected | session=%s", session_id)
+            meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
+            if meeting_data:
+                final_meta.update(meeting_data)
 
         # Safety net: if the intent classifier missed handoff but the LLM
         # still produced a handoff-style response, override suggest_handoff.
@@ -1311,23 +1313,12 @@ async def rag_pipeline_stream(
                 if cta_data:
                     final_meta["cta"] = cta_data
                 # BANT-based meeting card (only if [MEETING_CARD] didn't already trigger)
-                if not final_meta.get("show_booking") and bot and getattr(bot, "meeting_booking_enabled", False):
-                    provider = getattr(bot, "meeting_provider", None) or "calendly"
-                    active_url = (
-                        getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
-                    )
-                    if active_url:
+                if not final_meta.get("show_booking"):
+                    bant_meeting = _resolve_meeting_booking(bot, session, session_id, bid)
+                    if bant_meeting:
                         show_for_sql = (chat_session.bant_tier or "unqualified") == "sql"
-                        has_booking = (
-                            session.query(MeetingBooking)
-                            .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
-                            .first()
-                            is not None
-                        )
-                        if show_for_sql and not has_booking:
-                            final_meta["show_booking"] = True
-                            final_meta["calendly_url"] = active_url
-                            final_meta["meeting_provider"] = provider
+                        if show_for_sql:
+                            final_meta.update(bant_meeting)
         except Exception as cleanup_err:
             logger.error(f"Post-stream cleanup failed for session {session_id}: {cleanup_err}", exc_info=True)
             with contextlib.suppress(Exception):
