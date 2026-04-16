@@ -293,6 +293,8 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "offline_message": bot.offline_message,
         "handoff_delay_seconds": bot.handoff_delay_seconds,
         "calendly_url": bot.calendly_url,
+        "zcal_url": bot.zcal_url,
+        "meeting_provider": bot.meeting_provider,
         "meeting_booking_enabled": bot.meeting_booking_enabled,
         "feature_flags": bot.feature_flags,
         "widget_messages": bot.widget_messages,

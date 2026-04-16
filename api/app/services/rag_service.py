@@ -904,6 +904,12 @@ def rag_pipeline(
             # Strip CTA marker before saving
             answer, _cta = _strip_cta_marker(answer, bant_config)
 
+            # Strip [MEETING_CARD] token from LLM response (non-streaming path)
+            _meeting_card_re = re.compile(r"\[MEETING_CARD\]")
+            _meeting_card_detected = bool(_meeting_card_re.search(answer))
+            if _meeting_card_detected:
+                answer = _meeting_card_re.sub("", answer).rstrip()
+
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
             if not suggest_handoff:
@@ -947,6 +953,24 @@ def rag_pipeline(
             }
             if suggest_handoff and live_chat_on:
                 result["suggest_handoff"] = True
+
+            # Meeting card: triggered by [MEETING_CARD] token from LLM
+            if _meeting_card_detected and bot and getattr(bot, "meeting_booking_enabled", False):
+                provider = getattr(bot, "meeting_provider", None) or "calendly"
+                active_url = (
+                    getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
+                )
+                if active_url:
+                    has_booking = (
+                        session.query(MeetingBooking)
+                        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
+                        .first()
+                        is not None
+                    )
+                    if not has_booking:
+                        result["show_booking"] = True
+                        result["calendly_url"] = active_url
+                        result["meeting_provider"] = provider
 
             # Cache the answer for identical future questions.
             # Skip caching when handoff was suggested — the response only
@@ -1280,12 +1304,14 @@ async def rag_pipeline_stream(
                     )
 
                 live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
-                final_meta = {"message_id": bot_msg_id} if bot_msg_id else {}
+                if bot_msg_id:
+                    final_meta["message_id"] = bot_msg_id
                 if suggest_handoff and live_chat_on:
                     final_meta["suggest_handoff"] = True
                 if cta_data:
                     final_meta["cta"] = cta_data
-                if bot and getattr(bot, "meeting_booking_enabled", False):
+                # BANT-based meeting card (only if [MEETING_CARD] didn't already trigger)
+                if not final_meta.get("show_booking") and bot and getattr(bot, "meeting_booking_enabled", False):
                     provider = getattr(bot, "meeting_provider", None) or "calendly"
                     active_url = (
                         getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)

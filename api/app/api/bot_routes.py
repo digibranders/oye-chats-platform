@@ -210,6 +210,10 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "waiting_message": bot.waiting_message or "Connecting you to support...",
         "offline_message": bot.offline_message or "Our team is currently unavailable.",
         "handoff_delay_seconds": bot.handoff_delay_seconds or 0,
+        "meeting_booking_enabled": bot.meeting_booking_enabled,
+        "meeting_provider": bot.meeting_provider,
+        "calendly_url": bot.calendly_url,
+        "zcal_url": bot.zcal_url,
         "bant_cta_options": _build_public_cta_options(bot),
     }
 
