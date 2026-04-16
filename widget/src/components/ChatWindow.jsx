@@ -596,7 +596,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         setMessages(prev => [...prev, userMsg]);
         setInputText('');
-        if (inputRef.current) inputRef.current.style.height = 'auto';
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            // Re-focus so the mobile keyboard stays open and the user can type ahead
+            inputRef.current.focus();
+        }
         setIsTyping(true);
 
         if (detectFrustration()) setShowProminentHandoff(true);

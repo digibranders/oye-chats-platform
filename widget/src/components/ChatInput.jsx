@@ -93,6 +93,7 @@ const ChatInput = ({
             setInputText('');
             if (inputRef?.current) {
                 inputRef.current.style.height = 'auto';
+                inputRef.current.focus();
             }
         } else {
             onSubmit?.(e);
