@@ -399,15 +399,17 @@ function EmailSettings() {
     );
 }
 
-// ─── Calendly Settings Tab ─────────────────────────────────────────────────
+// ─── Meetings Settings Tab ─────────────────────────────────────────────────
 
-function CalendlySettings() {
+function MeetingsSettings() {
     const { showToast } = useToast();
     const [bot, setBot] = useState(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [meetingBookingEnabled, setMeetingBookingEnabled] = useState(false);
+    const [meetingProvider, setMeetingProvider] = useState('calendly');
     const [calendlyUrl, setCalendlyUrl] = useState('');
+    const [zcalUrl, setZcalUrl] = useState('');
     const [justSaved, setJustSaved] = useState(false);
 
     const fetchBot = useCallback(async () => {
@@ -418,10 +420,12 @@ function CalendlySettings() {
                 const b = bots[0];
                 setBot(b);
                 setMeetingBookingEnabled(!!b.meeting_booking_enabled);
+                setMeetingProvider(b.meeting_provider || 'calendly');
                 setCalendlyUrl(b.calendly_url || '');
+                setZcalUrl(b.zcal_url || '');
             }
         } catch {
-            showToast('error', 'Failed to load meeting booking settings');
+            showToast('error', 'Failed to load meeting settings');
         } finally {
             setLoading(false);
         }
@@ -429,20 +433,24 @@ function CalendlySettings() {
 
     useEffect(() => { fetchBot(); }, [fetchBot]);
 
+    const activeUrl = meetingProvider === 'zcal' ? zcalUrl : calendlyUrl;
+
     const handleSave = async () => {
         if (!bot) return;
         setSaving(true);
         try {
             await updateBot(bot.id, {
                 meeting_booking_enabled: meetingBookingEnabled,
-                calendly_url: meetingBookingEnabled ? calendlyUrl : null,
+                meeting_provider: meetingBookingEnabled ? meetingProvider : null,
+                calendly_url: calendlyUrl || null,
+                zcal_url: zcalUrl || null,
             });
-            showToast('success', 'Meeting booking settings saved');
+            showToast('success', 'Meeting settings saved');
             setJustSaved(true);
             await fetchBot();
             setTimeout(() => setJustSaved(false), 3000);
         } catch (error) {
-            showToast('error', error.message || 'Failed to save meeting booking settings');
+            showToast('error', error.message || 'Failed to save meeting settings');
         } finally {
             setSaving(false);
         }
@@ -460,7 +468,6 @@ function CalendlySettings() {
 
     return (
         <div className="space-y-6 max-w-3xl">
-            {/* Calendly Configuration */}
             <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
                 <div className="flex items-center gap-3 mb-5">
                     <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center">
@@ -468,7 +475,7 @@ function CalendlySettings() {
                     </div>
                     <div>
                         <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">Meeting Booking</h3>
-                        <p className="text-xs text-surface-500 dark:text-surface-400">Show a Calendly booking widget when leads qualify as SQL</p>
+                        <p className="text-xs text-surface-500 dark:text-surface-400">Let visitors book meetings directly in the chat widget</p>
                     </div>
                 </div>
 
@@ -476,39 +483,86 @@ function CalendlySettings() {
                     <div className="flex items-start gap-2 px-3.5 py-3 bg-surface-50 dark:bg-surface-800 rounded-xl">
                         <Info size={14} className="text-surface-400 dark:text-surface-500 mt-0.5 shrink-0" />
                         <p className="text-xs text-surface-600 dark:text-surface-400 leading-relaxed">
-                            When enabled, visitors who qualify as a Sales Qualified Lead (SQL) will see an embedded Calendly widget to book a meeting directly in the chat.
+                            When enabled, visitors can book meetings inline in the chat. The bot will also suggest booking when it detects scheduling intent. Only one provider can be active at a time.
                         </p>
                     </div>
 
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="text-sm font-medium text-surface-800 dark:text-surface-200">Enable meeting booking</p>
-                            <p className="text-xs text-surface-500 dark:text-surface-400">Automatically offer meeting scheduling to qualified leads</p>
+                            <p className="text-xs text-surface-500 dark:text-surface-400">Show booking option in the chat widget</p>
                         </div>
                         <Toggle checked={meetingBookingEnabled} onChange={setMeetingBookingEnabled} />
                     </div>
 
                     {meetingBookingEnabled && (
-                        <div>
-                            <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Calendly URL</label>
-                            <input
-                                type="url"
-                                value={calendlyUrl}
-                                onChange={(e) => setCalendlyUrl(e.target.value)}
-                                placeholder="https://calendly.com/your-name/30min"
-                                className={inputClass}
-                            />
-                            <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">Paste your Calendly scheduling link here</p>
-                        </div>
+                        <>
+                            <div>
+                                <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">Meeting Provider</label>
+                                <div className="flex gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setMeetingProvider('calendly')}
+                                        className={cn(
+                                            'flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all',
+                                            meetingProvider === 'calendly'
+                                                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400'
+                                                : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                                        )}
+                                    >
+                                        <div className="w-8 h-8 rounded-lg bg-[#006BFF] flex items-center justify-center flex-shrink-0">
+                                            <span className="text-white text-xs font-bold">C</span>
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="text-sm font-medium text-surface-900 dark:text-surface-100">Calendly</p>
+                                            <p className="text-xs text-surface-500 dark:text-surface-400">calendly.com</p>
+                                        </div>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setMeetingProvider('zcal')}
+                                        className={cn(
+                                            'flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all',
+                                            meetingProvider === 'zcal'
+                                                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400'
+                                                : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                                        )}
+                                    >
+                                        <div className="w-8 h-8 rounded-lg bg-[#000000] flex items-center justify-center flex-shrink-0">
+                                            <span className="text-white text-xs font-bold">Z</span>
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="text-sm font-medium text-surface-900 dark:text-surface-100">Zcal</p>
+                                            <p className="text-xs text-surface-500 dark:text-surface-400">zcal.co</p>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">
+                                    {meetingProvider === 'zcal' ? 'Zcal URL' : 'Calendly URL'}
+                                </label>
+                                <input
+                                    type="url"
+                                    value={meetingProvider === 'zcal' ? zcalUrl : calendlyUrl}
+                                    onChange={(e) => meetingProvider === 'zcal' ? setZcalUrl(e.target.value) : setCalendlyUrl(e.target.value)}
+                                    placeholder={meetingProvider === 'zcal' ? 'https://zcal.co/your-name/30min' : 'https://calendly.com/your-name/30min'}
+                                    className={inputClass}
+                                />
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">
+                                    Paste your {meetingProvider === 'zcal' ? 'Zcal' : 'Calendly'} scheduling link
+                                </p>
+                            </div>
+                        </>
                     )}
                 </div>
             </div>
 
-            {/* Save Button */}
             <div className="flex justify-end">
                 <button
                     onClick={handleSave}
-                    disabled={saving || (meetingBookingEnabled && !calendlyUrl.trim())}
+                    disabled={saving || (meetingBookingEnabled && !activeUrl.trim())}
                     className={cn(
                         'flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium shadow-sm transition-all disabled:opacity-50',
                         justSaved
@@ -530,7 +584,7 @@ function CalendlySettings() {
 const integrationTabs = [
     { id: 'email', label: 'Email', icon: Mail },
     { id: 'webhooks', label: 'Webhooks', icon: WebhookIcon },
-    { id: 'calendly', label: 'Calendly', icon: Calendar },
+    { id: 'meetings', label: 'Meetings', icon: Calendar },
 ];
 
 export default function Integrations() {
@@ -548,7 +602,7 @@ export default function Integrations() {
 
             {activeTab === 'email' && <EmailSettings />}
             {activeTab === 'webhooks' && <Webhooks embedded />}
-            {activeTab === 'calendly' && <CalendlySettings />}
+            {activeTab === 'meetings' && <MeetingsSettings />}
         </div>
     );
 }
