@@ -41,6 +41,34 @@ _EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 
 _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 
+_meeting_card_re = re.compile(r"\[MEETING_CARD\]")
+
+
+def _resolve_meeting_booking(bot, session, session_id: str, bot_id: int) -> dict:
+    """Resolve the active meeting provider URL and check for existing bookings.
+
+    Returns a dict with show_booking/calendly_url/meeting_provider keys if
+    booking should be shown, or an empty dict if not.
+    """
+    if not bot or not getattr(bot, "meeting_booking_enabled", False):
+        return {}
+    provider = getattr(bot, "meeting_provider", None) or "calendly"
+    active_url = getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
+    if not active_url:
+        return {}
+    has_booking = (
+        session.query(MeetingBooking)
+        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bot_id)
+        .first()
+        is not None
+    )
+    if has_booking:
+        logger.info("Meeting booking skipped (already booked) | session=%s bot_id=%d", session_id, bot_id)
+        return {}
+    logger.info("Meeting booking resolved | session=%s provider=%s", session_id, provider)
+    return {"show_booking": True, "calendly_url": active_url, "meeting_provider": provider}
+
+
 # Safety-net regex: detect handoff language in the LLM's generated response.
 # When the intent classifier misses a handoff (timeout, typo, etc.) but the
 # main LLM still produces a handoff-style response (because the system prompt
@@ -213,7 +241,7 @@ def _should_skip_bant_extraction(question: str, current_bant: dict, framework_co
         return True
     dimensions = _framework_dimensions(framework_config) or ["need", "budget", "authority", "timeline"]
     scores = [int(current_bant.get(f"{dim}_score", 0) or 0) for dim in dimensions]
-    return all(s >= 15 for s in scores)
+    return all(s >= 20 for s in scores)
 
 
 def _build_bant_state(chat_session: ChatSession | None) -> dict:
@@ -297,7 +325,23 @@ INSTRUCTIONS:
 - For each new signal, provide the exact user quote, a structured summary, confidence level, and a score (0-25) based on the rubric options above.
 - Match the score to the closest rubric option that fits the user's statement.
 - If no new signals are found, return an empty signals list.
-- Only extract signals from the USER's messages, not the bot's responses."""
+- Only extract signals from the USER's messages, not the bot's responses.
+- If a statement is ambiguous or vague, use confidence "low" and assign a conservative score from the lower end of the rubric.
+- Do not infer qualification signals the user did not explicitly state. Stick to what was said.
+
+NEGATIVE EXAMPLES — Do NOT extract signals from these:
+- "Hi, how are you?" — greeting, no signal
+- "Thanks, that's helpful" — acknowledgment, no signal
+- "Can you tell me more about your product?" — product inquiry, not a qualification statement
+- "Interesting" / "I see" / "Okay" — filler, no signal
+- "What integrations do you support?" — feature question, not BANT
+- "Let me think about it" — non-committal, no new information
+
+POSITIVE EXAMPLES — These ARE signals:
+- "We need to solve this by Q3" — Timeline signal
+- "Our budget is around $5K per month" — Budget signal
+- "I'm the VP of Engineering and I'll make the final call" — Authority signal
+- "We're losing $50K/month due to this problem" — Need signal (urgent)"""
 
         response = litellm.completion(
             model=LLM_MODEL,
@@ -489,6 +533,7 @@ def build_hybrid_prompt(
     company_name: str | None = None,
     company_description: str | None = None,
     bot_name: str | None = None,
+    meeting_booking_enabled: bool = False,
 ) -> str:
     """Construct the Hybrid RAG system prompt with BANT qualification support."""
 
@@ -567,6 +612,11 @@ LIVE SUPPORT: If the user asks to speak with a person or connect with the team, 
 SUPPORT REQUESTS: If the user asks for a person, warmly direct them to the contact form in the menu above. Say the team will follow up by email. Say "our team" — never "human team"."""
         handoff_offer = "Direct them to the contact form in the menu above."
 
+    meeting_section = ""
+    if meeting_booking_enabled:
+        meeting_section = """
+MEETING BOOKING: When the visitor expresses interest in scheduling a meeting, demo, call, or appointment, include the token [MEETING_CARD] on its own line at the end of your response. This will trigger an inline booking calendar in the chat. Only include [MEETING_CARD] once per conversation — do not repeat it if a booking was already offered."""
+
     # Build optional sections (truncate to prevent prompt bloat)
     if custom_system_prompt:
         sanitized_prompt = _sanitize_system_prompt(custom_system_prompt)
@@ -609,6 +659,7 @@ RULES:
 8. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. Never tell visitors that information is "unavailable" or "not available right now" — always pivot to what you know and offer a path forward.{custom_prompt_section}{tone_section}{company_section}
 {qualification_section}
 {handoff_section}
+{meeting_section}
 
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
@@ -870,6 +921,7 @@ def rag_pipeline(
                 company_name=_company_name,
                 company_description=_company_desc,
                 bot_name=_bot_name,
+                meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
             )
 
             answer = generate_response(
@@ -879,6 +931,11 @@ def rag_pipeline(
 
             # Strip CTA marker before saving
             answer, _cta = _strip_cta_marker(answer, bant_config)
+
+            # Strip [MEETING_CARD] token from LLM response (non-streaming path)
+            _meeting_card_detected = bool(_meeting_card_re.search(answer))
+            if _meeting_card_detected:
+                answer = _meeting_card_re.sub("", answer).rstrip()
 
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
@@ -923,6 +980,12 @@ def rag_pipeline(
             }
             if suggest_handoff and live_chat_on:
                 result["suggest_handoff"] = True
+
+            # Meeting card: triggered by [MEETING_CARD] token from LLM
+            if _meeting_card_detected:
+                meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
+                if meeting_data:
+                    result.update(meeting_data)
 
             # Cache the answer for identical future questions.
             # Skip caching when handoff was suggested — the response only
@@ -1149,6 +1212,7 @@ async def rag_pipeline_stream(
             company_name=_company_name,
             company_description=_company_desc,
             bot_name=_bot_name,
+            meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -1177,6 +1241,19 @@ async def rag_pipeline_stream(
         # Strip CTA marker from response before saving
         full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)
 
+        # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
+        # Build it inside a try/finally so even a DB failure sends the frame.
+        bot_msg_id = None
+        final_meta: dict = {}
+
+        # Detect [MEETING_CARD] token from the LLM response
+        if _meeting_card_re.search(full_answer):
+            full_answer = _meeting_card_re.sub("", full_answer).rstrip()
+            logger.info("Meeting card token detected | session=%s", session_id)
+            meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
+            if meeting_data:
+                final_meta.update(meeting_data)
+
         # Safety net: if the intent classifier missed handoff but the LLM
         # still produced a handoff-style response, override suggest_handoff.
         if not suggest_handoff and not _stream_error:
@@ -1187,11 +1264,6 @@ async def rag_pipeline_stream(
                     "Handoff safety net triggered (stream) for session %s",
                     session_id,
                 )
-
-        # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
-        # Build it inside a try/finally so even a DB failure sends the frame.
-        bot_msg_id = None
-        final_meta: dict = {}
         try:
             if not _stream_error or full_answer:
                 bot_msg = add_chat_message(
@@ -1234,26 +1306,19 @@ async def rag_pipeline_stream(
                     )
 
                 live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
-                final_meta = {"message_id": bot_msg_id} if bot_msg_id else {}
+                if bot_msg_id:
+                    final_meta["message_id"] = bot_msg_id
                 if suggest_handoff and live_chat_on:
                     final_meta["suggest_handoff"] = True
                 if cta_data:
                     final_meta["cta"] = cta_data
-                if (
-                    bot
-                    and getattr(bot, "meeting_booking_enabled", False)
-                    and getattr(bot, "calendly_url", None)
-                    and (chat_session.bant_tier or "unqualified") == "sql"
-                ):
-                    has_booking = (
-                        session.query(MeetingBooking)
-                        .filter(MeetingBooking.session_id == session_id, MeetingBooking.bot_id == bid)
-                        .first()
-                        is not None
-                    )
-                    if not has_booking:
-                        final_meta["show_booking"] = True
-                        final_meta["calendly_url"] = bot.calendly_url
+                # BANT-based meeting card (only if [MEETING_CARD] didn't already trigger)
+                if not final_meta.get("show_booking"):
+                    bant_meeting = _resolve_meeting_booking(bot, session, session_id, bid)
+                    if bant_meeting:
+                        show_for_sql = (chat_session.bant_tier or "unqualified") == "sql"
+                        if show_for_sql:
+                            final_meta.update(bant_meeting)
         except Exception as cleanup_err:
             logger.error(f"Post-stream cleanup failed for session {session_id}: {cleanup_err}", exc_info=True)
             with contextlib.suppress(Exception):

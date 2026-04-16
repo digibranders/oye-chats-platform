@@ -15,6 +15,19 @@ import PageHeader from '../components/ui/PageHeader';
 import Progress from '../components/ui/Progress';
 import { cn } from '../lib/utils';
 
+/** Validate that a URL points to a trusted payment domain before redirecting. */
+const TRUSTED_REDIRECT_DOMAINS = ['checkout.stripe.com', 'billing.stripe.com'];
+const isTrustedRedirectUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && TRUSTED_REDIRECT_DOMAINS.some(
+      (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d)
+    );
+  } catch {
+    return false;
+  }
+};
+
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
   animate: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
@@ -99,8 +112,10 @@ export default function Subscription() {
     setActionLoading(true);
     try {
       const result = await createCheckoutSession(targetPlanId, billingCycle);
-      if (result.checkout_url) {
+      if (result.checkout_url && isTrustedRedirectUrl(result.checkout_url)) {
         window.location.href = result.checkout_url;
+      } else if (result.checkout_url) {
+        showToast('error', 'Received an untrusted checkout URL. Please contact support.');
       }
     } catch (error) {
       showToast('error', error.message || 'Failed to start checkout');
@@ -112,8 +127,10 @@ export default function Subscription() {
   const handleManageBilling = async () => {
     try {
       const result = await getBillingPortalUrl();
-      if (result.portal_url) {
+      if (result.portal_url && isTrustedRedirectUrl(result.portal_url)) {
         window.open(result.portal_url, '_blank');
+      } else if (result.portal_url) {
+        showToast('error', 'Received an untrusted billing URL. Please contact support.');
       }
     } catch (error) {
       showToast('error', error.message || 'Failed to open billing portal');

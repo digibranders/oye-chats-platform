@@ -820,6 +820,16 @@ export const toggleOperatorStatus = async () => {
     }
 };
 
+export const getMyOperatorStatus = async () => {
+    try {
+        const response = await api.get('/operators/me/status');
+        return response.data;
+    } catch (error) {
+        console.error('API Error getting operator status:', error);
+        return null;
+    }
+};
+
 export const getSessionDetails = async (sessionId) => {
     try {
         const response = await api.get(`/operators/session/${sessionId}/details`);

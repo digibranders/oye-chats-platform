@@ -124,6 +124,8 @@ class Bot(Base):
     handoff_delay_seconds = Column(Integer, default=0, server_default="0", nullable=False)
     calendly_url = Column(String, nullable=True)
     meeting_booking_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    meeting_provider = Column(String, nullable=True)  # "calendly" | "zcal" | null
+    zcal_url = Column(String, nullable=True)
 
     # Feature flags — controls per-bot widget/operator behavior toggles
     feature_flags = Column(
@@ -394,6 +396,7 @@ class Operator(Base):
     # Auth credentials (for separate operator login)
     hashed_password = Column(String, nullable=True)
     operator_api_key = Column(String, unique=True, index=True, nullable=True)
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
 
     # Role & department
     role = Column(String, default="operator", server_default="operator", nullable=False)  # owner|admin|operator

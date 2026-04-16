@@ -141,7 +141,7 @@ class TestExpandCompanyQuery:
 
 class TestShouldSkipBantExtraction:
     """_should_skip_bant_extraction uses keys like ``need_score``, ``budget_score``
-    (without ``bant_`` prefix) and the skip threshold is ``>= 15``.
+    (without ``bant_`` prefix) and the skip threshold is ``>= 20``.
     """
 
     def test_skip_short_question(self):
@@ -170,6 +170,18 @@ class TestShouldSkipBantExtraction:
             "budget_score": 0,
         }
         assert _should_skip_bant_extraction("What features do you offer?", bant) is False
+
+    def test_no_skip_at_sal_level(self):
+        """A lead at 15/15/15/15 = 60 (SAL) must NOT be skipped — can still upgrade to SQL."""
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        bant = {
+            "need_score": 15,
+            "timeline_score": 15,
+            "authority_score": 15,
+            "budget_score": 15,
+        }
+        assert _should_skip_bant_extraction("We need this tool urgently", bant) is False
 
 
 # ── BANT state building ─────────────────────────────────────────────────────

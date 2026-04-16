@@ -122,6 +122,19 @@ const LiveChatMode = ({
                         }, 2000);
                     },
                     triggerFilePick: () => fileInputRef.current?.click(),
+                    handlePaste: (e) => {
+                        if (!settings?.feature_flags?.file_sharing) return;
+                        const items = e.clipboardData?.items;
+                        if (!items) return;
+                        for (const item of items) {
+                            if (item.type.startsWith('image/')) {
+                                e.preventDefault();
+                                const file = item.getAsFile();
+                                if (file) openFilePreview(file);
+                                break;
+                            }
+                        }
+                    },
                     endChat: () => {
                         if (socket.readyState === WebSocket.OPEN) {
                             socket.send(JSON.stringify({ type: 'visitor_end_chat' }));
@@ -152,19 +165,42 @@ const LiveChatMode = ({
                                 getChatHistory(sessionId)
                                     .then(history => {
                                         if (history && history.length > 0) {
+                                            // Match file messages stored as markdown: [File: name](url)
+                                            const fileRe = /^\[File:\s*(.+?)\]\((.+?)\)$/;
                                             const restored = history
                                                 .filter(m => m.role === 'user' || m.role === 'operator')
-                                                .map((m, i) => ({
-                                                    id: `restored-${i}`,
-                                                    text: m.content,
-                                                    sender: m.role === 'operator' ? 'operator' : 'user',
-                                                    operatorName: m.role === 'operator' ? (data.operator_name || 'Support') : undefined,
-                                                    timestamp: m.timestamp || m.created_at,
-                                                }));
+                                                .map((m) => {
+                                                    const fileMatch = m.content?.match(fileRe);
+                                                    const base = {
+                                                        id: m.id ? `srv-${m.id}` : `restored-${Date.now()}-${Math.random()}`,
+                                                        sender: m.role === 'operator' ? 'operator' : 'user',
+                                                        operatorName: m.role === 'operator' ? (data.operator_name || 'Support') : undefined,
+                                                        timestamp: m.timestamp || m.created_at,
+                                                    };
+                                                    if (fileMatch) {
+                                                        const filename = fileMatch[1];
+                                                        const url = fileMatch[2];
+                                                        const ext = filename.split('.').pop()?.toLowerCase() || '';
+                                                        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+                                                        return {
+                                                            ...base,
+                                                            file_url: url,
+                                                            filename,
+                                                            content_type: imageExts.includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : (ext === 'pdf' ? 'application/pdf' : 'text/plain'),
+                                                        };
+                                                    }
+                                                    return { ...base, text: m.content };
+                                                });
                                             onLiveMessagesChange?.(prev => {
                                                 if (!Array.isArray(prev) || prev.length === 0) return restored;
-                                                const existingIds = new Set(prev.map(m => m.id));
-                                                const newMsgs = restored.filter(m => !existingIds.has(m.id));
+                                                // Deduplicate: match by text+timestamp to catch live messages
+                                                // that were already received via WS before history loaded
+                                                const existingKeys = new Set(prev.map(m =>
+                                                    `${m.text || ''}|${m.sender || ''}|${(m.timestamp || '').slice(0, 19)}`
+                                                ));
+                                                const newMsgs = restored.filter(m =>
+                                                    !existingKeys.has(`${m.text || ''}|${m.sender || ''}|${(m.timestamp || '').slice(0, 19)}`)
+                                                );
                                                 return newMsgs.length > 0 ? [...newMsgs, ...prev] : prev;
                                             });
                                         }
@@ -174,7 +210,8 @@ const LiveChatMode = ({
                         } else if (data.status === 'closed') {
                             intentionalClose.current = true;
                             socket.close();
-                            onLiveMessagesChange?.([]);
+                            // Don't wipe messages — preserve conversation for rating survey.
+                            // Messages are cleared in handleReturnToBot after rating is submitted.
                             setOperatorName(null);
                             onChatEnded?.();
                         } else if (data.status === 'unavailable') {
@@ -193,6 +230,21 @@ const LiveChatMode = ({
                             timestamp: data.timestamp || new Date().toISOString(),
                         };
                         onLiveMessagesChange?.(prev => [...(prev || []), msg]);
+                        break;
+                    }
+
+                    case 'file': {
+                        onOperatorTyping?.(false);
+                        const fileMsg = {
+                            id: `live-file-${++msgIdCounter.current}`,
+                            sender: data.role === 'operator' ? 'operator' : 'user',
+                            file_url: data.file_url,
+                            filename: data.filename,
+                            content_type: data.content_type,
+                            operatorName: data.operator_name,
+                            timestamp: data.timestamp || new Date().toISOString(),
+                        };
+                        onLiveMessagesChange?.(prev => [...(prev || []), fileMsg]);
                         break;
                     }
 
@@ -343,8 +395,14 @@ const LiveChatMode = ({
 
     const openFilePreview = (file) => {
         const ALLOWED = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
-        if (!ALLOWED.includes(file.type)) return;
-        if (file.size > 10 * 1024 * 1024) return;
+        if (!ALLOWED.includes(file.type)) {
+            setFileError('Unsupported file type. Allowed: images, PDF, and text files.');
+            return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            setFileError('File is too large. Maximum size is 10 MB.');
+            return;
+        }
         const isImage = file.type.startsWith('image/');
         setPendingFile({
             file,

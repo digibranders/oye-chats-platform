@@ -1,5 +1,6 @@
 import contextlib
 import html as html_lib
+import ipaddress
 import json
 import logging
 import re
@@ -26,7 +27,6 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.schemas.chat import ChatRequest, FeedbackRequest
 from app.services.rag_service import rag_pipeline, rag_pipeline_stream
-from app.services.sdr_service import run_sdr_qualification
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 _SAFE_URL_SCHEME = re.compile(r"^https?://", re.IGNORECASE)
@@ -140,17 +140,29 @@ def _parse_request_context(fastapi_request: Request):
 def _resolve_and_update_location(session_id: str, ip_address: str):
     """Fire-and-forget: resolve geolocation from IP and update the session in DB."""
     try:
-        # Resolve public IP if local
-        is_local = ip_address in ("127.0.0.1", "localhost", "::1", "")
-        is_private = ip_address.startswith(("10.", "192.168.", "172."))
+        # Validate IP format to prevent SSRF via crafted X-Forwarded-For values.
+        # Without this, an attacker could inject arbitrary strings (e.g. path
+        # traversal, newlines for header injection) into the geolocation URLs.
+        ip_address = ip_address.strip()
+        try:
+            parsed_ip = ipaddress.ip_address(ip_address)
+        except ValueError:
+            logger.warning("Invalid IP address rejected: %r", ip_address[:100])
+            return
+
+        is_local = parsed_ip.is_loopback or ip_address == ""
+        is_private = parsed_ip.is_private
         if is_local or is_private:
             try:
                 with urllib.request.urlopen("https://api.ipify.org?format=json", timeout=2.0) as resp:
-                    ip_address = json.loads(resp.read().decode()).get("ip", ip_address)
-            except Exception:
+                    resolved = json.loads(resp.read().decode()).get("ip", "")
+                # Re-validate the resolved IP before using it in URLs
+                ipaddress.ip_address(resolved)
+                ip_address = resolved
+            except (Exception, ValueError):
                 return
 
-        if not ip_address or ip_address in ("127.0.0.1", "localhost", "::1"):
+        if not ip_address:
             return
 
         location = None
@@ -492,33 +504,6 @@ def get_lead_info_endpoint(session_id: str, bot: Bot = Depends(get_current_bot))
     except Exception as e:
         logger.error(f"Failed to fetch lead info for session {session_id}: {e}")
         return {"lead_info": None}  # Always non-breaking for the widget
-
-
-@router.post("/chat/sdr")
-def chat_sdr_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
-    """
-    SDR Qualification Endpoint: Qualifies leads using BANT framework.
-    Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
-    """
-    try:
-        session_id = _resolve_session_id(body.session_id, bot.id)
-
-        with get_session() as session:
-            ensure_chat_session(session, session_id, client_id=None, bot_id=bot.id)
-            session.commit()
-
-        result = run_sdr_qualification(bot, body.question, session_id, bot_id=bot.id)
-
-        if "error" in result:
-            logger.error(f"SDR qualification error: {result['error']}")
-            raise HTTPException(status_code=500, detail="Chat request failed. Please try again.")
-
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"SDR Chat failed: {e}")
-        raise HTTPException(status_code=500, detail="Chat request failed. Please try again.") from e
 
 
 @router.post("/chat/feedback/{message_id}")

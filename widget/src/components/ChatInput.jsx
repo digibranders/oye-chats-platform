@@ -1,5 +1,5 @@
 import React from 'react';
-import { Headphones, Paperclip } from 'lucide-react';
+import { Headphones, Paperclip, CalendarDays } from 'lucide-react';
 import SendIcon from './SendIcon';
 
 /**
@@ -30,9 +30,12 @@ const ChatInput = ({
     onLiveTyping,
     onEndChat,
     onFilePick,
+    onPaste,
     fileSharing = false,
     isReconnecting = false,
     uploadProgress = null,
+    onBookMeeting,
+    meetingBookingEnabled = false,
     // Mobile keyboard
     onInputFocus,
     onInputBlur,
@@ -79,6 +82,10 @@ const ChatInput = ({
 
     const handleSubmit = (e) => {
         e?.preventDefault();
+        // Guard against double-sends while bot is generating a response.
+        // The textarea is intentionally NOT disabled during isTyping so that
+        // the mobile keyboard stays open and users can type ahead.
+        if (isTyping || isWaiting) return;
         if (isLive) {
             const text = inputText.trim();
             if (!text) return;
@@ -86,6 +93,7 @@ const ChatInput = ({
             setInputText('');
             if (inputRef?.current) {
                 inputRef.current.style.height = 'auto';
+                inputRef.current.focus();
             }
         } else {
             onSubmit?.(e);
@@ -143,13 +151,14 @@ const ChatInput = ({
                             value={inputText}
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
+                            onPaste={onPaste}
                             onFocus={handleFocus}
                             onBlur={handleBlur}
                             placeholder={isWaiting ? 'Connecting you with the support team...' : inputPlaceholder}
                             aria-label="Chat message input"
                             className="w-full outline-none bg-transparent text-[14px] text-[#16202C] placeholder:text-gray-400 resize-none overflow-y-auto min-h-[20px] max-h-[60px] leading-[20px]"
                             style={{ border: 'none', margin: 0, scrollbarWidth: 'none' }}
-                            disabled={isTyping || isWaiting || isReconnecting}
+                            disabled={isWaiting || isReconnecting}
                             ref={inputRef}
                             rows={1}
                         />
@@ -194,6 +203,18 @@ const ChatInput = ({
                                 <span className={showProminentHandoff ? 'font-semibold' : 'font-normal'}>
                                     {liveChatLabel}
                                 </span>
+                            </button>
+                        )}
+                        {meetingBookingEnabled && onBookMeeting && (
+                            <button
+                                type="button"
+                                onClick={onBookMeeting}
+                                title="Book a meeting"
+                                aria-label="Book a meeting"
+                                className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer text-gray-400 hover:text-gray-600"
+                            >
+                                <CalendarDays size={12} />
+                                <span>Book meeting</span>
                             </button>
                         )}
                     </div>

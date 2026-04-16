@@ -55,6 +55,31 @@ def ensure_chat_session(
         session.flush()
 
 
+_BANT_ALLOWED_FIELDS = frozenset(
+    {
+        "bant_need",
+        "bant_timeline",
+        "bant_authority",
+        "bant_budget",
+        "bant_need_score",
+        "bant_budget_score",
+        "bant_authority_score",
+        "bant_timeline_score",
+        "bant_score",
+        "bant_tier",
+        "dimensions_assessed",
+        "bant_last_updated",
+        "dimension_scores",
+        "qualification_framework",
+        "behavioral_score",
+        "page_url",
+        "referrer",
+        "utm_params",
+        "visit_count",
+    }
+)
+
+
 def update_session_bant(session, session_id: str, client_id: int = None, bant_data: dict = None, bot_id: int = None):
     """Update the BANT qualification state for a session."""
     stmt = select(ChatSession).where(ChatSession.id == session_id).limit(1)
@@ -67,6 +92,8 @@ def update_session_bant(session, session_id: str, client_id: int = None, bant_da
 
     if chat_session and bant_data:
         for key, value in bant_data.items():
+            if key not in _BANT_ALLOWED_FIELDS:
+                continue
             if hasattr(chat_session, key) and value is not None:
                 setattr(chat_session, key, value)
         session.flush()
