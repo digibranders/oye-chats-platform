@@ -115,6 +115,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [activeCTA, setActiveCTA] = useState(null);
     const [showBooking, setShowBooking] = useState(false);
     const [calendlyUrl, setCalendlyUrl] = useState(null);
+    const [meetingProvider, setMeetingProvider] = useState(null);
     const [meetingBooked, setMeetingBooked] = useState(false);
     const ctaShownRef = useRef(false);
     const ctaDimensionsShownRef = useRef(new Set());
@@ -547,6 +548,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setShowBooking(false);
         setCalendlyUrl(null);
         setMeetingBooked(false);
+        setMeetingProvider(null);
         consecutiveFallbacks.current = 0;
         setExistingLeadInfo(null);
         setLiveMessages([]);
@@ -676,6 +678,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                     if (finalMeta.show_booking && finalMeta.calendly_url && !meetingBooked) {
                         setCalendlyUrl(finalMeta.calendly_url);
+                        setMeetingProvider(finalMeta.meeting_provider || 'calendly');
                         setShowBooking(true);
                     }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
@@ -1329,6 +1332,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     <MeetingBooking
                         calendlyUrl={calendlyUrl}
                         sessionId={sessionId}
+                        provider={meetingProvider || 'calendly'}
                         onDismiss={() => setShowBooking(false)}
                         onBooked={async (bookingData) => {
                             const sid = sessionId || bookingData.session_id;
@@ -1713,6 +1717,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     uploadProgress={uploadProgress}
                     onInputFocus={scrollToBottom}
                     onInputBlur={resyncViewport}
+                    meetingBookingEnabled={!!settings.meeting_booking_enabled && !meetingBooked}
+                    onBookMeeting={() => {
+                        if (settings.meeting_booking_enabled && !meetingBooked) {
+                            const p = settings.meeting_provider || 'calendly';
+                            const url = p === 'zcal' ? settings.zcal_url : settings.calendly_url;
+                            if (url) {
+                                setCalendlyUrl(url);
+                                setMeetingProvider(p);
+                                setShowBooking(true);
+                            }
+                        }
+                    }}
                 />
             )}
 

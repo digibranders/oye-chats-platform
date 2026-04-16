@@ -1,5 +1,5 @@
 import React from 'react';
-import { Headphones, Paperclip } from 'lucide-react';
+import { Headphones, Paperclip, CalendarDays } from 'lucide-react';
 import SendIcon from './SendIcon';
 
 /**
@@ -34,6 +34,8 @@ const ChatInput = ({
     fileSharing = false,
     isReconnecting = false,
     uploadProgress = null,
+    onBookMeeting,
+    meetingBookingEnabled = false,
     // Mobile keyboard
     onInputFocus,
     onInputBlur,
@@ -200,6 +202,18 @@ const ChatInput = ({
                                 <span className={showProminentHandoff ? 'font-semibold' : 'font-normal'}>
                                     {liveChatLabel}
                                 </span>
+                            </button>
+                        )}
+                        {meetingBookingEnabled && onBookMeeting && (
+                            <button
+                                type="button"
+                                onClick={onBookMeeting}
+                                title="Book a meeting"
+                                aria-label="Book a meeting"
+                                className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer text-gray-400 hover:text-gray-600"
+                            >
+                                <CalendarDays size={12} />
+                                <span>Book meeting</span>
                             </button>
                         )}
                     </div>
