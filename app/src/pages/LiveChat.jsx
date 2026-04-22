@@ -15,13 +15,16 @@ import { useBotContext } from '../context/BotContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
+/** Only allow https: URLs for file attachments (blocks javascript:, data:, etc.) */
+const isSafeFileUrl = (url) => typeof url === 'string' && /^https?:\/\//i.test(url);
+
 /** Parse a history message, extracting file_url/filename/content_type from markdown file syntax. */
 const FILE_RE = /^\[File:\s*(.+?)\]\((.+?)\)$/;
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 const parseHistoryMessage = (m, i) => {
     const base = { id: m.id ?? i, dbId: m.id, role: m.role, content: m.content, timestamp: m.timestamp };
     const match = m.content?.match(FILE_RE);
-    if (match) {
+    if (match && isSafeFileUrl(match[2])) {
         const filename = match[1];
         const ext = filename.split('.').pop()?.toLowerCase() || '';
         base.file_url = match[2];
@@ -342,7 +345,7 @@ export default function LiveChat({ embedded = false }) {
 
                 case 'file': {
                     const currentSelected = selectedChatRef.current;
-                    if (data.session_id === currentSelected) {
+                    if (data.session_id === currentSelected && isSafeFileUrl(data.file_url)) {
                         setMessages(prev => [...prev, {
                             id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
                             role: data.role || 'user',

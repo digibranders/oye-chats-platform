@@ -176,6 +176,12 @@ def get_current_client_or_operator(
                 .first()
             )
             if operator:
+                if not getattr(operator, "is_active", True):
+                    logger.warning(f"Deactivated operator {operator.id} attempted authentication.")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="This operator account has been deactivated.",
+                    )
                 _ = (
                     operator.id,
                     operator.name,
