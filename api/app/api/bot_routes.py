@@ -1,5 +1,7 @@
 import html
+import ipaddress
 import logging
+import socket
 import uuid
 from urllib.parse import urlparse
 
@@ -421,12 +423,28 @@ def _build_demo_page_html(bot: Bot) -> str:
 
 
 def _validate_preview_url(raw_url: str) -> str:
-    """Validate that a preview URL uses http/https and has a valid host."""
+    """Validate that a preview URL uses http/https, has a valid host, and does not resolve to a private IP.
+
+    Blocks SSRF by resolving the hostname and rejecting private, loopback,
+    link-local, and other reserved IP ranges before allowing server-side requests.
+    """
     parsed = urlparse(raw_url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="URL must use http or https scheme.")
-    if not parsed.netloc:
+    hostname = parsed.hostname
+    if not hostname:
         raise HTTPException(status_code=400, detail="Invalid URL.")
+
+    try:
+        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail="Could not resolve hostname.") from exc
+
+    for _family, _type, _proto, _canonname, sockaddr in addr_info:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise HTTPException(status_code=400, detail="URLs pointing to internal addresses are not allowed.")
+
     return raw_url
 
 
