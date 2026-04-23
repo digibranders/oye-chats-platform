@@ -85,6 +85,38 @@ const ChatWidget = () => {
     fetchSettings();
   }, []);
 
+  // ── Live preview bridge ──────────────────────────────────────────────────
+  // When the widget is embedded in the admin "Preview on my website" panel,
+  // the demo page sets `window.__OYECHATS_PREVIEW_MODE__ = true`. In that
+  // mode we accept `oyechats:preview-config` messages from the parent frame
+  // and merge them into local settings — no network round-trip, no save.
+  // Only the immediate parent window is trusted (dashboard → iframe),
+  // which prevents third-party sites from driving the widget via postMessage.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    if (!window.__OYECHATS_PREVIEW_MODE__) return undefined;
+    if (window.parent === window) return undefined;
+
+    const handleMessage = (event) => {
+      if (event.source !== window.parent) return;
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type !== 'oyechats:preview-config') return;
+      const payload = data.payload;
+      if (!payload || typeof payload !== 'object') return;
+      setSettings((prev) => ({ ...prev, ...payload }));
+    };
+
+    window.addEventListener('message', handleMessage);
+    // Signal readiness so the parent flushes the initial draft settings.
+    try {
+      window.parent.postMessage({ type: 'oyechats:preview-ready' }, '*');
+    } catch (error) {
+      console.warn('[OyeChats] Preview ready signal failed:', error);
+    }
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   // ── Mobile body scroll lock ──────────────────────────────────────────────────
   // When the widget opens full-screen on mobile, freeze the host page body
   // to prevent it from scrolling underneath (causes shake/jitter).
