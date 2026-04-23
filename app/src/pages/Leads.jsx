@@ -96,16 +96,21 @@ export default function Leads() {
 
     const handleMarkAllRead = async () => {
         if (!hasUnreadLeads) return;
-        // Optimistic UI — snap to zero, then refresh in the background.
-        setLeads((prev) => prev.map((l) => ({ ...l, unread: false })));
-        setStats((prev) => (prev ? { ...prev, unread: 0 } : prev));
+        // Optimistic UI — snap to zero immediately. On failure we toast and
+        // let the 60s sidebar poll reconcile; a full list refetch just to
+        // undo optimism is an expensive round-trip for a rare error.
+        const prevLeads = leads;
+        const prevStats = stats;
+        setLeads((current) => current.map((l) => ({ ...l, unread: false })));
+        setStats((current) => (current ? { ...current, unread: 0 } : current));
         try {
             await markAllLeadsViewed(selectedBot?.id);
         } catch (error) {
             console.error('Failed to mark all leads read:', error);
             showToast('error', error.message || 'Failed to mark leads as read');
-            // Re-fetch to correct any drift.
-            fetchData();
+            // Roll back optimistic mutation so the UI matches server truth.
+            setLeads(prevLeads);
+            setStats(prevStats);
         }
     };
 

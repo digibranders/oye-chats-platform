@@ -91,60 +91,163 @@ def _response_suggests_handoff(text: str) -> bool:
     return bool(_HANDOFF_RESPONSE_RE.search(text))
 
 
-# Safety-net regex: detect "leave a message" intent in the VISITOR'S question.
-# Covers common phrasings, common typos, and punctuation noise. Used to force
-# the [LEAVE_MESSAGE_CARD] card when the LLM fails to emit the sentinel for a
-# clearly-relevant turn (see screenshot: "can i submit a nessage for the team"
-# → bot replied "you can leave a note here" with no card).
+# ─────────────────────────────────────────────────────────────────────────────
+# LEAVE-MESSAGE CARD — safety net
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Background: the main RAG prompt instructs the LLM to emit
+# [LEAVE_MESSAGE_CARD] when the visitor expresses intent to contact the team
+# asynchronously (email, leave a note, write to support, etc.). In practice
+# the LLM sometimes forgets the sentinel and drifts into a hallucinated
+# "leave a note here" affordance pointing at the chat box. The safety net
+# below deterministically re-injects the card when BOTH:
+#   (a) the user's turn expresses async contact intent
+#   (b) the bot's answer frames an async leave-message affordance tightly
+#       co-occurring with contact language (leave/send/write + note/message)
+# to avoid false positives on informational answers that merely mention
+# "our team" or "we'll follow up" in passing.
+
+# Verbs that express async contact intent. Broad enough to catch typo
+# families (m[aeiou]ss[aeiou]g[e]? → "message/messag/nessage/massage/messege")
+# without drifting into unrelated semantics.
 _LEAVE_MESSAGE_QUESTION_RE = re.compile(
     r"(?ix)"
     r"(?:"
-    # Verbs that express intent to contact/reach the team asynchronously.
-    r"\b(?:email|e-mail|emai?l|contact|cont?act|reach(?:\s+out)?|write(?:\s+to)?|"
-    r"message|messag|nessage|"  # typo tolerance
-    r"submit|drop|leave|pass\s+(?:on|along)|send)\b"
+    # 1. Core verb + object (team / support / message / note) co-occurrence.
+    r"\b(?:"
+    r"e[-\s]?m[ae]?i?l|"  # email, e-mail, emial, emal, emial
+    r"c[o0]n?t[a@]ct|"  # contact, cntact, cntct, c0ntact
+    r"reach(?:\s+out)?|"
+    r"write(?:\s+to)?|"
+    r"m[aeiou]ss[aeiou]g[ae]?|"  # message, messag, messge, messeg, massage, nessage (keyboard-n-for-m typo)
+    r"n[aeiou]ss[aeiou]g[ae]?|"  # nessage and variants (common mobile typo)
+    r"submit|drop|pass\s+(?:on|along)|send"
+    r")\b"
     r".{0,40}?"
-    r"\b(?:team|support|staff|you|sales|someone|anyone|human|agent|rep(?:resentative)?|"
-    r"note|message|nessage|enquiry|inquiry|question)\b"
+    r"\b(?:t[ea]+m|support|staff|sales|someone|anyone|human|"
+    r"agent|rep(?:resentative)?|note|m[aeiou]ss[aeiou]g[ae]?|"
+    r"n[aeiou]ss[aeiou]g[ae]?|enquiry|inquiry|feedback)\b"
     r"|"
+    # 2. Idiomatic contact phrases — no verb-object split.
     r"\b(?:get|getting)\s+(?:in\s+touch|back\s+to\s+me)\b"
     r"|"
-    r"\bhow\s+(?:do\s+|can\s+)?i\s+(?:contact|reach|email|message|write)\b"
+    r"\bhow\s+(?:do\s+|can\s+)?i\s+(?:contact|reach|email|e[-\s]?mail|write|message)\b"
     r"|"
-    r"\bcan\s+i\s+(?:contact|reach|email|e-?mail|message|messag|nessage|write|leave|submit|drop|send)\b"
-    r"|"
-    r"\bleave\s+(?:a\s+)?(?:note|message|nessage|comment|feedback)\b"
+    # 3. "leave a note/message" — the canonical leave-message phrasing.
+    r"\bleave\s+(?:a\s+)?(?:note|m[aeiou]ss[aeiou]g[ae]?|n[aeiou]ss[aeiou]g[ae]?|"
+    r"comment|feedback|enquiry|inquiry)\b"
     r")"
 )
 
-# Safety-net regex: detect "leave a message" affordance in the BOT'S answer.
-# Triggers even when the LLM is hallucinating "leave a note here" — by matching
-# on the leave/send/contact framing we catch exactly the failure mode the
-# prompt explicitly told the model to avoid.
+# Disqualifiers — phrases that, if present, should block the safety net even
+# when the verb-object pattern matches. Catches "leave and come back later",
+# "email me the pricing sheet" (self-directed, not team-directed), etc.
+_LEAVE_MESSAGE_DISQUALIFIER_RE = re.compile(
+    r"(?ix)"
+    r"(?:"
+    r"\blater\b|\btomorrow\b|\blast\s+time\b|\bthis\s+morning\b|"
+    r"\bemail\s+me\b|\bsend\s+me\b|\btext\s+me\b|"  # self-addressed
+    r"\bleave\s+and\s+come\s+back\b|"
+    r"\bleave\s+(?:the\s+)?(?:office|building|site|page)\b"
+    r")"
+)
+
+# Bot-answer affordance — leave/send/write verb MUST co-occur with
+# message/note/email noun in the same clause. Prevents match on standalone
+# "our team will follow up" in a non-contact context.
 _LEAVE_MESSAGE_RESPONSE_RE = re.compile(
     r"(?ix)"
     r"(?:"
-    r"\bleave\s+(?:a|your)\s+(?:note|message|comment|enquiry|inquiry)\b"
+    # "leave a note|message|comment|enquiry" — canonical affordance.
+    r"\bleave\s+(?:a|your|us\s+a)\s+(?:note|message|comment|enquiry|inquiry)\b"
     r"|"
-    r"\b(?:send|submit|drop)\s+(?:us|the\s+team|our\s+team)\s+(?:a\s+)?(?:note|message|line)\b"
+    # "send/submit/drop us a note|message|line" — proactive contact framing.
+    r"\b(?:send|submit|drop)\s+(?:us|the\s+team|our\s+team)\s+(?:a\s+)?"
+    r"(?:note|message|line|email|enquiry|inquiry)\b"
     r"|"
+    # "write to (us|team|support)" — canonical.
     r"\bwrite\s+to\s+(?:us|our\s+team|the\s+team|support)\b"
     r"|"
-    r"\b(?:our\s+team|we)\s+(?:will|'ll)\s+(?:get\s+back|follow\s+up|reach\s+out|respond|be\s+in\s+touch)\b"
+    # "forward (your|the) message" — explicit forwarding framing.
+    r"\bforward\s+(?:your|the|that)\s+message\b"
     r"|"
-    r"\bforward\s+(?:your|the)\s+message\s+to\s+(?:our\s+team|the\s+team)\b"
+    # "(our team|we) will <contact-verb>" — now REQUIRES a contact noun within
+    # 40 chars so it stops firing on "our team will follow up with pricing
+    # details" (informational) vs "our team will follow up on your message"
+    # (contact affordance).
+    r"\b(?:our\s+team|we)\s+(?:will|'ll)\s+"
+    r"(?:get\s+back|follow\s+up|reach\s+out|respond|be\s+in\s+touch)\b"
+    r".{0,40}?"
+    r"\b(?:your|the|you|via|by|through)\s+"
+    r"(?:message|email|note|enquiry|inquiry|request|form|detail|reply)\b"
     r")"
 )
 
 
+def _question_suggests_leave_message(text: str) -> bool:
+    """Safety net: detect 'I want to contact the team' intent in the user's turn.
+
+    Returns False if the text matches a known disqualifier phrase (self-addressed
+    email, "leave and come back", etc.) even when the verb/object pattern fires.
+    """
+    if not text:
+        return False
+    if _LEAVE_MESSAGE_DISQUALIFIER_RE.search(text):
+        return False
+    return bool(_LEAVE_MESSAGE_QUESTION_RE.search(text))
+
+
 def _response_suggests_leave_message(text: str) -> bool:
-    """Safety net: detect async contact-the-team language in the bot response."""
+    """Safety net: detect async contact-the-team affordance in the bot response.
+
+    Requires tight co-occurrence of a leave/send/write verb with a
+    message/note/email noun — informational "our team will follow up with
+    the details" no longer matches.
+    """
+    if not text:
+        return False
     return bool(_LEAVE_MESSAGE_RESPONSE_RE.search(text))
 
 
-def _question_suggests_leave_message(text: str) -> bool:
-    """Safety net: detect 'I want to contact the team' intent in the user's turn."""
-    return bool(_LEAVE_MESSAGE_QUESTION_RE.search(text))
+# ─────────────────────────────────────────────────────────────────────────────
+# Inline card per-session dedupe
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _card_already_shown(chat_session, card_key: str) -> bool:
+    """Return True if `card_key` has already been surfaced for this session.
+
+    Reads ChatSession.inline_cards_shown JSONB. `card_key` values in use:
+    'leave_message', 'meeting'.
+    """
+    if chat_session is None:
+        return False
+    shown = getattr(chat_session, "inline_cards_shown", None) or {}
+    return bool(shown.get(card_key))
+
+
+def _mark_card_shown(chat_session, card_key: str) -> None:
+    """Flag the card as shown on the session's JSONB metadata.
+
+    SQLAlchemy tracks JSONB mutations only when the column value is
+    reassigned, so we always rebuild the dict before assignment.
+    """
+    if chat_session is None:
+        return
+    shown = dict(getattr(chat_session, "inline_cards_shown", None) or {})
+    shown[card_key] = True
+    chat_session.inline_cards_shown = shown
+
+
+def _safety_net_metric(name: str, **tags) -> None:
+    """Structured log line for aggregation (Grafana/Loki/Sentry breadcrumb).
+
+    Emits a single `rag.metric` line with key=value tag pairs so log-based
+    alerts can count safety-net firings without regex-scraping freeform text.
+    Interim measure until LLM observability (Langfuse or OTEL) is restored.
+    """
+    tag_str = " ".join(f"{k}={v}" for k, v in tags.items())
+    logger.info("rag.metric name=%s %s", name, tag_str)
 
 
 # Prompt injection guard — patterns that attempt to override the system prompt
@@ -660,47 +763,75 @@ CURRENT QUALIFICATION STATE:
 {state_text}
 {cta_instruction}"""
 
-    # Shared list of phrasings that ALL count as "leave a message" intent.
-    # Typos, synonyms, partial matches — treat them all the same.
-    _leave_msg_intents = (
-        "email / write to / contact / reach / get in touch with our team; "
-        "send / submit / drop / leave / pass along a message / note / enquiry / "
-        'question / request / feedback; "can I reach someone", "how do I contact you", '
-        '"can the team get back to me". Typos of these words (e.g. "nessage", "ocntact") '
-        "count the same as the correct spelling."
-    )
-    _leave_msg_rules = (
-        f"If the user expresses ANY of these intents — {_leave_msg_intents} — "
-        "reply with ONE short warm sentence acknowledging the request and then put "
-        "[LEAVE_MESSAGE_CARD] on its own line at the end of your response. A dedicated "
-        "message form will open when the visitor taps that card. "
-        "CRITICAL RULES: "
-        "(a) NEVER ask the visitor to type their message into this chat so you can "
-        "forward it — we have a dedicated form; the chat input does not reach our team. "
-        '(b) NEVER say the team can be reached "here", "below", "in this chat", or '
-        '"in this window". The destination is the form, not the chat box. '
-        "(c) NEVER promise to email/forward a message that the visitor types in chat. "
-        "(d) If uncertain whether the intent matches, err on the side of emitting "
-        "[LEAVE_MESSAGE_CARD] — the form is always the correct affordance for "
-        '"contact the team" style requests. '
-        "Emit [LEAVE_MESSAGE_CARD] at most once per conversation."
-    )
+    # ─── Leave-message card instructions ───
+    # Structured block (heading + WHEN/ACTION/EXAMPLE/HARD-RULES) — LLMs
+    # follow labeled sections more reliably than prose paragraphs. The
+    # positive few-shot example pins the exact output format so the model
+    # doesn't have to infer it. NEGATIVE rules target the observed drift
+    # ("leave a note here", forwarding-chat-to-team promise).
+    _leave_msg_block = """
+LEAVE A MESSAGE (inline card):
+  WHEN TO EMIT [LEAVE_MESSAGE_CARD]:
+    The visitor expresses intent to send the team something asynchronously —
+    email, note, message, request, feedback, enquiry — OR asks how to
+    contact / reach / write to / get in touch with the team.
+
+  DO NOT emit for: informational questions about the team (e.g. "how big is
+    your team", "who founded the company") — these are RAG answers, not
+    contact affordances.
+
+  ACTION: Reply with ONE short warm sentence acknowledging the request, then
+    emit [LEAVE_MESSAGE_CARD] alone on a new line at the very end.
+
+  POSITIVE EXAMPLE:
+    visitor: "can I email support?"
+    you: "Of course — I'll open a quick message form for you.
+    [LEAVE_MESSAGE_CARD]"
+
+  HARD RULES (never break these):
+    1. NEVER say the team can be reached "here", "below", "in this chat",
+       or "in this window" — the destination is the form, never the chat box.
+    2. NEVER ask the visitor to type their message in chat so you can
+       "forward" it — the chat input does not reach the team.
+    3. NEVER claim you will send, email, or forward something yourself.
+    4. Emit [LEAVE_MESSAGE_CARD] only when the visitor's intent clearly
+       matches the WHEN clause above. When uncertain, answer their question
+       normally; do NOT emit the card as a catch-all."""
 
     if live_chat_enabled:
         handoff_section = f"""
 LIVE SUPPORT: If the user asks to speak with a person RIGHT NOW or have a live conversation, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly — do not say the connection is already established. Say "our team" — never "human team". Don't answer their question after they ask for a person.
+{_leave_msg_block}
 
-LEAVE A MESSAGE: {_leave_msg_rules} This path is distinct from live support — use it when the visitor wants an async reply (write, email, leave a note) rather than an immediate live conversation."""
+  DISTINCTION FROM LIVE SUPPORT: Use this card when the visitor wants an
+  async reply (write / email / leave a note). Use LIVE SUPPORT when they
+  want an immediate live conversation RIGHT NOW."""
         handoff_offer = "Offer to connect them with a team member or take a written message."
     else:
         handoff_section = f"""
-SUPPORT REQUESTS: {_leave_msg_rules} Say "our team" — never "human team"."""
+SUPPORT REQUESTS: {_leave_msg_block}
+
+  Say "our team" — never "human team"."""
         handoff_offer = "Offer to take a written message for the team."
 
     meeting_section = ""
     if meeting_booking_enabled:
         meeting_section = """
-MEETING BOOKING: When the visitor expresses interest in scheduling a meeting, demo, call, or appointment, include the token [MEETING_CARD] on its own line at the end of your response. This will trigger an inline booking calendar in the chat. Only include [MEETING_CARD] once per conversation — do not repeat it if a booking was already offered."""
+MEETING BOOKING (inline card):
+  WHEN TO EMIT [MEETING_CARD]:
+    The visitor expresses interest in scheduling a meeting, demo, call, or
+    appointment.
+
+  ACTION: Acknowledge in one short sentence, then emit [MEETING_CARD] alone
+    on a new line at the end.
+
+  PRECEDENCE: If the visitor's turn expresses BOTH a scheduling intent AND
+    an async-message intent (e.g. "can I email to book a demo?"), prefer
+    [MEETING_CARD] and do NOT also emit [LEAVE_MESSAGE_CARD]. The booking
+    flow collects contact details as part of confirmation, so a separate
+    message form would be redundant.
+
+  Do not repeat the card if booking was already offered in this conversation."""
 
     # Build optional sections (truncate to prevent prompt bloat)
     if custom_system_prompt:
@@ -1033,28 +1164,55 @@ def rag_pipeline(
                 _live = getattr(bot, "live_chat_enabled", True) if bot else True
                 if _live and _response_suggests_handoff(answer):
                     suggest_handoff = True
-                    logger.info(
-                        "Handoff safety net triggered (non-stream) for session %s",
-                        session_id,
+                    _safety_net_metric(
+                        "handoff_safety_net_triggered",
+                        path="nonstream",
+                        bot_id=bid,
+                        session=session_id,
                     )
 
             # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly
             # asks for async team contact but the LLM forgot to emit the
-            # sentinel (prompt miss / typos / free-form drift). We trigger
-            # when BOTH the user's question and the bot's answer look like
-            # contact-the-team — this avoids false positives on the bot
+            # sentinel (prompt miss / typos / free-form drift). Triggers
+            # only when BOTH the user's question AND the bot's answer look
+            # like contact-the-team — avoids false positives on the bot
             # merely mentioning "our team" in an informational answer.
+            _leave_msg_safety_net_fired = False
             if (
                 not _leave_msg_card_detected
+                and not _meeting_card_detected
                 and not suggest_handoff
                 and _question_suggests_leave_message(question)
                 and _response_suggests_leave_message(answer)
             ):
                 _leave_msg_card_detected = True
+                _leave_msg_safety_net_fired = True
+                _safety_net_metric(
+                    "leave_message_safety_net_triggered",
+                    path="nonstream",
+                    bot_id=bid,
+                    session=session_id,
+                )
+
+            # Precedence: [MEETING_CARD] wins over [LEAVE_MESSAGE_CARD] when
+            # both fire in the same turn (booking flow collects contact as
+            # part of confirmation, so a separate message form is redundant).
+            if _meeting_card_detected and _leave_msg_card_detected:
+                _leave_msg_card_detected = False
                 logger.info(
-                    "Leave-message safety net triggered (non-stream) for session %s",
+                    "Leave-message card suppressed by meeting-card precedence | session=%s",
                     session_id,
                 )
+
+            # Per-session dedupe: suppress either card if already shown in
+            # this conversation. The LLM cannot reliably enforce "at most
+            # once per conversation" — we enforce it server-side.
+            if _meeting_card_detected and _card_already_shown(chat_session, "meeting"):
+                _meeting_card_detected = False
+                logger.info("Meeting card suppressed (already shown) | session=%s", session_id)
+            if _leave_msg_card_detected and _card_already_shown(chat_session, "leave_message"):
+                _leave_msg_card_detected = False
+                logger.info("Leave-message card suppressed (already shown) | session=%s", session_id)
 
             bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=answer, bot_id=bid)
 
@@ -1094,12 +1252,31 @@ def rag_pipeline(
                 meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
                 if meeting_data:
                     result.update(meeting_data)
+                    _mark_card_shown(chat_session, "meeting")
 
             # Leave-message card: triggered by [LEAVE_MESSAGE_CARD] token from LLM.
             # Skipped when a live-chat handoff is already being suggested so the
             # two calls-to-action never compete in the same turn.
             if _leave_msg_card_detected and not (suggest_handoff and live_chat_on):
                 result["show_leave_message"] = True
+                _mark_card_shown(chat_session, "leave_message")
+                if _leave_msg_safety_net_fired:
+                    # Tagging the rendered card separately from the safety-net
+                    # trigger count — the two metrics diverge if precedence or
+                    # dedupe suppresses a safety-net-injected card.
+                    _safety_net_metric(
+                        "leave_message_card_rendered",
+                        path="nonstream",
+                        source="safety_net",
+                        bot_id=bid,
+                        session=session_id,
+                    )
+
+            # Persist any inline_cards_shown mutation from _mark_card_shown().
+            # The earlier session.commit() ran before card resolution; without
+            # this second commit the dedupe flag would be lost on close.
+            if _meeting_card_detected or _leave_msg_card_detected:
+                session.commit()
 
             # Cache the answer for identical future questions.
             # Skip caching when handoff was suggested — the response only
@@ -1360,18 +1537,15 @@ async def rag_pipeline_stream(
         bot_msg_id = None
         final_meta: dict = {}
 
-        # Detect [MEETING_CARD] token from the LLM response
-        if _meeting_card_re.search(full_answer):
+        # Detect + strip [MEETING_CARD] token from the LLM response. Card
+        # resolution (calendly_url etc.) runs AFTER precedence + dedupe below,
+        # so a suppressed meeting card doesn't emit show_booking metadata.
+        _meeting_card_detected = bool(_meeting_card_re.search(full_answer))
+        if _meeting_card_detected:
             full_answer = _meeting_card_re.sub("", full_answer).rstrip()
             logger.info("Meeting card token detected | session=%s", session_id)
-            meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
-            if meeting_data:
-                final_meta.update(meeting_data)
 
-        # Detect [LEAVE_MESSAGE_CARD] token from the LLM response.
-        # Stripped before persistence/rendering; flagged in metadata so the
-        # widget can render an inline "Leave a message" CTA that opens the
-        # existing offline-message form.
+        # Detect + strip [LEAVE_MESSAGE_CARD] token from the LLM response.
         _leave_msg_card_detected = bool(_leave_message_card_re.search(full_answer))
         if _leave_msg_card_detected:
             full_answer = _leave_message_card_re.sub("", full_answer).rstrip()
@@ -1383,26 +1557,60 @@ async def rag_pipeline_stream(
             _live = getattr(bot, "live_chat_enabled", True) if bot else True
             if _live and _response_suggests_handoff(full_answer):
                 suggest_handoff = True
-                logger.info(
-                    "Handoff safety net triggered (stream) for session %s",
-                    session_id,
+                _safety_net_metric(
+                    "handoff_safety_net_triggered",
+                    path="stream",
+                    bot_id=bid,
+                    session=session_id,
                 )
 
         # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly asks
         # for async team contact but the LLM forgot to emit the sentinel.
-        # Mirrors the non-streaming path above — see its comment for rationale.
+        # Mirrors the non-streaming path — see its comment for rationale.
+        _leave_msg_safety_net_fired = False
         if (
             not _leave_msg_card_detected
+            and not _meeting_card_detected
             and not suggest_handoff
             and not _stream_error
             and _question_suggests_leave_message(question)
             and _response_suggests_leave_message(full_answer)
         ):
             _leave_msg_card_detected = True
+            _leave_msg_safety_net_fired = True
+            _safety_net_metric(
+                "leave_message_safety_net_triggered",
+                path="stream",
+                bot_id=bid,
+                session=session_id,
+            )
+
+        # Precedence: [MEETING_CARD] wins over [LEAVE_MESSAGE_CARD] when both
+        # fire this turn — booking flow collects contact as part of confirm.
+        if _meeting_card_detected and _leave_msg_card_detected:
+            _leave_msg_card_detected = False
             logger.info(
-                "Leave-message safety net triggered (stream) for session %s",
+                "Leave-message card suppressed by meeting-card precedence | session=%s",
                 session_id,
             )
+
+        # Per-session dedupe: suppress cards already shown in this session.
+        if _meeting_card_detected and _card_already_shown(chat_session, "meeting"):
+            _meeting_card_detected = False
+            logger.info("Meeting card suppressed (already shown) | session=%s", session_id)
+        if _leave_msg_card_detected and _card_already_shown(chat_session, "leave_message"):
+            _leave_msg_card_detected = False
+            logger.info("Leave-message card suppressed (already shown) | session=%s", session_id)
+
+        # Resolve meeting-card data now that precedence + dedupe are settled.
+        if _meeting_card_detected:
+            meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
+            if meeting_data:
+                final_meta.update(meeting_data)
+            else:
+                # _resolve_meeting_booking returned {} (provider URL missing or
+                # already booked) — don't flip to card-shown state.
+                _meeting_card_detected = False
         try:
             if not _stream_error or full_answer:
                 bot_msg = add_chat_message(
@@ -1451,18 +1659,40 @@ async def rag_pipeline_stream(
                     final_meta["suggest_handoff"] = True
                 if cta_data:
                     final_meta["cta"] = cta_data
+
+                # Mark meeting card as shown for per-session dedupe (only if
+                # resolution actually populated show_booking above).
+                if _meeting_card_detected and final_meta.get("show_booking"):
+                    _mark_card_shown(chat_session, "meeting")
+
                 # Leave-message card: only show when a live-chat handoff isn't
                 # already being suggested this turn, so the two CTAs never
                 # compete for the visitor's attention.
                 if _leave_msg_card_detected and not final_meta.get("suggest_handoff"):
                     final_meta["show_leave_message"] = True
-                # BANT-based meeting card (only if [MEETING_CARD] didn't already trigger)
-                if not final_meta.get("show_booking"):
+                    _mark_card_shown(chat_session, "leave_message")
+                    if _leave_msg_safety_net_fired:
+                        _safety_net_metric(
+                            "leave_message_card_rendered",
+                            path="stream",
+                            source="safety_net",
+                            bot_id=bid,
+                            session=session_id,
+                        )
+
+                # BANT-based meeting card (only if [MEETING_CARD] didn't already
+                # trigger AND meeting hasn't already been shown this session).
+                if not final_meta.get("show_booking") and not _card_already_shown(chat_session, "meeting"):
                     bant_meeting = _resolve_meeting_booking(bot, session, session_id, bid)
                     if bant_meeting:
                         show_for_sql = (chat_session.bant_tier or "unqualified") == "sql"
                         if show_for_sql:
                             final_meta.update(bant_meeting)
+                            _mark_card_shown(chat_session, "meeting")
+
+                # Persist any mutation made to chat_session.inline_cards_shown
+                # by the _mark_card_shown calls above.
+                session.commit()
         except Exception as cleanup_err:
             logger.error(f"Post-stream cleanup failed for session {session_id}: {cleanup_err}", exc_info=True)
             with contextlib.suppress(Exception):

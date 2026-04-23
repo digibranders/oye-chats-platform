@@ -247,6 +247,11 @@ class ChatSession(Base):
     handoff_reason = Column(Text, nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
+    # Per-session record of inline cards already surfaced to the visitor.
+    # Shape: {"leave_message": true, "meeting": true}. Used to suppress
+    # duplicate card rendering across turns — the LLM cannot enforce
+    # "at most once per conversation" on its own.
+    inline_cards_shown = Column(JSONB, nullable=True)
     visitor_rating = Column(Integer, nullable=True)  # Post-chat satisfaction: 1–5, null = not rated
     visitor_resolved = Column(Boolean, nullable=True)  # Post-chat: was the issue resolved? null = not answered
 

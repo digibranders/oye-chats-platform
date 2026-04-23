@@ -425,8 +425,9 @@ class TestResponseSuggestsLeaveMessage:
     def test_leave_your_message(self):
         assert self._match("Feel free to leave your message and we'll respond.")
 
-    def test_team_will_get_back(self):
-        assert self._match("Our team will get back to you within a day.")
+    def test_team_will_get_back_via_email(self):
+        # Tightened regex now requires a contact-noun within 40 chars.
+        assert self._match("Our team will get back to you via email soon.")
 
     def test_send_us_a_note(self):
         assert self._match("You can send us a note anytime.")
@@ -434,9 +435,108 @@ class TestResponseSuggestsLeaveMessage:
     def test_write_to_our_team(self):
         assert self._match("You're welcome to write to our team.")
 
+    def test_forward_your_message(self):
+        assert self._match("We'll forward your message to the right person.")
+
     def test_informational_our_team_mention_does_not_match(self):
         # Bot mentioning "our team" in a factual answer must not trigger.
         assert not self._match("Our team has been serving clients since 2015.")
 
     def test_plain_answer_does_not_match(self):
         assert not self._match("Our pricing starts at $49/mo for the starter plan.")
+
+    def test_tightened_team_will_no_longer_fires_on_pricing_context(self):
+        # C2 regression: before the fix, "our team will follow up with pricing
+        # details next quarter" would trigger the card. Now requires a
+        # contact-noun within 40 chars — pricing details are not a contact noun.
+        assert not self._match("Our team will follow up with pricing details next quarter.")
+
+    def test_tightened_team_will_no_longer_fires_on_work_context(self):
+        assert not self._match("Our team will be in touch with the engineering update.")
+
+
+class TestLeaveMessageDisqualifiers:
+    """User turns that MUST block the safety net even when intent verb matches."""
+
+    def _match(self, text: str) -> bool:
+        from app.services.rag_service import _question_suggests_leave_message
+
+        return _question_suggests_leave_message(text)
+
+    def test_leave_and_come_back_does_not_match(self):
+        # "leave" + "team" were colliding in the verb-object pattern; the
+        # disqualifier catches the idiomatic "leave and come back" phrase.
+        assert not self._match("Can I leave and come back to reach the team tomorrow?")
+
+    def test_email_me_self_addressed_does_not_match(self):
+        # Visitor asking for email TO THEM — not a contact-team intent.
+        assert not self._match("Can you email me the pricing sheet?")
+
+    def test_send_me_self_addressed_does_not_match(self):
+        assert not self._match("Please send me a link to the docs.")
+
+    def test_leave_the_office_does_not_match(self):
+        assert not self._match("When does your team leave the office on Fridays?")
+
+
+# ── Inline-card precedence + per-session dedupe ──────────────────────────────
+
+
+class TestInlineCardDedupe:
+    """_card_already_shown + _mark_card_shown manipulate ChatSession.inline_cards_shown."""
+
+    def _make_session(self, shown=None):
+        return SimpleNamespace(inline_cards_shown=shown)
+
+    def test_card_already_shown_false_for_empty(self):
+        from app.services.rag_service import _card_already_shown
+
+        assert not _card_already_shown(self._make_session(), "leave_message")
+        assert not _card_already_shown(self._make_session({}), "leave_message")
+
+    def test_card_already_shown_true_when_flagged(self):
+        from app.services.rag_service import _card_already_shown
+
+        s = self._make_session({"leave_message": True})
+        assert _card_already_shown(s, "leave_message")
+
+    def test_card_already_shown_isolated_per_key(self):
+        from app.services.rag_service import _card_already_shown
+
+        s = self._make_session({"meeting": True})
+        assert _card_already_shown(s, "meeting")
+        assert not _card_already_shown(s, "leave_message")
+
+    def test_mark_card_shown_creates_dict_on_first_call(self):
+        from app.services.rag_service import _mark_card_shown
+
+        s = self._make_session(None)
+        _mark_card_shown(s, "leave_message")
+        assert s.inline_cards_shown == {"leave_message": True}
+
+    def test_mark_card_shown_preserves_other_flags(self):
+        from app.services.rag_service import _mark_card_shown
+
+        s = self._make_session({"meeting": True})
+        _mark_card_shown(s, "leave_message")
+        assert s.inline_cards_shown == {"meeting": True, "leave_message": True}
+
+    def test_mark_card_shown_reassigns_for_sqlalchemy_jsonb_tracking(self):
+        """SQLAlchemy only tracks JSONB mutations when the attribute is
+        reassigned. _mark_card_shown must always assign a NEW dict, not
+        mutate the existing one in-place."""
+        from app.services.rag_service import _mark_card_shown
+
+        original = {"meeting": True}
+        s = self._make_session(original)
+        _mark_card_shown(s, "leave_message")
+        # The session's attribute should be a NEW object, leaving the
+        # original dict untouched (otherwise SQLAlchemy misses the change).
+        assert s.inline_cards_shown is not original
+        assert original == {"meeting": True}  # untouched
+
+    def test_mark_card_shown_noop_on_none_session(self):
+        from app.services.rag_service import _mark_card_shown
+
+        # Defensive: should not raise when chat_session is missing.
+        _mark_card_shown(None, "leave_message")  # must not raise
