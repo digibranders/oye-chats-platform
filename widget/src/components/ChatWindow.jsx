@@ -4,7 +4,7 @@ import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, c
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
-import { sanitizeColor } from '../services/sanitize';
+import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
@@ -1065,15 +1065,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             className="max-w-[85%] px-4 py-3 rounded-2xl text-[14px] break-words"
                             style={{ backgroundColor: userBubbleBg, color: '#16202C' }}
                         >
-                            {msg.file_url ? (
+                            {sanitizeFileUrl(msg.file_url) ? (
                                 msg.content_type?.startsWith('image/') ? (
                                     <img
-                                        src={msg.file_url}
+                                        src={sanitizeImageUrl(msg.file_url)}
                                         alt={msg.filename || 'image'}
                                         className="max-w-[200px] rounded-xl block cursor-zoom-in hover:opacity-90 transition-opacity"
                                     />
                                 ) : (
-                                    <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
+                                    <a href={sanitizeFileUrl(msg.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
                                         📎 {msg.filename || 'file'}
                                     </a>
                                 )
@@ -1121,15 +1121,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {msg.operatorName && (
                     <p className="text-[11px] font-semibold mb-0.5 ml-0.5" style={{ color: primaryColor }}>{msg.operatorName}</p>
                 )}
-                {msg.file_url ? (
+                {sanitizeFileUrl(msg.file_url) ? (
                     msg.content_type?.startsWith('image/') ? (
                         <img
-                            src={msg.file_url}
+                            src={sanitizeImageUrl(msg.file_url)}
                             alt={msg.filename || 'image'}
                             className="max-w-[200px] rounded-xl block hover:opacity-90 transition-opacity"
                         />
                     ) : (
-                        <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
+                        <a href={sanitizeFileUrl(msg.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-sm break-all">
                             📎 {msg.filename || 'file'}
                         </a>
                     )

@@ -693,6 +693,14 @@ async def accept_chat(
                     detail=f"Operator already at max capacity ({operator.max_concurrent_chats} chats).",
                 )
 
+        # Verify the session belongs to a bot owned by the operator's workspace.
+        target_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not target_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        owning_bot = session.execute(select(Bot).where(Bot.id == target_session.bot_id)).scalar_one_or_none()
+        if not owning_bot or owning_bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
         # DB-level race condition guard: atomically claim the session only if still waiting.
         # Using UPDATE ... WHERE status='waiting' ensures only one operator wins the race.
         result = session.execute(
@@ -703,10 +711,6 @@ async def accept_chat(
         )
         claimed = result.scalar_one_or_none()
         if not claimed:
-            # Either session doesn't exist or was already accepted by another operator
-            existing = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
-            if not existing:
-                raise HTTPException(status_code=404, detail="Session not found")
             raise HTTPException(status_code=409, detail="Chat was already accepted by another operator")
 
         # Audit log — chat accepted
