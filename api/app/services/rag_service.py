@@ -171,7 +171,24 @@ _LEAVE_MESSAGE_RESPONSE_RE = re.compile(
     # "forward (your|the) message" — explicit forwarding framing.
     r"\bforward\s+(?:your|the|that)\s+message\b"
     r"|"
-    # "(our team|we) will <contact-verb>" — now REQUIRES a contact noun within
+    # "open/share/pull up/bring up/get/surface/prepare a [...] form" — this is
+    # the phrasing the LLM naturally uses after the positive few-shot example
+    # in the prompt ("I'll open a quick message form for you"). Without this
+    # branch the safety net misses a huge fraction of real LLM outputs.
+    # Requires a form/contact noun within 40 chars to avoid matching
+    # "open our website" or unrelated "share a document" phrasings.
+    r"\b(?:open|share|pull\s+up|bring\s+up|get|surface|prepare|set\s+up|"
+    r"load|launch|show\s+you|pop\s+up)\s+"
+    r"(?:a|the|an|our)?\s*"
+    r"(?:quick|short|simple|handy|brief)?\s*"
+    r"(?:message|contact|offline|enquiry|inquiry|feedback|support)?\s*"
+    r"\bform\b"
+    r"|"
+    # Mirror: "a form will open" / "a form appears" — passive framing.
+    r"\b(?:a|the)\s+(?:message|contact|offline|enquiry|inquiry)?\s*form\s+"
+    r"(?:will\s+open|opens|will\s+appear|appears|is\s+below)\b"
+    r"|"
+    # "(our team|we) will <contact-verb>" — REQUIRES a contact noun within
     # 40 chars so it stops firing on "our team will follow up with pricing
     # details" (informational) vs "our team will follow up on your message"
     # (contact affordance).
@@ -780,13 +797,35 @@ LEAVE A MESSAGE (inline card):
     your team", "who founded the company") — these are RAG answers, not
     contact affordances.
 
-  ACTION: Reply with ONE short warm sentence acknowledging the request, then
-    emit [LEAVE_MESSAGE_CARD] alone on a new line at the very end.
+  ACTION (mandatory two-part output):
+    Part 1 — Reply with ONE short warm sentence acknowledging the request.
+    Part 2 — On the NEXT line after that sentence, output this literal token
+             on a line by itself, with NOTHING ELSE on that line:
 
-  POSITIVE EXAMPLE:
+             [LEAVE_MESSAGE_CARD]
+
+    The token MUST be the last thing in your response. Without it the form
+    never appears and the visitor is stuck. Do NOT add text after the token.
+    Do NOT paraphrase the token ("form below", "see below", etc. do not work
+    — only the literal string [LEAVE_MESSAGE_CARD] triggers the form).
+
+  POSITIVE EXAMPLE (copy this shape exactly):
     visitor: "can I email support?"
-    you: "Of course — I'll open a quick message form for you.
-    [LEAVE_MESSAGE_CARD]"
+    you:
+    Of course — I'll open a quick message form for you.
+    [LEAVE_MESSAGE_CARD]
+
+  ANOTHER POSITIVE EXAMPLE:
+    visitor: "can i submit a message for the team"
+    you:
+    Absolutely — I'll pull up the message form now.
+    [LEAVE_MESSAGE_CARD]
+
+  NEGATIVE EXAMPLE (DO NOT DO THIS — the form never opens):
+    visitor: "can I email support?"
+    you: "Of course — I'll open a quick message form for you."
+    ← MISSING the [LEAVE_MESSAGE_CARD] token. The visitor sees your promise
+      but no form appears. This is a broken response.
 
   HARD RULES (never break these):
     1. NEVER say the team can be reached "here", "below", "in this chat",
@@ -794,9 +833,9 @@ LEAVE A MESSAGE (inline card):
     2. NEVER ask the visitor to type their message in chat so you can
        "forward" it — the chat input does not reach the team.
     3. NEVER claim you will send, email, or forward something yourself.
-    4. Emit [LEAVE_MESSAGE_CARD] only when the visitor's intent clearly
-       matches the WHEN clause above. When uncertain, answer their question
-       normally; do NOT emit the card as a catch-all."""
+    4. If you acknowledge a contact-the-team request, you MUST include the
+       [LEAVE_MESSAGE_CARD] token on its own line — no exceptions. A promise
+       without the token is a broken promise."""
 
     if live_chat_enabled:
         handoff_section = f"""

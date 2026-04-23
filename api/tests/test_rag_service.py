@@ -383,6 +383,11 @@ class TestQuestionSuggestsLeaveMessage:
         # The exact screenshot repro.
         assert self._match("can i submit a nessage for the team")
 
+    def test_submit_a_message_with_team_typo(self):
+        # Second repro from user testing: typo in "team" instead of "message".
+        # The t[ea]+m pattern must catch "taeam".
+        assert self._match("can i submit a message for the taeam")
+
     def test_email_the_support_team(self):
         assert self._match("can I email the support team?")
 
@@ -453,6 +458,45 @@ class TestResponseSuggestsLeaveMessage:
 
     def test_tightened_team_will_no_longer_fires_on_work_context(self):
         assert not self._match("Our team will be in touch with the engineering update.")
+
+    # ── "open/share/pull up a form" family — LLM's natural phrasing ──
+    # Repro: visitor said "can i submit a message for the taeam", bot replied
+    # "Of course — I'll open a quick message form for you." but dropped the
+    # [LEAVE_MESSAGE_CARD] sentinel. Safety net missed it because the regex
+    # had no branch for the "open a form" affordance. These tests pin the fix.
+
+    def test_repro_open_quick_message_form(self):
+        # Exact text from the screenshot.
+        assert self._match("Of course — I'll open a quick message form for you.")
+
+    def test_ill_open_the_message_form(self):
+        assert self._match("I'll open the message form now.")
+
+    def test_pull_up_the_form(self):
+        assert self._match("Absolutely — I'll pull up the message form now.")
+
+    def test_share_a_form(self):
+        assert self._match("Let me share a contact form with you.")
+
+    def test_bring_up_an_enquiry_form(self):
+        assert self._match("I'll bring up an enquiry form for you.")
+
+    def test_passive_form_will_open(self):
+        assert self._match("A message form will open in a moment.")
+
+    def test_form_appears(self):
+        assert self._match("The contact form appears below.")
+
+    def test_unrelated_open_phrase_does_not_match(self):
+        # "open our website" or "open your browser" must NOT trigger.
+        assert not self._match("You can open our website to learn more.")
+
+    def test_unrelated_share_does_not_match(self):
+        assert not self._match("Let me share a document with the pricing breakdown.")
+
+    def test_form_word_alone_does_not_match(self):
+        # Informational mention of a form on the site should not fire.
+        assert not self._match("We form lasting partnerships with all our clients.")
 
 
 class TestLeaveMessageDisqualifiers:
