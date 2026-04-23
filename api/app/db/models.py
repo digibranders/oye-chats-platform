@@ -247,8 +247,18 @@ class ChatSession(Base):
     handoff_reason = Column(Text, nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     visitor_metadata = Column(JSONB, nullable=True)  # parsed user-agent: browser, os, etc.
+    # Per-session record of inline cards already surfaced to the visitor.
+    # Shape: {"leave_message": true, "meeting": true}. Used to suppress
+    # duplicate card rendering across turns — the LLM cannot enforce
+    # "at most once per conversation" on its own.
+    inline_cards_shown = Column(JSONB, nullable=True)
     visitor_rating = Column(Integer, nullable=True)  # Post-chat satisfaction: 1–5, null = not rated
     visitor_resolved = Column(Boolean, nullable=True)  # Post-chat: was the issue resolved? null = not answered
+
+    # Unread-leads tracking: NULL = unread in the /leads admin view.
+    # Backed by partial index ix_chat_sessions_bot_id_lead_viewed_at
+    # (see migration d4e5f6a7b8c9) to keep sidebar polling cheap.
+    lead_viewed_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_active_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

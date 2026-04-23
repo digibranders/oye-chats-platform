@@ -200,6 +200,7 @@ def build_lead_response(
         }
 
     tier = get_lead_tier(score, thresholds=config.get("thresholds"))
+    lead_viewed_at = getattr(session, "lead_viewed_at", None)
     return {
         "session_id": session.id,
         "score": score,
@@ -226,4 +227,6 @@ def build_lead_response(
         "chats": message_count,
         "created_at": _isoformat_or_none(session.created_at),
         "last_active_at": _isoformat_or_none(session.last_active_at),
+        "unread": lead_viewed_at is None,
+        "lead_viewed_at": _isoformat_or_none(lead_viewed_at),
     }

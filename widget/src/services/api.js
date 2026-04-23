@@ -1,3 +1,8 @@
+// Streaming sentinel stripper — extracted to its own module so the
+// split-chunk correctness logic is unit-tested independently.
+// See sentinelStripper.test.js for regression coverage.
+import { createSentinelStripper } from './sentinelStripper.js';
+
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const getHeaders = () => {
@@ -38,7 +43,7 @@ export const sendMessage = async (message, sessionId = null) => {
     }
 };
 
-// Wrap reader.read() in a race against a timeout so a stalled stream 
+// Wrap reader.read() in a race against a timeout so a stalled stream
 // (backend hung, TCP open but no bytes flowing) never freezes the UI forever.
 // 35s = 30s server-side chunk timeout + 5s network RTT buffer.
 const _STREAM_READ_TIMEOUT_MS = 35_000;
@@ -75,6 +80,15 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         let buffer = '';
         let metadataReceived = false;
 
+        // All visible text funnels through this stripper so inline-card
+        // sentinels (e.g. [LEAVE_MESSAGE_CARD]) never reach the UI — even
+        // when they straddle chunk boundaries.
+        const stripper = createSentinelStripper();
+        const emitClean = (text) => {
+            const clean = stripper.push(text);
+            if (clean) onChunk?.(clean);
+        };
+
         while (true) {
             let done, value;
             try {
@@ -105,15 +119,19 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                     // Flush any pending partial buffer BEFORE triggering final metadata
                     // so all streamed text is delivered before handoff can fire.
                     if (buffer && !buffer.startsWith('METADATA:') && !buffer.startsWith('FINAL_METADATA:')) {
-                        onChunk?.(buffer);
+                        emitClean(buffer);
                         buffer = '';
                     }
+                    // Release any sentinel-prefix tail the stripper was holding
+                    // so no trailing text is silently swallowed by cleanup.
+                    const tail = stripper.flush();
+                    if (tail) onChunk?.(tail);
                     try {
                         const finalMeta = JSON.parse(line.slice(15));
                         onFinalMetadata?.(finalMeta);
                     } catch { /* ignore parse errors */ }
                 } else {
-                    onChunk?.(line + '\n');
+                    emitClean(line + '\n');
                 }
             }
 
@@ -124,7 +142,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
             if (metadataReceived && buffer &&
                 !buffer.startsWith('METADATA:') &&
                 !buffer.startsWith('FINAL_METADATA:')) {
-                onChunk?.(buffer);
+                emitClean(buffer);
                 buffer = '';
             }
         }
@@ -132,14 +150,22 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         // Process any remaining buffer
         if (buffer.trim()) {
             if (buffer.startsWith('FINAL_METADATA:')) {
+                // Flush stripper before final metadata so no text is lost.
+                const tail = stripper.flush();
+                if (tail) onChunk?.(tail);
                 try {
                     const finalMeta = JSON.parse(buffer.slice(15));
                     onFinalMetadata?.(finalMeta);
                 } catch { /* ignore */ }
             } else if (!buffer.startsWith('METADATA:')) {
-                onChunk?.(buffer);
+                emitClean(buffer);
             }
         }
+
+        // Final safety flush — releases any stripper-held tail in the
+        // (rare) case the stream ended without FINAL_METADATA.
+        const tail = stripper.flush();
+        if (tail) onChunk?.(tail);
     } catch (error) {
         console.error("[OyeChats] Streaming error:", error);
         onError?.(error);

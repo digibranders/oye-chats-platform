@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Target, Download, X, Loader2, User, Mail, Phone, Building2, MapPin, Monitor, MessageCircle, Search, ChevronRight, Tag, FileText, CheckSquare, Square, Trash2 } from 'lucide-react';
+import { Target, Download, X, Loader2, User, Mail, Phone, Building2, MapPin, Monitor, MessageCircle, Search, ChevronRight, Tag, FileText, CheckSquare, Square, Trash2, CheckCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RadialBarChart, RadialBar, ResponsiveContainer, Tooltip as ReTooltip } from 'recharts';
-import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv } from '../services/api';
+import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv, markLeadViewed, markAllLeadsViewed } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
@@ -73,6 +73,15 @@ export default function Leads() {
     const handleViewLead = async (sessionId) => {
         setSelectedLead(sessionId);
         setIsDetailLoading(true);
+        // Optimistically clear unread for this row and decrement stats so the
+        // sidebar badge feels instant. Server is the source of truth on next poll.
+        const wasUnread = leads.find((l) => l.session_id === sessionId)?.unread === true;
+        if (wasUnread) {
+            setLeads((prev) => prev.map((l) => (l.session_id === sessionId ? { ...l, unread: false } : l)));
+            setStats((prev) => (prev ? { ...prev, unread: Math.max((prev.unread || 0) - 1, 0) } : prev));
+            // Fire-and-forget: idempotent endpoint, never blocks drawer open.
+            markLeadViewed(sessionId).catch(() => { /* non-critical */ });
+        }
         try {
             setLeadDetail(await getLeadDetail(sessionId));
         } catch (error) {
@@ -80,6 +89,28 @@ export default function Leads() {
             showToast('error', error.message || 'Failed to load lead details');
         } finally {
             setIsDetailLoading(false);
+        }
+    };
+
+    const hasUnreadLeads = leads.some((l) => l.unread === true);
+
+    const handleMarkAllRead = async () => {
+        if (!hasUnreadLeads) return;
+        // Optimistic UI — snap to zero immediately. On failure we toast and
+        // let the 60s sidebar poll reconcile; a full list refetch just to
+        // undo optimism is an expensive round-trip for a rare error.
+        const prevLeads = leads;
+        const prevStats = stats;
+        setLeads((current) => current.map((l) => ({ ...l, unread: false })));
+        setStats((current) => (current ? { ...current, unread: 0 } : current));
+        try {
+            await markAllLeadsViewed(selectedBot?.id);
+        } catch (error) {
+            console.error('Failed to mark all leads read:', error);
+            showToast('error', error.message || 'Failed to mark leads as read');
+            // Roll back optimistic mutation so the UI matches server truth.
+            setLeads(prevLeads);
+            setStats(prevStats);
         }
     };
 
@@ -161,14 +192,25 @@ export default function Leads() {
         <div className="space-y-6 animate-fade-in">
             <div className="flex items-center justify-between">
                 <PageHeader title="Leads" subtitle="Track and qualify your sales leads with BANT scoring" />
-                <button
-                    onClick={handleExport}
-                    disabled={isExporting || leads.length === 0}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
-                >
-                    {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    Export CSV
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleMarkAllRead}
+                        disabled={!hasUnreadLeads}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={hasUnreadLeads ? 'Mark every unread lead as read' : 'No unread leads'}
+                    >
+                        <CheckCheck className="w-4 h-4" />
+                        Mark all as read
+                    </button>
+                    <button
+                        onClick={handleExport}
+                        disabled={isExporting || leads.length === 0}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-700 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors disabled:opacity-50"
+                    >
+                        {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                        Export CSV
+                    </button>
+                </div>
             </div>
 
             {/* Stats Cards */}
@@ -278,13 +320,25 @@ export default function Leads() {
                                                 : <Square size={15} className="text-surface-400 dark:text-surface-500" />}
                                         </td>
                                         <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
-                                            <div>
-                                                <p className="font-medium text-surface-900 dark:text-surface-100">
-                                                    {lead.contact?.name || 'Anonymous'}
-                                                </p>
-                                                {lead.contact?.email && (
-                                                    <p className="text-[12px] text-surface-500 dark:text-surface-400">{lead.contact.email}</p>
+                                            <div className="flex items-start gap-2">
+                                                {lead.unread && (
+                                                    <span
+                                                        className="mt-1.5 w-2 h-2 rounded-full bg-primary-500 shrink-0"
+                                                        title="Unread lead"
+                                                        aria-label="Unread lead"
+                                                    />
                                                 )}
+                                                <div>
+                                                    <p className={cn(
+                                                        'text-surface-900 dark:text-surface-100',
+                                                        lead.unread ? 'font-semibold' : 'font-medium'
+                                                    )}>
+                                                        {lead.contact?.name || 'Anonymous'}
+                                                    </p>
+                                                    {lead.contact?.email && (
+                                                        <p className="text-[12px] text-surface-500 dark:text-surface-400">{lead.contact.email}</p>
+                                                    )}
+                                                </div>
                                             </div>
                                         </td>
                                         <td className="px-4 py-3" onClick={() => handleViewLead(lead.session_id)}>
