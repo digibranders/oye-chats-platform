@@ -1004,24 +1004,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </div>
             );
         }
-        if (chatMode === 'live' && operatorName) {
-            const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
-            const isReconnecting = liveConnectionStatus === 'reconnecting';
+        // Live-chat mode: keep the header consistent with bot mode (same
+        // date/time chrome) so the widget's chrome doesn't reshuffle when
+        // an operator joins. The operator's identity is already surfaced
+        // in-band via per-message "Operator Name" labels and the
+        // "<Name> joined" system line. A subtle "Reconnecting..." overlay
+        // still appears when the WS is dropping — that's a connection-
+        // health signal, not an identity swap.
+        if (chatMode === 'live' && liveConnectionStatus === 'reconnecting') {
             return (
-                <div className="flex items-center gap-2.5">
-                    <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
-                        style={{ backgroundColor: isReconnecting ? '#F59E0B' : primaryColor }}
-                    >
-                        {operatorName?.charAt(0)?.toUpperCase() || '?'}
-                    </div>
-                    <div>
-                        <h3 className="font-semibold text-sm text-[#16202C]">{operatorName}</h3>
-                        {isReconnecting && (
-                            <p className="text-[10px] font-medium text-amber-600">Reconnecting...</p>
-                        )}
-                    </div>
-                </div>
+                <span className="text-[11px] font-medium text-amber-600 tracking-wide">
+                    Reconnecting...
+                </span>
             );
         }
         return (
@@ -1032,29 +1026,25 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // ── Floating agent badge ─────────────────────────────────────────────────────
+    // Always shows the bot identity (avatar + name + subtitle) regardless
+    // of chatMode. Switching to the operator's name and initials when a
+    // human joined created a jarring chrome swap mid-conversation — the
+    // bot brand should anchor the widget consistently. Operator presence
+    // is communicated in-band via the "<Name> joined" system line and the
+    // per-message author labels.
     const renderAgentBadge = () => {
-        const isLive = chatMode === 'live' && operatorName;
         return (
             <div
                 className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40 pointer-events-auto"
                 style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
             >
-                {isLive ? (
-                    <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                        style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
-                    >
-                        {operatorName?.charAt(0)?.toUpperCase() || 'S'}
-                    </div>
-                ) : (
-                    <BotAvatar settings={settings} size="sm" />
-                )}
+                <BotAvatar settings={settings} size="sm" />
                 <div className="flex flex-col">
                     <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
-                        {isLive ? operatorName : (settings.bot_name || 'AI Assistant')}
+                        {settings.bot_name || 'AI Assistant'}
                     </span>
                     <span className="text-[10px] text-gray-400 leading-tight">
-                        {isLive ? (operatorDepartment || 'Support Team') : 'AI Assistant'}
+                        AI Assistant
                     </span>
                 </div>
                 <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
@@ -1224,8 +1214,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 })()}
             </div>
 
-            {/* ── Floating agent badge (always on top of messages area) ── */}
-            {!isInitializing && !showLeadForm && (chatMode === 'bot' || (chatMode === 'live' && operatorName)) && (
+            {/* ── Floating agent badge (always on top of messages area) ──
+                Shown in both bot and live modes — badge shows bot identity
+                regardless of mode. Hidden during waiting/unavailable where
+                dedicated state screens own the header, and during
+                initialization/lead form where chrome is suppressed. */}
+            {!isInitializing && !showLeadForm && (chatMode === 'bot' || chatMode === 'live') && (
                 <div className="shrink-0 flex justify-center -mb-5 relative z-30" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                     {renderAgentBadge()}
                 </div>
