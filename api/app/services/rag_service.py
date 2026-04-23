@@ -42,6 +42,7 @@ _EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 
 _meeting_card_re = re.compile(r"\[MEETING_CARD\]")
+_leave_message_card_re = re.compile(r"\[LEAVE_MESSAGE_CARD\]")
 
 
 def _resolve_meeting_booking(bot, session, session_id: str, bot_id: int) -> dict:
@@ -605,12 +606,14 @@ CURRENT QUALIFICATION STATE:
 
     if live_chat_enabled:
         handoff_section = """
-LIVE SUPPORT: If the user asks to speak with a person or connect with the team, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly — do not say the connection is already established. Say "our team" — never "human team". Don't answer their question after they ask for a person."""
-        handoff_offer = "Offer to connect with a team member."
+LIVE SUPPORT: If the user asks to speak with a person or connect with the team, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly — do not say the connection is already established. Say "our team" — never "human team". Don't answer their question after they ask for a person.
+
+LEAVE A MESSAGE: If the user asks to email our team, write to support, send a note, or leave a message (distinct from wanting to talk to a person right now), reply with ONE short warm sentence and then put [LEAVE_MESSAGE_CARD] on its own line at the end of your response. A dedicated message form will open from that card. NEVER ask the visitor to type their message into this chat so you can forward it — we have a form for that. Emit [LEAVE_MESSAGE_CARD] at most once per conversation."""
+        handoff_offer = "Offer to connect them with a team member or take a written message."
     else:
         handoff_section = """
-SUPPORT REQUESTS: If the user asks for a person, warmly direct them to the contact form in the menu above. Say the team will follow up by email. Say "our team" — never "human team"."""
-        handoff_offer = "Direct them to the contact form in the menu above."
+SUPPORT REQUESTS: If the user asks for a person, to email our team, to write to support, or to leave a message, reply with ONE short warm sentence and then put [LEAVE_MESSAGE_CARD] on its own line at the end of your response. A dedicated message form will open from that card. NEVER ask the visitor to type their message into this chat so you can forward it — we have a form for that. Say "our team" — never "human team". Emit [LEAVE_MESSAGE_CARD] at most once per conversation."""
+        handoff_offer = "Offer to take a written message for the team."
 
     meeting_section = ""
     if meeting_booking_enabled:
@@ -937,6 +940,11 @@ def rag_pipeline(
             if _meeting_card_detected:
                 answer = _meeting_card_re.sub("", answer).rstrip()
 
+            # Strip [LEAVE_MESSAGE_CARD] token from LLM response (non-streaming path)
+            _leave_msg_card_detected = bool(_leave_message_card_re.search(answer))
+            if _leave_msg_card_detected:
+                answer = _leave_message_card_re.sub("", answer).rstrip()
+
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
             if not suggest_handoff:
@@ -986,6 +994,12 @@ def rag_pipeline(
                 meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
                 if meeting_data:
                     result.update(meeting_data)
+
+            # Leave-message card: triggered by [LEAVE_MESSAGE_CARD] token from LLM.
+            # Skipped when a live-chat handoff is already being suggested so the
+            # two calls-to-action never compete in the same turn.
+            if _leave_msg_card_detected and not (suggest_handoff and live_chat_on):
+                result["show_leave_message"] = True
 
             # Cache the answer for identical future questions.
             # Skip caching when handoff was suggested — the response only
@@ -1254,6 +1268,15 @@ async def rag_pipeline_stream(
             if meeting_data:
                 final_meta.update(meeting_data)
 
+        # Detect [LEAVE_MESSAGE_CARD] token from the LLM response.
+        # Stripped before persistence/rendering; flagged in metadata so the
+        # widget can render an inline "Leave a message" CTA that opens the
+        # existing offline-message form.
+        _leave_msg_card_detected = bool(_leave_message_card_re.search(full_answer))
+        if _leave_msg_card_detected:
+            full_answer = _leave_message_card_re.sub("", full_answer).rstrip()
+            logger.info("Leave-message card token detected | session=%s", session_id)
+
         # Safety net: if the intent classifier missed handoff but the LLM
         # still produced a handoff-style response, override suggest_handoff.
         if not suggest_handoff and not _stream_error:
@@ -1312,6 +1335,11 @@ async def rag_pipeline_stream(
                     final_meta["suggest_handoff"] = True
                 if cta_data:
                     final_meta["cta"] = cta_data
+                # Leave-message card: only show when a live-chat handoff isn't
+                # already being suggested this turn, so the two CTAs never
+                # compete for the visitor's attention.
+                if _leave_msg_card_detected and not final_meta.get("suggest_handoff"):
+                    final_meta["show_leave_message"] = True
                 # BANT-based meeting card (only if [MEETING_CARD] didn't already trigger)
                 if not final_meta.get("show_booking"):
                     bant_meeting = _resolve_meeting_booking(bot, session, session_id, bid)

@@ -18,9 +18,12 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
 const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure about that|couldn't find.*information|not contained in/i;
 
-// Chat mode state machine — valid transitions
+// Chat mode state machine — valid transitions.
+// `bot → unavailable` covers the "Leave a message" CTA (header menu option and
+// the inline [LEAVE_MESSAGE_CARD] card) that drops the visitor straight from
+// the AI chat into the offline-message form without a live-chat handoff first.
 const _VALID_TRANSITIONS = {
-    bot: ['waiting'],
+    bot: ['waiting', 'unavailable'],
     waiting: ['live', 'bot', 'unavailable'],
     live: ['bot', 'unavailable'],
     unavailable: ['bot'],
@@ -117,6 +120,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [calendlyUrl, setCalendlyUrl] = useState(null);
     const [meetingProvider, setMeetingProvider] = useState(null);
     const [meetingBooked, setMeetingBooked] = useState(false);
+    // Inline "Leave a message" CTA — triggered by the [LEAVE_MESSAGE_CARD]
+    // sentinel from the RAG pipeline when the visitor asks to email or write
+    // to the team. Clicking the button drops them into the offline-message
+    // form (chatMode='unavailable') which persists + emails the team.
+    const [showLeaveMessageCard, setShowLeaveMessageCard] = useState(false);
+    const leaveMessageCardShownRef = useRef(false);
     const ctaShownRef = useRef(false);
     const ctaDimensionsShownRef = useRef(new Set());
     const [liveConnectionStatus, setLiveConnectionStatus] = useState('connected');
@@ -685,6 +694,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         setMeetingProvider(finalMeta.meeting_provider || 'calendly');
                         setShowBooking(true);
                     }
+                    if (
+                        finalMeta.show_leave_message &&
+                        !leaveMessageCardShownRef.current &&
+                        !offlineSubmitted
+                    ) {
+                        leaveMessageCardShownRef.current = true;
+                        setShowLeaveMessageCard(true);
+                    }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
                         const delay = (settings.handoff_delay_seconds || 0) * 1000 || 600;
@@ -885,6 +902,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setOfflineSubmitted(false);
         setOfflineError(false);
         setOfflineForm({ name: '', email: '', phone: '', message: '' });
+        setShowLeaveMessageCard(false);
+        leaveMessageCardShownRef.current = false;
         setChatMode('bot');
         setOperatorName(null);
         handoffFormInjectedRef.current = false;
@@ -1369,6 +1388,46 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             }
                         }}
                     />
+                )}
+
+                {/* Leave-a-message CTA — inline prompt to open the offline form.
+                    Triggered by the [LEAVE_MESSAGE_CARD] sentinel from the RAG
+                    pipeline when the visitor asks to email/write to the team.
+                    Only shown while in bot mode; transitioning to 'unavailable'
+                    (on click) reveals the existing offline form below. */}
+                {showLeaveMessageCard && chatMode === 'bot' && !offlineSubmitted && (
+                    <div
+                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
+                        style={{ animation: 'fadeUp 0.3s ease-out' }}
+                    >
+                        <div className="flex items-center gap-2 mb-2">
+                            <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            <p className="text-[13px] font-semibold text-[#16202C]">Leave a message for our team</p>
+                        </div>
+                        <p className="text-[12px] text-gray-500 mb-3">
+                            We&apos;ll reply by email as soon as we can.
+                        </p>
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowLeaveMessageCard(false);
+                                    setChatMode('unavailable');
+                                }}
+                                className="flex-1 py-2 rounded-xl text-white text-[13px] font-medium transition-opacity hover:opacity-90"
+                                style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                            >
+                                Leave a message
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowLeaveMessageCard(false)}
+                                className="px-4 py-2 rounded-xl border border-gray-200 text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                            >
+                                Not now
+                            </button>
+                        </div>
+                    </div>
                 )}
 
                 {/* BANT qualification quick-reply chips */}
