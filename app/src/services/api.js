@@ -716,6 +716,27 @@ export const exportLeadsCsv = async (botId) => {
     }
 };
 
+// Mark a single lead as viewed (idempotent, 204 no body). Fire-and-forget on drawer open.
+export const markLeadViewed = async (sessionId) => {
+    try {
+        await api.post(`/leads/${sessionId}/view`);
+    } catch (error) {
+        console.error('API Error marking lead viewed:', error);
+        throw buildApiError(error, 'Failed to mark lead as read');
+    }
+};
+
+// Bulk-clear unread leads for a bot (or all of the caller's bots).
+export const markAllLeadsViewed = async (botId) => {
+    try {
+        const query = botId ? `?bot_id=${botId}` : '';
+        await api.post(`/leads/mark-all-viewed${query}`);
+    } catch (error) {
+        console.error('API Error marking all leads viewed:', error);
+        throw buildApiError(error, 'Failed to mark all leads as read');
+    }
+};
+
 // ── Webhooks ──
 
 export const getWebhooks = async (botId) => {

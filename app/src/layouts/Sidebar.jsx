@@ -31,8 +31,9 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         ]);
         if (offlineData.status === 'fulfilled') setUnreadMsgs(offlineData.value?.total || 0);
         if (leadsData.status === 'fulfilled') {
-          const s = leadsData.value;
-          setNewLeads((s?.cold || 0) + (s?.unqualified || 0));
+          // `unread` = ChatSessions where lead_viewed_at IS NULL.
+          // Drops to 0 when the team opens each lead or clicks "Mark all read".
+          setNewLeads(leadsData.value?.unread || 0);
         }
       } catch {
         // badges are non-critical

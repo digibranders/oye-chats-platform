@@ -3,10 +3,11 @@
 import csv
 import io
 import logging
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 
 from app.api.auth import get_current_client_or_operator
 from app.db.models import BANTSignal, Bot, ChatMessage, ChatSession, LeadInfo
@@ -16,6 +17,23 @@ from app.services.lead_service import build_lead_response
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leads", tags=["leads"])
+
+
+def _resolve_client_bot_ids(session, auth: dict, bot_id: int | None) -> list[int]:
+    """Return the list of bot IDs this caller can act on.
+
+    If `bot_id` is provided, verify the caller owns it (raises 403 otherwise).
+    If not, return every bot owned by the caller's client.
+    """
+    client_bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+    if bot_id is None:
+        return client_bot_ids
+    owns_bot = session.execute(
+        select(Bot.id).where(Bot.id == bot_id, Bot.client_id == auth["client_id"])
+    ).scalar_one_or_none()
+    if not owns_bot:
+        raise HTTPException(status_code=403, detail="Bot not found or access denied.")
+    return [bot_id]
 
 
 @router.get("")
@@ -125,9 +143,24 @@ def lead_stats(
             counts[lead["tier"]] += 1
             total_score += lead["score"]
 
+        # Unread count drives the sidebar badge. Covered by the partial index
+        # ix_chat_sessions_bot_id_lead_viewed_at (migration d4e5f6a7b8c9).
+        unread = 0
+        if bot_ids:
+            unread = (
+                session.execute(
+                    select(func.count(ChatSession.id)).where(
+                        ChatSession.bot_id.in_(bot_ids),
+                        ChatSession.lead_viewed_at.is_(None),
+                    )
+                ).scalar()
+                or 0
+            )
+
         total = len(sessions)
         return {
             "total": total,
+            "unread": unread,
             **counts,
             # backward-compat aliases for frontend expecting old status names
             "cold": counts["unqualified"],
@@ -136,6 +169,63 @@ def lead_stats(
             "qualified": counts["sql"],
             "avg_score": round(total_score / total) if total > 0 else 0,
         }
+
+
+@router.post("/mark-all-viewed", status_code=204)
+def mark_all_leads_viewed(
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Bulk-clear the unread flag on every lead for the caller's bot(s).
+
+    Matches the `PATCH /offline-messages/{id} → read` UX — a single
+    "Mark all as read" click on the Leads page drops the sidebar badge
+    to zero without opening every drawer.
+    """
+    with get_session() as session:
+        bot_ids = _resolve_client_bot_ids(session, auth, bot_id)
+        if not bot_ids:
+            return Response(status_code=204)
+
+        session.execute(
+            update(ChatSession)
+            .where(
+                ChatSession.bot_id.in_(bot_ids),
+                ChatSession.lead_viewed_at.is_(None),
+            )
+            .values(lead_viewed_at=datetime.now(UTC))
+        )
+        session.commit()
+        return Response(status_code=204)
+
+
+@router.post("/{session_id}/view", status_code=204)
+def mark_lead_viewed(
+    session_id: str,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Mark a single lead as viewed. Idempotent — subsequent calls are no-ops.
+
+    Returns 204 (no body) so the frontend can fire-and-forget on drawer open.
+    """
+    with get_session() as session:
+        bot_ids = list(session.execute(select(Bot.id).where(Bot.client_id == auth["client_id"])).scalars().all())
+        if not bot_ids:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        lead = session.execute(
+            select(ChatSession).where(
+                ChatSession.id == session_id,
+                ChatSession.bot_id.in_(bot_ids),
+            )
+        ).scalar_one_or_none()
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        if lead.lead_viewed_at is None:
+            lead.lead_viewed_at = datetime.now(UTC)
+            session.commit()
+        return Response(status_code=204)
 
 
 @router.get("/export")
