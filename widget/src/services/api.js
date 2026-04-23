@@ -38,10 +38,68 @@ export const sendMessage = async (message, sessionId = null) => {
     }
 };
 
-// Wrap reader.read() in a race against a timeout so a stalled stream 
+// Wrap reader.read() in a race against a timeout so a stalled stream
 // (backend hung, TCP open but no bytes flowing) never freezes the UI forever.
 // 35s = 30s server-side chunk timeout + 5s network RTT buffer.
 const _STREAM_READ_TIMEOUT_MS = 35_000;
+
+// ── Inline-card sentinel tokens ──
+//
+// The RAG prompt instructs the LLM to emit sentinels like [MEETING_CARD]
+// or [LEAVE_MESSAGE_CARD] on their own line to trigger inline UI cards.
+// The backend strips these from the PERSISTED ChatMessage and sets flags
+// in FINAL_METADATA, but during streaming the raw chunks are yielded as
+// they arrive — so without client-side scrubbing the token visibly
+// flashes in the chat bubble. This helper sits between the stream reader
+// and onChunk so the visitor never sees a stray token.
+//
+// Split-chunk correctness: LLM token boundaries can land inside a
+// sentinel (e.g. chunk 1 ends with "[LEAVE_ME", chunk 2 starts with
+// "SSAGE_CARD]"). The stripper holds back any trailing substring that
+// could be the prefix of a known sentinel and releases it on the next
+// push() or on flush() at stream end.
+const _STREAM_SENTINELS = ['[LEAVE_MESSAGE_CARD]', '[MEETING_CARD]'];
+const _MAX_SENTINEL_LEN = _STREAM_SENTINELS.reduce((m, s) => Math.max(m, s.length), 0);
+
+const _stripAllSentinels = (text) => {
+    let out = text;
+    for (const s of _STREAM_SENTINELS) {
+        // Use split+join for a literal (non-regex) global replace.
+        if (out.includes(s)) out = out.split(s).join('');
+    }
+    return out;
+};
+
+const _createSentinelStripper = () => {
+    let pending = '';
+    return {
+        /** Absorb a new chunk; return only the text safe to render. */
+        push(chunk) {
+            if (!chunk) return '';
+            pending = _stripAllSentinels(pending + chunk);
+            // Identify the longest trailing substring that could still be
+            // the prefix of a sentinel — hold it back until more arrives.
+            const maxHold = Math.min(_MAX_SENTINEL_LEN - 1, pending.length);
+            let holdFrom = pending.length;
+            for (let k = maxHold; k > 0; k--) {
+                const tail = pending.slice(pending.length - k);
+                if (_STREAM_SENTINELS.some((s) => s.startsWith(tail))) {
+                    holdFrom = pending.length - k;
+                    break;
+                }
+            }
+            const emit = pending.slice(0, holdFrom);
+            pending = pending.slice(holdFrom);
+            return emit;
+        },
+        /** Stream is done — release anything still held, minus any late-completed sentinel. */
+        flush() {
+            const out = _stripAllSentinels(pending);
+            pending = '';
+            return out;
+        },
+    };
+};
 
 const _readWithTimeout = (reader) =>
     new Promise((resolve, reject) => {
@@ -75,6 +133,15 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         let buffer = '';
         let metadataReceived = false;
 
+        // All visible text funnels through this stripper so inline-card
+        // sentinels (e.g. [LEAVE_MESSAGE_CARD]) never reach the UI — even
+        // when they straddle chunk boundaries.
+        const stripper = _createSentinelStripper();
+        const emitClean = (text) => {
+            const clean = stripper.push(text);
+            if (clean) onChunk?.(clean);
+        };
+
         while (true) {
             let done, value;
             try {
@@ -105,15 +172,19 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
                     // Flush any pending partial buffer BEFORE triggering final metadata
                     // so all streamed text is delivered before handoff can fire.
                     if (buffer && !buffer.startsWith('METADATA:') && !buffer.startsWith('FINAL_METADATA:')) {
-                        onChunk?.(buffer);
+                        emitClean(buffer);
                         buffer = '';
                     }
+                    // Release any sentinel-prefix tail the stripper was holding
+                    // so no trailing text is silently swallowed by cleanup.
+                    const tail = stripper.flush();
+                    if (tail) onChunk?.(tail);
                     try {
                         const finalMeta = JSON.parse(line.slice(15));
                         onFinalMetadata?.(finalMeta);
                     } catch { /* ignore parse errors */ }
                 } else {
-                    onChunk?.(line + '\n');
+                    emitClean(line + '\n');
                 }
             }
 
@@ -124,7 +195,7 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
             if (metadataReceived && buffer &&
                 !buffer.startsWith('METADATA:') &&
                 !buffer.startsWith('FINAL_METADATA:')) {
-                onChunk?.(buffer);
+                emitClean(buffer);
                 buffer = '';
             }
         }
@@ -132,14 +203,22 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         // Process any remaining buffer
         if (buffer.trim()) {
             if (buffer.startsWith('FINAL_METADATA:')) {
+                // Flush stripper before final metadata so no text is lost.
+                const tail = stripper.flush();
+                if (tail) onChunk?.(tail);
                 try {
                     const finalMeta = JSON.parse(buffer.slice(15));
                     onFinalMetadata?.(finalMeta);
                 } catch { /* ignore */ }
             } else if (!buffer.startsWith('METADATA:')) {
-                onChunk?.(buffer);
+                emitClean(buffer);
             }
         }
+
+        // Final safety flush — releases any stripper-held tail in the
+        // (rare) case the stream ended without FINAL_METADATA.
+        const tail = stripper.flush();
+        if (tail) onChunk?.(tail);
     } catch (error) {
         console.error("[OyeChats] Streaming error:", error);
         onError?.(error);

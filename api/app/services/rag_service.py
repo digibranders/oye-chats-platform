@@ -91,6 +91,62 @@ def _response_suggests_handoff(text: str) -> bool:
     return bool(_HANDOFF_RESPONSE_RE.search(text))
 
 
+# Safety-net regex: detect "leave a message" intent in the VISITOR'S question.
+# Covers common phrasings, common typos, and punctuation noise. Used to force
+# the [LEAVE_MESSAGE_CARD] card when the LLM fails to emit the sentinel for a
+# clearly-relevant turn (see screenshot: "can i submit a nessage for the team"
+# → bot replied "you can leave a note here" with no card).
+_LEAVE_MESSAGE_QUESTION_RE = re.compile(
+    r"(?ix)"
+    r"(?:"
+    # Verbs that express intent to contact/reach the team asynchronously.
+    r"\b(?:email|e-mail|emai?l|contact|cont?act|reach(?:\s+out)?|write(?:\s+to)?|"
+    r"message|messag|nessage|"  # typo tolerance
+    r"submit|drop|leave|pass\s+(?:on|along)|send)\b"
+    r".{0,40}?"
+    r"\b(?:team|support|staff|you|sales|someone|anyone|human|agent|rep(?:resentative)?|"
+    r"note|message|nessage|enquiry|inquiry|question)\b"
+    r"|"
+    r"\b(?:get|getting)\s+(?:in\s+touch|back\s+to\s+me)\b"
+    r"|"
+    r"\bhow\s+(?:do\s+|can\s+)?i\s+(?:contact|reach|email|message|write)\b"
+    r"|"
+    r"\bcan\s+i\s+(?:contact|reach|email|e-?mail|message|messag|nessage|write|leave|submit|drop|send)\b"
+    r"|"
+    r"\bleave\s+(?:a\s+)?(?:note|message|nessage|comment|feedback)\b"
+    r")"
+)
+
+# Safety-net regex: detect "leave a message" affordance in the BOT'S answer.
+# Triggers even when the LLM is hallucinating "leave a note here" — by matching
+# on the leave/send/contact framing we catch exactly the failure mode the
+# prompt explicitly told the model to avoid.
+_LEAVE_MESSAGE_RESPONSE_RE = re.compile(
+    r"(?ix)"
+    r"(?:"
+    r"\bleave\s+(?:a|your)\s+(?:note|message|comment|enquiry|inquiry)\b"
+    r"|"
+    r"\b(?:send|submit|drop)\s+(?:us|the\s+team|our\s+team)\s+(?:a\s+)?(?:note|message|line)\b"
+    r"|"
+    r"\bwrite\s+to\s+(?:us|our\s+team|the\s+team|support)\b"
+    r"|"
+    r"\b(?:our\s+team|we)\s+(?:will|'ll)\s+(?:get\s+back|follow\s+up|reach\s+out|respond|be\s+in\s+touch)\b"
+    r"|"
+    r"\bforward\s+(?:your|the)\s+message\s+to\s+(?:our\s+team|the\s+team)\b"
+    r")"
+)
+
+
+def _response_suggests_leave_message(text: str) -> bool:
+    """Safety net: detect async contact-the-team language in the bot response."""
+    return bool(_LEAVE_MESSAGE_RESPONSE_RE.search(text))
+
+
+def _question_suggests_leave_message(text: str) -> bool:
+    """Safety net: detect 'I want to contact the team' intent in the user's turn."""
+    return bool(_LEAVE_MESSAGE_QUESTION_RE.search(text))
+
+
 # Prompt injection guard — patterns that attempt to override the system prompt
 _INJECTION_PATTERNS = re.compile(
     r"(ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context))|"
@@ -604,15 +660,41 @@ CURRENT QUALIFICATION STATE:
 {state_text}
 {cta_instruction}"""
 
-    if live_chat_enabled:
-        handoff_section = """
-LIVE SUPPORT: If the user asks to speak with a person or connect with the team, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly — do not say the connection is already established. Say "our team" — never "human team". Don't answer their question after they ask for a person.
+    # Shared list of phrasings that ALL count as "leave a message" intent.
+    # Typos, synonyms, partial matches — treat them all the same.
+    _leave_msg_intents = (
+        "email / write to / contact / reach / get in touch with our team; "
+        "send / submit / drop / leave / pass along a message / note / enquiry / "
+        'question / request / feedback; "can I reach someone", "how do I contact you", '
+        '"can the team get back to me". Typos of these words (e.g. "nessage", "ocntact") '
+        "count the same as the correct spelling."
+    )
+    _leave_msg_rules = (
+        f"If the user expresses ANY of these intents — {_leave_msg_intents} — "
+        "reply with ONE short warm sentence acknowledging the request and then put "
+        "[LEAVE_MESSAGE_CARD] on its own line at the end of your response. A dedicated "
+        "message form will open when the visitor taps that card. "
+        "CRITICAL RULES: "
+        "(a) NEVER ask the visitor to type their message into this chat so you can "
+        "forward it — we have a dedicated form; the chat input does not reach our team. "
+        '(b) NEVER say the team can be reached "here", "below", "in this chat", or '
+        '"in this window". The destination is the form, not the chat box. '
+        "(c) NEVER promise to email/forward a message that the visitor types in chat. "
+        "(d) If uncertain whether the intent matches, err on the side of emitting "
+        "[LEAVE_MESSAGE_CARD] — the form is always the correct affordance for "
+        '"contact the team" style requests. '
+        "Emit [LEAVE_MESSAGE_CARD] at most once per conversation."
+    )
 
-LEAVE A MESSAGE: If the user asks to email our team, write to support, send a note, or leave a message (distinct from wanting to talk to a person right now), reply with ONE short warm sentence and then put [LEAVE_MESSAGE_CARD] on its own line at the end of your response. A dedicated message form will open from that card. NEVER ask the visitor to type their message into this chat so you can forward it — we have a form for that. Emit [LEAVE_MESSAGE_CARD] at most once per conversation."""
+    if live_chat_enabled:
+        handoff_section = f"""
+LIVE SUPPORT: If the user asks to speak with a person RIGHT NOW or have a live conversation, respond warmly in 1-2 sentences. Let them know a team member will be with them shortly — do not say the connection is already established. Say "our team" — never "human team". Don't answer their question after they ask for a person.
+
+LEAVE A MESSAGE: {_leave_msg_rules} This path is distinct from live support — use it when the visitor wants an async reply (write, email, leave a note) rather than an immediate live conversation."""
         handoff_offer = "Offer to connect them with a team member or take a written message."
     else:
-        handoff_section = """
-SUPPORT REQUESTS: If the user asks for a person, to email our team, to write to support, or to leave a message, reply with ONE short warm sentence and then put [LEAVE_MESSAGE_CARD] on its own line at the end of your response. A dedicated message form will open from that card. NEVER ask the visitor to type their message into this chat so you can forward it — we have a form for that. Say "our team" — never "human team". Emit [LEAVE_MESSAGE_CARD] at most once per conversation."""
+        handoff_section = f"""
+SUPPORT REQUESTS: {_leave_msg_rules} Say "our team" — never "human team"."""
         handoff_offer = "Offer to take a written message for the team."
 
     meeting_section = ""
@@ -956,6 +1038,24 @@ def rag_pipeline(
                         session_id,
                     )
 
+            # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly
+            # asks for async team contact but the LLM forgot to emit the
+            # sentinel (prompt miss / typos / free-form drift). We trigger
+            # when BOTH the user's question and the bot's answer look like
+            # contact-the-team — this avoids false positives on the bot
+            # merely mentioning "our team" in an informational answer.
+            if (
+                not _leave_msg_card_detected
+                and not suggest_handoff
+                and _question_suggests_leave_message(question)
+                and _response_suggests_leave_message(answer)
+            ):
+                _leave_msg_card_detected = True
+                logger.info(
+                    "Leave-message safety net triggered (non-stream) for session %s",
+                    session_id,
+                )
+
             bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=answer, bot_id=bid)
 
             if lf and hasattr(bot_msg, "trace_id"):
@@ -1287,6 +1387,22 @@ async def rag_pipeline_stream(
                     "Handoff safety net triggered (stream) for session %s",
                     session_id,
                 )
+
+        # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly asks
+        # for async team contact but the LLM forgot to emit the sentinel.
+        # Mirrors the non-streaming path above — see its comment for rationale.
+        if (
+            not _leave_msg_card_detected
+            and not suggest_handoff
+            and not _stream_error
+            and _question_suggests_leave_message(question)
+            and _response_suggests_leave_message(full_answer)
+        ):
+            _leave_msg_card_detected = True
+            logger.info(
+                "Leave-message safety net triggered (stream) for session %s",
+                session_id,
+            )
         try:
             if not _stream_error or full_answer:
                 bot_msg = add_chat_message(
