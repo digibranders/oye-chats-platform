@@ -1,10 +1,12 @@
 """Email notification service using Brevo (formerly Sendinblue) transactional API."""
 
 import asyncio
+import contextlib
 import html
 import json
 import logging
 import re
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.config import BREVO_API_KEY, EMAIL_ENABLED, EMAIL_FROM_ADDRESS, EMAIL_FROM_NAME
@@ -12,6 +14,48 @@ from app.config import BREVO_API_KEY, EMAIL_ENABLED, EMAIL_FROM_ADDRESS, EMAIL_F
 logger = logging.getLogger(__name__)
 
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account"
+
+
+def _capture_email_failure(exc: Exception, **tags) -> None:
+    """Capture an email-send failure to Sentry (if configured) with tags.
+
+    Fire-and-forget daemon threads otherwise lose these exceptions entirely
+    — logger.error is not enough because no one reads app logs proactively.
+    Sentry is where ops actually sees failures.
+    """
+    with contextlib.suppress(Exception):
+        import sentry_sdk
+
+        with sentry_sdk.push_scope() as scope:
+            for key, value in tags.items():
+                scope.set_tag(f"email.{key}", str(value))
+            sentry_sdk.capture_exception(exc)
+
+
+def _extract_brevo_error(exc: Exception) -> str:
+    """Extract the human-readable reason from a Brevo API failure.
+
+    Brevo returns a JSON body like {"code": "invalid_parameter", "message": "..."}
+    on errors. The old code caught the exception and logged str(exc) which only
+    shows the HTTP status — the actual reason lived unread in the response body.
+    """
+    if isinstance(exc, HTTPError):
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+            try:
+                parsed = json.loads(body)
+                code = parsed.get("code", "unknown")
+                message = parsed.get("message", body[:200])
+                return f"HTTP {exc.code} brevo_code={code} message={message}"
+            except json.JSONDecodeError:
+                return f"HTTP {exc.code} body={body[:200]}"
+        except Exception:
+            return f"HTTP {exc.code} (body unreadable)"
+    if isinstance(exc, URLError):
+        return f"network error: {exc.reason}"
+    return f"{type(exc).__name__}: {exc}"
+
 
 # ── Brevo Template IDs (created 2026-04-09) ──────────────────────────────────
 # Manage templates at: https://app.brevo.com/templates/listing
@@ -75,7 +119,9 @@ def _send_brevo_email(
             logger.info(f"Email sent to {to_email} | subject={subject} | status={resp.status}")
             return True
     except Exception as e:
-        logger.error(f"Brevo email failed to {to_email}: {e}")
+        reason = _extract_brevo_error(e)
+        logger.warning("Brevo email failed | to=%s subject=%s reason=%s", to_email, subject, reason)
+        _capture_email_failure(e, kind="raw", to=to_email, subject=subject, reason=reason)
         return False
 
 
@@ -97,7 +143,15 @@ def _send_brevo_template(
         sender_name: Optional override for the sender display name.
     """
     if not EMAIL_ENABLED:
-        logger.debug("Email not sent (Brevo not configured)")
+        # Promoted from DEBUG to WARN — silent skips were invisible in prod,
+        # making "email never arrived" an unexplained mystery. A single WARN
+        # per send is acceptable noise; if it's too much, the fix is to set
+        # BREVO_API_KEY, not silence the log.
+        logger.warning(
+            "Email skipped — EMAIL_ENABLED=False (no BREVO_API_KEY) | to=%s template_id=%s",
+            to_email,
+            template_id,
+        )
         return False
 
     # When using templateId, Brevo uses the template's own verified sender.
@@ -129,7 +183,14 @@ def _send_brevo_template(
             logger.info(f"Template email sent to {to_email} | template_id={template_id} | status={resp.status}")
             return True
     except Exception as e:
-        logger.error(f"Brevo template email failed to {to_email} (template={template_id}): {e}")
+        reason = _extract_brevo_error(e)
+        logger.warning(
+            "Brevo template email failed | to=%s template_id=%s reason=%s",
+            to_email,
+            template_id,
+            reason,
+        )
+        _capture_email_failure(e, kind="template", to=to_email, template_id=template_id, reason=reason)
         return False
 
 
