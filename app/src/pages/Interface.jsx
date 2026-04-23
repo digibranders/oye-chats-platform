@@ -3,7 +3,7 @@ import { getAuthState } from '../utils/auth';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
 import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus, Mail } from 'lucide-react';
-import { getClientSettings, updateClientSettings, uploadLogo } from '../services/api';
+import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import EmptyState from '../components/ui/EmptyState';
@@ -148,6 +148,13 @@ export default function Interface({ embedded = false }) {
     const [previewState, setPreviewState] = useState('chat');
     const inputRef = useRef(null);
 
+    // ── Live "Preview on my website" panel ──────────────────────────────
+    const [websitePreviewOpen, setWebsitePreviewOpen] = useState(false);
+    const [previewUrlInput, setPreviewUrlInput] = useState('');
+    const [loadedPreviewUrl, setLoadedPreviewUrl] = useState('');
+    const [previewReady, setPreviewReady] = useState(false);
+    const previewIframeRef = useRef(null);
+
     // Crop state
     const [showCropModal, setShowCropModal] = useState(false);
     const [cropImage, setCropImage] = useState(null);
@@ -213,6 +220,89 @@ export default function Interface({ embedded = false }) {
         };
         fetchSettings();
     }, [selectedBot?.id, showToast]);
+
+    // Prefill the preview URL with the bot's configured website.
+    useEffect(() => {
+        if (selectedBot?.website && !previewUrlInput) {
+            setPreviewUrlInput(selectedBot.website);
+        }
+    }, [selectedBot?.website, previewUrlInput]);
+
+    // Build the current draft payload — same shape the widget expects.
+    const buildPreviewPayload = useCallback(() => ({
+        bot_name: botName,
+        bot_logo: logo,
+        launcher_name: launcherName,
+        launcher_logo: launcherLogo,
+        primary_color: primaryColor,
+        header_color: primaryColor,
+        user_bubble_color: userBubbleColor,
+        background_color: '#ffffff',
+        avatar_type: avatarType,
+        orb_color: orbColor || null,
+        welcome_title: welcomeTitle,
+        welcome_subtitle: welcomeSubtitle,
+        waiting_message: waitingMessage,
+        offline_message: offlineMessage,
+        branding_text: brandingText,
+        branding_url: brandingUrl,
+        widget_messages: widgetMessages,
+        widget_config: widgetConfig,
+    }), [
+        botName, logo, launcherName, launcherLogo, primaryColor, userBubbleColor,
+        avatarType, orbColor, welcomeTitle, welcomeSubtitle, waitingMessage,
+        offlineMessage, brandingText, brandingUrl, widgetMessages, widgetConfig,
+    ]);
+
+    // Listen for the widget's ready signal so we flush the initial draft.
+    useEffect(() => {
+        if (!websitePreviewOpen) return undefined;
+        const apiOrigin = getBotDemoOrigin();
+        const handler = (event) => {
+            if (event.origin !== apiOrigin) return;
+            if (event.data?.type === 'oyechats:preview-ready') {
+                setPreviewReady(true);
+            }
+        };
+        window.addEventListener('message', handler);
+        return () => window.removeEventListener('message', handler);
+    }, [websitePreviewOpen]);
+
+    // Reset readiness when the iframe URL changes.
+    useEffect(() => {
+        setPreviewReady(false);
+    }, [loadedPreviewUrl, websitePreviewOpen]);
+
+    // Push config to the widget (debounced) whenever a relevant field changes
+    // and the widget has signaled readiness.
+    useEffect(() => {
+        if (!websitePreviewOpen || !previewReady) return undefined;
+        const iframe = previewIframeRef.current;
+        if (!iframe?.contentWindow) return undefined;
+        const apiOrigin = getBotDemoOrigin();
+        const payload = buildPreviewPayload();
+        const timer = setTimeout(() => {
+            try {
+                iframe.contentWindow.postMessage(
+                    { type: 'oyechats:preview-config', payload },
+                    apiOrigin,
+                );
+            } catch (error) {
+                console.warn('[Interface] Failed to post preview config:', error);
+            }
+        }, 150);
+        return () => clearTimeout(timer);
+    }, [websitePreviewOpen, previewReady, buildPreviewPayload]);
+
+    const handleLoadPreview = () => {
+        const trimmed = previewUrlInput.trim();
+        if (!trimmed) return;
+        setLoadedPreviewUrl(trimmed);
+    };
+
+    const previewIframeSrc = loadedPreviewUrl && selectedBot?.bot_key
+        ? getBotPreviewUrl(selectedBot.bot_key, loadedPreviewUrl, { edit: true })
+        : null;
 
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
@@ -329,13 +419,66 @@ export default function Interface({ embedded = false }) {
             )}
             {/* Page Header */}
             {!embedded && (
-                <div>
-                    <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">Appearance</h1>
-                    <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm">Customize how your chatbot looks</p>
-                    {!isBotManager && (
-                        <p className="mt-2 text-sm text-surface-500 dark:text-surface-400">
-                            You have read-only access to this bot configuration.
-                        </p>
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div>
+                        <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">Appearance</h1>
+                        <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm">Customize how your chatbot looks</p>
+                        {!isBotManager && (
+                            <p className="mt-2 text-sm text-surface-500 dark:text-surface-400">
+                                You have read-only access to this bot configuration.
+                            </p>
+                        )}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setWebsitePreviewOpen((v) => !v)}
+                        className="self-start inline-flex items-center gap-2 px-3 h-9 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-700 dark:text-surface-200 text-sm font-medium hover:bg-surface-50 dark:hover:bg-surface-700 transition-colors"
+                    >
+                        <Sparkles className="w-4 h-4 text-primary-500" />
+                        {websitePreviewOpen ? 'Hide website preview' : 'Preview on my website'}
+                    </button>
+                </div>
+            )}
+
+            {/* Live website preview panel */}
+            {websitePreviewOpen && (
+                <div className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-4 shadow-sm animate-fade-in">
+                    <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                        <div className="flex-1">
+                            <label className="block text-[12px] font-semibold text-surface-600 dark:text-surface-300 mb-1">
+                                Your website URL
+                            </label>
+                            <input
+                                type="url"
+                                value={previewUrlInput}
+                                onChange={(e) => setPreviewUrlInput(e.target.value)}
+                                placeholder="https://yourcompany.com"
+                                className="w-full h-10 px-3 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-sm text-surface-900 dark:text-surface-100 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleLoadPreview}
+                            disabled={!previewUrlInput.trim() || !selectedBot?.bot_key}
+                            className="sm:self-end h-10 px-4 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            {loadedPreviewUrl ? 'Reload' : 'Load preview'}
+                        </button>
+                    </div>
+                    {previewIframeSrc && (
+                        <div className="mt-3">
+                            <p className="text-[12px] text-surface-500 dark:text-surface-400 mb-2">
+                                Changes you make above apply to the widget inside this preview in real time — no save needed. If the site blocks embedding, a fallback page appears; your changes still apply on your real site once you save.
+                            </p>
+                            <iframe
+                                ref={previewIframeRef}
+                                key={previewIframeSrc}
+                                src={previewIframeSrc}
+                                title="Website preview with chat widget"
+                                className="w-full h-[560px] rounded-xl border border-surface-200 dark:border-surface-700 bg-white"
+                                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                            />
+                        </div>
                     )}
                 </div>
             )}

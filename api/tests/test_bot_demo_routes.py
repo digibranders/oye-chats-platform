@@ -186,6 +186,73 @@ class TestBotDemoRoutes:
         assert response.status_code == 400
         assert "http or https" in response.json()["detail"]
 
+    def test_preview_with_edit_flag_injects_bootstrap(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=7,
+            bot_key="bot-demo123",
+            name="Sales Assistant",
+            website="https://example.com",
+            is_active=True,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        session.add.side_effect = lambda x: None
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda _url: True)
+
+        client = TestClient(_build_test_client())
+        response = client.get("/demo/bot-demo123?url=https://example.com&edit=1")
+
+        assert response.status_code == 200
+        assert "window.__OYECHATS_PREVIEW_MODE__=true" in response.text
+        assert "<iframe" in response.text
+
+    def test_preview_without_edit_flag_omits_bootstrap(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=7,
+            bot_key="bot-demo123",
+            name="Sales Assistant",
+            website="https://example.com",
+            is_active=True,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        session.add.side_effect = lambda x: None
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+        monkeypatch.setattr(bot_routes, "_check_iframe_allowed", lambda _url: True)
+
+        client = TestClient(_build_test_client())
+        response = client.get("/demo/bot-demo123?url=https://example.com")
+
+        assert response.status_code == 200
+        assert "__OYECHATS_PREVIEW_MODE__" not in response.text
+
+    def test_hero_page_with_edit_flag_injects_bootstrap(self, monkeypatch):
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=7,
+            bot_key="bot-demo123",
+            name="Sales Assistant",
+            website="https://example.com",
+            is_active=True,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        session.add.side_effect = lambda x: None
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_context(session))
+
+        client = TestClient(_build_test_client())
+        response = client.get("/demo/bot-demo123?edit=1")
+
+        assert response.status_code == 200
+        assert "<iframe" not in response.text
+        assert "window.__OYECHATS_PREVIEW_MODE__=true" in response.text
+
     def test_preview_rejects_empty_netloc(self, monkeypatch):
         from app.api import bot_routes
 

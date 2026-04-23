@@ -1,5 +1,7 @@
 import html
+import ipaddress
 import logging
+import socket
 import uuid
 from urllib.parse import urlparse
 
@@ -253,7 +255,7 @@ def _build_public_cta_options(bot) -> dict:
     return cta_options
 
 
-def _build_demo_page_html(bot: Bot) -> str:
+def _build_demo_page_html(bot: Bot, edit: bool = False) -> str:
     bot_name = html.escape(bot.name or "OyeChats")
     website = (bot.website or "").strip()
     website_link = ""
@@ -263,6 +265,7 @@ def _build_demo_page_html(bot: Bot) -> str:
             f'<a class="demo-link" href="{safe_website}" target="_blank" rel="noopener noreferrer">'
             f"Visit {safe_website}</a>"
         )
+    editor_bootstrap = _PREVIEW_EDITOR_BOOTSTRAP if edit else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -414,19 +417,35 @@ def _build_demo_page_html(bot: Bot) -> str:
       </div>
     </section>
   </main>
-  <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{html.escape(bot.bot_key)}"></script>
+  {editor_bootstrap}<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{html.escape(bot.bot_key)}"></script>
 </body>
 </html>
 """
 
 
 def _validate_preview_url(raw_url: str) -> str:
-    """Validate that a preview URL uses http/https and has a valid host."""
+    """Validate that a preview URL uses http/https, has a valid host, and does not resolve to a private IP.
+
+    Blocks SSRF by resolving the hostname and rejecting private, loopback,
+    link-local, and other reserved IP ranges before allowing server-side requests.
+    """
     parsed = urlparse(raw_url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="URL must use http or https scheme.")
-    if not parsed.netloc:
+    hostname = parsed.hostname
+    if not hostname:
         raise HTTPException(status_code=400, detail="Invalid URL.")
+
+    try:
+        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail="Could not resolve hostname.") from exc
+
+    for _family, _type, _proto, _canonname, sockaddr in addr_info:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise HTTPException(status_code=400, detail="URLs pointing to internal addresses are not allowed.")
+
     return raw_url
 
 
@@ -467,12 +486,21 @@ def _mask_bot_key(bot_key: str) -> str:
     return f"{bot_key[:6]}{'•' * (len(bot_key) - 10)}{bot_key[-4:]}"
 
 
-def _build_preview_page_html(bot: Bot, target_url: str) -> str:
-    """Build an iframe-based preview page that overlays the widget on a real website."""
+_PREVIEW_EDITOR_BOOTSTRAP = "<script>window.__OYECHATS_PREVIEW_MODE__=true;</script>\n"
+
+
+def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> str:
+    """Build an iframe-based preview page that overlays the widget on a real website.
+
+    When *edit* is True, a bootstrap flag is injected so the widget enables its
+    live-preview bridge (accepts `oyechats:preview-config` postMessage events
+    from the parent frame — typically the admin dashboard editor).
+    """
     bot_name = html.escape(bot.name or "OyeChats")
     bot_key = html.escape(bot.bot_key)
     masked_key = html.escape(_mask_bot_key(bot.bot_key))
     safe_url = html.escape(target_url)
+    editor_bootstrap = _PREVIEW_EDITOR_BOOTSTRAP if edit else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -645,7 +673,7 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
       <p>This website doesn&rsquo;t allow being loaded inside a preview frame. The chat widget is still active &mdash; try it using the launcher in the bottom-right corner.</p>
     </div>
   </div>
-  <script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{bot_key}"></script>
+  {editor_bootstrap}<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="{bot_key}"></script>
   <script>
     (function() {{
       var frame = document.getElementById('preview-frame');
@@ -715,8 +743,17 @@ def _build_preview_page_html(bot: Bot, target_url: str) -> str:
 
 
 @public_router.get("/demo/{bot_key}", response_class=HTMLResponse)
-def get_bot_demo_page(bot_key: str, url: str | None = Query(default=None)):
-    """Render a shareable demo page, or an iframe-based preview when *url* is supplied."""
+def get_bot_demo_page(
+    bot_key: str,
+    url: str | None = Query(default=None),
+    edit: int = Query(default=0, ge=0, le=1),
+):
+    """Render a shareable demo page, or an iframe-based preview when *url* is supplied.
+
+    When ``edit=1`` is passed, the page enables a postMessage bridge so the
+    embedding dashboard can drive widget appearance in real time.
+    """
+    edit_mode = edit == 1
     with get_session() as session:
         bot = session.execute(select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))).scalars().first()
         if not bot:
@@ -728,10 +765,10 @@ def get_bot_demo_page(bot_key: str, url: str | None = Query(default=None)):
         if url:
             _validate_preview_url(url)
             if _check_iframe_allowed(url):
-                return HTMLResponse(content=_build_preview_page_html(bot, url))
+                return HTMLResponse(content=_build_preview_page_html(bot, url, edit=edit_mode))
             # Site blocks framing — fall through to the hero demo page
             # so the user still sees a working widget.
-        return HTMLResponse(content=_build_demo_page_html(bot))
+        return HTMLResponse(content=_build_demo_page_html(bot, edit=edit_mode))
 
 
 @router.get("", response_model=list[BotResponse])

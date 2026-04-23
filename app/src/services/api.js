@@ -619,11 +619,24 @@ export const deleteBot = async (botId) => {
 
 export const getBotDemoUrl = (botKey) => `${API_BASE_URL}/demo/${botKey}`;
 
-export const getBotPreviewUrl = (botKey, websiteUrl) => {
+export const getBotPreviewUrl = (botKey, websiteUrl, { edit = false } = {}) => {
     const base = `${API_BASE_URL}/demo/${botKey}`;
-    if (!websiteUrl) return base;
-    const normalized = /^https?:\/\//i.test(websiteUrl) ? websiteUrl : `https://${websiteUrl}`;
-    return `${base}?url=${encodeURIComponent(normalized)}`;
+    const params = new URLSearchParams();
+    if (websiteUrl) {
+        const normalized = /^https?:\/\//i.test(websiteUrl) ? websiteUrl : `https://${websiteUrl}`;
+        params.set('url', normalized);
+    }
+    if (edit) params.set('edit', '1');
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
+};
+
+export const getBotDemoOrigin = () => {
+    try {
+        return new URL(API_BASE_URL).origin;
+    } catch {
+        return API_BASE_URL;
+    }
 };
 
 export const trackDemoShareClick = async (botId) => {

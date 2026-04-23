@@ -38,16 +38,16 @@ async def stripe_webhook(request: Request):
     if not sig_header:
         raise HTTPException(status_code=400, detail="Missing Stripe signature header.")
 
-    # Verify webhook signature
-    try:
-        if STRIPE_WEBHOOK_SECRET:
-            event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-        else:
-            # No webhook secret configured — parse without verification (dev only)
-            import json
+    # Verify webhook signature — NEVER process unverified events.
+    if not STRIPE_WEBHOOK_SECRET:
+        logger.error("STRIPE_WEBHOOK_SECRET is not configured — rejecting unverified webhook.")
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook signature verification is not configured.",
+        )
 
-            event = json.loads(payload)
-            logger.warning("Stripe webhook signature verification SKIPPED (no STRIPE_WEBHOOK_SECRET)")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except stripe.error.SignatureVerificationError as e:
         logger.warning(f"Stripe webhook signature verification failed: {e}")
         raise HTTPException(status_code=400, detail="Invalid webhook signature.") from e
@@ -84,21 +84,27 @@ async def razorpay_webhook(request: Request):
     """
     payload = await request.body()
 
-    # Verify webhook signature if secret is configured
-    if RAZORPAY_WEBHOOK_SECRET:
-        import hashlib
-        import hmac
+    # Verify webhook signature — NEVER process unverified events.
+    if not RAZORPAY_WEBHOOK_SECRET:
+        logger.error("RAZORPAY_WEBHOOK_SECRET is not configured — rejecting unverified webhook.")
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook signature verification is not configured.",
+        )
 
-        sig_header = request.headers.get("x-razorpay-signature", "")
-        expected = hmac.new(
-            RAZORPAY_WEBHOOK_SECRET.encode(),
-            payload,
-            hashlib.sha256,
-        ).hexdigest()
+    import hashlib
+    import hmac
 
-        if not hmac.compare_digest(expected, sig_header):
-            logger.warning("Razorpay webhook signature verification failed")
-            raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+    sig_header = request.headers.get("x-razorpay-signature", "")
+    expected = hmac.new(
+        RAZORPAY_WEBHOOK_SECRET.encode(),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected, sig_header):
+        logger.warning("Razorpay webhook signature verification failed")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
 
     import json
 
