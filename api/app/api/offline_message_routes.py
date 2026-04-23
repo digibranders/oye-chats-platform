@@ -79,8 +79,23 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
         # Send team notification emails (multi-recipient)
         reply_to = bot.reply_to_email
         email_on_offline = getattr(bot, "email_on_offline", True)
-        if email_on_offline:
+        if not email_on_offline:
+            logger.warning(
+                "Offline team-notification skipped — email_on_offline=False on bot %s",
+                bot.id,
+            )
+        else:
             recipients = get_notification_recipients(bot, "offline_message")
+            if not recipients:
+                # This was silently no-op before. If the bot has no
+                # notification_email or notification_emails["offline_message"]
+                # configured, the team literally cannot be notified — log
+                # loudly so ops sees it in the first failure case.
+                logger.warning(
+                    "Offline team-notification not dispatched — bot %s has no notification recipients "
+                    "(check bot.notification_emails['offline_message'] or bot.notification_email)",
+                    bot.id,
+                )
             for recipient in recipients:
                 if request.phone and request.phone.strip():
                     send_unavailable_callback_email(
@@ -110,6 +125,11 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
                 bot_name=bot.name,
                 visitor_name=request.name.strip(),
                 reply_to=reply_to,
+            )
+        else:
+            logger.warning(
+                "Visitor confirmation email skipped — email_visitor_confirmation=False on bot %s",
+                bot.id,
             )
 
         logger.info(f"Offline message saved: {msg.id} from {request.email} for bot {bot.id}")
