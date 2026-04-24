@@ -14,7 +14,11 @@ After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 
 [Service]
-Type=notify
+# Type=simple — Gunicorn isn't configured to emit sd_notify READY/WATCHDOG
+# messages, so Type=notify would leave the unit stuck in "activating"
+# until TimeoutStartSec. If we later wire sd_notify into gunicorn.conf.py
+# we can flip back to Type=notify and reinstate WatchdogSec.
+Type=simple
 User=root
 WorkingDirectory=/opt/oyechats/platform/api
 EnvironmentFile=/opt/oyechats/platform/api/.env
@@ -24,9 +28,6 @@ ExecReload=/bin/kill -HUP $MAINPID
 # Auto-restart on crash with 5s backoff
 Restart=always
 RestartSec=5
-
-# Watchdog: kill if no response in 30s (Gunicorn sends heartbeat via sd_notify)
-WatchdogSec=30
 
 # Resource limits
 LimitNOFILE=65535

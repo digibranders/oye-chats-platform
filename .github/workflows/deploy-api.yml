@@ -102,9 +102,12 @@ jobs:
             systemctl daemon-reload
             systemctl enable oyechats-api oyechats-worker
 
-            # Restart services
-            systemctl restart oyechats-api
+            # Restart worker FIRST so its heartbeat is fresh before the new
+            # API comes up — the new /health endpoint gates on the worker
+            # heartbeat key, so a stale worker would make the API report
+            # 503 during the health-check retry loop below.
             systemctl restart oyechats-worker
+            systemctl restart oyechats-api
 
             # Reload Nginx if config exists (Phase 1 scalability: reverse proxy)
             if [ -f /etc/nginx/sites-enabled/oyechats-api.conf ]; then

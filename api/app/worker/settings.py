@@ -38,6 +38,16 @@ async def startup(ctx: dict) -> None:
     logging.basicConfig(level=logging.INFO)
     logger.info("OyeChats worker starting")
 
+    # Emit a heartbeat immediately so /health turns green without waiting
+    # for the first cron tick (cron fires at :00 and :30 of each minute,
+    # so a post-deploy window of up to 30s would otherwise return 503).
+    from app.worker.tasks import task_worker_heartbeat
+
+    try:
+        await task_worker_heartbeat(ctx)
+    except Exception:
+        logger.warning("initial worker heartbeat failed", exc_info=True)
+
 
 async def shutdown(ctx: dict) -> None:
     """Called once when the worker shuts down. Clean up resources."""
