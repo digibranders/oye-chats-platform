@@ -1318,9 +1318,12 @@ def rag_pipeline(
                 session.commit()
 
             # Cache the answer for identical future questions.
-            # Skip caching when handoff was suggested — the response only
-            # makes sense alongside the suggest_handoff flag.
-            if _cache_key and not suggest_handoff:
+            # Skip caching when any per-turn inline trigger fires — handoff,
+            # meeting card, leave-message card, or CTA button. These are not
+            # stored in the cache payload and would silently vanish on future
+            # hits, making a cached response miss its intended call-to-action.
+            _skip_cache_for_turn = suggest_handoff or _meeting_card_detected or _leave_msg_card_detected or bool(_cta)
+            if _cache_key and not _skip_cache_for_turn:
                 cache_set(_cache_key, {"answer": answer, "sources": result["sources"]}, QA_RESPONSE_TTL)
 
             return result
@@ -1669,11 +1672,15 @@ async def rag_pipeline_stream(
                 session.commit()
 
                 # Only cache a real LLM answer — never cache the zero-chunk
-                # fallback string, which would poison the QA cache.
-                # Also skip caching when handoff was suggested: the response
-                # (e.g. "I'm connecting you…") only makes sense when
-                # accompanied by the suggest_handoff flag in FINAL_METADATA.
-                if _cache_key and full_answer and chunk_count > 0 and not suggest_handoff:
+                # fallback string, which would poison the QA cache. Also skip
+                # caching when any per-turn inline trigger fires (handoff,
+                # meeting card, leave-message card, CTA button): those flags
+                # aren't stored in the cache payload and would silently vanish
+                # on future hits, making a cached response miss its CTA.
+                _skip_cache_for_turn = (
+                    suggest_handoff or _meeting_card_detected or _leave_msg_card_detected or bool(cta_data)
+                )
+                if _cache_key and full_answer and chunk_count > 0 and not _skip_cache_for_turn:
                     cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
 
                 if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
