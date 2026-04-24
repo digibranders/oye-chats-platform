@@ -1243,15 +1243,15 @@ def rag_pipeline(
                     session_id,
                 )
 
-            # Per-session dedupe: suppress either card if already shown in
-            # this conversation. The LLM cannot reliably enforce "at most
-            # once per conversation" — we enforce it server-side.
+            # Per-session dedupe for the meeting card only — booking the same
+            # meeting twice is not a real user need, so we suppress server-side.
+            # Leave-message is intentionally NOT deduped: a visitor asking to
+            # send another message is a legitimate follow-up, and suppressing
+            # the card while the bot still says "I'll open a form" creates a
+            # broken UX where the promised form never appears.
             if _meeting_card_detected and _card_already_shown(chat_session, "meeting"):
                 _meeting_card_detected = False
                 logger.info("Meeting card suppressed (already shown) | session=%s", session_id)
-            if _leave_msg_card_detected and _card_already_shown(chat_session, "leave_message"):
-                _leave_msg_card_detected = False
-                logger.info("Leave-message card suppressed (already shown) | session=%s", session_id)
 
             bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=answer, bot_id=bid)
 
@@ -1636,13 +1636,13 @@ async def rag_pipeline_stream(
                 session_id,
             )
 
-        # Per-session dedupe: suppress cards already shown in this session.
+        # Per-session dedupe for the meeting card only — see non-streaming
+        # path above for the reasoning. Leave-message intentionally re-renders
+        # so visitors can send a follow-up message without the promised form
+        # silently disappearing.
         if _meeting_card_detected and _card_already_shown(chat_session, "meeting"):
             _meeting_card_detected = False
             logger.info("Meeting card suppressed (already shown) | session=%s", session_id)
-        if _leave_msg_card_detected and _card_already_shown(chat_session, "leave_message"):
-            _leave_msg_card_detected = False
-            logger.info("Leave-message card suppressed (already shown) | session=%s", session_id)
 
         # Resolve meeting-card data now that precedence + dedupe are settled.
         if _meeting_card_detected:
