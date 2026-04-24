@@ -94,13 +94,17 @@ jobs:
             # Run migrations
             /root/.local/bin/uv run alembic upgrade head
 
+            # Sync systemd units from the repo (repo is source of truth).
+            # This ensures the worker — and any future unit-file edits — are
+            # picked up on every deploy instead of drifting from the repo.
+            cp /opt/oyechats/platform/api/systemd/oyechats-api.service /etc/systemd/system/
+            cp /opt/oyechats/platform/api/systemd/oyechats-worker.service /etc/systemd/system/
+            systemctl daemon-reload
+            systemctl enable oyechats-api oyechats-worker
+
             # Restart services
             systemctl restart oyechats-api
-
-            # Restart background worker if service is installed
-            if systemctl is-enabled oyechats-worker 2>/dev/null; then
-              systemctl restart oyechats-worker
-            fi
+            systemctl restart oyechats-worker
 
             # Reload Nginx if config exists (Phase 1 scalability: reverse proxy)
             if [ -f /etc/nginx/sites-enabled/oyechats-api.conf ]; then
@@ -122,6 +126,7 @@ jobs:
             done
             echo "❌ Deploy failed — server not responding after 45s"
             # Print service status for debugging
-            systemctl status oyechats-api --no-pager || true
+            systemctl status oyechats-api oyechats-worker --no-pager || true
             journalctl -u oyechats-api --since '1 minute ago' --no-pager -n 30 || true
+            journalctl -u oyechats-worker --since '1 minute ago' --no-pager -n 20 || true
             exit 1

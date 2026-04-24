@@ -104,6 +104,31 @@ async def task_process_webhook_retries(ctx: dict) -> int:
     return count
 
 
+# ── Worker Heartbeat ────────────────────────────────────────────────────────
+
+WORKER_HEARTBEAT_KEY = "oyechats:worker:heartbeat"
+WORKER_HEARTBEAT_TTL = 120  # seconds — 2× the cron interval, so a missed tick
+#                              is still healthy but two missed ticks flag dead.
+
+
+async def task_worker_heartbeat(ctx: dict) -> bool:
+    """Cron task: write a freshness marker to Redis every 30s.
+
+    The API ``/health`` endpoint reads this key — if it's missing or stale,
+    the worker is considered unhealthy and the deploy/monitor can alert.
+    """
+    from datetime import UTC, datetime
+
+    from app.core.cache import get_redis
+
+    client = get_redis()
+    if client is None:
+        return False
+
+    client.set(WORKER_HEARTBEAT_KEY, datetime.now(UTC).isoformat(), ex=WORKER_HEARTBEAT_TTL)
+    return True
+
+
 # ── Email Sending ───────────────────────────────────────────────────────────
 
 
