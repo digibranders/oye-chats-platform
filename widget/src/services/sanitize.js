@@ -25,3 +25,13 @@ export const sanitizeImageUrl = (url) => {
     if (/^data:image\//i.test(url)) return url;
     return null;
 };
+
+/**
+ * Return `url` only if it uses http(s). For use with file download links
+ * and other non-image URLs where data: URIs are not expected.
+ */
+export const sanitizeFileUrl = (url) => {
+    if (!url || typeof url !== 'string') return null;
+    if (/^https?:\/\//i.test(url)) return url;
+    return null;
+};
