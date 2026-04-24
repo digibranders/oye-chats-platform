@@ -19,6 +19,7 @@ from app.worker.tasks import (
     task_process_webhook_retries,
     task_send_email,
     task_send_template_email,
+    task_worker_heartbeat,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,8 +57,10 @@ class WorkerSettings:
     ]
 
     # Cron jobs — poll for webhook retries every 30s (replaces the daemon thread)
+    # and emit a heartbeat at the same cadence so /health can detect a dead worker.
     cron_jobs = [
         cron(task_process_webhook_retries, second={0, 30}),
+        cron(task_worker_heartbeat, second={0, 30}),
     ]
 
     # Redis connection

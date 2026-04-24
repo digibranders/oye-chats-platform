@@ -139,14 +139,23 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 @app.get("/health", tags=["system"])
 def health_check():
-    """Full readiness check: DB + Redis + connection pool stats.
+    """Full readiness check: DB + Redis + ARQ worker + connection pool stats.
 
-    Returns 200 if all dependencies are reachable, 503 if any are degraded.
+    Returns 200 if all required dependencies are reachable, 503 if any are
+    degraded. Worker status is reported as ``alive | stale | missing |
+    disabled`` and fails the check only when ``WORKER_ENABLED=true`` — in
+    disabled mode background work runs in-process and there's no separate
+    worker to poll.
+
     Used by deploy scripts, Nginx, and external uptime monitors.
     """
+    from datetime import UTC, datetime
+
     from fastapi.responses import JSONResponse
 
     from app.core.cache import get_redis
+    from app.worker.enqueue import WORKER_ENABLED
+    from app.worker.tasks import WORKER_HEARTBEAT_KEY, WORKER_HEARTBEAT_TTL
 
     # -- Database check --
     db_ok = False
@@ -167,15 +176,39 @@ def health_check():
 
     # -- Redis check --
     redis_ok = False
+    redis_client = None
     try:
-        client = get_redis()
-        if client is not None:
-            client.ping()
+        redis_client = get_redis()
+        if redis_client is not None:
+            redis_client.ping()
             redis_ok = True
     except Exception:
         pass
 
-    all_ok = db_ok and redis_ok
+    # -- Worker heartbeat check --
+    # Worker writes WORKER_HEARTBEAT_KEY every 30s via cron. Key presence
+    # (TTL unexpired) = alive within the last WORKER_HEARTBEAT_TTL seconds;
+    # key missing = worker is dead, never started, or has been down >2 min.
+    worker_last_seen: str | None = None
+    worker_age_s: float | None = None
+    if not WORKER_ENABLED:
+        worker_status = "disabled"
+    else:
+        worker_status = "missing"
+        if redis_ok and redis_client is not None:
+            try:
+                raw = redis_client.get(WORKER_HEARTBEAT_KEY)
+                if raw is not None:
+                    worker_last_seen = raw
+                    last_seen = datetime.fromisoformat(raw)
+                    worker_age_s = (datetime.now(UTC) - last_seen).total_seconds()
+                    worker_status = "alive"
+            except Exception:
+                pass
+
+    # Worker only fails /health when it's expected to be running.
+    worker_required_ok = worker_status in ("alive", "disabled")
+    all_ok = db_ok and redis_ok and worker_required_ok
     status_code = 200 if all_ok else 503
 
     return JSONResponse(
@@ -184,6 +217,12 @@ def health_check():
             "status": "healthy" if all_ok else "degraded",
             "database": "connected" if db_ok else "unreachable",
             "redis": "connected" if redis_ok else "unreachable",
+            "worker": {
+                "status": worker_status,
+                "last_seen": worker_last_seen,
+                "age_seconds": round(worker_age_s, 1) if worker_age_s is not None else None,
+                "heartbeat_ttl_seconds": WORKER_HEARTBEAT_TTL,
+            },
             "pool": pool_stats,
             "version": "1.0.0",
         },
