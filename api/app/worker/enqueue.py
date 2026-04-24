@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 _pool: ArqRedis | None = None
 _pool_lock = threading.Lock()
 
+# Strong references to fire-and-forget enqueue tasks scheduled from sync
+# callers inside an async context. Without this, the event loop holds only
+# a weak reference and the task is garbage-collected mid-flight — the
+# symptom is an "ERROR:asyncio:Task was destroyed but it is pending!" log
+# line and the Redis enqueue never completing. Tasks auto-remove themselves
+# via add_done_callback once finished.
+_pending_enqueue_tasks: set[asyncio.Task[None]] = set()
+
 # Feature flag: when False, callers fall back to their original behavior.
 WORKER_ENABLED = os.getenv("WORKER_ENABLED", "false").lower() in ("1", "true", "yes")
 
@@ -74,19 +82,19 @@ def enqueue_sync(task_name: str, *args: Any, **kwargs: Any) -> str | None:
     if loop and loop.is_running():
         # We're inside an async context but called synchronously (e.g. from
         # a sync function called within an async route). Schedule in the
-        # existing loop via a future.
-        import concurrent.futures
-
-        future: concurrent.futures.Future[str | None] = concurrent.futures.Future()
+        # existing loop as a fire-and-forget task, holding a strong
+        # reference so it isn't garbage-collected before the Redis enqueue
+        # completes (which drops the job silently).
 
         async def _do_enqueue() -> None:
             try:
-                job = await enqueue(task_name, *args, **kwargs)
-                future.set_result(job.job_id if job else None)
-            except Exception as exc:
-                future.set_exception(exc)
+                await enqueue(task_name, *args, **kwargs)
+            except Exception:
+                logger.exception("enqueue_sync background task failed for %s", task_name)
 
-        loop.create_task(_do_enqueue())
+        task = loop.create_task(_do_enqueue())
+        _pending_enqueue_tasks.add(task)
+        task.add_done_callback(_pending_enqueue_tasks.discard)
         # Don't block — return None and let the task fire async.
         # The job_id won't be available synchronously in this path.
         return None
