@@ -19,21 +19,37 @@ const VALID_EVENTS = new Set([
   'error',
 ])
 
+// How long a queued action / send waits for a subscriber before being
+// dropped. Bounds memory growth if the customer calls open()/send()
+// after destroy() and never re-init()s.
+const QUEUE_TTL_MS = 30_000
+
 const createController = () => {
   const listeners = new Map()  // eventName -> Set<callback>
   const onceListeners = new Map()
-  const stateListeners = new Set()  // (state) -> void
+  const stateListeners = new Set()  // ({visitor?, runtimeConfig?}) -> void
   const actionListeners = new Set()  // (action) -> void
+  const sendListeners = new Set()    // (text) -> void  (chat panel takes deliveries here)
 
-  let visitor = null  // identity from identify() / boot()
-  let runtimeConfig = {}  // overrides from update()
+  // Pending action / send queues — drained when the first listener subscribes.
+  // Without this, OyeChats.open() called before ChatWidget's useEffect runs is
+  // silently dropped (race between loader register() and React effect commit).
+  const actionQueue = []  // [{action, expiresAt}]
+  const sendQueue = []    // [{text, expiresAt}]
+
+  let visitor = null
+  let runtimeConfig = {}
+
+  const now = () => Date.now()
+  const pruneExpired = (queue) => {
+    const t = now()
+    while (queue.length && queue[0].expiresAt <= t) queue.shift()
+  }
 
   const emit = (event, payload) => {
     if (!VALID_EVENTS.has(event)) {
-      // Allow internal events (e.g. 'state:changed') without warning,
-      // but warn on typos in the public surface.
       if (!event.includes(':') || event.startsWith('state:')) {
-        // skip — internal channel
+        // internal channel — skip
       } else {
         console.warn(`[OyeChats] Unknown event "${event}"`)
       }
@@ -54,8 +70,44 @@ const createController = () => {
   }
 
   const dispatch = (action) => {
+    if (actionListeners.size === 0) {
+      actionQueue.push({ action, expiresAt: now() + QUEUE_TTL_MS })
+      return
+    }
     for (const cb of actionListeners) {
       try { cb(action) } catch (e) { console.error('[OyeChats] action handler error:', e) }
+    }
+  }
+
+  const flushActionQueue = () => {
+    pruneExpired(actionQueue)
+    if (actionListeners.size === 0) return
+    while (actionQueue.length) {
+      const { action } = actionQueue.shift()
+      for (const cb of actionListeners) {
+        try { cb(action) } catch (e) { console.error('[OyeChats] action handler error:', e) }
+      }
+    }
+  }
+
+  const queueSend = (text) => {
+    if (sendListeners.size === 0) {
+      sendQueue.push({ text, expiresAt: now() + QUEUE_TTL_MS })
+      return
+    }
+    for (const cb of sendListeners) {
+      try { cb(text) } catch (e) { console.error('[OyeChats] send handler error:', e) }
+    }
+  }
+
+  const flushSendQueue = () => {
+    pruneExpired(sendQueue)
+    if (sendListeners.size === 0) return
+    while (sendQueue.length) {
+      const { text } = sendQueue.shift()
+      for (const cb of sendListeners) {
+        try { cb(text) } catch (e) { console.error('[OyeChats] send handler error:', e) }
+      }
     }
   }
 
@@ -90,7 +142,12 @@ const createController = () => {
     toggle()  { dispatch({ type: 'toggle' }) },
     send(text) {
       if (typeof text !== 'string' || !text.trim()) return
-      dispatch({ type: 'send', text: text.trim() })
+      const trimmed = text.trim()
+      // Open the chat (if closed) AND queue the text for delivery to ChatWindow.
+      // Two channels because ChatWidget and ChatWindow have different concerns:
+      // ChatWidget owns visibility, ChatWindow owns the message stream.
+      dispatch({ type: 'send', text: trimmed })
+      queueSend(trimmed)
     },
     identify(v) { setVisitor(v) },
     shutdown() {
@@ -117,7 +174,13 @@ const createController = () => {
     },
     onAction(cb) {
       actionListeners.add(cb)
+      flushActionQueue()
       return () => actionListeners.delete(cb)
+    },
+    onSend(cb) {
+      sendListeners.add(cb)
+      flushSendQueue()
+      return () => sendListeners.delete(cb)
     },
   }
 }

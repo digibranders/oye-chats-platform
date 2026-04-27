@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle } from 'lucide-react';
 import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
+import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
@@ -185,6 +186,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const recentMessageTimestamps = useRef([]);
     const consecutiveFallbacks = useRef(0);
     const handoffTriggeredRef = useRef(false);
+    // Stable handle on the latest handleSend so the controller.onSend
+    // subscription can invoke it without re-subscribing on every render.
+    const handleSendRef = useRef(null);
     const prevOperatorNameRef = useRef(null);
     const pageContextRef = useRef(null);
     const behavioralSentRef = useRef(false);
@@ -394,6 +398,22 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         initChat();
         // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // ── Public-API send delivery ────────────────────────────────────────────────
+    // OyeChats.send(text) queues into the controller's send channel. ChatWindow
+    // subscribes here so the message is sent through the normal handleSend flow
+    // even when the chat is already open (the initialMessage ref path only fires
+    // once on mount). The controller drains its send queue on subscribe, so
+    // messages dispatched before this effect runs aren't lost.
+    useEffect(() => {
+        const ctrl = getController();
+        return ctrl.onSend((text) => {
+            const handler = handleSendRef.current;
+            if (typeof handler === 'function') {
+                handler(null, text);
+            }
+        });
     }, []);
 
     // ── Collect page context on mount, send time-on-page on unload ──────────────
@@ -786,6 +806,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             }]);
         }
     };
+
+    // Keep the ref pointing at the latest handleSend so the controller.onSend
+    // subscription (registered once) always invokes the current closure.
+    handleSendRef.current = handleSend;
 
     // ── Handoff flow ─────────────────────────────────────────────────────────────
     const injectHandoffForm = useCallback(() => {
