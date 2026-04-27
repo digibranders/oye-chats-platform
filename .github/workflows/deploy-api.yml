@@ -47,7 +47,23 @@ jobs:
 
             cd /opt/oyechats/platform
 
-            # Pull latest code FIRST (so .env write applies to new code)
+            # Make the working tree match origin/main verbatim before
+            # pulling. Operators occasionally hotfix files in place
+            # (scp + restart) when prod is on fire; without this reset,
+            # those local edits make `git pull` abort with "would be
+            # overwritten by merge". Resetting is safe because:
+            #   - The committed source-of-truth lives on origin/main.
+            #   - Any in-place edit that survives a deploy is a bug
+            #     waiting to happen — better to lose it loudly here
+            #     than ship divergent code silently.
+            #   - .env is .gitignored, so it's untouched.
+            #   - reset --hard discards tracked-file changes only;
+            #     untracked files (.env.bak.*, etc.) are kept.
+            git fetch origin main
+            git reset --hard origin/main
+            # Pull is now a no-op but kept for clarity and as a
+            # defence in case future scripts add something between
+            # reset and reset.
             git pull origin main
 
             # Generate .env from secrets + hardcoded prod values
