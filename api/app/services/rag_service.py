@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 
 import litellm
@@ -283,18 +284,46 @@ _INJECTION_PATTERNS = re.compile(
 # Maximum chars accepted for a custom system prompt (validated at API boundary too)
 _MAX_CUSTOM_PROMPT_CHARS = 2000
 
-# Canonical off-topic refusal. Used by the relevance gate AND the empty-context
-# short-circuit so visitors get a consistent, on-brand response when the question
-# falls outside the customer's knowledge base. Format with `company_name`.
-OFF_TOPIC_REFUSAL_TEMPLATE = (
+# Off-topic refusal variant pool.
+#
+# Used by the relevance gate, empty-context short-circuit, injection guard, and
+# system-prompt leak guard. Variants are rotated per call so a visitor who keeps
+# probing doesn't see identical text repeated — the "robotic refusal" failure
+# mode flagged by ACM CHI 2024 ("As an AI language model, I cannot…") and seen
+# in our own live testing where 7 consecutive refusals were verbatim identical.
+#
+# Each template follows the pattern: ACKNOWLEDGE + SCOPE + 2-3 forward
+# suggestions, modelled on Intercom Fin's published refusal style.
+# Format with ``{company_name}``.
+OFF_TOPIC_REFUSAL_VARIANTS: tuple[str, ...] = (
     "That's a bit outside what I can help with — I'm here to assist with "
-    "everything related to {company_name}! Is there anything about our "
-    "services, team, or how we work that I can help you with?"
+    "everything related to {company_name}. Want to know about our services, "
+    "pricing, or how to get in touch?",
+    "I appreciate the question, but I'm here to help with {company_name}. "
+    "What brings you here today — are you looking at our services, pricing, "
+    "or something else?",
+    "I'm focused on questions about {company_name} — happy to help with our "
+    "services, team, or how we work. What were you hoping to learn?",
+    "That one's outside my lane! I help with {company_name} — services, "
+    "pricing, and connecting you with the team. What can I show you?",
+    "Let's keep this about {company_name}. I can answer about our work, our "
+    "services, or connect you with the team — which would be most useful?",
+    "I stick to topics about {company_name}. Are you exploring our services, "
+    "looking at pricing, or wanting to talk to someone on the team?",
 )
 
 
 def _off_topic_refusal(company_name: str | None) -> str:
-    return OFF_TOPIC_REFUSAL_TEMPLATE.format(company_name=company_name or "our company")
+    """Return a randomly-rotated off-topic refusal scoped to ``company_name``.
+
+    Plain ``random.choice`` is intentional: stateless, no DB round-trip, and
+    repeats are tolerable (~1 in 6 chance of consecutive duplicates with the
+    current pool size). If duplicate-suppression becomes an issue we can pass
+    ``session_id`` and seed the choice on it, but the live test failure was
+    7 identical refusals in a row — anything random fixes that.
+    """
+    template = random.choice(OFF_TOPIC_REFUSAL_VARIANTS)
+    return template.format(company_name=company_name or "our company")
 
 
 def _sanitize_system_prompt(prompt: str) -> str:
