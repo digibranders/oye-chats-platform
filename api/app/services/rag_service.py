@@ -358,6 +358,58 @@ def is_visitor_injection_attempt(question: str) -> bool:
     return bool(_INJECTION_PATTERNS.search(question))
 
 
+# OpenAI Moderation feature flag. The endpoint is free under OpenAI's TOS
+# (no usage quota) but adds ~100ms per request. Defaults ON because the
+# DPD/Air Canada-class incidents this catches are far more expensive than
+# the latency. Ops can disable globally via env if it becomes a bottleneck.
+MODERATION_ENABLED: bool = os.getenv("MODERATION_ENABLED", "true").lower() in ("1", "true", "yes")
+MODERATION_MODEL: str = os.getenv("MODERATION_MODEL", "openai/omni-moderation-latest")
+
+
+def check_visitor_safety(question: str) -> tuple[bool, str | None]:
+    """Run an OpenAI Moderation pre-check on visitor input.
+
+    Returns
+    -------
+    tuple[bool, str | None]
+        ``(is_safe, top_category_if_flagged)``. On any error returns
+        ``(True, None)`` so a transient OpenAI outage cannot block legit
+        traffic — moderation is defence-in-depth, not a single point of
+        failure.
+
+    Categories follow the ``omni-moderation-latest`` schema (sexual,
+    sexual/minors, harassment, harassment/threatening, hate, hate/threatening,
+    self-harm, self-harm/intent, self-harm/instructions, violence,
+    violence/graphic, illicit, illicit/violent).
+    """
+    if not MODERATION_ENABLED or not question or not question.strip():
+        return True, None
+    try:
+        response = litellm.moderation(model=MODERATION_MODEL, input=question)
+    except Exception as exc:
+        logger.warning("Moderation check failed (non-blocking): %s", exc)
+        return True, None
+
+    # LiteLLM normalises to OpenAI's shape: {results: [{flagged, categories: {...}}]}
+    try:
+        results = response.results if hasattr(response, "results") else response.get("results", [])
+        if not results:
+            return True, None
+        first = results[0]
+        flagged = bool(getattr(first, "flagged", None) or (isinstance(first, dict) and first.get("flagged")))
+        if not flagged:
+            return True, None
+        cats = getattr(first, "categories", None) or (first.get("categories") if isinstance(first, dict) else None)
+        if not cats:
+            return False, "unspecified"
+        cats_dict = cats if isinstance(cats, dict) else getattr(cats, "__dict__", {})
+        top = next((k for k, v in cats_dict.items() if v), None)
+        return False, top or "unspecified"
+    except Exception as exc:
+        logger.warning("Moderation response parse failed (non-blocking): %s", exc)
+        return True, None
+
+
 # Sentinels that uniquely identify text from the platform's system prompt.
 # If the LLM emits any of these in its reply, it has been jailbroken into
 # leaking the prompt — replace the response with the refusal and log it.
@@ -1163,6 +1215,31 @@ def rag_pipeline(
                     "message_id": _bot_msg.id,
                 }
 
+            # ── OpenAI Moderation pre-check ──────────────────────────────
+            # Catches the DPD/MyCity-class incidents (toxicity, hate,
+            # self-harm, illicit content) that the injection regex misses.
+            # Free under OpenAI's TOS, ~100ms latency, fails open on error.
+            _safe, _flagged_cat = check_visitor_safety(question)
+            if not _safe:
+                _safety_net_metric(
+                    "moderation_block",
+                    path="nonstream",
+                    category=_flagged_cat or "unspecified",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _refusal = _off_topic_refusal(_company_name)
+                _bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                )
+                session.commit()
+                return {
+                    "answer": _refusal,
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": _bot_msg.id,
+                }
+
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
@@ -1565,6 +1642,26 @@ async def rag_pipeline_stream(
             _safety_net_metric(
                 "injection_attempt",
                 path="stream",
+                session=session_id,
+                bot_id=bid,
+            )
+            _refusal = _off_topic_refusal(_company_name)
+            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+            yield _refusal
+            _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid)
+            session.flush()
+            _msg_id = _bot_msg.id
+            session.commit()
+            yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+            return
+
+        # ── OpenAI Moderation pre-check (streaming path) ────────────────
+        _safe, _flagged_cat = await asyncio.to_thread(check_visitor_safety, question)
+        if not _safe:
+            _safety_net_metric(
+                "moderation_block",
+                path="stream",
+                category=_flagged_cat or "unspecified",
                 session=session_id,
                 bot_id=bid,
             )
