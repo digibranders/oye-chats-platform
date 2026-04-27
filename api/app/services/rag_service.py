@@ -363,7 +363,11 @@ def is_visitor_injection_attempt(question: str) -> bool:
 # DPD/Air Canada-class incidents this catches are far more expensive than
 # the latency. Ops can disable globally via env if it becomes a bottleneck.
 MODERATION_ENABLED: bool = os.getenv("MODERATION_ENABLED", "true").lower() in ("1", "true", "yes")
-MODERATION_MODEL: str = os.getenv("MODERATION_MODEL", "openai/omni-moderation-latest")
+# Bare model name (no "openai/" prefix) — litellm's moderation endpoint
+# only routes to OpenAI and rejects the prefixed form with
+# `Invalid value for 'model'`. The completions endpoint requires the
+# prefix, so don't reuse this for chat models.
+MODERATION_MODEL: str = os.getenv("MODERATION_MODEL", "omni-moderation-latest")
 
 
 def check_visitor_safety(question: str) -> tuple[bool, str | None]:

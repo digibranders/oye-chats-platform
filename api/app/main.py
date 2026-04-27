@@ -49,6 +49,16 @@ from app.db.session import engine, get_session
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# LiteLLM: silently drop params unsupported by the target provider.
+# Without this, e.g. gpt-5 family rejects ``temperature=0`` (callers like the
+# intent classifier set it for determinism) and the entire fallback chain
+# fails with UnsupportedParamsError. Setting drop_params globally is the
+# fix the error message itself recommends; the alternative is hardcoding
+# per-model conditionals at every call site.
+import litellm as _litellm  # noqa: E402
+
+_litellm.drop_params = True
+
 # Initialize Sentry (must be before FastAPI app creation)
 if SENTRY_ENABLED:
     import sentry_sdk
