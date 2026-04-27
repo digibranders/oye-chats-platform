@@ -1,11 +1,26 @@
 @import "tailwindcss";
 
-/* Shadow DOM host reset — prevents host page CSS from leaking into widget */
+/* Shadow DOM host reset — prevents host page CSS from leaking into widget.
+   position:fixed + 0-size box takes the host out of document flow so it cannot
+   interfere with the customer's page layout on mobile. pointer-events:none stops
+   the invisible host from intercepting touches; the render target re-enables them. */
 :host {
   all: initial;
-  display: block;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: visible !important;
+  z-index: 2147483647 !important;
+  pointer-events: none !important;
   font-family: 'Calibri Light', Calibri, 'Gill Sans MT', 'Trebuchet MS', ui-sans-serif, system-ui, sans-serif;
   color-scheme: light;
+}
+
+/* Re-enable pointer events inside shadow so the widget UI is interactive */
+#oyechats-shadow-inner {
+  pointer-events: auto;
 }
 
 /* iOS safe area support — prevents content from going behind notch/home indicator */
