@@ -78,32 +78,12 @@ jobs:
             --cache-control="${{ env.IMMUTABLE_CACHE }}" \
             --remote
 
-      # ── Mutable files: loader + manifest (short cache, must revalidate) ──
-      - name: Upload loader (mutable)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        working-directory: widget
-        run: |
-          npx wrangler r2 object put \
-            "${{ env.R2_BUCKET }}/oyechats-widget.js" \
-            --file=dist/oyechats-widget.js \
-            --content-type="text/javascript" \
-            --cache-control="${{ env.REVALIDATE_CACHE }}" \
-            --remote
-
-      - name: Upload manifest (mutable)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        working-directory: widget
-        run: |
-          npx wrangler r2 object put \
-            "${{ env.R2_BUCKET }}/app/manifest.json" \
-            --file=dist/app/manifest.json \
-            --content-type="application/json" \
-            --cache-control="${{ env.REVALIDATE_CACHE }}" \
-            --remote
+      # ── Upload order matters: chunks → manifest → loader → purge ──
+      # The manifest references chunks by hashed filename; if it goes live
+      # before its chunks exist, any uncached request resolves to a 404
+      # until the chunk upload finishes. Same logic for loader→manifest:
+      # the loader fetches manifest.json, so the manifest must exist first.
+      # Purge runs last so the cache flip is atomic from the customer's POV.
 
       # ── Immutable hashed chunks: long cache, no purge ──
       - name: Upload hashed chunks (immutable)
@@ -130,6 +110,32 @@ jobs:
               --cache-control="${{ env.IMMUTABLE_CACHE }}" \
               --remote
           done
+
+      - name: Upload manifest (mutable)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: widget
+        run: |
+          npx wrangler r2 object put \
+            "${{ env.R2_BUCKET }}/app/manifest.json" \
+            --file=dist/app/manifest.json \
+            --content-type="application/json" \
+            --cache-control="${{ env.REVALIDATE_CACHE }}" \
+            --remote
+
+      - name: Upload loader (mutable)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: widget
+        run: |
+          npx wrangler r2 object put \
+            "${{ env.R2_BUCKET }}/oyechats-widget.js" \
+            --file=dist/oyechats-widget.js \
+            --content-type="text/javascript" \
+            --cache-control="${{ env.REVALIDATE_CACHE }}" \
+            --remote
 
       # ── Purge only the mutable URLs ──
       - name: Purge Cloudflare CDN cache (loader + manifest only)
