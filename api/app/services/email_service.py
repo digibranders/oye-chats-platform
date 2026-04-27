@@ -17,6 +17,49 @@ BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 BREVO_ACCOUNT_URL = "https://api.brevo.com/v3/account"
 
 
+# ── Credit metering ──
+#
+# Customer-facing emails (lead alerts, BANT notifications, offline-message
+# digests) deduct 1 credit per send. System emails (auth OTPs, operator pings,
+# password resets, visitor confirmations) are always free. Call-sites that
+# trigger customer-facing emails should call ``meter_customer_email`` BEFORE
+# invoking the relevant ``send_*_email`` function and bail out if it returns
+# ``False`` — the customer is out of credits.
+#
+# We deliberately keep the metering at call-sites (not inside the send_*
+# functions) because (a) those functions are fire-and-forget and don't have a
+# DB session in scope, and (b) the call-site has the ``client_id`` already.
+
+
+def meter_customer_email(session, client_id: int, *, reference_id: int | None = None) -> bool:
+    """Charge 1 credit for a customer-facing email send.
+
+    Returns ``True`` if the credit was deducted (caller may proceed to send),
+    or ``False`` if the client is out of credits or the kill switch is on
+    (caller should skip the send and log).
+    """
+    from app.services import credit_service
+
+    cost = credit_service.get_credit_cost(session, "email_send")
+    if cost <= 0:
+        return True
+    try:
+        credit_service.check_and_deduct(
+            session,
+            client_id,
+            cost,
+            reason="email_send",
+            reference_id=reference_id,
+        )
+        return True
+    except credit_service.InsufficientCredits:
+        logger.warning("Customer email skipped for client %s: out of credits", client_id)
+        return False
+    except credit_service.KillSwitchActive:
+        logger.warning("Customer email skipped for client %s: kill switch active", client_id)
+        return False
+
+
 def _capture_email_failure(exc: Exception, **tags) -> None:
     """Capture an email-send failure to Sentry (if configured) with tags.
 

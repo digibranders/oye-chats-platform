@@ -193,12 +193,10 @@ def ingest_documents(
     client_id = auth["client_id"]
     _verify_bot_ownership(bot_id, client_id)
 
-    # ── Plan enforcement: check storage limit ──
-    from app.services.usage_service import enforce_limit
-
-    with get_session() as db:
-        enforce_limit(db, client_id, "knowledge_pages")
-        db.commit()
+    # File ingestion is no longer credit-metered (URL crawling is the metered
+    # ingest path; uploads are unlimited within the plan). The legacy
+    # ``knowledge_pages`` limit was a soft storage cap that's been retired
+    # along with the per-metric ``UsageRecord`` table.
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
@@ -323,12 +321,30 @@ async def crawl_endpoint(
     _verify_bot_ownership(bot_id, client_id)
     _check_memory()
 
-    # ── Plan enforcement: check URL scan limit ──
-    from app.services.usage_service import enforce_limit
+    # ── Credit pre-flight: reserve enough for the worst-case crawl ──
+    # We charge per page actually ingested (not per request), so the pre-flight
+    # uses ``max_pages * cost_per_page`` as an upper bound. The real deduction
+    # happens once we know ``pages_processed``.
+    from app.services import credit_service
 
     with get_session() as db:
-        enforce_limit(db, client_id, "url_scans")
-        db.commit()
+        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        required = cost_per_page * max(int(crawl_request.max_pages or 1), 1)
+        available = credit_service.get_balance(db, client_id)
+        if available < required:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_credits",
+                    "required": required,
+                    "available": available,
+                    "message": (
+                        f"This crawl needs up to {required} credits "
+                        f"({cost_per_page} per page × {crawl_request.max_pages} pages). "
+                        f"You have {available}. Upgrade your plan or buy a top-up to proceed."
+                    ),
+                },
+            )
 
     # Per-client lock: each customer can run one crawl at a time.
     # Other customers are not blocked.
@@ -360,6 +376,34 @@ async def crawl_endpoint(
             None,
             lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
         )
+
+        # ── Credit deduction: charge for actually-ingested pages ──
+        # Best-effort — a deduction failure here means the crawl already ran;
+        # we log and continue rather than 500-ing the whole request.
+        if pages_processed > 0:
+            with get_session() as billing_db:
+                deduction = cost_per_page * pages_processed
+                try:
+                    credit_service.check_and_deduct(
+                        billing_db,
+                        client_id,
+                        deduction,
+                        reason="url_scan",
+                        reference_id=bot_id,
+                    )
+                    billing_db.commit()
+                except credit_service.InsufficientCredits as exc:
+                    billing_db.rollback()
+                    logger.warning(
+                        "Crawl deduction skipped for client %s: insufficient (need %d, have %d). "
+                        "Pre-flight passed but balance changed mid-crawl.",
+                        client_id,
+                        exc.required,
+                        exc.available,
+                    )
+                except credit_service.KillSwitchActive:
+                    billing_db.rollback()
+                    logger.warning("Crawl deduction skipped for client %s: kill switch active.", client_id)
 
         # Orphan sweep: after a successful recrawl, delete chunks for pages that
         # existed in the previous crawl but were NOT visited this time — i.e. pages

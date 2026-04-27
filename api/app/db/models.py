@@ -510,10 +510,14 @@ class Plan(Base):
     slug = Column(String, unique=True, index=True, nullable=False)  # "free", "starter", "standard", "enterprise"
     description = Column(Text, nullable=True)
 
-    # Pricing (stored in cents to avoid floating-point issues)
+    # Pricing (stored in *minor units* of the configured currency — paise for
+    # INR, cents for USD — to avoid floating-point issues). The historical
+    # column name ``*_cents`` is retained for compatibility; treat it as
+    # "minor units of ``currency`` field" in new code.
     pricing_model = Column(
         String, default="per_operator", server_default="per_operator", nullable=False
     )  # per_operator|flat|custom
+    currency = Column(String(3), default="INR", server_default="INR", nullable=False)
     monthly_price_cents = Column(Integer, default=0, server_default="0", nullable=False)
     annual_price_cents = Column(Integer, default=0, server_default="0", nullable=False)  # total annual price
     annual_discount_percent = Column(Integer, default=30, server_default="30", nullable=False)
@@ -537,6 +541,14 @@ class Plan(Base):
 
     # Overage pricing (cents per AI message beyond limit; 0 = hard cutoff)
     overage_rate_cents = Column(Integer, default=0, server_default="0", nullable=False)
+
+    # ── Credit-based billing fields ──
+    # Monthly credit allowance granted on subscription renewal. Use-it-or-lose-it.
+    credits_per_month = Column(Integer, default=0, server_default="0", nullable=False)
+    # Operator seats included in the base subscription price.
+    included_operator_seats = Column(Integer, default=1, server_default="1", nullable=False)
+    # Price per additional operator seat above the included number, in cents.
+    extra_seat_price_cents = Column(Integer, default=1500, server_default="1500", nullable=False)
 
     # Stripe integration
     stripe_product_id = Column(String, nullable=True)
@@ -724,3 +736,83 @@ class PaymentMethod(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     client = relationship("Client")
+
+
+# ── Credit-based billing ──────────────────────────────────────────────────────
+
+
+class CreditLedger(Base):
+    """Single source of truth for credit balances.
+
+    Event-sourced: every grant, deduction, refund, and expiry is an immutable
+    row with a signed ``delta``. Current balance for a client is
+    ``SUM(delta) WHERE client_id = ?``.
+
+    Deduction rows carry a ``grant_id`` pointing back at the grant entry they
+    were allocated against (FIFO bookkeeping for top-up expiry). Top-up grants
+    set ``expires_at`` 12 months out; plan grants leave it NULL because they
+    reset monthly via ``reset_monthly_plan_credits``.
+    """
+
+    __tablename__ = "credit_ledger"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    delta = Column(Integer, nullable=False)
+    reason = Column(String, nullable=False)  # credit_reason ENUM in PG
+    reference_id = Column(Integer, nullable=True)  # chat_message_id, document_id, invoice_id, etc.
+    grant_id = Column(Integer, ForeignKey("credit_ledger.id", ondelete="SET NULL"), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # only set on topup grants
+    note = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    client = relationship("Client", foreign_keys=[client_id])
+    creator = relationship("Client", foreign_keys=[created_by])
+    grant = relationship("CreditLedger", remote_side=[id], foreign_keys=[grant_id])
+
+    __table_args__ = (
+        Index("ix_credit_ledger_client_created", "client_id", sqlalchemy.text("created_at DESC")),
+        Index(
+            "ix_credit_ledger_topup_expiry",
+            "expires_at",
+            postgresql_where=sqlalchemy.text("expires_at IS NOT NULL AND delta > 0"),
+        ),
+        Index("ix_credit_ledger_grant_id", "grant_id"),
+        Index("ix_credit_ledger_reference_id", "reference_id"),
+    )
+
+
+class PricingConfig(Base):
+    """Key/value store for super-admin tunable billing parameters.
+
+    Lets the super admin change credit costs and top-up packs without a code
+    deploy. Examples:
+      * ``credit_cost.ai_chat`` → ``1``
+      * ``credit_cost.url_scan`` → ``3``
+      * ``seat_price_cents`` → ``1500``
+      * ``topup_packs`` → JSON array of {usd, credits, bonus_pct, ...}
+      * ``kill_switch`` → ``true`` halts all credit deductions globally
+    """
+
+    __tablename__ = "pricing_config"
+
+    key = Column(Text, primary_key=True)
+    value = Column(JSONB, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_by = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
+
+
+class ProcessedWebhook(Base):
+    """Idempotency log for Stripe / Razorpay webhook event IDs.
+
+    Webhook providers retry on 5xx and may deliver duplicates. We store the
+    event ID on first successful processing; subsequent deliveries with the
+    same ID are short-circuited with a 200 OK.
+    """
+
+    __tablename__ = "processed_webhooks"
+
+    event_id = Column(Text, primary_key=True)
+    provider = Column(Text, nullable=False, index=True)  # 'stripe' | 'razorpay'
+    processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

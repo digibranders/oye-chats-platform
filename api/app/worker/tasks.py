@@ -104,6 +104,98 @@ async def task_process_webhook_retries(ctx: dict) -> int:
     return count
 
 
+# ── Credit lifecycle ────────────────────────────────────────────────────────
+
+
+async def task_renew_due_subscriptions(ctx: dict) -> int:
+    """Cron task: grant the new month's plan credits for subscriptions whose
+    current_period_end is today.
+
+    Stripe's ``invoice.paid`` webhook is the canonical trigger for renewals;
+    this cron is a safety net that catches missed webhooks. The webhook handler
+    is idempotent (skips when balance was already renewed in the same period),
+    so running both is safe.
+
+    Returns the number of subscriptions renewed.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import func, select
+
+    from app.db.models import CreditLedger, Subscription
+    from app.db.session import get_session
+    from app.services import credit_service
+
+    def _renew() -> int:
+        today_utc = datetime.now(UTC).date()
+        renewed = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.status.in_(("active", "trialing")),
+                        func.date(Subscription.current_period_end) == today_utc,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                # Skip if a plan_grant already exists for today (webhook beat us to it).
+                already_granted = (
+                    session.execute(
+                        select(func.count())
+                        .select_from(CreditLedger)
+                        .where(
+                            CreditLedger.client_id == sub.client_id,
+                            CreditLedger.reason == "plan_grant",
+                            CreditLedger.delta > 0,
+                            func.date(CreditLedger.created_at) == today_utc,
+                        )
+                    ).scalar()
+                    or 0
+                )
+                if already_granted:
+                    continue
+                credit_service.reset_monthly_plan_credits(session, sub.client_id)
+                credit_service.grant_for_subscription(session, sub)
+                renewed += 1
+            session.commit()
+        return renewed
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _renew)
+    if count:
+        logger.info("task_renew_due_subscriptions: granted credits for %d subscription(s)", count)
+    return count
+
+
+async def task_expire_old_topups(ctx: dict) -> int:
+    """Cron task: write off any unredeemed credits in top-up grants that are
+    past their 12-month expiry. Runs daily; idempotent (already-expired grants
+    are skipped).
+
+    Returns the total number of credits expired across all clients.
+    """
+    import asyncio
+
+    from app.db.session import get_session
+    from app.services import credit_service
+
+    def _expire() -> int:
+        with get_session() as session:
+            expired = credit_service.expire_old_topups(session)
+            session.commit()
+            return expired
+
+    loop = asyncio.get_running_loop()
+    total = await loop.run_in_executor(None, _expire)
+    if total:
+        logger.info("task_expire_old_topups: expired %d credit(s)", total)
+    return total
+
+
 # ── Worker Heartbeat ────────────────────────────────────────────────────────
 
 WORKER_HEARTBEAT_KEY = "oyechats:worker:heartbeat"

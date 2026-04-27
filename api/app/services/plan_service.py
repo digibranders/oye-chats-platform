@@ -86,6 +86,30 @@ def is_feature_enabled(plan: Plan, feature: str) -> bool:
     return features.get(feature, False)
 
 
+def enforce_feature(session: Session, client_id: int, feature: str) -> None:
+    """Raise HTTP 403 if a feature is not enabled on the client's current plan.
+
+    Feature gating is independent of credits — it controls which capabilities
+    a tier exposes (e.g. ``live_chat``, ``bant``, ``sso``). The ``features``
+    JSONB column on ``Plan`` is the source of truth.
+    """
+    from fastapi import HTTPException, status
+
+    plan = get_client_plan(session, client_id)
+    if not is_feature_enabled(plan, feature):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "feature_not_available",
+                "feature": feature,
+                "message": (
+                    f"The '{feature.replace('_', ' ')}' feature is not included in your "
+                    f"current plan. Please upgrade to access this feature."
+                ),
+            },
+        )
+
+
 def get_current_usage_record(session: Session, client_id: int) -> UsageRecord | None:
     """Get the usage record for the current billing period."""
     now = datetime.now(UTC)

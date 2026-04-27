@@ -714,14 +714,23 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         }, delay);
                     }
                 },
-                onError: () => {
+                onError: (err) => {
                     setIsTyping(false);
+                    // Distinguish "bot operator out of credits" / "billing paused"
+                    // from a generic stream failure. Visitors must NEVER see internal
+                    // billing terms — these messages are deliberately neutral.
+                    const friendly =
+                        err?.status === 402
+                            ? "We're temporarily over capacity for this chatbot. Please try again later or reach us by email."
+                            : err?.status === 503
+                            ? "We're briefly offline for maintenance. Please try again in a few minutes."
+                            : "I'm sorry, I couldn't generate a response. Please try again.";
                     if (placeholderId !== null) {
                         setMessages(prev => prev.map(msg => {
                             if (msg.id !== placeholderId) return msg;
                             const cleaned = sanitizeMarkdown(msg.text || '');
                             if (!cleaned) {
-                                return { ...msg, text: "I'm sorry, I couldn't generate a response. Please try again." };
+                                return { ...msg, text: friendly };
                             }
                             // Partial content streamed before error — preserve it, mark as interrupted
                             return { ...msg, text: cleaned + '\n\n*Response was interrupted. Please try again.*' };
@@ -729,7 +738,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     } else {
                         setMessages(prev => [...prev, {
                             id: Date.now() + 2,
-                            text: "I'm sorry, I couldn't generate a response. Please try again.",
+                            text: friendly,
                             sender: 'bot',
                             timestamp: new Date().toISOString(),
                             feedback: null

@@ -6,12 +6,13 @@ import logging
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
 from app.services.live_chat_service import manager
+from app.services.plan_service import get_client_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +360,36 @@ async def operator_websocket(
         return
 
     operator_id, operator_name, client_id, department_id, is_online = result
+
+    # ── Seat-limit enforcement: cap concurrent online operators per subscription ──
+    # ``operator_quantity`` on Subscription is the customer's purchased seat count
+    # (= included_operator_seats from the plan + extras paid via the seat add-on).
+    # Best-effort check: counts operators flagged is_online in the DB. The auth
+    # path above already set this operator's flag to True, so the count includes
+    # self. If the total exceeds the seat allowance, roll back and reject.
+    with get_session() as db:
+        sub = get_client_subscription(db, client_id)
+        if sub is not None:
+            seat_limit = max(int(sub.operator_quantity or 1), 1)
+            online_count = (
+                db.scalar(
+                    select(func.count(Operator.id)).where(
+                        Operator.client_id == client_id,
+                        Operator.is_online.is_(True),
+                    )
+                )
+                or 0
+            )
+            if online_count > seat_limit:
+                operator_row = db.get(Operator, operator_id)
+                if operator_row is not None:
+                    operator_row.is_online = False
+                    db.commit()
+                await ws.close(
+                    code=4003,
+                    reason=f"seat_limit:{seat_limit} operators online; upgrade or buy a seat to add more",
+                )
+                return
 
     await manager.connect_operator(
         operator_id,

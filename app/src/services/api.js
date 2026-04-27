@@ -1169,3 +1169,78 @@ export const getBillingPortalUrl = async () => {
         throw buildApiError(error, 'Failed to open billing portal');
     }
 };
+
+// --- CREDITS & TOP-UPS ---
+
+export const getCreditBalance = async () => {
+    try {
+        const response = await api.get('/credits/balance');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load credit balance');
+    }
+};
+
+export const getCreditHistory = async ({ page = 1, limit = 50 } = {}) => {
+    try {
+        const response = await api.get('/credits/history', { params: { page, limit } });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load credit history');
+    }
+};
+
+export const getTopupPacks = async () => {
+    try {
+        const response = await api.get('/credits/packs');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load top-up packs');
+    }
+};
+
+/**
+ * Initiate a top-up purchase.
+ *
+ * Returns provider-specific payload:
+ *   - Razorpay: { provider:'razorpay', order_id, amount, currency, key_id, name,
+ *                 description, prefill, theme, credits, bonus_pct, receipt }
+ *   - Stripe:   { provider:'stripe', checkout_url, session_id }
+ *
+ * The caller passes `amount` in the configured currency's major unit (rupees
+ * for INR, dollars for USD). `pack_usd` is accepted as a legacy alias.
+ */
+export const initiateTopup = async (amount, { provider } = {}) => {
+    try {
+        const response = await api.post('/credits/topup', { amount, provider });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start top-up checkout');
+    }
+};
+
+/**
+ * Server-verify the Razorpay Checkout success callback.
+ * Required for defence-in-depth — never trust the modal-only success path.
+ */
+export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) => {
+    try {
+        const response = await api.post('/credits/topup/verify', {
+            razorpay_order_id,
+            razorpay_payment_id,
+            razorpay_signature,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not verify payment');
+    }
+};
+
+export const changeOperatorSeats = async (delta) => {
+    try {
+        const response = await api.post('/subscriptions/seats', { delta });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update operator seats');
+    }
+};

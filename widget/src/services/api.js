@@ -72,6 +72,25 @@ export const sendMessageStream = async (message, sessionId, { onMetadata, onChun
         });
 
         if (!response.ok) {
+            // 402 = bot operator out of credits. Surface a friendly message
+            // (visitors must NEVER see internal billing terms like "credits").
+            if (response.status === 402) {
+                const err = new Error(
+                    "We're temporarily over capacity for this chatbot. Please try again later or reach us by email."
+                );
+                err.status = 402;
+                err.code = 'over_capacity';
+                throw err;
+            }
+            // 503 = global kill switch / billing paused.
+            if (response.status === 503) {
+                const err = new Error(
+                    "We're briefly offline for maintenance. Please try again in a few minutes."
+                );
+                err.status = 503;
+                err.code = 'maintenance';
+                throw err;
+            }
             throw new Error('Network response was not ok');
         }
 

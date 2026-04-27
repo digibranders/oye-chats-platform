@@ -108,7 +108,7 @@ def create_webhook(
     auth: dict = Depends(get_current_client_or_operator),
 ):
     # ── Plan enforcement: check webhooks feature ──
-    from app.services.usage_service import enforce_feature
+    from app.services.plan_service import enforce_feature
 
     with get_session() as db:
         enforce_feature(db, auth["client_id"], "webhooks")

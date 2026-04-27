@@ -1530,6 +1530,7 @@ dependencies = [
     { name = "python-docx" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "razorpay" },
     { name = "redis", extra = ["hiredis"] },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "slowapi" },
@@ -1577,6 +1578,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "razorpay", specifier = ">=1.4.2" },
     { name = "redis", extras = ["hiredis"], specifier = ">=5.0.0,<6.0.0" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.0.0" },
     { name = "slowapi", specifier = ">=0.1.9" },
@@ -2023,6 +2025,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fc/0a/f9579384aa017d8b4c15613f86954b92a95a93d641cc849182467cf0bb3b/rank_bm25-0.2.2.tar.gz", hash = "sha256:096ccef76f8188563419aaf384a02f0ea459503fdf77901378d4fd9d87e5e51d", size = 8347, upload-time = "2022-02-16T12:10:52.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/21/f691fb2613100a62b3fa91e9988c991e9ca5b89ea31c0d3152a3210344f9/rank_bm25-0.2.2-py3-none-any.whl", hash = "sha256:7bd4a95571adadfc271746fa146a4bcfd89c0cf731e49c3d1ad863290adbe8ae", size = 8584, upload-time = "2022-02-16T12:10:50.626Z" },
+]
+
+[[package]]
+name = "razorpay"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/e4/877eb8ba68bb5212021b25a4f97b6c3f693e08bb6b319fc97c966c4391a3/razorpay-2.0.1.tar.gz", hash = "sha256:a766b9019e496c995906f75c31900bff8b2709bea251f1771925d742cba53e5b", size = 197169, upload-time = "2026-03-09T12:59:03.445Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/35/e8fbf239cb16595007839408f7645bc952d8490f5dd50f9049434f296ce8/razorpay-2.0.1-py3-none-any.whl", hash = "sha256:e6a60c78203a3e1d3fc428e6fadf15bc67f75bd67217eaf9dc9925c87e98bc7a", size = 176920, upload-time = "2026-03-09T12:59:01.99Z" },
 ]
 
 [[package]]

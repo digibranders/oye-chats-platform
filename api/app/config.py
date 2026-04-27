@@ -136,7 +136,18 @@ RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 RAZORPAY_ENABLED = bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
 
-# Frontend URL for Stripe checkout redirects
+# Default billing provider for new subscriptions and top-ups. Customers on a
+# subscription continue to use whichever provider their record is tagged with;
+# this only affects new sign-ups and the admin checkout button.
+# Values: "razorpay" (default — Indian customers, UPI) or "stripe" (international).
+BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()
+
+# Display currency for the admin and landing pricing page. The provider sees
+# the actual currency on each charge; this is purely a presentation default
+# for new subscriptions when the plan row doesn't pin a currency.
+BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "INR").upper()
+
+# Frontend URL for checkout redirects (Stripe success/cancel, Razorpay return).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
 
 if STRIPE_ENABLED:
@@ -148,6 +159,8 @@ if RAZORPAY_ENABLED:
     logger.info("Razorpay billing enabled")
 else:
     logger.info("Razorpay billing disabled (no RAZORPAY_KEY_ID)")
+
+logger.info(f"Default billing provider: {BILLING_PROVIDER} ({BILLING_CURRENCY})")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler

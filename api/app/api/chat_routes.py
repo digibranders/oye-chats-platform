@@ -261,14 +261,37 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     Protocol: METADATA:{json} → text chunks → FINAL_METADATA:{json}
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
-    # ── Plan enforcement: check AI message limit ──
-    from app.services.usage_service import enforce_limit, increment_usage
+    # ── Credit enforcement: deduct 1 credit per AI reply (configurable) ──
+    from app.services import credit_service
 
     with get_session() as db:
-        enforce_limit(db, bot.client_id, "ai_messages")
-        # Increment usage immediately (counts AI response about to be generated)
-        increment_usage(db, bot.client_id, "ai_messages")
-        db.commit()
+        cost = credit_service.get_credit_cost(db, "ai_chat")
+        try:
+            credit_service.check_and_deduct(
+                db,
+                bot.client_id,
+                cost,
+                reason="ai_chat",
+                reference_id=bot.id,
+            )
+            db.commit()
+        except credit_service.InsufficientCredits as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_credits",
+                    "required": exc.required,
+                    "available": exc.available,
+                    "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
+                },
+            ) from exc
+        except credit_service.KillSwitchActive as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
+            ) from exc
 
     ip_address, formatted_device = _parse_request_context(request)
     location = f"IP: {ip_address}"
