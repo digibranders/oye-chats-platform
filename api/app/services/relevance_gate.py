@@ -6,9 +6,9 @@ retrieved chunk's relevance to the question on a 0–1 scale. If ALL chunks
 score below the threshold, the gate fires and the pipeline returns a
 "can't help" response without generating an answer from irrelevant context.
 
-Feature flag: ``RELEVANCE_GATE_ENABLED`` (default: false)
+Feature flag: ``RELEVANCE_GATE_ENABLED`` (default: true — scope-enforcement on by default)
 Model:        ``GATE_MODEL`` (default: gemini/gemini-2.5-flash — cheap & fast)
-Threshold:    ``RELEVANCE_THRESHOLD`` (default: 0.5)
+Threshold:    ``RELEVANCE_THRESHOLD`` (default: 0.6)
 
 Gate results are cached in Redis to avoid redundant LLM calls for repeated
 questions against the same knowledge base state.
@@ -27,13 +27,13 @@ from app.core.cache import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 
-RELEVANCE_GATE_ENABLED: bool = os.getenv("RELEVANCE_GATE_ENABLED", "false").lower() in (
+RELEVANCE_GATE_ENABLED: bool = os.getenv("RELEVANCE_GATE_ENABLED", "true").lower() in (
     "1",
     "true",
     "yes",
 )
 GATE_MODEL: str = os.getenv("GATE_MODEL", "gemini/gemini-2.5-flash")
-RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.5"))
+RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.6"))
 
 _GATE_TTL = 3600  # 1 hour — safe: same question + same bot KB = same result
 _MAX_CHUNKS_TO_JUDGE = 3  # Only judge top-3 chunks (cost control)

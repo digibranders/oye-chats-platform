@@ -274,6 +274,7 @@ class ConnectionManager:
         department_id: int | None = None,
         operator_name: str = "",
         is_online: bool = True,
+        subprotocol: str | None = None,
     ):
         self._ensure_background_tasks()
         # Cancel any pending grace-period timeout — operator is back before it expired.
@@ -288,7 +289,7 @@ class ConnectionManager:
             with contextlib.suppress(Exception):
                 await old_ws.close(code=4001, reason="Session opened in another tab")
 
-        await ws.accept()
+        await ws.accept(subprotocol=subprotocol)
         self.operator_connections[operator_id] = ws
         self._operator_departments[operator_id] = department_id
         self._operator_names[operator_id] = operator_name

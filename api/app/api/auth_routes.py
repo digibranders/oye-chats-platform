@@ -21,6 +21,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _redact_email(email: str) -> str:
+    """Mask an email address for safe logging (e.g. 'j***@example.com')."""
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.rsplit("@", 1)
+    return f"{local[0]}***@{domain}" if local else f"***@{domain}"
+
+
+def _sanitize_for_log(value: str) -> str:
+    """Strip CRLF sequences to prevent log injection attacks."""
+    return value.replace("\r", "").replace("\n", "")
+
+
 def _normalize_workspace_stats(
     client_ids: set[int], workspace_stats: dict[int, dict[str, int]] | None
 ) -> dict[int, dict[str, int]]:
@@ -311,14 +324,14 @@ def login(request: Request, body: LoginRequest):
             client = session.execute(stmt).scalars().first()
 
             if not client:
-                logger.warning(f"Login failed: Unknown email {body.email}")
+                logger.warning("Login failed: unknown email %s", _redact_email(_sanitize_for_log(body.email)))
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
                 )
 
             if not verify_password(body.password, client.hashed_password):
-                logger.warning(f"Login failed: Incorrect password for {body.email}")
+                logger.warning("Login failed: incorrect password for %s", _redact_email(_sanitize_for_log(body.email)))
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
@@ -338,7 +351,7 @@ def login(request: Request, body: LoginRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"LOGIN FAILED for {body.email}: {type(e).__name__}: {e}", exc_info=True)
+        logger.error("LOGIN FAILED for %s: %s", _redact_email(_sanitize_for_log(body.email)), type(e).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed. Please try again.",
@@ -376,7 +389,7 @@ def register(request: Request, body: RegisterRequest):
 
             session.add(new_client)
             session.flush()  # Get the client ID
-            logger.info(f"Client INSERT flushed: id={new_client.id}, email={new_client.email}")
+            logger.info("Client INSERT flushed: id=%s", new_client.id)
 
             # Auto-assign the default (free) plan to the new client
             try:
@@ -392,7 +405,9 @@ def register(request: Request, body: RegisterRequest):
             session.refresh(new_client)
 
             logger.info(
-                f"New client registered: {new_client.id} ({new_client.name}, {new_client.email}) — no default bot (client will create manually)"
+                "New client registered: id=%s (%s) — no default bot (client will create manually)",
+                new_client.id,
+                new_client.name,
             )
 
             return {
@@ -408,7 +423,7 @@ def register(request: Request, body: RegisterRequest):
     except HTTPException:
         raise  # Re-raise 409 (duplicate email) and other HTTP errors as-is
     except Exception as e:
-        logger.error(f"REGISTRATION FAILED for {body.email}: {type(e).__name__}: {e}", exc_info=True)
+        logger.error("REGISTRATION FAILED for %s: %s", _redact_email(_sanitize_for_log(body.email)), type(e).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed. Please try again.",
@@ -435,7 +450,11 @@ def request_password_reset(request: Request, body: RequestPasswordResetRequest):
             send_password_reset_email(client.email, otp)
             return {"message": "If an account exists, a reset link has been sent."}
     except Exception as e:
-        logger.error(f"Failed to request password reset for {body.email}: {e}")
+        logger.error(
+            "Failed to request password reset for %s: %s",
+            _redact_email(_sanitize_for_log(body.email)),
+            type(e).__name__,
+        )
         raise HTTPException(status_code=500, detail="An error occurred.") from e
 
 
@@ -473,7 +492,9 @@ def reset_password(request: Request, body: ResetPasswordRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to reset password for {body.email}: {e}")
+        logger.error(
+            "Failed to reset password for %s: %s", _redact_email(_sanitize_for_log(body.email)), type(e).__name__
+        )
         raise HTTPException(status_code=500, detail="An error occurred.") from e
 
 
@@ -539,7 +560,10 @@ def operator_login(request: Request, body: OperatorLoginRequest):
             ]
 
             if not valid_operators:
-                logger.warning(f"Operator login failed: unknown email or no password set for {body.email}")
+                logger.warning(
+                    "Operator login failed: unknown email or no password set for %s",
+                    _redact_email(_sanitize_for_log(body.email)),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password",
@@ -589,7 +613,7 @@ def operator_login(request: Request, body: OperatorLoginRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"OPERATOR LOGIN FAILED for {body.email}: {type(e).__name__}: {e}", exc_info=True)
+        logger.error("OPERATOR LOGIN FAILED for %s: %s", _redact_email(_sanitize_for_log(body.email)), type(e).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed. Please try again.",
