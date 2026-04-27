@@ -115,11 +115,11 @@ REDIS_ENABLED = bool(REDIS_URL)
 if APP_ENV == "production" and not REDIS_URL:
     raise RuntimeError(
         "REDIS_URL is required in production. "
-        "Set it in .env (e.g. REDIS_URL=rediss://...) or use APP_ENV=development for local dev."
+        "Set it in .env (e.g. REDIS_URL=redis://localhost:6379/0) or use APP_ENV=development for local dev."
     )
 
 if REDIS_ENABLED:
-    logger.info("Redis caching enabled (Upstash)")
+    logger.info("Redis caching enabled")
 else:
     logger.info("Redis not configured — caching disabled, rate limiter uses in-memory backend (dev only)")
 

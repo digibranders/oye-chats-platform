@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
-import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Sparkles, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Sparkles, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity, Link2, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
-import { getDashboardStats, getTopQuestions, getLeadStats, getFeedbackData, getOfflineMessages } from '../services/api';
+import { getDashboardStats, getTopQuestions, getLeadStats, getFeedbackData, getOfflineMessages, getBotDemoUrl, trackDemoShareClick } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import StatCard from '../components/ui/StatCard';
@@ -34,59 +34,110 @@ export default function Dashboard() {
   const [recentActivity, setRecentActivity] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dateRange, setDateRange] = useState(null);
+  const [copiedDemo, setCopiedDemo] = useState(false);
+  const copyResetTimeoutRef = useRef(null);
   const navigate = useNavigate();
 
   const adminName = localStorage.getItem('admin_name') || 'there';
 
-  useEffect(() => {
+  const loadDashboardData = useCallback(async () => {
     if (!selectedBot?.id) {
+      setStats(null);
+      setTopQuestions([]);
+      setLeadStats(null);
+      setRecentActivity([]);
       setIsLoading(false);
       return;
     }
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        const [statsData, questionsData, leadsData, feedbackData, offlineData] = await Promise.all([
-          getDashboardStats(selectedBot.id, dateRange),
-          getTopQuestions(selectedBot.id),
-          getLeadStats(selectedBot.id).catch(() => null),
-          getFeedbackData(selectedBot.id).catch(() => []),
-          getOfflineMessages({ limit: 5, status: 'new' }).catch(() => ({ messages: [] })),
-        ]);
-        setStats(statsData);
-        setTopQuestions(questionsData);
-        setLeadStats(leadsData);
+    setIsLoading(true);
+    try {
+      const [statsData, questionsData, leadsData, feedbackData, offlineData] = await Promise.all([
+        getDashboardStats(selectedBot.id, dateRange),
+        getTopQuestions(selectedBot.id),
+        getLeadStats(selectedBot.id).catch(() => null),
+        getFeedbackData(selectedBot.id).catch(() => []),
+        getOfflineMessages({ limit: 5, status: 'new' }).catch(() => ({ messages: [] })),
+      ]);
+      setStats(statsData);
+      setTopQuestions(questionsData);
+      setLeadStats(leadsData);
 
-        // Build recent activity feed (last 5 items combined, sorted by date)
-        const feedbackItems = (feedbackData || []).slice(0, 5).map(f => ({
-          type: 'feedback',
-          positive: f.feedback === 1,
-          text: f.question,
-          time: f.created_at,
-        }));
-        const offlineItems = ((offlineData?.messages) || []).slice(0, 5).map(m => ({
-          type: 'offline',
-          text: m.visitor_name || 'Visitor',
-          subtext: m.message_body,
-          time: m.created_at,
-        }));
-        const combined = [...feedbackItems, ...offlineItems]
-          .sort((a, b) => new Date(b.time) - new Date(a.time))
-          .slice(0, 6);
-        setRecentActivity(combined);
-      } catch (error) {
-        console.error('Failed to fetch dashboard data', error);
-        showToast('error', error.message || 'Failed to load dashboard data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
+      // Build recent activity feed (last 5 items combined, sorted by date)
+      const feedbackItems = (feedbackData || []).slice(0, 5).map(f => ({
+        type: 'feedback',
+        positive: f.feedback === 1,
+        text: f.question,
+        time: f.created_at,
+      }));
+      const offlineItems = ((offlineData?.messages) || []).slice(0, 5).map(m => ({
+        type: 'offline',
+        text: m.visitor_name || 'Visitor',
+        subtext: m.message_body,
+        time: m.created_at,
+      }));
+      const combined = [...feedbackItems, ...offlineItems]
+        .sort((a, b) => new Date(b.time) - new Date(a.time))
+        .slice(0, 6);
+      setRecentActivity(combined);
+    } catch (error) {
+      console.error('Failed to fetch dashboard data', error);
+      showToast('error', error.message || 'Failed to load dashboard data');
+    } finally {
+      setIsLoading(false);
+    }
   }, [selectedBot?.id, dateRange, showToast]);
+
+  const refreshDashboardStats = useCallback(async () => {
+    if (!selectedBot?.id) return;
+    try {
+      const statsData = await getDashboardStats(selectedBot.id, dateRange);
+      setStats(statsData);
+    } catch (error) {
+      console.error('Failed to refresh dashboard stats', error);
+    }
+  }, [selectedBot?.id, dateRange]);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
+
+  useEffect(() => (
+    () => {
+      if (copyResetTimeoutRef.current) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+    }
+  ), []);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const handleShareDemo = async () => {
+    if (!selectedBot?.id || !selectedBot?.bot_key) return;
+
+    try {
+      await navigator.clipboard.writeText(getBotDemoUrl(selectedBot.bot_key));
+      setCopiedDemo(true);
+      if (copyResetTimeoutRef.current) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => setCopiedDemo(false), 2000);
+      showToast('success', 'Demo link copied. Share it with teammates or prospects.');
+    } catch (error) {
+      console.error('Failed to copy demo link', error);
+      showToast('error', 'Failed to copy demo link');
+      return;
+    }
+
+    try {
+      await trackDemoShareClick(selectedBot.id);
+      await refreshDashboardStats();
+    } catch (error) {
+      console.error('Failed to track demo share click', error);
+      showToast('error', 'Demo link copied, but share tracking failed.');
+    }
+  };
 
   if (!botsLoading && bots.length === 0) {
     return (
@@ -104,6 +155,10 @@ export default function Dashboard() {
     { icon: Palette, label: 'Customize appearance', desc: 'Brand your chatbot', to: '/chatbot?tab=appearance', color: 'from-amber-500/10 to-orange-500/10 dark:from-amber-500/20 dark:to-orange-500/20' },
     { icon: Code2, label: 'Get embed code', desc: 'Add to your website', to: '/chatbot', color: 'from-emerald-500/10 to-sky-500/10 dark:from-emerald-500/20 dark:to-sky-500/20' },
   ];
+  const demoOpens = stats?.demo_opens ?? 0;
+  const demoShares = stats?.demo_shares ?? 0;
+  const demoOpenRate = Number(stats?.demo_open_rate ?? 0);
+  const demoOpenRateLabel = `${Number.isInteger(demoOpenRate) ? demoOpenRate.toFixed(0) : demoOpenRate.toFixed(1)}% open rate`;
 
   return (
     <motion.div
@@ -185,7 +240,7 @@ export default function Dashboard() {
       </motion.div>
 
       {/* Quick Actions */}
-      <motion.div variants={fadeUp} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <motion.div variants={fadeUp} className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {quickActions.map((action) => (
           <button
             key={action.to}
@@ -207,6 +262,45 @@ export default function Dashboard() {
             <ArrowRight size={14} className="text-surface-600 dark:text-surface-300 group-hover:text-primary-500 group-hover:translate-x-0.5 transition-all" />
           </button>
         ))}
+        <button
+          onClick={handleShareDemo}
+          disabled={!selectedBot?.id}
+          className={cn(
+            'flex items-center gap-3 p-4 rounded-xl border transition-all text-left group',
+            'bg-gradient-to-br from-fuchsia-500/10 to-primary-500/10 dark:from-fuchsia-500/20 dark:to-primary-500/20',
+            'border-surface-200 dark:border-surface-800 hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-sm',
+            !selectedBot?.id && 'opacity-60 cursor-not-allowed hover:border-surface-200 dark:hover:border-surface-800 hover:shadow-none'
+          )}
+        >
+          <div className="w-10 h-10 rounded-lg bg-white dark:bg-surface-800 shadow-sm flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+            {copiedDemo ? (
+              <Check size={18} className="text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Link2 size={18} className="text-primary-600 dark:text-primary-400" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-surface-900 dark:text-white">
+              {copiedDemo ? 'Demo link copied' : 'Share demo link'}
+            </p>
+            <p className="text-xs text-surface-500">
+              {isLoading
+                ? 'Loading demo traction...'
+                : `${demoOpens} opens from ${demoShares} shares`}
+            </p>
+            <p className="mt-1 text-[11px] font-semibold text-primary-600 dark:text-primary-400">
+              {demoOpenRateLabel}
+            </p>
+          </div>
+          <span className={cn(
+            'text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full shrink-0 transition-colors',
+            copiedDemo
+              ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400'
+              : 'bg-white/80 dark:bg-surface-800 text-surface-500 dark:text-surface-400'
+          )}>
+            {copiedDemo ? 'Copied' : 'Copy link'}
+          </span>
+        </button>
       </motion.div>
 
       {/* Lead Funnel + Activity Feed row */}

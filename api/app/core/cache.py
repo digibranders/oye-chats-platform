@@ -1,10 +1,11 @@
-"""Redis cache utilities (Upstash-compatible).
+"""Redis cache utilities.
 
 All operations are **best-effort**: if Redis is unavailable or not configured,
 every function degrades gracefully (returns ``None`` / ``False`` / ``0``)
 so the application works identically without Redis.
 
-Key prefix ``oyechats:`` namespaces all keys in shared Upstash instances.
+Key prefix ``oyechats:`` namespaces all keys so the same Redis instance can be
+shared with other services without collisions.
 """
 
 import json
@@ -108,7 +109,7 @@ def cache_delete(key: str) -> bool:
 def cache_delete_prefix(prefix: str) -> int:
     """Delete all keys matching ``prefix*`` via SCAN (non-blocking).
 
-    Upstash supports SCAN natively.  Returns the count of deleted keys.
+    Returns the count of deleted keys.
     """
     client = get_redis()
     if client is None:
