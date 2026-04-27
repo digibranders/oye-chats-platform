@@ -108,9 +108,9 @@ jobs:
             systemctl enable oyechats-api oyechats-worker
 
             # Restart worker FIRST so its heartbeat is fresh before the new
-            # API comes up — the new /health endpoint gates on the worker
-            # heartbeat key, so a stale worker would make the API report
-            # 503 during the health-check retry loop below.
+            # API comes up — the deploy gate hits /health/full, which 503s
+            # when the worker heartbeat is missing, so a stale worker would
+            # fail the deploy. Worker first → API second avoids that race.
             systemctl restart oyechats-worker
             systemctl restart oyechats-api
 
@@ -119,13 +119,16 @@ jobs:
               nginx -t && systemctl reload nginx
             fi
 
-            # Health check — wait for server startup then retry
-            # Server takes ~25s to start (Gunicorn + Sentry + DB init)
+            # Deploy gate hits /health/full (DB + Redis + worker), not
+            # /health (DB + Redis only). /health is for LB probes and must
+            # not flap on worker hiccups; /health/full is the strict check
+            # that enforces a complete deploy before this job goes green.
+            # Server takes ~25s to start (Gunicorn + Sentry + DB init).
             echo "⏳ Waiting 15s for server startup..."
             sleep 15
             set +e  # Temporarily disable errexit for the retry loop
             for i in 1 2 3 4 5 6; do
-              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              if curl -sf http://localhost:8000/health/full > /dev/null 2>&1; then
                 echo "✅ Deploy successful (attempt $i)"
                 exit 0
               fi

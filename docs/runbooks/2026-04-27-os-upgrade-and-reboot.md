@@ -102,7 +102,7 @@ This closes the entire pass started after the Upstash quota outage:
 | Zero-downtime A | `/health` split (readiness + comprehensive) | ✅ |
 | Sentry hardening | worker init + release/service tags | ✅ |
 | Sentry repair | truncated DSN fixed | ✅ |
-| BetterStack | 2 monitors (`/health` + `/health/live`) | ✅ |
+| BetterStack | 3 monitors recommended: `/health` (user-facing readiness) + `/health/live` (liveness) + `/health/full` (paging on worker death) | ✅ |
 | GitHub | secrets audit (24 present, 2 minor drift items reported) | ✅ |
 | B | off-site DB backups to R2 (30-day retention) | ✅ |
 | C | fail2ban for SSH | ✅ |
