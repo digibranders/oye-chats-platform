@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle } from 'lucide-react';
 import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
 import { themeConfigs } from './themeConfigs';
@@ -8,11 +8,14 @@ import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sa
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
-import LeadCaptureForm from './LeadCaptureForm';
-import HandoffForm from './HandoffForm';
-import LiveChatMode from './LiveChatMode';
-import MeetingBooking from './MeetingBooking';
 import QualificationCTA from './QualificationCTA';
+
+// Lazy-loaded — only fetched when the user actually triggers handoff, lead capture, or booking.
+// Keeps the initial chat chunk lean.
+const LeadCaptureForm = lazy(() => import('./LeadCaptureForm'));
+const HandoffForm = lazy(() => import('./HandoffForm'));
+const LiveChatMode = lazy(() => import('./LiveChatMode'));
+const MeetingBooking = lazy(() => import('./MeetingBooking'));
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -1260,13 +1263,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {/* Lead capture form overlay — shown before any conversation begins */}
                 {showLeadForm && (
                     <div className="absolute inset-0 z-20 pointer-events-auto">
-                        <LeadCaptureForm
-                            settings={settings}
-                            currentTheme={currentTheme}
-                            onClose={onClose}
-                            onSubmit={handleLeadFormSubmit}
-                            isAnimating={isAnimating}
-                        />
+                        <Suspense fallback={null}>
+                            <LeadCaptureForm
+                                settings={settings}
+                                currentTheme={currentTheme}
+                                onClose={onClose}
+                                onSubmit={handleLeadFormSubmit}
+                                isAnimating={isAnimating}
+                            />
+                        </Suspense>
                     </div>
                 )}
 
@@ -1315,13 +1320,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
                                 <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
-                                    <HandoffForm
-                                        settings={settings}
-                                        onSubmit={handleHandoffSubmit}
-                                        onCancel={handleHandoffCancel}
-                                        existingLeadInfo={existingLeadInfo}
-                                        status={msg.status}
-                                    />
+                                    <Suspense fallback={null}>
+                                        <HandoffForm
+                                            settings={settings}
+                                            onSubmit={handleHandoffSubmit}
+                                            onCancel={handleHandoffCancel}
+                                            existingLeadInfo={existingLeadInfo}
+                                            status={msg.status}
+                                        />
+                                    </Suspense>
                                 </div>
                             );
                         } else if (msg.type === 'handoff_form') {
@@ -1346,6 +1353,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                 {/* Meeting booking widget for qualified leads */}
                 {showBooking && calendlyUrl && (
+                    <Suspense fallback={null}>
                     <MeetingBooking
                         calendlyUrl={calendlyUrl}
                         sessionId={sessionId}
@@ -1382,6 +1390,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             }
                         }}
                     />
+                    </Suspense>
                 )}
 
                 {/* Leave-a-message CTA — inline prompt to open the offline form.
@@ -1791,26 +1800,28 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
             {/* ── Headless LiveChatMode — WebSocket + file upload logic only ── */}
             {isLiveMode && sessionId && (
-                <LiveChatMode
-                    sessionId={sessionId}
-                    settings={settings}
-                    chatMode={chatMode}
-                    setChatMode={setChatMode}
-                    setOperatorName={setOperatorName}
-                    setOperatorDepartment={setOperatorDepartment}
-                    onConnectionStatusChange={(status) => {
-                        setLiveConnectionStatus(status);
-                        if (status === 'reconnecting') setIsLiveReconnecting(true);
-                        else if (status === 'connected') setIsLiveReconnecting(false);
-                    }}
-                    onLiveMessagesChange={handleLiveMessagesChange}
-                    onOperatorTyping={setIsOperatorTyping}
-                    onLastReadAtChange={setLastReadAt}
-                    onReconnectingChange={setIsLiveReconnecting}
-                    onWsReady={handleWsReady}
-                    onChatEnded={handleChatEnded}
-                    onUploadProgressChange={setUploadProgress}
-                />
+                <Suspense fallback={null}>
+                    <LiveChatMode
+                        sessionId={sessionId}
+                        settings={settings}
+                        chatMode={chatMode}
+                        setChatMode={setChatMode}
+                        setOperatorName={setOperatorName}
+                        setOperatorDepartment={setOperatorDepartment}
+                        onConnectionStatusChange={(status) => {
+                            setLiveConnectionStatus(status);
+                            if (status === 'reconnecting') setIsLiveReconnecting(true);
+                            else if (status === 'connected') setIsLiveReconnecting(false);
+                        }}
+                        onLiveMessagesChange={handleLiveMessagesChange}
+                        onOperatorTyping={setIsOperatorTyping}
+                        onLastReadAtChange={setLastReadAt}
+                        onReconnectingChange={setIsLiveReconnecting}
+                        onWsReady={handleWsReady}
+                        onChatEnded={handleChatEnded}
+                        onUploadProgressChange={setUploadProgress}
+                    />
+                </Suspense>
             )}
 
             {/* ── Transcript Email Modal ── */}

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OyeChats Widget — Local Host Fixture</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #222; }
+    h1 { margin-bottom: 4px; }
+    p.lead { color: #666; margin-top: 0; }
+    .panel { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 16px 0; background: #fafafa; }
+    code { background: #eee; padding: 2px 4px; border-radius: 3px; font-size: 0.9em; }
+    button { padding: 8px 12px; margin-right: 8px; border: 1px solid #999; background: white; cursor: pointer; border-radius: 4px; }
+    button:hover { background: #f0f0f0; }
+    pre { background: #1e1e1e; color: #eee; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OyeChats Widget — Host Fixture</h1>
+  <p class="lead">Mimics a customer page. Use to verify the widget loads, the bundle splits correctly, and the public API works.</p>
+
+  <div class="panel">
+    <strong>Verify the bundle split (Phase 1).</strong> Open DevTools → Network. You should see:
+    <ul>
+      <li><code>oyechats-widget.js</code> — the loader, ≤ 8 KB gzipped, loaded by the script tag</li>
+      <li><code>manifest.json</code> + <code>oyechats-app.[hash].js</code> + <code>oyechats-vendor.[hash].js</code> — loaded immediately after</li>
+      <li><code>oyechats-chat.[hash].js</code> — appears only on first widget open</li>
+      <li><code>oyechats-livechat.[hash].js</code> — appears only on "talk to human" handoff</li>
+      <li><code>oyechats-forms.[hash].js</code> — appears only when a form (lead capture, handoff, booking) is shown</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <strong>Test the public API (Phase 3).</strong>
+    <button onclick="window.OyeChats.open()">open()</button>
+    <button onclick="window.OyeChats.close()">close()</button>
+    <button onclick="window.OyeChats.toggle()">toggle()</button>
+    <button onclick="window.OyeChats.send('Hello from the host page')">send('hello')</button>
+    <button onclick="window.OyeChats.identify({ name: 'Test User', email: 'test@example.com' })">identify()</button>
+    <button onclick="console.log(window.OyeChats.diagnose())">diagnose()</button>
+    <button onclick="window.OyeChats.destroy()">destroy()</button>
+  </div>
+
+  <div class="panel">
+    <strong>Test deferred init (Phase 2).</strong> To test, open the browser console and run:
+    <pre>window.OYECHATS_ASYNC_INIT = true; location.reload();
+// Then later:
+OyeChats.init();</pre>
+  </div>
+
+  <p>Embed (matches what customers paste into their site):</p>
+  <pre>&lt;script src="/oyechats-widget.js" data-bot-key="bot-DEV"&gt;&lt;/script&gt;</pre>
+
+  <!-- The actual widget embed -->
+  <script src="/oyechats-widget.js" data-bot-key="bot-DEV"></script>
+</body>
+</html>

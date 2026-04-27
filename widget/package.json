@@ -1,15 +1,82 @@
 {
   "name": "oyechats-widget",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:app && npm run build:loader && node scripts/copy-host-fixture.js",
+    "build:app": "vite build --config vite.app.config.js",
+    "build:loader": "vite build --config vite.loader.config.js",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "test": "node --test --test-reporter=spec src/services/**/*.test.js"
+    "preview": "vite preview --port 4173",
+    "size": "size-limit",
+    "test": "node --test --test-reporter=spec src/services/**/*.test.js",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install --with-deps chromium"
   },
+  "size-limit": [
+    {
+      "name": "Loader (initial payload — script tag)",
+      "path": "dist/oyechats-widget.js",
+      "limit": "8 KB",
+      "gzip": true
+    },
+    {
+      "name": "App entry stub",
+      "path": "dist/app/oyechats-app.*.js",
+      "limit": "5 KB",
+      "gzip": true
+    },
+    {
+      "name": "App entry code (FAB + state machine)",
+      "path": "dist/app/oyechats-app-entry.*.js",
+      "limit": "12 KB",
+      "gzip": true
+    },
+    {
+      "name": "Vendor chunk (React + axios + services)",
+      "path": "dist/app/oyechats-vendor.*.js",
+      "limit": "65 KB",
+      "gzip": true
+    },
+    {
+      "name": "Chat chunk (lazy on first widget open)",
+      "path": "dist/app/oyechats-ChatWindow.*.js",
+      "limit": "20 KB",
+      "gzip": true
+    },
+    {
+      "name": "Live chat chunk (lazy on handoff)",
+      "path": "dist/app/oyechats-LiveChatMode.*.js",
+      "limit": "8 KB",
+      "gzip": true
+    },
+    {
+      "name": "HandoffForm (lazy on demand)",
+      "path": "dist/app/oyechats-HandoffForm.*.js",
+      "limit": "4 KB",
+      "gzip": true
+    },
+    {
+      "name": "LeadCaptureForm (lazy on demand)",
+      "path": "dist/app/oyechats-LeadCaptureForm.*.js",
+      "limit": "4 KB",
+      "gzip": true
+    },
+    {
+      "name": "MeetingBooking (lazy on demand)",
+      "path": "dist/app/oyechats-MeetingBooking.*.js",
+      "limit": "4 KB",
+      "gzip": true
+    },
+    {
+      "name": "Markdown chunk (lazy with chat)",
+      "path": "dist/app/oyechats-markdown.*.js",
+      "limit": "40 KB",
+      "gzip": true
+    }
+  ],
   "dependencies": {
     "@sentry/react": "^10.45.0",
     "axios": "1.14.0",
@@ -20,6 +87,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@size-limit/file": "^12.1.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
@@ -30,6 +98,8 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "postcss": "^8.5.6",
+    "rollup-plugin-visualizer": "^7.0.1",
+    "size-limit": "^12.1.0",
     "tailwindcss": "^4.1.18",
     "vite": "^7.3.1"
   }

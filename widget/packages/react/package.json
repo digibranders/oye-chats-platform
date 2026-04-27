@@ -1,0 +1,23 @@
+{
+  "name": "@oyechats/react",
+  "version": "0.1.0",
+  "description": "React component + hooks wrapper around the OyeChats embeddable widget.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": ["src"],
+  "peerDependencies": {
+    "react": ">=18 <20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
