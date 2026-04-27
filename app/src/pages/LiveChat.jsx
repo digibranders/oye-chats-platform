@@ -238,11 +238,12 @@ export default function LiveChat({ embedded = false }) {
         manualCloseRef.current = false;
 
         const wsUrl = API_URL.replace(/^http/, 'ws').replace(/\/+$/, '');
-        // Operators use operator_key param (their operator_api_key is stored in admin_token).
-        // Owners/clients use api_key param (resolves to their first operator record on the backend).
-        const encodedKey = encodeURIComponent(apiKey);
-        const wsParam = authType === 'operator' ? `operator_key=${encodedKey}` : `api_key=${encodedKey}`;
-        const socket = new WebSocket(`${wsUrl}/ws/operator?${wsParam}`);
+        // Pass auth via Sec-WebSocket-Protocol header instead of query params
+        // to avoid leaking credentials in server access logs and browser history.
+        const subprotocol = authType === 'operator'
+            ? `operator-key.${apiKey}`
+            : `api-key.${apiKey}`;
+        const socket = new WebSocket(`${wsUrl}/ws/operator`, [subprotocol]);
         wsRef.current = socket;
 
         socket.onopen = () => {

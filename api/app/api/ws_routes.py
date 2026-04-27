@@ -322,11 +322,29 @@ async def operator_websocket(
 ):
     """WebSocket for operator (admin dashboard) side of live chat.
 
-    Supports dual auth:
+    Supports dual auth via query params (legacy) **or** Sec-WebSocket-Protocol
+    header (preferred — avoids leaking credentials in URL/logs):
+
+    Query params (legacy, kept for backward compat):
     - api_key: Client API key (owner/backward compat, resolves to first operator)
     - operator_key: Operator's own API key (for multi-operator)
-    - agent_key: Legacy alias for operator_key (backward compat during transition)
+    - agent_key: Legacy alias for operator_key
+
+    Subprotocol header (preferred):
+    - ``operator-key.<value>``  — operator's own key
+    - ``api-key.<value>``       — client/owner key
     """
+    # --- Resolve auth: prefer subprotocol header over query params ---
+    accepted_subprotocol: str | None = None
+    for proto in ws.headers.get("sec-websocket-protocol", "").split(","):
+        proto = proto.strip()
+        if proto.startswith("operator-key."):
+            operator_key = operator_key or proto[len("operator-key.") :]
+            accepted_subprotocol = proto
+        elif proto.startswith("api-key."):
+            api_key = api_key or proto[len("api-key.") :]
+            accepted_subprotocol = proto
+
     effective_key = operator_key or agent_key
     if effective_key:
         result = _resolve_operator_from_key(effective_key, "operator_key")
@@ -348,6 +366,7 @@ async def operator_websocket(
         department_id=department_id,
         operator_name=operator_name,
         is_online=is_online,
+        subprotocol=accepted_subprotocol,
     )
 
     heartbeat_task = asyncio.create_task(_heartbeat(ws))
