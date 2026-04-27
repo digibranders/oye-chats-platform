@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 
 import litellm
@@ -283,18 +284,46 @@ _INJECTION_PATTERNS = re.compile(
 # Maximum chars accepted for a custom system prompt (validated at API boundary too)
 _MAX_CUSTOM_PROMPT_CHARS = 2000
 
-# Canonical off-topic refusal. Used by the relevance gate AND the empty-context
-# short-circuit so visitors get a consistent, on-brand response when the question
-# falls outside the customer's knowledge base. Format with `company_name`.
-OFF_TOPIC_REFUSAL_TEMPLATE = (
+# Off-topic refusal variant pool.
+#
+# Used by the relevance gate, empty-context short-circuit, injection guard, and
+# system-prompt leak guard. Variants are rotated per call so a visitor who keeps
+# probing doesn't see identical text repeated — the "robotic refusal" failure
+# mode flagged by ACM CHI 2024 ("As an AI language model, I cannot…") and seen
+# in our own live testing where 7 consecutive refusals were verbatim identical.
+#
+# Each template follows the pattern: ACKNOWLEDGE + SCOPE + 2-3 forward
+# suggestions, modelled on Intercom Fin's published refusal style.
+# Format with ``{company_name}``.
+OFF_TOPIC_REFUSAL_VARIANTS: tuple[str, ...] = (
     "That's a bit outside what I can help with — I'm here to assist with "
-    "everything related to {company_name}! Is there anything about our "
-    "services, team, or how we work that I can help you with?"
+    "everything related to {company_name}. Want to know about our services, "
+    "pricing, or how to get in touch?",
+    "I appreciate the question, but I'm here to help with {company_name}. "
+    "What brings you here today — are you looking at our services, pricing, "
+    "or something else?",
+    "I'm focused on questions about {company_name} — happy to help with our "
+    "services, team, or how we work. What were you hoping to learn?",
+    "That one's outside my lane! I help with {company_name} — services, "
+    "pricing, and connecting you with the team. What can I show you?",
+    "Let's keep this about {company_name}. I can answer about our work, our "
+    "services, or connect you with the team — which would be most useful?",
+    "I stick to topics about {company_name}. Are you exploring our services, "
+    "looking at pricing, or wanting to talk to someone on the team?",
 )
 
 
 def _off_topic_refusal(company_name: str | None) -> str:
-    return OFF_TOPIC_REFUSAL_TEMPLATE.format(company_name=company_name or "our company")
+    """Return a randomly-rotated off-topic refusal scoped to ``company_name``.
+
+    Plain ``random.choice`` is intentional: stateless, no DB round-trip, and
+    repeats are tolerable (~1 in 6 chance of consecutive duplicates with the
+    current pool size). If duplicate-suppression becomes an issue we can pass
+    ``session_id`` and seed the choice on it, but the live test failure was
+    7 identical refusals in a row — anything random fixes that.
+    """
+    template = random.choice(OFF_TOPIC_REFUSAL_VARIANTS)
+    return template.format(company_name=company_name or "our company")
 
 
 def _sanitize_system_prompt(prompt: str) -> str:
@@ -327,6 +356,58 @@ def is_visitor_injection_attempt(question: str) -> bool:
     if not question:
         return False
     return bool(_INJECTION_PATTERNS.search(question))
+
+
+# OpenAI Moderation feature flag. The endpoint is free under OpenAI's TOS
+# (no usage quota) but adds ~100ms per request. Defaults ON because the
+# DPD/Air Canada-class incidents this catches are far more expensive than
+# the latency. Ops can disable globally via env if it becomes a bottleneck.
+MODERATION_ENABLED: bool = os.getenv("MODERATION_ENABLED", "true").lower() in ("1", "true", "yes")
+MODERATION_MODEL: str = os.getenv("MODERATION_MODEL", "openai/omni-moderation-latest")
+
+
+def check_visitor_safety(question: str) -> tuple[bool, str | None]:
+    """Run an OpenAI Moderation pre-check on visitor input.
+
+    Returns
+    -------
+    tuple[bool, str | None]
+        ``(is_safe, top_category_if_flagged)``. On any error returns
+        ``(True, None)`` so a transient OpenAI outage cannot block legit
+        traffic — moderation is defence-in-depth, not a single point of
+        failure.
+
+    Categories follow the ``omni-moderation-latest`` schema (sexual,
+    sexual/minors, harassment, harassment/threatening, hate, hate/threatening,
+    self-harm, self-harm/intent, self-harm/instructions, violence,
+    violence/graphic, illicit, illicit/violent).
+    """
+    if not MODERATION_ENABLED or not question or not question.strip():
+        return True, None
+    try:
+        response = litellm.moderation(model=MODERATION_MODEL, input=question)
+    except Exception as exc:
+        logger.warning("Moderation check failed (non-blocking): %s", exc)
+        return True, None
+
+    # LiteLLM normalises to OpenAI's shape: {results: [{flagged, categories: {...}}]}
+    try:
+        results = response.results if hasattr(response, "results") else response.get("results", [])
+        if not results:
+            return True, None
+        first = results[0]
+        flagged = bool(getattr(first, "flagged", None) or (isinstance(first, dict) and first.get("flagged")))
+        if not flagged:
+            return True, None
+        cats = getattr(first, "categories", None) or (first.get("categories") if isinstance(first, dict) else None)
+        if not cats:
+            return False, "unspecified"
+        cats_dict = cats if isinstance(cats, dict) else getattr(cats, "__dict__", {})
+        top = next((k for k, v in cats_dict.items() if v), None)
+        return False, top or "unspecified"
+    except Exception as exc:
+        logger.warning("Moderation response parse failed (non-blocking): %s", exc)
+        return True, None
 
 
 # Sentinels that uniquely identify text from the platform's system prompt.
@@ -1134,6 +1215,31 @@ def rag_pipeline(
                     "message_id": _bot_msg.id,
                 }
 
+            # ── OpenAI Moderation pre-check ──────────────────────────────
+            # Catches the DPD/MyCity-class incidents (toxicity, hate,
+            # self-harm, illicit content) that the injection regex misses.
+            # Free under OpenAI's TOS, ~100ms latency, fails open on error.
+            _safe, _flagged_cat = check_visitor_safety(question)
+            if not _safe:
+                _safety_net_metric(
+                    "moderation_block",
+                    path="nonstream",
+                    category=_flagged_cat or "unspecified",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _refusal = _off_topic_refusal(_company_name)
+                _bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                )
+                session.commit()
+                return {
+                    "answer": _refusal,
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": _bot_msg.id,
+                }
+
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
             _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
@@ -1203,7 +1309,14 @@ def rag_pipeline(
                     final_results = rerank(search_query, final_results)
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
-            _is_relevant, _gate_score = check_relevance(question, final_results, bot_id=bid, client_id=cid)
+            _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
+            _is_relevant, _gate_score = check_relevance(
+                question,
+                final_results,
+                bot_id=bid,
+                client_id=cid,
+                threshold=_bot_threshold,
+            )
             if not _is_relevant:
                 _safety_net_metric(
                     "off_topic_refusal",
@@ -1542,6 +1655,26 @@ async def rag_pipeline_stream(
             yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
             return
 
+        # ── OpenAI Moderation pre-check (streaming path) ────────────────
+        _safe, _flagged_cat = await asyncio.to_thread(check_visitor_safety, question)
+        if not _safe:
+            _safety_net_metric(
+                "moderation_block",
+                path="stream",
+                category=_flagged_cat or "unspecified",
+                session=session_id,
+                bot_id=bid,
+            )
+            _refusal = _off_topic_refusal(_company_name)
+            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+            yield _refusal
+            _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid)
+            session.flush()
+            _msg_id = _bot_msg.id
+            session.commit()
+            yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+            return
+
         # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
         _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
         _cache_key = qa_response_key(bid, _q_hash) if bid else None
@@ -1627,7 +1760,10 @@ async def rag_pipeline_stream(
         sources = [doc.document_name for doc in final_results]
 
         # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
-        _is_relevant, _gate_score = await asyncio.to_thread(check_relevance, question, final_results, bid, cid)
+        _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
+        _is_relevant, _gate_score = await asyncio.to_thread(
+            check_relevance, question, final_results, bid, cid, _bot_threshold
+        )
         if not _is_relevant:
             _safety_net_metric(
                 "off_topic_refusal",

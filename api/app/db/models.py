@@ -1,6 +1,6 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -79,6 +79,13 @@ class Bot(Base):
 
     bant_enabled = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     bant_config = Column(JSONB, nullable=True)  # per-bot qualification rubric config
+
+    # CRAG relevance gate threshold override.
+    # NULL = use the env default (RELEVANCE_THRESHOLD, currently 0.55).
+    # Lower = more lenient (fewer off-topic refusals, more risk of off-scope answers).
+    # Higher = stricter (more refusals, more risk of false positives on legit questions).
+    # Reasonable range: 0.40 (lenient) — 0.70 (strict). Out-of-range is clamped at runtime.
+    relevance_threshold = Column(Float, nullable=True)
     avatar_type = Column(String, default="upload", server_default="upload", nullable=False)
     orb_color = Column(String, nullable=True)
 

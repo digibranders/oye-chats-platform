@@ -72,6 +72,11 @@ class UpdateBotRequest(BaseModel):
     bant_enabled: bool | None = None
     bant_config: dict | None = None
     qualification_framework: str | None = None
+    # CRAG relevance gate threshold override. None = use env default (0.55).
+    # 0.0 = always pass (effectively disable), 1.0 = always fail (refuse everything).
+    # Reasonable range 0.40 (lenient) – 0.70 (strict). Out-of-range writes are
+    # rejected at the API; runtime ALSO clamps in case a bad value slipped past.
+    relevance_threshold: float | None = Field(None, ge=0.0, le=1.0)
     avatar_type: str | None = None
     orb_color: str | None = None
     # Lead form settings
@@ -147,6 +152,7 @@ class BotResponse(BaseModel):
     user_bubble_color: str = "#DBE9FF"
     bant_enabled: bool
     bant_config: dict | None = None
+    relevance_threshold: float | None = None
     avatar_type: str
     orb_color: str | None
     lead_form_enabled: bool = False
@@ -804,6 +810,7 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     user_bubble_color=b.user_bubble_color or "#DBE9FF",
                     bant_enabled=b.bant_enabled,
                     bant_config=b.bant_config,
+                    relevance_threshold=b.relevance_threshold,
                     avatar_type=b.avatar_type or "upload",
                     orb_color=b.orb_color,
                     lead_form_enabled=b.lead_form_enabled,
@@ -938,6 +945,7 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             user_bubble_color=bot.user_bubble_color or "#DBE9FF",
             bant_enabled=bot.bant_enabled,
             bant_config=bot.bant_config,
+            relevance_threshold=bot.relevance_threshold,
             avatar_type=bot.avatar_type or "upload",
             orb_color=bot.orb_color,
             lead_form_enabled=bot.lead_form_enabled,
