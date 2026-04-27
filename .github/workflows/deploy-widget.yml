@@ -65,6 +65,10 @@ jobs:
         run: npm install --no-save wrangler@3
 
       # ── Versioned backup of loader (rollback safety) ──
+      # Note: `wrangler r2 object put` defaults to remote storage in current
+      # wrangler 3.x; `--local` is the opt-in for the local dev simulator.
+      # Older versions had a `--remote` flag — it was removed without a
+      # deprecation cycle, so we explicitly do NOT pass it.
       - name: Upload versioned loader backup
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
@@ -75,8 +79,7 @@ jobs:
             "${{ env.R2_BUCKET }}/versions/oyechats-widget-${{ github.sha }}.js" \
             --file=dist/oyechats-widget.js \
             --content-type="text/javascript" \
-            --cache-control="${{ env.IMMUTABLE_CACHE }}" \
-            --remote
+            --cache-control="${{ env.IMMUTABLE_CACHE }}"
 
       # ── Upload order matters: chunks → manifest → loader → purge ──
       # The manifest references chunks by hashed filename; if it goes live
@@ -107,8 +110,7 @@ jobs:
               "${{ env.R2_BUCKET }}/app/$base" \
               --file="$file" \
               --content-type="$ctype" \
-              --cache-control="${{ env.IMMUTABLE_CACHE }}" \
-              --remote
+              --cache-control="${{ env.IMMUTABLE_CACHE }}"
           done
 
       - name: Upload manifest (mutable)
@@ -121,8 +123,7 @@ jobs:
             "${{ env.R2_BUCKET }}/app/manifest.json" \
             --file=dist/app/manifest.json \
             --content-type="application/json" \
-            --cache-control="${{ env.REVALIDATE_CACHE }}" \
-            --remote
+            --cache-control="${{ env.REVALIDATE_CACHE }}"
 
       - name: Upload loader (mutable)
         env:
@@ -134,8 +135,7 @@ jobs:
             "${{ env.R2_BUCKET }}/oyechats-widget.js" \
             --file=dist/oyechats-widget.js \
             --content-type="text/javascript" \
-            --cache-control="${{ env.REVALIDATE_CACHE }}" \
-            --remote
+            --cache-control="${{ env.REVALIDATE_CACHE }}"
 
       # ── Purge only the mutable URLs ──
       - name: Purge Cloudflare CDN cache (loader + manifest only)
