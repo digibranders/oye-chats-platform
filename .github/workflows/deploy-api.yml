@@ -29,6 +29,9 @@ jobs:
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
+          # Pass the deployed git SHA so Sentry tags every event with a
+          # release; spikes can then be pinned to a specific commit.
+          SENTRY_RELEASE: ${{ github.sha }}
           # Toggle-able feature flags (set in GitHub secrets to flip without a code push)
           RELEVANCE_GATE_ENABLED: ${{ secrets.RELEVANCE_GATE_ENABLED }}
           CHUNK_ENRICHMENT_ENABLED: ${{ secrets.CHUNK_ENRICHMENT_ENABLED }}
@@ -38,7 +41,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -59,6 +62,7 @@ jobs:
               "R2_BUCKET_NAME=${R2_BUCKET_NAME}" \
               "R2_ENDPOINT=${R2_ENDPOINT}" \
               "SENTRY_DSN_BACKEND=${SENTRY_DSN_BACKEND}" \
+              "SENTRY_RELEASE=${SENTRY_RELEASE}" \
               "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}" \
               "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}" \
               "LANGFUSE_HOST=https://cloud.langfuse.com" \
@@ -72,7 +76,7 @@ jobs:
               "CAG_LITE_THRESHOLD=20" \
               "CHUNK_SIZE=1000" \
               "CHUNK_OVERLAP=200" \
-              "RELEVANCE_THRESHOLD=0.5" \
+              "RELEVANCE_THRESHOLD=0.55" \
               "GATE_MODEL=gemini/gemini-2.5-flash" \
               "ENRICHMENT_MODEL=gemini/gemini-2.5-flash" \
               "CRAWLER_BROWSER_RECYCLE=10" \
@@ -80,6 +84,7 @@ jobs:
               "CHUNK_ENRICHMENT_ENABLED=${CHUNK_ENRICHMENT_ENABLED}" \
               "CRAWLER_JS_ALL_PAGES=${CRAWLER_JS_ALL_PAGES}" \
               "WORKER_ENABLED=true" \
+              "MODERATION_ENABLED=true" \
               > api/.env
 
             # Sync dependencies
@@ -103,9 +108,9 @@ jobs:
             systemctl enable oyechats-api oyechats-worker
 
             # Restart worker FIRST so its heartbeat is fresh before the new
-            # API comes up — the new /health endpoint gates on the worker
-            # heartbeat key, so a stale worker would make the API report
-            # 503 during the health-check retry loop below.
+            # API comes up — the deploy gate hits /health/full, which 503s
+            # when the worker heartbeat is missing, so a stale worker would
+            # fail the deploy. Worker first → API second avoids that race.
             systemctl restart oyechats-worker
             systemctl restart oyechats-api
 
@@ -114,13 +119,16 @@ jobs:
               nginx -t && systemctl reload nginx
             fi
 
-            # Health check — wait for server startup then retry
-            # Server takes ~25s to start (Gunicorn + Sentry + DB init)
+            # Deploy gate hits /health/full (DB + Redis + worker), not
+            # /health (DB + Redis only). /health is for LB probes and must
+            # not flap on worker hiccups; /health/full is the strict check
+            # that enforces a complete deploy before this job goes green.
+            # Server takes ~25s to start (Gunicorn + Sentry + DB init).
             echo "⏳ Waiting 15s for server startup..."
             sleep 15
             set +e  # Temporarily disable errexit for the retry loop
             for i in 1 2 3 4 5 6; do
-              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              if curl -sf http://localhost:8000/health/full > /dev/null 2>&1; then
                 echo "✅ Deploy successful (attempt $i)"
                 exit 0
               fi

@@ -33,9 +33,43 @@ def _parse_redis_settings() -> RedisSettings:
     return RedisSettings.from_dsn(redis_url)
 
 
+def _init_sentry_for_worker() -> None:
+    """Initialise Sentry inside the ARQ worker process.
+
+    The API process initialises Sentry in ``app.main`` at module load. The
+    worker is a separate process (``arq`` CLI entry point) and never imports
+    ``app.main``, so without this call background-task errors (BANT extraction,
+    webhook delivery, email send, document ingestion) never reach Sentry —
+    they only end up in ``journalctl`` on the droplet.
+
+    Tagged as ``service: worker`` so events can be filtered apart from the API.
+    """
+    from app.config import APP_ENV, SENTRY_DSN, SENTRY_ENABLED
+
+    if not SENTRY_ENABLED:
+        logger.info("Sentry disabled in worker (no DSN configured)")
+        return
+
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=APP_ENV,
+        release=os.getenv("SENTRY_RELEASE") or None,
+        send_default_pii=False,
+        enable_logs=True,
+        traces_sample_rate=0.1,
+        profile_session_sample_rate=0.1,
+        profile_lifecycle="trace",
+    )
+    sentry_sdk.set_tag("service", "worker")
+    logger.info(f"Sentry error tracking enabled in worker | env={APP_ENV}")
+
+
 async def startup(ctx: dict) -> None:
     """Called once when the worker starts. Initialize shared resources."""
     logging.basicConfig(level=logging.INFO)
+    _init_sentry_for_worker()
     logger.info("OyeChats worker starting")
 
     # Emit a heartbeat immediately so /health turns green without waiting

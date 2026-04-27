@@ -6,6 +6,26 @@ on:
     paths: ['widget/**']
   workflow_dispatch:
 
+# Bundle layout (post-split):
+#   dist/oyechats-widget.js              ← loader IIFE (mutable, must revalidate, purge on deploy)
+#   dist/app/manifest.json               ← chunk manifest (mutable, must revalidate, purge on deploy)
+#   dist/app/oyechats-*.{js,css}         ← hashed chunks (immutable, 1y cache, no purge needed)
+#
+# Cache strategy mirrors how Vite + the loader resolve URLs:
+#   - The customer's <script> hits /oyechats-widget.js → must always be the latest
+#     (loader contains the manifest URL hard-coded as `${BASE}/app/manifest.json`).
+#   - The loader fetches /app/manifest.json on every page load → must always be the latest
+#     (it points to the current hashed entry chunk).
+#   - The loader then dynamic-imports the hashed chunk → safe to cache forever.
+#
+# CORS: cdn.oyechats.com MUST serve `Access-Control-Allow-Origin: *` on every chunk URL.
+# This is a Cloudflare R2 / CDN config concern, not something this workflow handles.
+
+env:
+  R2_BUCKET: oyechats-cdn
+  IMMUTABLE_CACHE: 'public, max-age=31536000, immutable'
+  REVALIDATE_CACHE: 'no-cache, must-revalidate, s-maxage=300'
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -16,7 +36,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install & Build
+      - name: Install & build
         working-directory: widget
         run: |
           npm ci
@@ -24,56 +44,106 @@ jobs:
         env:
           VITE_API_URL: https://api.oyechats.com
           VITE_BUILD_TIMESTAMP: ${{ github.sha }}
+          VITE_WIDGET_BASE: https://cdn.oyechats.com
 
-      - name: Verify build output exists
+      - name: Verify build outputs
+        working-directory: widget
         run: |
-          test -f widget/dist/oyechats-widget.js || { echo "❌ Build output missing: oyechats-widget.js"; exit 1; }
-          test -f widget/dist/oyechats-widget.css || { echo "❌ Build output missing: oyechats-widget.css"; exit 1; }
-          JS_SIZE=$(stat -c%s widget/dist/oyechats-widget.js 2>/dev/null || stat -f%z widget/dist/oyechats-widget.js)
-          CSS_SIZE=$(stat -c%s widget/dist/oyechats-widget.css 2>/dev/null || stat -f%z widget/dist/oyechats-widget.css)
-          echo "✅ Widget JS size: ${JS_SIZE} bytes"
-          echo "✅ Widget CSS size: ${CSS_SIZE} bytes"
-          if [ "$JS_SIZE" -lt 10000 ]; then echo "❌ Widget JS suspiciously small"; exit 1; fi
+          set -euo pipefail
+          test -f dist/oyechats-widget.js     || { echo "❌ Missing loader: dist/oyechats-widget.js"; exit 1; }
+          test -f dist/app/manifest.json      || { echo "❌ Missing manifest: dist/app/manifest.json"; exit 1; }
+          # The manifest must point to a real entry chunk that exists on disk.
+          ENTRY=$(node -e "const m=require('./dist/app/manifest.json'); process.stdout.write(m['src/app-entry.jsx'].file)")
+          test -f "dist/app/$ENTRY"           || { echo "❌ Manifest entry chunk missing: $ENTRY"; exit 1; }
+          # Loader sanity: should be small (~1-3 KB). Catch accidental fat builds.
+          LOADER_SIZE=$(stat -c%s dist/oyechats-widget.js 2>/dev/null || stat -f%z dist/oyechats-widget.js)
+          if [ "$LOADER_SIZE" -gt 10000 ]; then echo "❌ Loader is ${LOADER_SIZE} bytes — should be < 10 KB"; exit 1; fi
+          if [ "$LOADER_SIZE" -lt 500   ]; then echo "❌ Loader is ${LOADER_SIZE} bytes — suspiciously small"; exit 1; fi
+          echo "✅ Build outputs verified — loader ${LOADER_SIZE} bytes, entry chunk: $ENTRY"
 
-      # Upload versioned backup first (rollback safety), then overwrite latest
-      - name: Upload versioned JS backup
-        uses: cloudflare/wrangler-action@v3
-        with:
-          command: >-
-            r2 object put oyechats-cdn/versions/oyechats-widget-${{ github.sha }}.js
-            --file widget/dist/oyechats-widget.js
-            --content-type "text/javascript"
-            --cache-control "public, max-age=31536000, immutable"
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+      - name: Install wrangler
+        run: npm install --no-save wrangler@3
 
-      - name: Upload JS to Cloudflare R2
-        uses: cloudflare/wrangler-action@v3
-        with:
-          command: >-
-            r2 object put oyechats-cdn/oyechats-widget.js
-            --file widget/dist/oyechats-widget.js
-            --content-type "text/javascript"
-            --cache-control "no-cache, must-revalidate, s-maxage=3600"
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+      # ── Versioned backup of loader (rollback safety) ──
+      - name: Upload versioned loader backup
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: widget
+        run: |
+          npx wrangler r2 object put \
+            "${{ env.R2_BUCKET }}/versions/oyechats-widget-${{ github.sha }}.js" \
+            --file=dist/oyechats-widget.js \
+            --content-type="text/javascript" \
+            --cache-control="${{ env.IMMUTABLE_CACHE }}" \
+            --remote
 
-      - name: Upload CSS to Cloudflare R2
-        uses: cloudflare/wrangler-action@v3
-        with:
-          command: >-
-            r2 object put oyechats-cdn/oyechats-widget.css
-            --file widget/dist/oyechats-widget.css
-            --content-type "text/css"
-            --cache-control "no-cache, must-revalidate, s-maxage=3600"
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+      # ── Upload order matters: chunks → manifest → loader → purge ──
+      # The manifest references chunks by hashed filename; if it goes live
+      # before its chunks exist, any uncached request resolves to a 404
+      # until the chunk upload finishes. Same logic for loader→manifest:
+      # the loader fetches manifest.json, so the manifest must exist first.
+      # Purge runs last so the cache flip is atomic from the customer's POV.
 
-      - name: Purge Cloudflare CDN cache
+      # ── Immutable hashed chunks: long cache, no purge ──
+      - name: Upload hashed chunks (immutable)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: widget
+        run: |
+          set -euo pipefail
+          # Allowlist by filename pattern: only the widget's own hashed chunks ship.
+          # Excludes index.html (fixture), stats.html (visualizer), public/ assets,
+          # source maps (those go to Sentry, never public).
+          shopt -s nullglob
+          for file in dist/app/oyechats-*.js dist/app/oyechats-*.css; do
+            base=$(basename "$file")
+            ext="${base##*.}"
+            ctype="text/javascript"
+            [ "$ext" = "css" ] && ctype="text/css"
+            echo "↑ $base"
+            npx wrangler r2 object put \
+              "${{ env.R2_BUCKET }}/app/$base" \
+              --file="$file" \
+              --content-type="$ctype" \
+              --cache-control="${{ env.IMMUTABLE_CACHE }}" \
+              --remote
+          done
+
+      - name: Upload manifest (mutable)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: widget
+        run: |
+          npx wrangler r2 object put \
+            "${{ env.R2_BUCKET }}/app/manifest.json" \
+            --file=dist/app/manifest.json \
+            --content-type="application/json" \
+            --cache-control="${{ env.REVALIDATE_CACHE }}" \
+            --remote
+
+      - name: Upload loader (mutable)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: widget
+        run: |
+          npx wrangler r2 object put \
+            "${{ env.R2_BUCKET }}/oyechats-widget.js" \
+            --file=dist/oyechats-widget.js \
+            --content-type="text/javascript" \
+            --cache-control="${{ env.REVALIDATE_CACHE }}" \
+            --remote
+
+      # ── Purge only the mutable URLs ──
+      - name: Purge Cloudflare CDN cache (loader + manifest only)
         env:
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
+          set -euo pipefail
           if [ -z "$CF_ZONE_ID" ]; then
             echo "❌ CF_ZONE_ID secret is not set — cannot purge CDN cache"
             exit 1
@@ -81,7 +151,21 @@ jobs:
           RESPONSE=$(curl -sf -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"files":["https://cdn.oyechats.com/oyechats-widget.js","https://cdn.oyechats.com/oyechats-widget.css"]}')
+            -d '{"files":["https://cdn.oyechats.com/oyechats-widget.js","https://cdn.oyechats.com/app/manifest.json"]}')
           echo "$RESPONSE"
           echo "$RESPONSE" | grep -q '"success":true' || { echo "❌ Cache purge failed"; exit 1; }
-          echo "✅ CDN cache purged successfully"
+          echo "✅ CDN cache purged for loader + manifest (hashed chunks are immutable, no purge needed)"
+
+      # ── Smoke test the deployed bundle ──
+      - name: Verify deploy via live fetch
+        run: |
+          set -euo pipefail
+          # Loader must respond and be the just-shipped build.
+          LOADER=$(curl -fsSL https://cdn.oyechats.com/oyechats-widget.js)
+          echo "$LOADER" | grep -q "${{ github.sha }}" || echo "⚠️  Loader fetched but build SHA not embedded (cache may still be warm)"
+          # Manifest must respond and reference a chunk we just uploaded.
+          MANIFEST=$(curl -fsSL https://cdn.oyechats.com/app/manifest.json)
+          ENTRY_FILE=$(echo "$MANIFEST" | python3 -c "import sys,json; m=json.load(sys.stdin); print(m['src/app-entry.jsx']['file'])")
+          echo "Manifest points to entry chunk: $ENTRY_FILE"
+          curl -fsI "https://cdn.oyechats.com/app/$ENTRY_FILE" | head -1
+          echo "✅ Deploy verified end-to-end"

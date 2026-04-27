@@ -1,0 +1,24 @@
+{
+  "name": "@oyechats/next",
+  "version": "0.1.0",
+  "description": "Next.js Script wrapper for the OyeChats embeddable widget. SSR-safe, sane defaults.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": ["src"],
+  "peerDependencies": {
+    "next": ">=14",
+    "react": ">=18 <20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

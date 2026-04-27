@@ -60,17 +60,32 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install
+        working-directory: widget
+        run: npm ci
+
       - name: Lint
         working-directory: widget
-        run: |
-          npm ci
-          npm run lint
+        run: npm run lint
 
       - name: Build
         working-directory: widget
         run: npm run build
         env:
           VITE_API_URL: https://api.oyechats.com
+          VITE_WIDGET_BASE: https://cdn.oyechats.com/
+
+      - name: Bundle size check
+        working-directory: widget
+        run: npm run size
+
+      - name: Upload bundle stats artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: widget-bundle-stats
+          path: widget/dist/app/stats.html
+          retention-days: 14
 
   # ── Admin Dashboard (React) ──
   app:

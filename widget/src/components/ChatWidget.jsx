@@ -1,7 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import Launcher from './Launcher';
-import ChatWindow from './ChatWindow';
 import { getChatbotSettings } from '../services/api';
+import { getController } from '../widget-controller.js';
+
+// Lazy-loaded — chat window ships in its own chunk, only fetched on first widget open.
+// This is the largest component (~1900 LOC plus react-markdown), so deferring it
+// keeps the initial FAB chunk small (Core Web Vitals win for the host site).
+const ChatWindow = lazy(() => import('./ChatWindow'));
 
 /** Ref used to pass a pre-typed message from the greeting bubble into the chat window. */
 const usePendingMessage = () => {
@@ -201,22 +206,81 @@ const ChatWidget = () => {
       openChat();
   }, [pendingMessageRef, openChat]);
 
+  // ── Public API bridge ──────────────────────────────────────────────────────
+  // Subscribe to controller actions dispatched by window.OyeChats.{open,close,toggle,send,...}
+  // and emit lifecycle events back out to customer-registered handlers.
+  useEffect(() => {
+    const ctrl = getController();
+    const unsubscribe = ctrl.onAction((action) => {
+      switch (action.type) {
+        case 'open':
+          openChat();
+          break;
+        case 'close':
+          closeChat();
+          break;
+        case 'toggle':
+          toggleChat();
+          break;
+        case 'send':
+          pendingMessageRef.current = action.text;
+          openChat();
+          break;
+        case 'shutdown':
+        case 'boot':
+          // Force a fresh chat session on identity change
+          closeChat();
+          break;
+        default:
+          break;
+      }
+    });
+    return unsubscribe;
+  }, [openChat, closeChat, toggleChat, pendingMessageRef]);
+
+  // Emit open/close events to customer handlers, but only on a real
+  // hidden→visible / visible→hidden transition. Without the prev-state
+  // guard this fires `close` on every initial render (isVisible=false),
+  // which would spam customer analytics handlers.
+  const wasVisibleRef = useRef(false);
+  useEffect(() => {
+    const ctrl = getController();
+    const wasVisible = wasVisibleRef.current;
+    if (isVisible && isAnimating === true && !wasVisible) {
+      ctrl.emit('open', undefined);
+      wasVisibleRef.current = true;
+    } else if (!isVisible && wasVisible) {
+      ctrl.emit('close', undefined);
+      wasVisibleRef.current = false;
+    }
+  }, [isVisible, isAnimating]);
+
+  // ── Hover-preload (Phase 6) ────────────────────────────────────────────────
+  // Warm the chat chunk on launcher hover so the open animation has zero TTI.
+  const preloadChat = useCallback(() => {
+    void import('./ChatWindow');
+  }, []);
+
   return (
     <>
       {isVisible && (
-        <ChatWindow
-          onClose={closeChat}
-          initialSettings={settings}
-          isAnimating={isAnimating}
-          isOnline={isOnline}
-          initialMessage={pendingMessageRef}
-        />
+        <Suspense fallback={null}>
+          <ChatWindow
+            onClose={closeChat}
+            initialSettings={settings}
+            isAnimating={isAnimating}
+            isOnline={isOnline}
+            initialMessage={pendingMessageRef}
+          />
+        </Suspense>
       )}
       {/* Launcher fades out while chat is open — LiveChat/Intercom pattern.
           Kept in DOM (not unmounted) so it can fade back in after the close animation. */}
       <div
         className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-4 transition-opacity duration-200"
         style={{ opacity: isVisible ? 0 : 1, pointerEvents: isVisible ? 'none' : 'auto' }}
+        onMouseEnter={preloadChat}
+        onTouchStart={preloadChat}
       >
         <Launcher
           isOpen={false}

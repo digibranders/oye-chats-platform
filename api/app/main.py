@@ -56,12 +56,20 @@ if SENTRY_ENABLED:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         environment=APP_ENV,
+        # Set by CI from ``${{ github.sha }}`` so error spikes can be
+        # pinned to a specific deploy. Falls back to None (Sentry will
+        # auto-derive from git if available) when running locally.
+        release=os.getenv("SENTRY_RELEASE") or None,
         send_default_pii=False,
         enable_logs=True,
         traces_sample_rate=0.1,
         profile_session_sample_rate=0.1,
         profile_lifecycle="trace",
     )
+    # Tag every event with the service name so API and worker can be
+    # filtered apart in the Sentry UI (the worker uses the same DSN
+    # but tags itself ``service: worker`` in app/worker/settings.py).
+    sentry_sdk.set_tag("service", "api")
     logger.info(f"Sentry error tracking enabled | env={APP_ENV}")
 else:
     logger.info("Sentry error tracking disabled (no DSN configured)")
@@ -137,21 +145,15 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 # --- Health Check ---
 
 
-@app.get("/health", tags=["system"])
-def health_check():
-    """Full readiness check: DB + Redis + ARQ worker + connection pool stats.
+def _gather_health() -> tuple[dict, bool, bool]:
+    """Collect subsystem health.
 
-    Returns 200 if all required dependencies are reachable, 503 if any are
-    degraded. Worker status is reported as ``alive | stale | missing |
-    disabled`` and fails the check only when ``WORKER_ENABLED=true`` — in
-    disabled mode background work runs in-process and there's no separate
-    worker to poll.
-
-    Used by deploy scripts, Nginx, and external uptime monitors.
+    Returns ``(payload, ready_to_serve, fully_ok)``:
+      - ``ready_to_serve`` — DB + Redis reachable; the API can serve chats.
+      - ``fully_ok`` — ``ready_to_serve`` **and** worker alive (or
+        intentionally disabled via ``WORKER_ENABLED=false``).
     """
     from datetime import UTC, datetime
-
-    from fastapi.responses import JSONResponse
 
     from app.core.cache import get_redis
     from app.worker.enqueue import WORKER_ENABLED
@@ -159,7 +161,7 @@ def health_check():
 
     # -- Database check --
     db_ok = False
-    pool_stats = {}
+    pool_stats: dict = {}
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -186,9 +188,9 @@ def health_check():
         pass
 
     # -- Worker heartbeat check --
-    # Worker writes WORKER_HEARTBEAT_KEY every 30s via cron. Key presence
-    # (TTL unexpired) = alive within the last WORKER_HEARTBEAT_TTL seconds;
-    # key missing = worker is dead, never started, or has been down >2 min.
+    # Worker writes WORKER_HEARTBEAT_KEY every 30s via cron. Key present =
+    # alive within the last WORKER_HEARTBEAT_TTL seconds; key missing = worker
+    # is dead, never started, or has been down longer than the TTL.
     worker_last_seen: str | None = None
     worker_age_s: float | None = None
     if not WORKER_ENABLED:
@@ -206,27 +208,69 @@ def health_check():
             except Exception:
                 pass
 
-    # Worker only fails /health when it's expected to be running.
+    ready_to_serve = db_ok and redis_ok
     worker_required_ok = worker_status in ("alive", "disabled")
-    all_ok = db_ok and redis_ok and worker_required_ok
-    status_code = 200 if all_ok else 503
+    fully_ok = ready_to_serve and worker_required_ok
 
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": "healthy" if all_ok else "degraded",
-            "database": "connected" if db_ok else "unreachable",
-            "redis": "connected" if redis_ok else "unreachable",
-            "worker": {
-                "status": worker_status,
-                "last_seen": worker_last_seen,
-                "age_seconds": round(worker_age_s, 1) if worker_age_s is not None else None,
-                "heartbeat_ttl_seconds": WORKER_HEARTBEAT_TTL,
-            },
-            "pool": pool_stats,
-            "version": "1.0.0",
+    if fully_ok:
+        status_label = "healthy"
+    elif ready_to_serve:
+        status_label = "degraded"
+    else:
+        status_label = "unhealthy"
+
+    payload = {
+        "status": status_label,
+        "database": "connected" if db_ok else "unreachable",
+        "redis": "connected" if redis_ok else "unreachable",
+        "worker": {
+            "status": worker_status,
+            "last_seen": worker_last_seen,
+            "age_seconds": round(worker_age_s, 1) if worker_age_s is not None else None,
+            "heartbeat_ttl_seconds": WORKER_HEARTBEAT_TTL,
         },
-    )
+        "pool": pool_stats,
+        "version": "1.0.0",
+    }
+    return payload, ready_to_serve, fully_ok
+
+
+@app.get("/health", tags=["system"])
+def health_check():
+    """Readiness check for user-facing traffic.
+
+    Returns **200** when the API can serve user requests (DB + Redis
+    reachable). Returns **503** only when one of those is down. Worker
+    status is reported in the body for ops visibility but does **not**
+    gate the response code: a degraded worker means BANT extraction and
+    async email pause, while chats themselves still work — failing the
+    deploy gate or load-balancer probe in that case would cause
+    user-visible downtime that wasn't there.
+
+    Used by deploy scripts, Nginx upstream checks, and external uptime
+    monitors. For comprehensive checks (worker included), use
+    ``/health/full``.
+    """
+    from fastapi.responses import JSONResponse
+
+    payload, ready_to_serve, _ = _gather_health()
+    return JSONResponse(status_code=200 if ready_to_serve else 503, content=payload)
+
+
+@app.get("/health/full", tags=["system"])
+def health_check_full():
+    """Comprehensive health check including the worker.
+
+    Returns **200** only when DB + Redis + worker are all green. Returns
+    **503** if any subsystem is degraded — including a missing worker
+    heartbeat. Use this for alerting that should page on partial
+    degradation; use ``/health`` for deploy gates and load-balancer
+    probes that must not flap on transient worker hiccups.
+    """
+    from fastapi.responses import JSONResponse
+
+    payload, _, fully_ok = _gather_health()
+    return JSONResponse(status_code=200 if fully_ok else 503, content=payload)
 
 
 @app.get("/health/live", tags=["system"])
