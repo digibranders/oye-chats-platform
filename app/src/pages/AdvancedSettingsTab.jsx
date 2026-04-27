@@ -16,11 +16,68 @@ const AdvancedSettingsTab = ({ settings, onSettingsChange }) => {
         });
     };
 
+    const handleBotFieldChange = (key, value) => {
+        onSettingsChange({ [key]: value });
+    };
+
     const msToSeconds = (ms) => ms / 1000;
     const secondsToMs = (seconds) => seconds * 1000;
 
+    // Map the relevance threshold (0.0-1.0) to a 3-level strictness selector.
+    // Numeric value is what the API stores; null means "use server default".
+    const STRICTNESS_LEVELS = [
+        { value: 0.45, label: 'Lenient', help: 'Answer more questions, even when retrieval is weak. Best when your KB has gaps.' },
+        { value: 0.55, label: 'Balanced (default)', help: 'Reasonable mix of helpfulness and scope enforcement.' },
+        { value: 0.65, label: 'Strict', help: 'Refuse anything not clearly answered by your KB. Best for regulated content.' },
+    ];
+
+    const currentThreshold = settings?.relevance_threshold;
+
     return (
         <div className="space-y-8">
+            {/* Bot Behavior — Scope Strictness */}
+            <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-6 bg-white dark:bg-surface-900">
+                <h3 className="text-lg font-semibold mb-1 text-surface-900 dark:text-surface-100">Scope Strictness</h3>
+                <p className="text-sm text-surface-500 dark:text-surface-400 mb-4">
+                    Controls how strictly the bot refuses questions outside your knowledge base. Lower it if legitimate questions are being refused; raise it to lock the bot down tighter.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {STRICTNESS_LEVELS.map((level) => {
+                        const selected = currentThreshold !== null && currentThreshold !== undefined
+                            && Math.abs(currentThreshold - level.value) < 0.01;
+                        const isDefault = currentThreshold === null || currentThreshold === undefined;
+                        const showAsSelected = selected || (isDefault && level.value === 0.55);
+                        return (
+                            <button
+                                key={level.value}
+                                type="button"
+                                onClick={() => handleBotFieldChange('relevance_threshold', level.value)}
+                                className={`text-left border rounded-md p-4 transition focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400/30 ${
+                                    showAsSelected
+                                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10 dark:border-primary-400'
+                                        : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600 bg-white dark:bg-surface-800'
+                                }`}
+                            >
+                                <div className="font-medium text-surface-900 dark:text-surface-100">{level.label}</div>
+                                <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">{level.help}</div>
+                                <div className="text-xs text-surface-400 dark:text-surface-500 mt-2 font-mono">threshold = {level.value}</div>
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {currentThreshold !== null && currentThreshold !== undefined && (
+                    <button
+                        type="button"
+                        onClick={() => handleBotFieldChange('relevance_threshold', null)}
+                        className="text-xs text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 mt-3 underline underline-offset-2"
+                    >
+                        Reset to platform default
+                    </button>
+                )}
+            </div>
+
             {/* Welcome Animation Section */}
             <div className="border border-surface-200 dark:border-surface-700 rounded-lg p-6 bg-white dark:bg-surface-900">
                 <h3 className="text-lg font-semibold mb-4 text-surface-900 dark:text-surface-100">Welcome Screen Animation</h3>

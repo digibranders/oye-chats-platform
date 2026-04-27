@@ -1232,7 +1232,14 @@ def rag_pipeline(
                     final_results = rerank(search_query, final_results)
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
-            _is_relevant, _gate_score = check_relevance(question, final_results, bot_id=bid, client_id=cid)
+            _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
+            _is_relevant, _gate_score = check_relevance(
+                question,
+                final_results,
+                bot_id=bid,
+                client_id=cid,
+                threshold=_bot_threshold,
+            )
             if not _is_relevant:
                 _safety_net_metric(
                     "off_topic_refusal",
@@ -1656,7 +1663,10 @@ async def rag_pipeline_stream(
         sources = [doc.document_name for doc in final_results]
 
         # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
-        _is_relevant, _gate_score = await asyncio.to_thread(check_relevance, question, final_results, bid, cid)
+        _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
+        _is_relevant, _gate_score = await asyncio.to_thread(
+            check_relevance, question, final_results, bid, cid, _bot_threshold
+        )
         if not _is_relevant:
             _safety_net_metric(
                 "off_topic_refusal",

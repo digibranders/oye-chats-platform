@@ -8,7 +8,7 @@ score below the threshold, the gate fires and the pipeline returns a
 
 Feature flag: ``RELEVANCE_GATE_ENABLED`` (default: true — scope-enforcement on by default)
 Model:        ``GATE_MODEL`` (default: gemini/gemini-2.5-flash — cheap & fast)
-Threshold:    ``RELEVANCE_THRESHOLD`` (default: 0.6)
+Threshold:    ``RELEVANCE_THRESHOLD`` (default: 0.55 — tunable per-bot via ``Bot.relevance_threshold``)
 
 Gate results are cached in Redis to avoid redundant LLM calls for repeated
 questions against the same knowledge base state.
@@ -33,7 +33,7 @@ RELEVANCE_GATE_ENABLED: bool = os.getenv("RELEVANCE_GATE_ENABLED", "true").lower
     "yes",
 )
 GATE_MODEL: str = os.getenv("GATE_MODEL", "gemini/gemini-2.5-flash")
-RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.6"))
+RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.55"))
 
 _GATE_TTL = 3600  # 1 hour — safe: same question + same bot KB = same result
 _MAX_CHUNKS_TO_JUDGE = 3  # Only judge top-3 chunks (cost control)
@@ -70,13 +70,32 @@ Respond with ONLY a JSON object in this exact format: {{"score": 0.7}}
 No explanation, no other text."""
 
 
+def _resolve_threshold(bot_threshold: float | None) -> float:
+    """Pick the active threshold for this call.
+
+    Per-bot override (``Bot.relevance_threshold``) wins; falls back to the
+    env default. Out-of-range values are clamped to [0.0, 1.0] so a bad
+    DB value can never disable the gate or make it impossible to pass.
+    """
+    if bot_threshold is None:
+        return RELEVANCE_THRESHOLD
+    return max(0.0, min(1.0, float(bot_threshold)))
+
+
 def check_relevance(
     question: str,
     chunks: list,
     bot_id: int | None = None,
     client_id: int | None = None,
+    threshold: float | None = None,
 ) -> tuple[bool, float]:
     """Determine whether retrieved chunks are relevant enough to answer the question.
+
+    Parameters
+    ----------
+    threshold
+        Optional per-bot override (typically ``Bot.relevance_threshold``).
+        ``None`` falls back to the ``RELEVANCE_THRESHOLD`` env default.
 
     Returns
     -------
@@ -91,12 +110,14 @@ def check_relevance(
     if not RELEVANCE_GATE_ENABLED or not chunks:
         return True, 1.0
 
+    active_threshold = _resolve_threshold(threshold)
+
     # Check Redis cache first
     cache_key = _gate_cache_key(bot_id, client_id, question)
     cached = cache_get(cache_key)
     if cached is not None and isinstance(cached, dict) and "score" in cached:
         score = float(cached["score"])
-        is_relevant = score >= RELEVANCE_THRESHOLD
+        is_relevant = score >= active_threshold
         logger.debug("Gate cache hit | score=%.2f relevant=%s", score, is_relevant)
         return is_relevant, score
 
@@ -116,8 +137,8 @@ def check_relevance(
         logger.warning("Relevance gate failed (non-blocking): %s", exc)
         return True, 1.0
 
-    is_relevant = score >= RELEVANCE_THRESHOLD
-    logger.info("Relevance gate | score=%.2f threshold=%.2f relevant=%s", score, RELEVANCE_THRESHOLD, is_relevant)
+    is_relevant = score >= active_threshold
+    logger.info("Relevance gate | score=%.2f threshold=%.2f relevant=%s", score, active_threshold, is_relevant)
 
     # Cache result — same question against same bot returns same judgment
     cache_set(cache_key, {"score": score}, _GATE_TTL)
