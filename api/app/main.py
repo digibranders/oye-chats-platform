@@ -56,12 +56,20 @@ if SENTRY_ENABLED:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         environment=APP_ENV,
+        # Set by CI from ``${{ github.sha }}`` so error spikes can be
+        # pinned to a specific deploy. Falls back to None (Sentry will
+        # auto-derive from git if available) when running locally.
+        release=os.getenv("SENTRY_RELEASE") or None,
         send_default_pii=False,
         enable_logs=True,
         traces_sample_rate=0.1,
         profile_session_sample_rate=0.1,
         profile_lifecycle="trace",
     )
+    # Tag every event with the service name so API and worker can be
+    # filtered apart in the Sentry UI (the worker uses the same DSN
+    # but tags itself ``service: worker`` in app/worker/settings.py).
+    sentry_sdk.set_tag("service", "api")
     logger.info(f"Sentry error tracking enabled | env={APP_ENV}")
 else:
     logger.info("Sentry error tracking disabled (no DSN configured)")
