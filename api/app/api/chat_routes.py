@@ -581,26 +581,32 @@ def get_history_endpoint(
     Accepts both admin auth (X-API-Key / X-Operator-Key) and widget auth (X-Bot-Key).
     Supports cursor-based pagination via `before` param.
     """
-    # Dual auth: try client/operator first, fall back to bot key (widget)
+    # Dual auth: try client/operator first, fall back to bot key (widget).
+    # Only fall back to bot-key when NO admin auth headers were provided.
+    # If admin headers are present but invalid, propagate the error —
+    # otherwise a deactivated operator with a valid bot key could still
+    # read chat history by triggering the silent fallback.
     auth = None
     resolved_bot_id = bot_id
-    try:
+    has_admin_auth = bool(
+        request.headers.get("X-API-Key") or request.headers.get("X-Operator-Key") or request.headers.get("X-Agent-Key")
+    )
+    if has_admin_auth:
         auth = get_current_client_or_operator(
             api_key=request.headers.get("X-API-Key"),
             operator_key=request.headers.get("X-Operator-Key"),
             legacy_agent_key=request.headers.get("X-Agent-Key"),
         )
-    except (HTTPException, Exception):
-        # Fall back to bot key auth for widget access
+    else:
         raw_bot_key = request.headers.get("X-Bot-Key")
         if not raw_bot_key:
-            raise HTTPException(status_code=401, detail="Authentication required") from None
+            raise HTTPException(status_code=401, detail="Authentication required")
         with get_session() as db:
             bot_obj = db.execute(
                 select(Bot).where(Bot.bot_key == raw_bot_key, Bot.is_active.is_(True))
             ).scalar_one_or_none()
             if not bot_obj:
-                raise HTTPException(status_code=401, detail="Invalid bot key") from None
+                raise HTTPException(status_code=401, detail="Invalid bot key")
             resolved_bot_id = bot_obj.id
             auth = {"client_id": bot_obj.client_id, "type": "bot"}
 

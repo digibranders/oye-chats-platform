@@ -8,7 +8,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: false,
-    sourcemap: true,
+    sourcemap: !!process.env.VITE_SOURCEMAP,
     target: 'es2020',
     minify: 'esbuild',
     lib: {
