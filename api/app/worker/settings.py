@@ -3,7 +3,8 @@
 Start with: ``uv run arq app.worker.settings.WorkerSettings``
 
 Redis connection is parsed from the same ``REDIS_URL`` env var used by the
-API.  Upstash uses ``rediss://`` (TLS) which ARQ handles natively.
+API. Both ``redis://`` (loopback / plain TCP) and ``rediss://`` (TLS) DSNs
+are handled natively by ARQ.
 """
 
 import logging

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import case, desc, func, insert, select, text
 
-from app.db.models import BANTSignal, ChatMessage, ChatSession, Client, Document, LeadInfo
+from app.db.models import BANTSignal, Bot, BotGrowthEvent, ChatMessage, ChatSession, Client, Document, LeadInfo
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: Resolve bot_id or client_id for backward compatibility
@@ -550,12 +550,37 @@ def get_dashboard_stats(session, client_id: int = None, bot_id: int = None, days
     if fb_result and fb_result.total > 0:
         success_rate = round((fb_result.positive / fb_result.total) * 100)
 
+    growth_stmt = select(BotGrowthEvent.event_type, func.count(BotGrowthEvent.id).label("count")).group_by(
+        BotGrowthEvent.event_type
+    )
+    if bot_id and client_id:
+        growth_stmt = growth_stmt.join(Bot, Bot.id == BotGrowthEvent.bot_id).where(
+            BotGrowthEvent.bot_id == bot_id,
+            Bot.client_id == client_id,
+        )
+    elif bot_id:
+        growth_stmt = growth_stmt.where(BotGrowthEvent.bot_id == bot_id)
+    elif client_id:
+        growth_stmt = growth_stmt.join(Bot, Bot.id == BotGrowthEvent.bot_id).where(Bot.client_id == client_id)
+
+    if days is not None:
+        growth_stmt = growth_stmt.where(BotGrowthEvent.created_at >= cutoff)
+
+    growth_rows = session.execute(growth_stmt).all()
+    growth_counts = {row.event_type: row.count for row in growth_rows}
+    demo_shares = int(growth_counts.get("demo_share_clicked", 0) or 0)
+    demo_opens = int(growth_counts.get("demo_link_opened", 0) or 0)
+    demo_open_rate = round((demo_opens / demo_shares) * 100, 1) if demo_shares > 0 else 0
+
     return {
         "total_conversations": total_sessions,
         "total_messages": total_messages,
         "total_documents": total_sources,
         "active_users": active_users,
         "success_rate": success_rate,
+        "demo_shares": demo_shares,
+        "demo_opens": demo_opens,
+        "demo_open_rate": demo_open_rate,
     }
 
 

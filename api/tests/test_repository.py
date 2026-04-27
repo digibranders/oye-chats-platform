@@ -3,6 +3,31 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+
+class _ScalarExecResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar(self):
+        return self._value
+
+
+class _FirstExecResult:
+    def __init__(self, value):
+        self._value = value
+
+    def first(self):
+        return self._value
+
+
+class _AllExecResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
 # ── Owner filter helpers ─────────────────────────────────────────────────────
 
 
@@ -275,6 +300,66 @@ class TestCountDocuments:
 
         result = count_documents_for_bot(session, bot_id=1)
         assert result == 42
+
+
+# ── get_dashboard_stats ──────────────────────────────────────────────────────
+
+
+class TestDashboardStats:
+    def test_includes_demo_growth_metrics_and_days_filter(self):
+        from app.db.repository import get_dashboard_stats
+
+        session = MagicMock()
+        session.execute.side_effect = [
+            _ScalarExecResult(14),
+            _ScalarExecResult(62),
+            _ScalarExecResult(5),
+            _ScalarExecResult(3),
+            _FirstExecResult(SimpleNamespace(total=8, positive=6)),
+            _AllExecResult(
+                [
+                    SimpleNamespace(event_type="demo_share_clicked", count=4),
+                    SimpleNamespace(event_type="demo_link_opened", count=10),
+                ]
+            ),
+        ]
+
+        result = get_dashboard_stats(session, client_id=1, bot_id=7, days=30)
+
+        assert result == {
+            "total_conversations": 14,
+            "total_messages": 62,
+            "total_documents": 5,
+            "active_users": 3,
+            "success_rate": 75,
+            "demo_shares": 4,
+            "demo_opens": 10,
+            "demo_open_rate": 250.0,
+        }
+
+        session_query = str(session.execute.call_args_list[0].args[0])
+        growth_query = str(session.execute.call_args_list[-1].args[0])
+        assert "chat_sessions.created_at" in session_query
+        assert "bot_growth_events.created_at" in growth_query
+
+    def test_returns_zero_demo_open_rate_without_shares(self):
+        from app.db.repository import get_dashboard_stats
+
+        session = MagicMock()
+        session.execute.side_effect = [
+            _ScalarExecResult(0),
+            _ScalarExecResult(0),
+            _ScalarExecResult(0),
+            _ScalarExecResult(0),
+            _FirstExecResult(SimpleNamespace(total=0, positive=0)),
+            _AllExecResult([SimpleNamespace(event_type="demo_link_opened", count=3)]),
+        ]
+
+        result = get_dashboard_stats(session, client_id=1, bot_id=7)
+
+        assert result["demo_shares"] == 0
+        assert result["demo_opens"] == 3
+        assert result["demo_open_rate"] == 0
 
 
 # ── update_message_feedback ──────────────────────────────────────────────────
