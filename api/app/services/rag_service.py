@@ -310,20 +310,82 @@ OFF_TOPIC_REFUSAL_VARIANTS: tuple[str, ...] = (
     "services, or connect you with the team — which would be most useful?",
     "I stick to topics about {company_name}. Are you exploring our services, "
     "looking at pricing, or wanting to talk to someone on the team?",
+    "That's not something I can speak to — I cover {company_name} only. "
+    "Curious about our services, recent work, or how to start a project?",
+    "Bit outside my wheelhouse. I'm built for {company_name} questions — "
+    "services, team, pricing, or anything about working together?",
+)
+
+# When a visitor has been off-topic two-plus turns in a row, swap to an
+# escalation variant that names the pattern and offers human handoff.
+# Re-asking with another redirect makes the bot sound stuck.
+OFF_TOPIC_ESCALATION_VARIANTS: tuple[str, ...] = (
+    "We've drifted off-topic a couple of times now — I only cover "
+    "{company_name}. If there's something specific you want help with, "
+    "I can hand you off to someone on our team. Or pick a topic about "
+    "{company_name} and I'll dive in.",
+    "Looks like the questions you have aren't ones I'm set up to answer. "
+    "Want me to put you in touch with the {company_name} team directly? "
+    "Otherwise, ask me anything about our services, work, or how we operate.",
+    "I keep needing to redirect us — sorry about that. If you have a "
+    "specific need, our team can help directly: just let me know and I'll "
+    "connect you. Otherwise I'm here for any {company_name} question.",
 )
 
 
-def _off_topic_refusal(company_name: str | None) -> str:
-    """Return a randomly-rotated off-topic refusal scoped to ``company_name``.
+def _is_known_refusal(text: str, company_name: str) -> bool:
+    """True if ``text`` matches the start of any current refusal template."""
+    if not text:
+        return False
+    head = text.strip()[:40]
+    if not head:
+        return False
+    for template in OFF_TOPIC_REFUSAL_VARIANTS + OFF_TOPIC_ESCALATION_VARIANTS:
+        rendered_head = template.format(company_name=company_name)[:40]
+        if head == rendered_head:
+            return True
+    return False
 
-    Plain ``random.choice`` is intentional: stateless, no DB round-trip, and
-    repeats are tolerable (~1 in 6 chance of consecutive duplicates with the
-    current pool size). If duplicate-suppression becomes an issue we can pass
-    ``session_id`` and seed the choice on it, but the live test failure was
-    7 identical refusals in a row — anything random fixes that.
+
+def _off_topic_refusal(
+    company_name: str | None,
+    recent_bot_messages: list[str] | None = None,
+) -> str:
+    """Return an off-topic refusal scoped to ``company_name``.
+
+    Picks a variant that **does not match** any of the recent bot messages
+    so consecutive refusals don't read identically — the repeated-variant
+    failure mode that ``random.choice`` allowed at ~1/8 per call.
+
+    If the visitor has produced ≥2 off-topic refusals in a row, escalates
+    to a handoff-offering variant instead of yet another redirect.
+
+    ``recent_bot_messages`` is the last ~3 bot messages (most recent last).
+    Pass ``None`` when state is unavailable — falls back to plain rotation.
     """
-    template = random.choice(OFF_TOPIC_REFUSAL_VARIANTS)
-    return template.format(company_name=company_name or "our company")
+    cn = company_name or "our company"
+    recent = recent_bot_messages or []
+
+    # Count how many of the last 3 bot messages were already refusals.
+    consecutive_refusals = sum(1 for msg in recent[-3:] if _is_known_refusal(msg, cn))
+
+    if consecutive_refusals >= 2:
+        # Filter escalation variants to avoid repeating the most recent one.
+        last = recent[-1] if recent else ""
+        candidates = [
+            t for t in OFF_TOPIC_ESCALATION_VARIANTS if not last.startswith(t.format(company_name=cn)[:40])
+        ] or list(OFF_TOPIC_ESCALATION_VARIANTS)
+        return random.choice(candidates).format(company_name=cn)
+
+    # Normal path: exclude variants matching any recent bot message so the
+    # immediate-neighbour repeat (the user's reported issue) cannot happen.
+    used_starts = {msg.strip()[:40] for msg in recent[-2:] if msg}
+    candidates = [t for t in OFF_TOPIC_REFUSAL_VARIANTS if t.format(company_name=cn)[:40] not in used_starts]
+    if not candidates:
+        # All variants used recently (very unlikely with 8 in pool); fall
+        # back to anything rather than block.
+        candidates = list(OFF_TOPIC_REFUSAL_VARIANTS)
+    return random.choice(candidates).format(company_name=cn)
 
 
 def _sanitize_system_prompt(prompt: str) -> str:
@@ -363,7 +425,11 @@ def is_visitor_injection_attempt(question: str) -> bool:
 # DPD/Air Canada-class incidents this catches are far more expensive than
 # the latency. Ops can disable globally via env if it becomes a bottleneck.
 MODERATION_ENABLED: bool = os.getenv("MODERATION_ENABLED", "true").lower() in ("1", "true", "yes")
-MODERATION_MODEL: str = os.getenv("MODERATION_MODEL", "openai/omni-moderation-latest")
+# Bare model name (no "openai/" prefix) — litellm's moderation endpoint
+# only routes to OpenAI and rejects the prefixed form with
+# `Invalid value for 'model'`. The completions endpoint requires the
+# prefix, so don't reuse this for chat models.
+MODERATION_MODEL: str = os.getenv("MODERATION_MODEL", "omni-moderation-latest")
 
 
 def check_visitor_safety(question: str) -> tuple[bool, str | None]:
@@ -1325,8 +1391,9 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
+                _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
-                    "answer": _off_topic_refusal(_company_name),
+                    "answer": _off_topic_refusal(_company_name, _recent_bot),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -1344,8 +1411,9 @@ def rag_pipeline(
                     session=session_id,
                     bot_id=bid,
                 )
+                _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 return {
-                    "answer": _off_topic_refusal(_company_name),
+                    "answer": _off_topic_refusal(_company_name, _recent_bot),
                     "sources": [],
                     "session_id": session_id,
                     "message_id": None,
@@ -1773,8 +1841,9 @@ async def rag_pipeline_stream(
                 session=session_id,
                 bot_id=bid,
             )
+            _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
             yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield _off_topic_refusal(_company_name)
+            yield _off_topic_refusal(_company_name, _recent_bot)
             return
 
         # ── Empty-context short-circuit (streaming path) ─────────────────
@@ -1786,8 +1855,9 @@ async def rag_pipeline_stream(
                 session=session_id,
                 bot_id=bid,
             )
+            _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
             yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield _off_topic_refusal(_company_name)
+            yield _off_topic_refusal(_company_name, _recent_bot)
             return
 
         yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"

@@ -10,10 +10,18 @@ are handled natively by ARQ.
 import logging
 import os
 
+import litellm
 from arq import cron
 from arq.connections import RedisSettings
 
-from app.worker.tasks import (
+# Same fix as app/main.py — silently drop provider-unsupported params
+# (e.g. temperature=0 on gpt-5 family) so background tasks that share
+# llm_service.py (BANT extraction, brand-tone extraction, etc.) don't
+# crash on UnsupportedParamsError. Must be set before app.worker.tasks
+# is imported because tasks.py transitively imports llm_service.
+litellm.drop_params = True
+
+from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_deliver_webhook,
     task_ingest_documents,
     task_ingest_web_batch,

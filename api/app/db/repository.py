@@ -407,12 +407,24 @@ def search_keyword_documents(session, client_id: int = None, query: str = "", k=
 
 
 def search_similar_documents(
-    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 0.65
+    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 1.25
 ):
     """Find top-k most similar documents using vector similarity with distance threshold.
 
     Uses raw SQL for the vector distance calculation to bypass pgvector Python
     package version incompatibilities with the Vector type processor.
+
+    ``max_distance`` is **L2** distance (the ``<->`` operator). For OpenAI's
+    ``text-embedding-3-small`` (normalised, 1536-dim) related-content distances
+    cluster around L2 = 0.9–1.2; truly off-topic queries land at L2 ≥ 1.29
+    against a typical SMB knowledge base. The default 1.25 sits in the natural
+    gap, capturing on-topic content while still excluding random general
+    knowledge. The earlier default of 0.65 was so tight it blocked **all**
+    chunks for normal phrasings — confirmed empirically against bot_id=2
+    (Fynix Digital, 50 chunks crawled from website) where every on-topic
+    query returned 0 chunks until this was loosened. The gate downstream
+    (CRAG relevance judge, threshold ≥0.55) provides a second filter so
+    loosening this primary cut-off doesn't make the bot answer off-topic.
     """
     if hasattr(query_embedding, "tolist"):
         query_embedding = query_embedding.tolist()
