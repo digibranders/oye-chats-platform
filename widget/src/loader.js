@@ -122,6 +122,11 @@ const boot = async (overrides = {}) => {
   if (overrides.botKey) window.OYECHATS_BOT_KEY = overrides.botKey
   if (overrides.apiKey) window.OYECHATS_API_KEY = overrides.apiKey
 
+  // Defense in depth: a compromised manifest can't escape the cdn.oyechats.com
+  // origin (browser URL parsing keeps the same origin), but a flat-filename
+  // check rejects obvious tampering early and avoids confusing 404s.
+  const SAFE_CHUNK_NAME = /^[a-zA-Z0-9._-]+$/
+
   _bootPromise = (async () => {
     try {
       const manifestUrl = `${BASE_URL}/app/manifest.json`
@@ -134,6 +139,9 @@ const boot = async (overrides = {}) => {
       if (!entry || !entry.file) {
         throw new Error('manifest missing entry chunk')
       }
+      if (!SAFE_CHUNK_NAME.test(entry.file)) {
+        throw new Error(`manifest entry has unsafe filename: ${entry.file}`)
+      }
       const entryUrl = `${BASE_URL}/app/${entry.file}`
       // CSS lookup: prefer entry.css[] (set when cssCodeSplit=true), else
       // fall back to the top-level style.css manifest entry (cssCodeSplit=false).
@@ -141,6 +149,9 @@ const boot = async (overrides = {}) => {
       if (!cssFile) {
         const styleEntry = manifest['style.css']
         if (styleEntry?.file) cssFile = styleEntry.file
+      }
+      if (cssFile && !SAFE_CHUNK_NAME.test(cssFile)) {
+        throw new Error(`manifest css has unsafe filename: ${cssFile}`)
       }
       const cssUrl = cssFile ? `${BASE_URL}/app/${cssFile}` : null
 
@@ -158,10 +169,19 @@ const boot = async (overrides = {}) => {
       })
     } catch (err) {
       console.error(`${PREFIX} failed to boot widget:`, err, '\n→ Action: confirm CORS on the chunk URLs and that the bot-key is valid.')
+      // Reset so a later OyeChats.init() can retry on the same page after
+      // a transient failure (CORS hiccup, CDN blip, manifest 404 mid-deploy).
+      // Without this, the rejected promise is cached forever and the widget
+      // can never recover without a full page reload.
+      _bootPromise = null
+      throw err
     }
   })()
 
-  return _bootPromise
+  // Swallow the rejection at the top level so the unhandledrejection handler
+  // doesn't fire — we already logged it inside the IIFE. Callers who want
+  // explicit error handling should chain `.catch()` themselves.
+  return _bootPromise.catch(() => undefined)
 }
 
 // Bind the stub's init to the boot logic so OyeChats.init() works post-load too.

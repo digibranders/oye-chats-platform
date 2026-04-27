@@ -4,13 +4,14 @@ import type { OyeChatsApi, OyeChatsVisitor } from '../../../types/oyechats'
 export interface OyeChatsWidgetProps {
   botKey: string
   src?: string
-  asyncInit?: boolean
   onReady?: () => void
 }
 
 export interface UseOyeChatsResult {
   ready: boolean
   isOpen: boolean
+  init(overrides?: { botKey?: string; apiKey?: string }): void
+  destroy(): void
   open(): void
   close(): void
   send(text: string): void

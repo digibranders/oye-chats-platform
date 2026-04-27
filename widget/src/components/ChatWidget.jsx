@@ -238,14 +238,20 @@ const ChatWidget = () => {
     return unsubscribe;
   }, [openChat, closeChat, toggleChat, pendingMessageRef]);
 
-  // Emit open/close events to customer handlers.
+  // Emit open/close events to customer handlers, but only on a real
+  // hidden→visible / visible→hidden transition. Without the prev-state
+  // guard this fires `close` on every initial render (isVisible=false),
+  // which would spam customer analytics handlers.
+  const wasVisibleRef = useRef(false);
   useEffect(() => {
     const ctrl = getController();
-    if (isVisible && isAnimating === true) {
+    const wasVisible = wasVisibleRef.current;
+    if (isVisible && isAnimating === true && !wasVisible) {
       ctrl.emit('open', undefined);
-    }
-    if (!isVisible) {
+      wasVisibleRef.current = true;
+    } else if (!isVisible && wasVisible) {
       ctrl.emit('close', undefined);
+      wasVisibleRef.current = false;
     }
   }, [isVisible, isAnimating]);
 
