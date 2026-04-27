@@ -72,7 +72,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     : [
         { path: '/chatbot', name: 'My Bots', icon: Bot },
         { path: '/team', name: 'Team', icon: UsersRound },
-        { path: '/subscription', name: 'Billing', icon: CreditCard },
+        { path: '/billing', name: 'Billing', icon: CreditCard },
       ];
 
   const isActive = (item) =>

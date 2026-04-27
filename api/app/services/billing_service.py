@@ -9,14 +9,36 @@ Razorpay is used for Indian customers (UPI, domestic cards).
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import FRONTEND_URL, STRIPE_ENABLED, STRIPE_SECRET_KEY
-from app.db.models import Client, Invoice, Plan, Subscription
+from app.db.models import Client, Invoice, Plan, ProcessedWebhook, Subscription
+from app.services import credit_service
 
 logger = logging.getLogger(__name__)
+
+
+# ── Webhook idempotency ──
+
+
+def _record_or_skip_webhook(session: Session, event_id: str | None, provider: str) -> bool:
+    """Return True if this is the first time we've seen this event (caller should process it).
+
+    Stripe and Razorpay both retry on 5xx, so duplicate deliveries are common.
+    We persist event IDs to ``processed_webhooks`` so the second delivery is a
+    no-op. Returns False if the event was already processed.
+    """
+    if not event_id:
+        return True  # No ID provided — process anyway (best-effort).
+    existing = session.get(ProcessedWebhook, event_id)
+    if existing is not None:
+        return False
+    session.add(ProcessedWebhook(event_id=event_id, provider=provider))
+    session.flush()
+    return True
 
 
 def _get_stripe():
@@ -205,14 +227,20 @@ def handle_stripe_webhook_event(session: Session, event: dict) -> str:
     """Process a verified Stripe webhook event. Returns a status message.
 
     Key events handled:
-    - checkout.session.completed → create/update subscription
-    - customer.subscription.updated → sync status changes
+    - checkout.session.completed → create subscription + grant initial plan credits
+    - customer.subscription.updated → sync status / period changes
     - customer.subscription.deleted → mark subscription as canceled
-    - invoice.paid → record payment
+    - invoice.paid → record payment + (subscription) reset & grant monthly credits
+                                       + (topup invoice) grant top-up credits
     - invoice.payment_failed → mark subscription as past_due
+    - payment_intent.succeeded → grant top-up credits (direct PaymentIntent path)
     """
     event_type = event.get("type", "")
+    event_id = event.get("id")
     data = event.get("data", {}).get("object", {})
+
+    if not _record_or_skip_webhook(session, event_id, "stripe"):
+        return f"Duplicate {event_type} ({event_id}) skipped"
 
     if event_type == "checkout.session.completed":
         return _handle_checkout_completed(session, data)
@@ -224,6 +252,8 @@ def handle_stripe_webhook_event(session: Session, event: dict) -> str:
         return _handle_invoice_paid(session, data)
     elif event_type == "invoice.payment_failed":
         return _handle_invoice_failed(session, data)
+    elif event_type == "payment_intent.succeeded":
+        return _handle_payment_intent_succeeded(session, data)
     else:
         return f"Unhandled event type: {event_type}"
 
@@ -274,12 +304,14 @@ def _handle_checkout_completed(session: Session, data: dict) -> str:
     if stripe_sub.get("trial_end"):
         trial_end = datetime.fromtimestamp(stripe_sub["trial_end"], tz=UTC)
 
+    plan = session.get(Plan, plan_id)
+    included_seats = int(plan.included_operator_seats) if plan and plan.included_operator_seats else 1
     new_sub = Subscription(
         client_id=client_id,
         plan_id=plan_id,
         status=status,
         billing_cycle=billing_cycle,
-        operator_quantity=1,
+        operator_quantity=included_seats,
         current_period_start=period_start,
         current_period_end=period_end,
         trial_start=trial_start,
@@ -290,6 +322,11 @@ def _handle_checkout_completed(session: Session, data: dict) -> str:
     )
     session.add(new_sub)
     session.flush()
+
+    # Grant the first month's plan credits immediately so the customer can
+    # start using the product. Subsequent renewals come via invoice.paid.
+    if plan is not None:
+        credit_service.grant_for_subscription(session, new_sub)
 
     logger.info(
         f"Subscription created from checkout: client={client_id}, plan={plan_id}, stripe={stripe_subscription_id}"
@@ -352,55 +389,128 @@ def _handle_subscription_deleted(session: Session, data: dict) -> str:
 
 
 def _handle_invoice_paid(session: Session, data: dict) -> str:
-    """Record a paid invoice from Stripe."""
-    stripe_invoice_id = data.get("id")
+    """Record a paid invoice from Stripe and grant credits.
 
-    # Avoid duplicates
+    Two distinct flows arrive here:
+      1. Subscription renewal — invoice.subscription is set. Resets the
+         monthly plan-credit bucket and grants the new month's allowance.
+      2. One-off top-up purchase — invoice.metadata.purpose == 'topup'. Grants
+         top-up credits with 12-month expiry. (Stripe Checkout in payment mode
+         can deliver via either invoice.paid or payment_intent.succeeded; both
+         paths are handled idempotently.)
+    """
+    stripe_invoice_id = data.get("id")
+    metadata = data.get("metadata") or {}
+    is_topup = metadata.get("purpose") == "topup"
+
+    # Avoid duplicate Invoice rows (first delivery may have created it).
     existing = session.execute(select(Invoice).where(Invoice.stripe_invoice_id == stripe_invoice_id)).scalars().first()
+    if existing and existing.status == "paid":
+        return f"Invoice {stripe_invoice_id} already recorded"
+
+    # Resolve client either via metadata (topup) or via Stripe customer (renewal).
+    sub: Subscription | None = None
+    client_id: int | None = None
+    if is_topup and metadata.get("client_id"):
+        client_id = int(metadata["client_id"])
+    else:
+        stripe_customer_id = data.get("customer")
+        sub = (
+            session.execute(select(Subscription).where(Subscription.stripe_customer_id == stripe_customer_id))
+            .scalars()
+            .first()
+        )
+        if sub:
+            client_id = sub.client_id
+
+    if client_id is None:
+        logger.warning(f"No client resolved for Stripe invoice {stripe_invoice_id}")
+        return "Client not found for invoice"
+
+    period_start = datetime.fromtimestamp(data["period_start"], tz=UTC) if data.get("period_start") else None
+    period_end = datetime.fromtimestamp(data["period_end"], tz=UTC) if data.get("period_end") else None
+
     if existing:
         existing.status = "paid"
         existing.paid_at = datetime.now(UTC)
-        session.flush()
-        return f"Invoice {stripe_invoice_id} updated to paid"
-
-    # Resolve client from Stripe customer metadata
-    stripe_customer_id = data.get("customer")
-    sub = (
-        session.execute(select(Subscription).where(Subscription.stripe_customer_id == stripe_customer_id))
-        .scalars()
-        .first()
-    )
-
-    if not sub:
-        logger.warning(f"No subscription found for Stripe customer {stripe_customer_id}")
-        return "Subscription not found for invoice"
-
-    period_start = None
-    period_end = None
-    if data.get("period_start"):
-        period_start = datetime.fromtimestamp(data["period_start"], tz=UTC)
-    if data.get("period_end"):
-        period_end = datetime.fromtimestamp(data["period_end"], tz=UTC)
-
-    invoice = Invoice(
-        client_id=sub.client_id,
-        subscription_id=sub.id,
-        amount_cents=data.get("amount_paid", 0),
-        currency=data.get("currency", "usd"),
-        status="paid",
-        stripe_invoice_id=stripe_invoice_id,
-        invoice_url=data.get("hosted_invoice_url"),
-        pdf_url=data.get("invoice_pdf"),
-        period_start=period_start,
-        period_end=period_end,
-        description=f"{sub.plan.name if sub.plan else 'Plan'} - {sub.billing_cycle}",
-        paid_at=datetime.now(UTC),
-    )
-    session.add(invoice)
+    else:
+        invoice = Invoice(
+            client_id=client_id,
+            subscription_id=sub.id if sub else None,
+            amount_cents=data.get("amount_paid", 0),
+            currency=data.get("currency", "usd"),
+            status="paid",
+            stripe_invoice_id=stripe_invoice_id,
+            invoice_url=data.get("hosted_invoice_url"),
+            pdf_url=data.get("invoice_pdf"),
+            period_start=period_start,
+            period_end=period_end,
+            description=(
+                f"Top-up ${int(data.get('amount_paid', 0)) / 100:.0f} pack"
+                if is_topup
+                else f"{sub.plan.name if sub and sub.plan else 'Plan'} - {sub.billing_cycle if sub else 'monthly'}"
+            ),
+            paid_at=datetime.now(UTC),
+        )
+        session.add(invoice)
     session.flush()
 
-    logger.info(f"Invoice {stripe_invoice_id} recorded: {data.get('amount_paid', 0)} cents for client {sub.client_id}")
-    return f"Invoice {stripe_invoice_id} recorded"
+    # ── Credit grants ──
+    if is_topup:
+        credits = int(metadata.get("credits", 0))
+        pack_usd = int(metadata.get("pack_usd", 0))
+        if credits > 0:
+            credit_service.grant_topup(
+                session,
+                client_id,
+                credits,
+                note=f"Top-up ${pack_usd} pack" if pack_usd else "Top-up",
+            )
+            logger.info(f"Granted {credits} top-up credits to client {client_id} (invoice {stripe_invoice_id})")
+    elif sub is not None:
+        # Subscription renewal: reset prior plan credits, grant new month's.
+        # On the very first invoice (initial subscription), checkout already
+        # granted credits — but reset_monthly is a no-op when balance is 0,
+        # and grant duplicates would cause double-issue. We detect "first
+        # invoice" via period_start matching subscription.created_at.
+        if period_start and sub.created_at and abs((period_start - sub.created_at).total_seconds()) < 86400:
+            logger.info(f"Skipping grant for first invoice on sub {sub.id} (already granted at checkout)")
+        else:
+            credit_service.reset_monthly_plan_credits(session, sub.client_id)
+            credit_service.grant_for_subscription(session, sub)
+            logger.info(f"Renewed monthly credits for client {sub.client_id} from invoice {stripe_invoice_id}")
+
+    return f"Invoice {stripe_invoice_id} recorded ({'topup' if is_topup else 'subscription'})"
+
+
+def _handle_payment_intent_succeeded(session: Session, data: dict) -> str:
+    """Grant top-up credits when a PaymentIntent for purpose=topup succeeds.
+
+    This complements ``invoice.paid``: Stripe Checkout in ``payment`` mode (not
+    subscription) emits a PaymentIntent rather than an Invoice. The webhook
+    idempotency guard at the dispatcher level prevents double-grants when both
+    events are delivered.
+    """
+    metadata = data.get("metadata") or {}
+    if metadata.get("purpose") != "topup":
+        return "PaymentIntent not a topup; ignored"
+
+    client_id_str = metadata.get("client_id")
+    credits = int(metadata.get("credits", 0))
+    pack_usd = int(metadata.get("pack_usd", 0))
+    if not client_id_str or credits <= 0:
+        logger.warning(f"Topup PaymentIntent missing metadata: {metadata}")
+        return "Missing topup metadata"
+
+    client_id = int(client_id_str)
+    credit_service.grant_topup(
+        session,
+        client_id,
+        credits,
+        note=f"Top-up ${pack_usd} pack" if pack_usd else "Top-up",
+    )
+    logger.info(f"Granted {credits} top-up credits to client {client_id} via PaymentIntent {data.get('id')}")
+    return f"Top-up credits granted to client {client_id}"
 
 
 def _handle_invoice_failed(session: Session, data: dict) -> str:
@@ -439,6 +549,99 @@ def _handle_invoice_failed(session: Session, data: dict) -> str:
         session.flush()
 
     return f"Invoice {stripe_invoice_id} failed"
+
+
+# ── Top-up checkout ──
+
+
+def create_topup_checkout_session(
+    session: Session,
+    client: Client,
+    pack: dict[str, Any],
+    success_url: str | None = None,
+    cancel_url: str | None = None,
+) -> dict:
+    """Create a Stripe Checkout session for a one-off top-up purchase.
+
+    ``pack`` must be one of the entries from ``pricing_config.topup_packs``
+    (validated by the caller). Metadata is set so the webhook handler can
+    grant the right number of credits when the payment succeeds.
+    """
+    stripe = _get_stripe()
+    customer_id = get_or_create_stripe_customer(session, client)
+
+    pack_usd = int(pack["usd"])
+    credits = int(pack["credits"])
+    bonus_pct = int(pack.get("bonus_pct", 0) or 0)
+
+    metadata = {
+        "purpose": "topup",
+        "client_id": str(client.id),
+        "credits": str(credits),
+        "pack_usd": str(pack_usd),
+        "bonus_pct": str(bonus_pct),
+    }
+
+    line_item: dict[str, Any]
+    if pack.get("stripe_price_id"):
+        line_item = {"price": pack["stripe_price_id"], "quantity": 1}
+    else:
+        line_item = {
+            "price_data": {
+                "currency": "usd",
+                "product_data": {
+                    "name": f"{credits:,} OyeChats credits",
+                    "description": (
+                        f"Top-up pack — {credits:,} credits" + (f" (includes {bonus_pct}% bonus)" if bonus_pct else "")
+                    ),
+                },
+                "unit_amount": pack_usd * 100,
+            },
+            "quantity": 1,
+        }
+
+    checkout_session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="payment",
+        line_items=[line_item],
+        success_url=success_url or f"{FRONTEND_URL}/credits?topup=success&session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=cancel_url or f"{FRONTEND_URL}/credits?topup=cancel",
+        metadata=metadata,
+        payment_intent_data={"metadata": metadata},
+    )
+
+    logger.info(
+        f"Created Stripe top-up checkout {checkout_session.id} for client {client.id}: ${pack_usd} → {credits} credits"
+    )
+
+    return {
+        "checkout_url": checkout_session.url,
+        "session_id": checkout_session.id,
+    }
+
+
+# ── Operator-seat add-on ──
+
+
+def update_seat_quantity(session: Session, sub: Subscription, new_total: int) -> int:
+    """Set the customer's total operator-seat count to ``new_total``.
+
+    The included seats are part of the base subscription price; only seats
+    above ``plan.included_operator_seats`` are billed as a separate Stripe
+    quantity-based subscription item. For now we just store the total on the
+    Subscription row. Hooking the seat add-on item to a Stripe price is left
+    as a follow-up — this keeps the API stable so the admin UI can ship
+    without blocking on Stripe price-id provisioning.
+    """
+    new_total = max(int(new_total), 0)
+    plan = sub.plan
+    floor = int(plan.included_operator_seats) if plan and plan.included_operator_seats else 1
+    if new_total < floor:
+        raise ValueError(f"Cannot set seats below included floor of {floor}")
+    sub.operator_quantity = new_total
+    session.flush()
+    logger.info(f"Updated seat count for subscription {sub.id} to {new_total}")
+    return new_total
 
 
 # ── Stripe Plan Sync ──

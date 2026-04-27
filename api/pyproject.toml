@@ -47,6 +47,7 @@ dependencies = [
     "flashrank>=0.2.9",
     "trafilatura>=2.0.0",
     "stripe>=11.0.0",
+    "razorpay>=1.4.2",
 ]
 
 [dependency-groups]

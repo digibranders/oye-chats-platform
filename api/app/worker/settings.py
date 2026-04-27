@@ -23,9 +23,11 @@ litellm.drop_params = True
 
 from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_deliver_webhook,
+    task_expire_old_topups,
     task_ingest_documents,
     task_ingest_web_batch,
     task_process_webhook_retries,
+    task_renew_due_subscriptions,
     task_send_email,
     task_send_template_email,
     task_worker_heartbeat,
@@ -107,13 +109,19 @@ class WorkerSettings:
         task_deliver_webhook,
         task_send_email,
         task_send_template_email,
+        task_renew_due_subscriptions,
+        task_expire_old_topups,
     ]
 
-    # Cron jobs — poll for webhook retries every 30s (replaces the daemon thread)
-    # and emit a heartbeat at the same cadence so /health can detect a dead worker.
+    # Cron jobs:
+    # • webhook retry poll + worker heartbeat — every 30s
+    # • subscription renewal safety net — once a day at 00:05 UTC
+    # • top-up expiry sweep — once a day at 00:10 UTC (offset to avoid lock contention)
     cron_jobs = [
         cron(task_process_webhook_retries, second={0, 30}),
         cron(task_worker_heartbeat, second={0, 30}),
+        cron(task_renew_due_subscriptions, hour=0, minute=5),
+        cron(task_expire_old_topups, hour=0, minute=10),
     ]
 
     # Redis connection

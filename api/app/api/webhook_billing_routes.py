@@ -77,14 +77,17 @@ async def stripe_webhook(request: Request):
 
 @router.post("/razorpay")
 async def razorpay_webhook(request: Request):
-    """Handle Razorpay webhook events with signature verification.
+    """Handle Razorpay webhook events.
 
-    Razorpay integration will be fully implemented in a later phase.
-    This endpoint validates the signature and logs the event for now.
+    Verifies the ``X-Razorpay-Signature`` HMAC against the raw request body
+    using ``RAZORPAY_WEBHOOK_SECRET``, then delegates dispatch to
+    :func:`razorpay_service.handle_webhook_event`. Idempotency is keyed on
+    the ``X-Razorpay-Event-Id`` header (present on all modern deliveries).
+
+    On exception during processing, returns 200 OK to Razorpay to suppress
+    the retry storm — the error is captured to Sentry/logs and can be
+    reprocessed manually if needed.
     """
-    payload = await request.body()
-
-    # Verify webhook signature — NEVER process unverified events.
     if not RAZORPAY_WEBHOOK_SECRET:
         logger.error("RAZORPAY_WEBHOOK_SECRET is not configured — rejecting unverified webhook.")
         raise HTTPException(
@@ -92,40 +95,36 @@ async def razorpay_webhook(request: Request):
             detail="Webhook signature verification is not configured.",
         )
 
-    import hashlib
-    import hmac
+    raw_payload = await request.body()
+    signature = request.headers.get("x-razorpay-signature", "")
+    event_id = request.headers.get("x-razorpay-event-id")
 
-    sig_header = request.headers.get("x-razorpay-signature", "")
-    expected = hmac.new(
-        RAZORPAY_WEBHOOK_SECRET.encode(),
-        payload,
-        hashlib.sha256,
-    ).hexdigest()
+    from app.services import razorpay_service
 
-    if not hmac.compare_digest(expected, sig_header):
-        logger.warning("Razorpay webhook signature verification failed")
-        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+    try:
+        razorpay_service.verify_webhook_signature(payload=raw_payload, signature=signature)
+    except razorpay_service.SignatureMismatch as exc:
+        logger.warning("Razorpay webhook signature verification failed: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.") from exc
 
     import json
 
     try:
-        event = json.loads(payload)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload.") from e
+        event = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
 
     event_type = event.get("event", "unknown")
-    logger.info(f"Razorpay webhook received: {event_type}")
+    logger.info("Razorpay webhook received: %s | id=%s", event_type, event_id or "N/A")
 
-    # TODO: Implement Razorpay event processing in Phase 2b
-    # Key events to handle:
-    # - subscription.activated
-    # - subscription.charged
-    # - subscription.cancelled
-    # - payment.captured
-    # - payment.failed
+    try:
+        with get_session() as session:
+            result = razorpay_service.handle_webhook_event(session, event, event_id)
+            session.commit()
+            logger.info("Razorpay webhook processed: %s → %s", event_type, result)
+    except Exception as exc:
+        logger.error("Razorpay webhook processing error for %s: %s", event_type, exc, exc_info=True)
+        # Return 200 so Razorpay doesn't retry-storm us. Sentry has the trace.
+        return {"status": "error", "event": event_type, "message": str(exc)}
 
-    return {
-        "status": "ok",
-        "event": event_type,
-        "message": "Razorpay webhook received (processing not yet implemented)",
-    }
+    return {"status": "ok", "event": event_type, "result": result}

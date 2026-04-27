@@ -302,7 +302,7 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
     client_id = auth["client_id"]
 
     # ── Plan enforcement: check live_chat feature and operator limit ──
-    from app.services.usage_service import enforce_feature
+    from app.services.plan_service import enforce_feature
 
     with get_session() as db:
         enforce_feature(db, client_id, "live_chat")

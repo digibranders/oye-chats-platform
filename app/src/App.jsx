@@ -20,7 +20,7 @@ import Insights from './pages/Insights';
 import Support from './pages/Support';
 import TeamManagement from './pages/TeamManagement';
 import Integrations from './pages/Integrations';
-import Subscription from './pages/Subscription';
+import Billing from './pages/Billing';
 
 // Superadmin
 import SuperadminLayout from './layouts/SuperadminLayout';
@@ -87,7 +87,9 @@ function App() {
                         <Route path="integrations/email" element={<Navigate to="/integrations?tab=email" replace />} />
 
                         {/* Accessible to all authenticated users */}
-                        <Route path="subscription" element={<Subscription />} />
+                        <Route path="billing" element={<Billing />} />
+                        <Route path="credits" element={<Navigate to="/billing" replace />} />
+                        <Route path="subscription" element={<Navigate to="/billing" replace />} />
                         <Route path="chatbot" element={<Chatbot />} />
                         <Route path="support" element={<Support />} />
                         <Route path="team" element={<TeamManagement />} />
