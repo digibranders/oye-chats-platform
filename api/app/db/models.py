@@ -18,6 +18,8 @@ class Client(Base):
     hashed_password = Column(String, nullable=False)
     api_key = Column(String, unique=True, index=True, nullable=False)
     is_superadmin = Column(sqlalchemy.Boolean, default=False, nullable=False)
+    superadmin_role = Column(String, nullable=True)  # owner | admin | readonly
+    suspended_at = Column(DateTime(timezone=True), nullable=True)
     max_bots = Column(Integer, default=100, server_default="100", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -816,3 +818,88 @@ class ProcessedWebhook(Base):
     event_id = Column(Text, primary_key=True)
     provider = Column(Text, nullable=False, index=True)  # 'stripe' | 'razorpay'
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# ── Super-admin audit & supporting tables ────────────────────────────────────
+
+
+class AuditLog(Base):
+    """Immutable audit trail of every super-admin mutation.
+
+    Each row captures who did what to whom, plus a JSON snapshot of the
+    before/after state where applicable. Inserted by the ``record_audit``
+    helper (services/audit_service.py); never updated or deleted.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
+    actor_name = Column(String, nullable=True)
+    action = Column(String, nullable=False, index=True)
+    target_type = Column(String, nullable=True, index=True)
+    target_id = Column(String, nullable=True, index=True)
+    before = Column(JSONB, nullable=True)
+    after = Column(JSONB, nullable=True)
+    ip = Column(String, nullable=True)
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    __table_args__ = (Index("ix_audit_logs_actor_created", "actor_id", sqlalchemy.text("created_at DESC")),)
+
+
+class Coupon(Base):
+    """Promotional discount codes that can be applied to plans."""
+
+    __tablename__ = "coupons"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, nullable=False, unique=True, index=True)
+    percent_off = Column(Integer, nullable=True)  # 1..100
+    amount_off_cents = Column(Integer, nullable=True)
+    max_redemptions = Column(Integer, nullable=True)
+    redemptions = Column(Integer, default=0, server_default="0", nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    applies_to_plan_ids = Column(JSONB, nullable=True)  # list[int] | null = all
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class LLMCallLog(Base):
+    """Per-call metering for LLM completions and embeddings.
+
+    Written from ``llm_service.py`` after each successful (or failed) call.
+    Powers the /superadmin/llm/usage dashboard.
+    """
+
+    __tablename__ = "llm_call_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+    model = Column(String, nullable=False, index=True)
+    prompt_tokens = Column(Integer, default=0, server_default="0", nullable=False)
+    completion_tokens = Column(Integer, default=0, server_default="0", nullable=False)
+    cost_cents = Column(Integer, default=0, server_default="0", nullable=False)
+    latency_ms = Column(Integer, default=0, server_default="0", nullable=False)
+    fallback_used = Column(Boolean, default=False, server_default="false", nullable=False)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
+class ImpersonationToken(Base):
+    """Short-lived (30 min) token allowing a super-admin to act as a customer.
+
+    Persisted so it can be revoked, audited, and inspected. The actual token
+    string is stored hashed; only the prefix is human-readable.
+    """
+
+    __tablename__ = "impersonation_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    actor_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    target_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

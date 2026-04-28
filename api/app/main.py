@@ -31,6 +31,7 @@ from app.api.subscription_routes import credits_router
 from app.api.subscription_routes import router as subscription_router
 from app.api.superadmin_plan_routes import router as superadmin_plan_router
 from app.api.superadmin_routes import router as superadmin_router
+from app.api.superadmin_routes_v2 import router as superadmin_v2_router
 from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
@@ -112,6 +113,7 @@ app.include_router(webhook_router)
 app.include_router(subscription_router)
 app.include_router(credits_router)
 app.include_router(superadmin_plan_router)
+app.include_router(superadmin_v2_router)
 app.include_router(webhook_billing_router)
 
 # --- Exception Handlers ---
