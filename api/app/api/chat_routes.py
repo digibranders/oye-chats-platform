@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.exceptions import SessionOwnershipError
@@ -448,6 +449,15 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
     except SessionOwnershipError:
         # Let the global handler turn this into a clean 404 — don't mask as 500.
         raise
+    except IntegrityError as e:
+        # Two near-simultaneous widget requests for a brand-new session_id can
+        # race on the chat_sessions PK insert. ``ensure_chat_session`` retries
+        # internally, but the retry's re-SELECT can still miss the winner if its
+        # commit isn't yet visible. Behavioral signals are idempotent from the
+        # widget's perspective — losing one signal is harmless and far better
+        # than 500ing, which makes the widget retry and amplifies the race.
+        logger.warning(f"Behavioral signals race ignored | bot={bot.id} session={body.session_id} | {e.orig}")
+        return {"success": True, "behavioral_score": None}
     except Exception as e:
         logger.error(f"Behavioral signals failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to record behavioral signals.") from e
