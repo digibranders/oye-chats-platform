@@ -29,6 +29,7 @@ from app.db.repository import (
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.services.email_service import send_qualified_lead_email
+from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import generate_response, generate_response_stream
 from app.services.qualification_service import get_framework_config, get_tier
@@ -386,6 +387,103 @@ def _off_topic_refusal(
         # back to anything rather than block.
         candidates = list(OFF_TOPIC_REFUSAL_VARIANTS)
     return random.choice(candidates).format(company_name=cn)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# No-info pivot — graceful response when the relevance gate fails on a
+# question that LOOKS on-scope but has no matching content in the knowledge
+# base (e.g. "is the CEO on linkedin?" — CEO is on-topic, but the bot has no
+# bio chunk to answer from). Returning the off-topic refusal here feels
+# defensive and contradicts the previous turn; the no-info pivot offers a
+# graceful path forward (connect with the team) without inventing data.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Tokens that, when present in the visitor's question, suggest the question
+# IS about the company even if retrieval came back empty. Conservative: only
+# matches second-person pronouns and team/business words that almost never
+# appear in genuinely off-topic questions ("what's the capital of france"
+# never contains "your", "we", "our team", etc.).
+_ON_SCOPE_HINTS_RE = re.compile(
+    r"(?i)\b("
+    r"your|you're|youre|youse|y'all|yall"
+    r"|we|us|our|ours"
+    r"|the\s+team|your\s+team|the\s+company|your\s+company"
+    r"|ceo|cto|coo|founder|co-?founder|owner|director|manager|partner"
+    r"|hiring|career|jobs?|internship|intern"
+    r"|pricing|price|cost|fee|rate|charge|quote|package|retainer|budget"
+    r"|services?|offerings?|product|deliverables?|capabilities|expertise"
+    r"|case\s+stud(?:y|ies)|portfolio|work|client|customer|brand"
+    r"|process|approach|methodology|workflow|engagement|onboarding"
+    r"|timeline|turnaround|duration|how\s+long"
+    r"|nda|confidentiality|ip\s+ownership|intellectual\s+property"
+    r"|address|location|office|headquartered|based"
+    r"|email|phone|contact|reach"
+    r"|hours?|timezone|time\s+zone|languages?|countries|geographies"
+    r"|industry|industries|vertical|sector"
+    r")\b"
+)
+
+
+def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
+    """Return True if ``question`` looks like an on-scope question that just
+    happens to lack matching context. Triggers the no-info pivot instead of
+    the off-topic refusal.
+    """
+    if not question:
+        return False
+    if company_name:
+        # Company name (or first word of it) literally in the question.
+        first_word = company_name.split()[0]
+        if first_word and re.search(rf"\b{re.escape(first_word)}\b", question, re.IGNORECASE):
+            return True
+    return bool(_ON_SCOPE_HINTS_RE.search(question))
+
+
+def _no_info_pivot(company_name: str | None) -> str:
+    """Graceful 'I don't have that detail handy' response.
+
+    Preserves the company-confident voice (no 'I don't have access to my
+    knowledge base' framing) and offers a forward path. Used when the gate
+    fails but the question is on-scope.
+    """
+    cn = f"**{company_name}**" if company_name else "us"
+    return (
+        f"I don't have that specific detail on hand for {cn} — want me to "
+        f"connect you with the team so they can help directly?"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# List / count question detection — used to boost retrieval k for questions
+# like "how many clients" or "list all services" so the full roster lands in
+# the prompt context (otherwise the per-turn cap of 15 chunks truncates the
+# list and the LLM hedges with "30+" or "at least N").
+# ─────────────────────────────────────────────────────────────────────────────
+
+_LIST_OR_COUNT_RE = re.compile(
+    r"(?ix)\b("
+    r"how\s+many|"
+    r"how\s+much\s+(?:client|customer|brand|team|service|project)|"
+    r"list\s+(?:all|of|your|the)|"
+    r"all\s+(?:of\s+)?(?:your|the)\s+(?:client|customer|brand|service|team|product)|"
+    r"(?:every|each)\s+(?:client|customer|brand|service|team|product)|"
+    r"who\s+are\s+(?:all\s+)?(?:your|the)\s+(?:client|customer)|"
+    r"complete\s+(?:list|roster)|"
+    r"full\s+(?:list|roster|portfolio)|"
+    r"show\s+me\s+(?:all|your|the)\s+(?:client|customer|brand|service|portfolio|work)"
+    r")\b"
+)
+
+
+def _is_list_or_count_question(question: str) -> bool:
+    """Return True if the question is asking for a complete list or count.
+
+    Used to boost retrieval k=15 → k=30 for these turns so a partial chunk
+    set doesn't cause the bot to under-report or hedge.
+    """
+    if not question:
+        return False
+    return bool(_LIST_OR_COUNT_RE.search(question))
 
 
 def _sanitize_system_prompt(prompt: str) -> str:
@@ -1107,9 +1205,10 @@ RULES:
 3. Bold only: **{display_name}**, product/service names, and prices. No other bold.
 4. Tone: like a knowledgeable colleague replying in chat — friendly but direct. Never start with "Great question!", "Absolutely!", "I'd be happy to help!" or "Thank you for asking!". Never say "Based on the information provided". Just answer naturally.
 5. For ON-SCOPE questions: never say "I don't have that information" or "No information is available." You ARE the company — speak with confidence. When specific details are available in the reference information below, state them directly — name clients, list services, quote prices, whatever is there. Only when an on-scope specific is genuinely absent from the reference material should you pivot: share what you do know about the company, and optionally {handoff_offer} Do NOT add a "connect with our team" offer to answers where you already have the information — only offer it when the reference material truly cannot answer the on-scope question. For OFF-SCOPE questions: use the SCOPE refusal — do not pivot, do not offer handoff.
-6. Only ask a follow-up question if the user's query is genuinely ambiguous.
-7. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
-8. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".{custom_prompt_section}{tone_section}{company_section}
+6. For LIST and COUNT questions ("who are your clients", "what services do you offer", "how many people on your team"): give the COMPLETE list that appears in the reference material — never a partial subset. Use the company's exact branded names where the reference material gives them (e.g. "Performance Marketing & Tracking", not generic "ads"; "Brand Identity & Storytelling", not generic "branding"). Never hedge with "at least N", "30+", or "we have several" when the reference material lists the items by name — count or enumerate them precisely. If the list is genuinely long, summarise with an exact count plus the most prominent names: "we work with 19 brands including X, Y, Z".
+7. Only ask a follow-up question if the user's query is genuinely ambiguous.
+8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
+9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".{custom_prompt_section}{tone_section}{company_section}
 {qualification_section}
 {handoff_section}
 {meeting_section}
@@ -1136,22 +1235,45 @@ def rewrite_query(session_id: str, question: str, history: list) -> str:
     if not history or len(history) < 2:
         return question
 
-    follow_up_signals = [
+    # Whole-word match list — sub-string matching ("that") was producing both
+    # false positives (rewrite triggered on "what's the price" because of
+    # "what") and false negatives ("who is he?" never matched because the
+    # original list lacked "he/she/his/her"). Whole-word boundaries fix both.
+    follow_up_signals = (
+        # neutral pronouns / determiners
         "it",
         "that",
         "this",
+        "these",
+        "those",
         "they",
         "them",
-        "those",
+        "their",
+        "theirs",
+        # masculine
+        "he",
+        "him",
+        "his",
+        # feminine
+        "she",
+        "her",
+        "hers",
+        # gender-neutral singular
+        "they",  # already above; left for readability
+        # phrase-level signals
         "the same",
         "more about",
         "what about",
         "how about",
         "and the",
         "also",
-    ]
-    question_lower = question.lower()
-    if not any(signal in question_lower for signal in follow_up_signals):
+        "and pricing",
+        "and timelines",
+        "and timeline",
+        "and cost",
+    )
+    pattern = r"\b(?:" + "|".join(re.escape(s) for s in follow_up_signals) + r")\b"
+    if not re.search(pattern, question, re.IGNORECASE):
         return question
 
     history_text = "\n".join(f"{msg.role.upper()}: {msg.content}" for msg in history[-4:])
@@ -1257,6 +1379,34 @@ def rag_pipeline(
                 device=device,
                 bot_id=bid,
             )
+
+            # ── Deterministic intent router ──────────────────────────────
+            # Greetings ("hi"), acks ("thanks"), and identity questions
+            # ("are you AI?", "what's your name?") get a deterministic
+            # short-circuit response so they bypass the relevance gate
+            # (which otherwise misclassifies them as off-topic and returns
+            # the boilerplate refusal — broken first impression for the
+            # visitor). Returns None for everything else, which falls
+            # through to the normal RAG pipeline below.
+            _intent = route_intent(question, _company_name)
+            if _intent is not None:
+                _safety_net_metric(
+                    "intent_router_short_circuit",
+                    path="nonstream",
+                    intent=_intent.intent,
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_intent.answer, bot_id=bid
+                )
+                session.commit()
+                return {
+                    "answer": _intent.answer,
+                    "sources": [],
+                    "session_id": session_id,
+                    "message_id": _bot_msg.id,
+                }
 
             # ── Visitor input injection guard ────────────────────────────
             # Reject jailbreak / prompt-injection attempts before any LLM
@@ -1364,13 +1514,20 @@ def rag_pipeline(
                     query_embedding = embed_chunks([search_query])[0]
                     cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
 
+                # List/count questions ("how many clients", "list all
+                # services") need the full entity set in context — otherwise
+                # the bot under-reports or hedges with "30+" instead of a
+                # confident enumeration. Boost from 15 → 30 for these turns.
+                _retrieval_k = 30 if _is_list_or_count_question(question) else 15
                 vector_results = search_similar_documents(
-                    session, client_id=cid, query_embedding=query_embedding, k=15, bot_id=bid
+                    session, client_id=cid, query_embedding=query_embedding, k=_retrieval_k, bot_id=bid
                 )
-                keyword_results = search_keyword_documents(session, client_id=cid, query=question, k=15, bot_id=bid)
+                keyword_results = search_keyword_documents(
+                    session, client_id=cid, query=question, k=_retrieval_k, bot_id=bid
+                )
 
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
-                final_results = _trim_results(final_results)  # top 15 candidate pool
+                final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if RERANK_ENABLED:
                     final_results = rerank(search_query, final_results)
 
@@ -1384,6 +1541,41 @@ def rag_pipeline(
                 threshold=_bot_threshold,
             )
             if not _is_relevant:
+                # Distinguish "on-scope but no info" from "actually off-topic":
+                # ─ on-scope (e.g. "is the CEO on linkedin?", "what time zone
+                #   are you in?"): use the no-info pivot, which acknowledges
+                #   the question is about the company and offers the team as
+                #   a forward path.
+                # ─ off-topic (e.g. "what's the capital of france?"): use the
+                #   refusal as before.
+                # Original-question check (not search_query / rewrite) because
+                # the rewrite can normalise pronouns out and lose the on-scope
+                # signal ("who is he?" → "who is Siddique Ahmed" — both should
+                # trigger the on-scope pivot).
+                _on_scope = _question_looks_on_scope(question, _company_name)
+                if not _on_scope and search_query != question:
+                    _on_scope = _question_looks_on_scope(search_query, _company_name)
+
+                if _on_scope:
+                    _safety_net_metric(
+                        "no_info_pivot",
+                        reason="gate_fired_on_scope",
+                        gate_score=f"{_gate_score:.2f}",
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _pivot = _no_info_pivot(_company_name)
+                    _bot_msg = add_chat_message(
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
+                    )
+                    session.commit()
+                    return {
+                        "answer": _pivot,
+                        "sources": [],
+                        "session_id": session_id,
+                        "message_id": _bot_msg.id,
+                    }
+
                 _safety_net_metric(
                     "off_topic_refusal",
                     reason="gate_fired",
@@ -1405,6 +1597,28 @@ def rag_pipeline(
             # ChatGPT" loophole where the model would otherwise be told to
             # "craft a helpful natural answer" from general knowledge.
             if not final_results:
+                # Same on-scope check — empty retrieval on an on-scope
+                # question gets the graceful pivot instead of the refusal.
+                if _question_looks_on_scope(question, _company_name) or (
+                    search_query != question and _question_looks_on_scope(search_query, _company_name)
+                ):
+                    _safety_net_metric(
+                        "no_info_pivot",
+                        reason="empty_retrieval_on_scope",
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _pivot = _no_info_pivot(_company_name)
+                    _bot_msg = add_chat_message(
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
+                    )
+                    session.commit()
+                    return {
+                        "answer": _pivot,
+                        "sources": [],
+                        "session_id": session_id,
+                        "message_id": _bot_msg.id,
+                    }
                 _safety_net_metric(
                     "off_topic_refusal",
                     reason="empty_retrieval",
@@ -1456,8 +1670,17 @@ def rag_pipeline(
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
             )
 
+            # temperature=0.3: low enough that "what services do you offer"
+            # produces the same answer in 4-of-5 fresh sessions (was ~1.0
+            # default → high variance), high enough that the bot doesn't
+            # sound robotic. max_tokens=600 keeps answers within the 1–3
+            # sentence rule (with headroom for occasional list responses)
+            # and prevents the model from running off into 1000-token
+            # essays when the context is rich.
             answer = generate_response(
                 prompt,
+                temperature=0.3,
+                max_tokens=600,
                 metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
             )
 
@@ -1705,6 +1928,30 @@ async def rag_pipeline_stream(
             bot_id=bid,
         )
 
+        # ── Deterministic intent router (streaming path) ─────────────────
+        # Mirrors the non-stream path: greetings/acks/identity questions
+        # short-circuit before retrieval so visitors don't hit the relevance
+        # gate's boilerplate refusal as a first impression.
+        _intent = route_intent(question, _company_name)
+        if _intent is not None:
+            _safety_net_metric(
+                "intent_router_short_circuit",
+                path="stream",
+                intent=_intent.intent,
+                session=session_id,
+                bot_id=bid,
+            )
+            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+            yield _intent.answer
+            _bot_msg = add_chat_message(
+                session, session_id, client_id=cid, role="bot", content=_intent.answer, bot_id=bid
+            )
+            session.flush()
+            _msg_id = _bot_msg.id
+            session.commit()
+            yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+            return
+
         # ── Visitor input injection guard (streaming path) ──────────────
         if is_visitor_injection_attempt(question):
             _safety_net_metric(
@@ -1815,13 +2062,17 @@ async def rag_pipeline_stream(
                     "YES" if suggest_handoff else "NO",
                 )
 
+            # Same retrieval boost as the non-stream path — list/count
+            # questions get k=30 so the bot has the full entity roster in
+            # context and never under-reports.
+            _retrieval_k = 30 if _is_list_or_count_question(question) else 15
             vector_results, keyword_results = await asyncio.gather(
-                asyncio.to_thread(_vector_search, cid, bid, query_embedding),
-                asyncio.to_thread(_keyword_search, cid, bid, search_query),
+                asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k),
+                asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
             )
 
             final_results = reciprocal_rank_fusion(vector_results, keyword_results)
-            final_results = _trim_results(final_results)  # top 15 candidate pool
+            final_results = _trim_results(final_results, top_k=_retrieval_k)
             if RERANK_ENABLED:
                 final_results = rerank(search_query, final_results)
 
@@ -1833,6 +2084,32 @@ async def rag_pipeline_stream(
             check_relevance, question, final_results, bid, cid, _bot_threshold
         )
         if not _is_relevant:
+            # Mirror of the non-stream path: on-scope questions where the
+            # gate fired (no matching chunks) get the graceful no-info pivot
+            # instead of the off-topic refusal.
+            _on_scope = _question_looks_on_scope(question, _company_name)
+            if not _on_scope and search_query != question:
+                _on_scope = _question_looks_on_scope(search_query, _company_name)
+
+            if _on_scope:
+                _safety_net_metric(
+                    "no_info_pivot",
+                    reason="gate_fired_on_scope",
+                    path="stream",
+                    gate_score=f"{_gate_score:.2f}",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _pivot = _no_info_pivot(_company_name)
+                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _pivot
+                _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid)
+                session.flush()
+                _msg_id = _bot_msg.id
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                return
+
             _safety_net_metric(
                 "off_topic_refusal",
                 reason="gate_fired",
@@ -1848,6 +2125,26 @@ async def rag_pipeline_stream(
 
         # ── Empty-context short-circuit (streaming path) ─────────────────
         if not final_results:
+            if _question_looks_on_scope(question, _company_name) or (
+                search_query != question and _question_looks_on_scope(search_query, _company_name)
+            ):
+                _safety_net_metric(
+                    "no_info_pivot",
+                    reason="empty_retrieval_on_scope",
+                    path="stream",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _pivot = _no_info_pivot(_company_name)
+                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _pivot
+                _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid)
+                session.flush()
+                _msg_id = _bot_msg.id
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                return
+
             _safety_net_metric(
                 "off_topic_refusal",
                 reason="empty_retrieval",
@@ -1899,6 +2196,8 @@ async def rag_pipeline_stream(
             chunk_count = 0
             async for chunk in generate_response_stream(
                 prompt,
+                temperature=0.3,
+                max_tokens=600,
                 metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
             ):
                 if chunk:

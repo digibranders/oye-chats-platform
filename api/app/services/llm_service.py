@@ -154,7 +154,13 @@ Website content:
 _STREAM_CHUNK_TIMEOUT_S = 30
 
 
-async def _stream_from_model(model: str, prompt: str, max_tokens: int | None, metadata: dict | None):
+async def _stream_from_model(
+    model: str,
+    prompt: str,
+    max_tokens: int | None,
+    metadata: dict | None,
+    temperature: float | None = None,
+):
     """Async inner generator: stream chunks from ``model``, enforcing per-chunk timeout.
 
     Uses ``litellm.acompletion`` so the event loop is never blocked waiting for
@@ -172,6 +178,8 @@ async def _stream_from_model(model: str, prompt: str, max_tokens: int | None, me
     }
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     response = await litellm.acompletion(**kwargs)
     response_iter = response.__aiter__()
     while True:
@@ -189,7 +197,13 @@ async def _stream_from_model(model: str, prompt: str, max_tokens: int | None, me
             yield content
 
 
-async def generate_response_stream(prompt: str, *, max_tokens: int | None = None, metadata: dict | None = None):
+async def generate_response_stream(
+    prompt: str,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    metadata: dict | None = None,
+):
     """Async generator: stream text chunks via LiteLLM.
 
     Fallback chain:
@@ -208,7 +222,7 @@ async def generate_response_stream(prompt: str, *, max_tokens: int | None = None
 
     logger.info(f"Starting LLM stream | model={LLM_MODEL} | prompt_length={len(prompt)}")
     try:
-        async for chunk in _stream_from_model(LLM_MODEL, prompt, max_tokens, metadata):
+        async for chunk in _stream_from_model(LLM_MODEL, prompt, max_tokens, metadata, temperature):
             yield chunk
         return
     except TimeoutError as e:
@@ -229,7 +243,7 @@ async def generate_response_stream(prompt: str, *, max_tokens: int | None = None
 
     try:
         logger.info(f"LLM stream fallback | model={FALLBACK_MODEL}")
-        async for chunk in _stream_from_model(FALLBACK_MODEL, prompt, max_tokens, metadata):
+        async for chunk in _stream_from_model(FALLBACK_MODEL, prompt, max_tokens, metadata, temperature):
             yield chunk
     except TimeoutError as e:
         logger.error(f"Fallback stream timed out: {e}")
