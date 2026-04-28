@@ -21,7 +21,7 @@ export default defineConfig({
   build: {
     outDir: 'dist/app',
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: !!process.env.VITE_SOURCEMAP,
     target: 'es2020',
     cssCodeSplit: false,
     manifest: 'manifest.json',
