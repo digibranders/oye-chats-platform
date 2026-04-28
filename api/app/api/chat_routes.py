@@ -713,7 +713,7 @@ async def get_visitor_upload_url(
     ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else "bin"
     key = f"chat-files/{uuid.uuid4()}.{ext}"
 
-    from app.services.b2_service import _build_public_url, generate_presigned_put
+    from app.services.r2_service import _build_public_url, generate_presigned_put
 
     upload_url = generate_presigned_put(key, body.content_type)
     file_url = _build_public_url(key)

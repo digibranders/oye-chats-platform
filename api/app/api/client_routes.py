@@ -115,7 +115,7 @@ async def upload_logo_endpoint(
 ):
     """Upload a logo to Backblaze B2 and return the URL."""
     try:
-        from app.services.b2_service import upload_to_b2
+        from app.services.r2_service import upload_to_b2
 
         content = await file.read()
         file_key = upload_to_b2(content, file.filename, file.content_type)

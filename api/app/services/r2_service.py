@@ -1,3 +1,12 @@
+"""S3-compatible object storage client (Cloudflare R2 in production).
+
+Production deployments use Cloudflare R2; the env var prefix `R2_*` reflects that.
+A small set of legacy "friendly URL" helpers below were originally written for
+Backblaze B2 and remain in place as inert fallbacks: they only fire when the
+endpoint string matches Backblaze's pattern. On Cloudflare R2 the regex misses
+and the code falls through to the standard S3-style URL.
+"""
+
 import io
 import logging
 import re
@@ -8,7 +17,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from PIL import Image
 
-from app.config import B2_APPLICATION_KEY, B2_BUCKET_NAME, B2_ENDPOINT, B2_KEY_ID
+from app.config import R2_APPLICATION_KEY, R2_BUCKET_NAME, R2_ENDPOINT, R2_KEY_ID
 
 logger = logging.getLogger(__name__)
 
@@ -43,57 +52,52 @@ def process_image_for_logo(file_data, target_size=(512, 512)):
     return output.getvalue()
 
 
-# Initialize S3 client for Backblaze B2
+# Initialize S3 client for Cloudflare R2 (S3-compatible)
 s3_client = boto3.client(
     "s3",
-    endpoint_url=f"https://{B2_ENDPOINT}",
-    aws_access_key_id=B2_KEY_ID,
-    aws_secret_access_key=B2_APPLICATION_KEY,
-    region_name=B2_ENDPOINT.split(".")[1] if hasattr(B2_ENDPOINT, "split") and "." in B2_ENDPOINT else "us-east-1",
+    endpoint_url=f"https://{R2_ENDPOINT}",
+    aws_access_key_id=R2_KEY_ID,
+    aws_secret_access_key=R2_APPLICATION_KEY,
+    region_name=R2_ENDPOINT.split(".")[1] if hasattr(R2_ENDPOINT, "split") and "." in R2_ENDPOINT else "auto",
     config=Config(signature_version="s3v4"),
 )
 
 
 def _build_public_url(key: str) -> str:
     """
-    Build the Backblaze B2 'friendly' public URL.
+    Build a public URL for the object.
 
-    B2 supports 3 URL formats:
-      1. S3 virtual-hosted: https://{bucket}.s3.{region}.backblazeb2.com/{key}
-         → Requires specific B2 bucket settings, often fails with CORS/404
-      2. S3 path-style:     https://s3.{region}.backblazeb2.com/{bucket}/{key}
-         → Same issues as virtual-hosted
-      3. Friendly URL:      https://f{cluster}.backblazeb2.com/file/{bucket}/{key}
-         → Most reliable for public access, works if bucket is set to "Public"
+    On Cloudflare R2 we fall through to the path-style S3 URL —
+    `https://{R2_ENDPOINT}/{R2_BUCKET_NAME}/{key}` — which works for buckets
+    exposed via the configured endpoint.
 
-    We use format #3 (friendly URL) for maximum reliability.
-
-    B2_ENDPOINT example: "s3.eu-central-003.backblazeb2.com"
-    → cluster = "003" → friendly host = "f003.backblazeb2.com"
+    The two regex branches below are legacy fallbacks that build Backblaze B2
+    "friendly URLs" when the endpoint matches that provider's pattern. They
+    are dead code on R2 but kept so older buckets keep working if `R2_ENDPOINT`
+    still points at Backblaze.
     """
-    # Extract cluster ID (e.g., "s3.eu-central-003.backblazeb2.com" -> cluster is "003")
-    match = re.search(r"(\d{3,4})\.backblazeb2\.com", B2_ENDPOINT or "")
+    # Legacy: Backblaze B2 "friendly" host extracted from the endpoint host
+    match = re.search(r"(\d{3,4})\.backblazeb2\.com", R2_ENDPOINT or "")
     if match:
         cluster_id = match.group(1)
-        return f"https://f{cluster_id}.backblazeb2.com/file/{B2_BUCKET_NAME}/{key}"
+        return f"https://f{cluster_id}.backblazeb2.com/file/{R2_BUCKET_NAME}/{key}"
 
-    # Secondary check: look for digits after a hyphen
-    match = re.search(r"-(\d{3,4})\.", B2_ENDPOINT or "")
+    match = re.search(r"-(\d{3,4})\.", R2_ENDPOINT or "")
     if match:
         cluster_id = match.group(1)
-        return f"https://f{cluster_id}.backblazeb2.com/file/{B2_BUCKET_NAME}/{key}"
+        return f"https://f{cluster_id}.backblazeb2.com/file/{R2_BUCKET_NAME}/{key}"
 
-    return f"https://{B2_ENDPOINT}/{B2_BUCKET_NAME}/{key}"
+    return f"https://{R2_ENDPOINT}/{R2_BUCKET_NAME}/{key}"
 
 
 def get_signed_url(key: str, expires_in: int = 3600) -> str:
     """
-    Generate a pre-signed URL for a private B2 file.
+    Generate a pre-signed URL for a private R2 object.
     Default expiry is 1 hour.
     """
     try:
         url = s3_client.generate_presigned_url(
-            "get_object", Params={"Bucket": B2_BUCKET_NAME, "Key": key}, ExpiresIn=expires_in
+            "get_object", Params={"Bucket": R2_BUCKET_NAME, "Key": key}, ExpiresIn=expires_in
         )
         return url
     except Exception as e:
@@ -103,17 +107,17 @@ def get_signed_url(key: str, expires_in: int = 3600) -> str:
 
 def get_object(key: str):
     """
-    Fetch an object from B2 and return its body stream and content type.
+    Fetch an object from R2 and return its body stream and content type.
     Raises ClientError if the object does not exist.
     """
-    response = s3_client.get_object(Bucket=B2_BUCKET_NAME, Key=key)
+    response = s3_client.get_object(Bucket=R2_BUCKET_NAME, Key=key)
     content_type = response.get("ContentType", "application/octet-stream")
     body = response["Body"]
     return body, content_type
 
 
 def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> str:
-    """Generate a presigned PUT URL so the browser can upload directly to B2.
+    """Generate a presigned PUT URL so the browser can upload directly to R2.
 
     The caller uploads via PUT to the returned URL (no auth headers needed).
     expires: seconds until the URL expires (default 5 minutes).
@@ -121,7 +125,7 @@ def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> s
     try:
         return s3_client.generate_presigned_url(
             "put_object",
-            Params={"Bucket": B2_BUCKET_NAME, "Key": key, "ContentType": content_type},
+            Params={"Bucket": R2_BUCKET_NAME, "Key": key, "ContentType": content_type},
             ExpiresIn=expires,
         )
     except Exception as e:
@@ -130,34 +134,35 @@ def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> s
 
 
 def upload_chat_file(file_data: bytes, original_filename: str, content_type: str) -> str:
-    """Upload a chat attachment (image, PDF, etc.) to B2.
+    """Upload a chat attachment (image, PDF, etc.) to R2.
 
-    Unlike upload_to_b2 (which crops/resizes logos), this preserves files as-is.
-    Returns the B2 object key (e.g. 'chat-files/uuid.pdf').
+    Unlike upload_to_r2 (which crops/resizes logos), this preserves files as-is.
+    Returns the R2 object key (e.g. 'chat-files/uuid.pdf').
     """
     ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
     unique_key = f"chat-files/{uuid.uuid4()}.{ext}"
 
     try:
         s3_client.put_object(
-            Bucket=B2_BUCKET_NAME,
+            Bucket=R2_BUCKET_NAME,
             Key=unique_key,
             Body=file_data,
             ContentType=content_type,
         )
         return unique_key
     except ClientError as e:
-        logger.error(f"B2 chat file upload failed: {e}")
+        logger.error(f"R2 chat file upload failed: {e}")
         raise
     except Exception as e:
         logger.error(f"Unexpected error uploading chat file: {e}")
         raise
 
 
-def upload_to_b2(file_data, filename, content_type):
+def upload_to_r2(file_data, filename, content_type):
     """
-    Upload a file to Backblaze B2 using the S3-compatible API.
-    Returns the public 'friendly' URL of the uploaded file.
+    Upload a logo image to Cloudflare R2 (S3-compatible).
+    Square-crops + resizes to 512x512 PNG before uploading.
+    Returns the R2 object key.
     """
     try:
         # Process image for consistency (Square crop + 512x512 PNG)
@@ -168,21 +173,22 @@ def upload_to_b2(file_data, filename, content_type):
         unique_filename = f"logos/{uuid.uuid4()}.png"
 
         # Upload the file
-        s3_client.put_object(Bucket=B2_BUCKET_NAME, Key=unique_filename, Body=processed_data, ContentType="image/png")
+        s3_client.put_object(Bucket=R2_BUCKET_NAME, Key=unique_filename, Body=processed_data, ContentType="image/png")
 
-        # Build a persistent backend URL that will handle the signing/redirecting
-        # This prevents logos from breaking when a direct signed URL expires.
-        # Format: /api/v1/files/logos/uuid.png (assuming we strip /api/v1 prefix in main.py if needed)
-        # For now, let's keep it simple: return the key and let the backend construct the full URL.
+        # Return the key — the backend will construct full URLs via signed/public URL helpers.
         return unique_filename
 
     except ClientError as e:
         error_msg = (
-            f"B2 Upload failed (ClientError): {e.response['Error']['Message'] if 'Error' in e.response else str(e)}"
+            f"R2 upload failed (ClientError): {e.response['Error']['Message'] if 'Error' in e.response else str(e)}"
         )
         logger.error(error_msg)
         raise Exception(error_msg) from e
     except Exception as e:
-        error_msg = f"Unexpected error during B2 upload: {str(e)}"
+        error_msg = f"Unexpected error during R2 upload: {str(e)}"
         logger.error(error_msg, exc_info=True)
         raise Exception(error_msg) from e
+
+
+# Backwards-compatibility alias — older imports may still call `upload_to_b2`.
+upload_to_b2 = upload_to_r2

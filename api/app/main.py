@@ -393,7 +393,7 @@ def serve_b2_file(file_path: str):
     from botocore.exceptions import ClientError
     from fastapi.responses import StreamingResponse
 
-    from app.services.b2_service import get_object
+    from app.services.r2_service import get_object
 
     try:
         body, content_type = get_object(file_path)

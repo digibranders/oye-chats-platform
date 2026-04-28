@@ -62,13 +62,19 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
 # ─────────────────────────────────────────────────────────────────────────────
-# File Storage (Backblaze B2 via S3-compatible API)
-# Env vars use R2_ prefix (deploy scripts), code uses B2_ (Backblaze naming)
+# File Storage (Cloudflare R2 via S3-compatible API)
+# `B2_*` env names are kept as a fallback for legacy deploy environments.
 # ─────────────────────────────────────────────────────────────────────────────
-B2_KEY_ID = os.getenv("R2_KEY_ID") or os.getenv("B2_KEY_ID")
-B2_APPLICATION_KEY = os.getenv("R2_APPLICATION_KEY") or os.getenv("B2_APPLICATION_KEY")
-B2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME") or os.getenv("B2_BUCKET_NAME")
-B2_ENDPOINT = os.getenv("R2_ENDPOINT") or os.getenv("B2_ENDPOINT")
+R2_KEY_ID = os.getenv("R2_KEY_ID") or os.getenv("B2_KEY_ID")
+R2_APPLICATION_KEY = os.getenv("R2_APPLICATION_KEY") or os.getenv("B2_APPLICATION_KEY")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME") or os.getenv("B2_BUCKET_NAME")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT") or os.getenv("B2_ENDPOINT")
+
+# Backwards-compatibility aliases — keep older imports working.
+B2_KEY_ID = R2_KEY_ID
+B2_APPLICATION_KEY = R2_APPLICATION_KEY
+B2_BUCKET_NAME = R2_BUCKET_NAME
+B2_ENDPOINT = R2_ENDPOINT
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Observability — Langfuse (LLM tracing) + Sentry (error tracking)
