@@ -157,6 +157,18 @@ Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessa
 - **Conda environment**: `oye` (Python 3.11)
 - **Dependency manager**: `uv` (inside conda env)
 
+## Production Access
+
+- **API server**: `root@159.223.45.213` (hostname `oyechats-api`, DigitalOcean KVM)
+- **SSH key**: `~/.ssh/oyechats_deploy` (the default `id_ed25519` is **not** authorized on this host)
+- **Connect**:
+  ```bash
+  ssh -i ~/.ssh/oyechats_deploy -o IdentitiesOnly=yes root@159.223.45.213
+  ```
+- **Services on box**: `oyechats-api.service` (Gunicorn, 127.0.0.1:8000), `oyechats-worker.service` (ARQ), `postgresql@16-main`, `nginx` (80/443).
+- **Health endpoints**: `GET /health`, `GET /health/live`, `GET /health/full` on `127.0.0.1:8000`.
+- **Read-only ops only** unless the user explicitly authorizes restarts or writes — production reads via remote shell still require explicit user approval per session.
+
 ## Development Commands
 
 ### API (Backend)
