@@ -440,12 +440,13 @@ def verify_webhook_signature(*, payload: bytes, signature: str) -> None:
 def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
     """Insert an event id into ``processed_webhooks`` or report it as a replay.
 
-    ``x-razorpay-event-id`` is present on every Razorpay webhook delivery; if
-    it's absent (older deliveries / synthetic test events), the caller should
-    fall through to processing without the idempotency guarantee.
+    ``x-razorpay-event-id`` is present on every modern Razorpay webhook
+    delivery.  Reject events without an id to prevent duplicate processing
+    that could grant credits twice or create duplicate subscriptions.
     """
     if not event_id:
-        return True  # process without idempotency (rare; tests and replays)
+        logger.warning("Razorpay webhook missing x-razorpay-event-id — rejecting to prevent duplicate processing")
+        return False
     existing = session.get(ProcessedWebhook, event_id)
     if existing is not None:
         return False
