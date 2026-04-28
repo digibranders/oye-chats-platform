@@ -443,7 +443,7 @@
     <tr><td>Backend</td><td>FastAPI + SQLAlchemy + Alembic</td></tr>
     <tr><td>Frontend</td><td>React 19 + Vite + Tailwind CSS</td></tr>
     <tr><td>Scraping</td><td>Playwright (Chromium)</td></tr>
-    <tr><td>Storage</td><td>Backblaze B2 (S3-compatible)</td></tr>
+    <tr><td>Storage</td><td>Cloudflare R2 (S3-compatible)</td></tr>
     <tr><td>Observability</td><td>Langfuse + Sentry</td></tr>
   </table>
 
@@ -1181,15 +1181,15 @@ npm run dev    <span class="cm"># → http://localhost:5174</span></code></pre>
   <table>
     <tr><th>Variable</th><th>Required</th><th>Default</th><th>Description</th></tr>
     <tr><td><code>OPENAI_API_KEY</code></td><td><span class="badge badge-required">Required</span></td><td>—</td><td>OpenAI API key</td></tr>
-    <tr><td><code>LLM_MODEL</code></td><td></td><td>openai/gpt-5-mini</td><td>LiteLLM model identifier</td></tr>
+    <tr><td><code>LLM_MODEL</code></td><td></td><td>openai/gpt-5.4-mini</td><td>LiteLLM model identifier</td></tr>
     <tr><td><code>EMBEDDING_MODEL</code></td><td></td><td>text-embedding-3-small</td><td>OpenAI embedding model</td></tr>
   </table>
 
   <h3>Ingestion</h3>
   <table>
     <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-    <tr><td><code>CHUNK_SIZE</code></td><td>2000</td><td>Max characters per chunk</td></tr>
-    <tr><td><code>CHUNK_OVERLAP</code></td><td>300</td><td>Overlap between chunks</td></tr>
+    <tr><td><code>CHUNK_SIZE</code></td><td>1000</td><td>Max characters per chunk</td></tr>
+    <tr><td><code>CHUNK_OVERLAP</code></td><td>200</td><td>Overlap between chunks</td></tr>
   </table>
 
   <h3>Observability</h3>
@@ -1203,9 +1203,9 @@ npm run dev    <span class="cm"># → http://localhost:5174</span></code></pre>
   <h3>Cloud Storage &amp; Email</h3>
   <table>
     <tr><th>Variable</th><th>Description</th></tr>
-    <tr><td><code>R2_KEY_ID</code></td><td>Backblaze B2 key ID</td></tr>
-    <tr><td><code>R2_APPLICATION_KEY</code></td><td>B2 application key</td></tr>
-    <tr><td><code>R2_BUCKET_NAME</code></td><td>B2 bucket name</td></tr>
+    <tr><td><code>R2_KEY_ID</code></td><td>Cloudflare R2 access key ID</td></tr>
+    <tr><td><code>R2_APPLICATION_KEY</code></td><td>Cloudflare R2 secret access key</td></tr>
+    <tr><td><code>R2_BUCKET_NAME</code></td><td>Cloudflare R2 bucket name</td></tr>
     <tr><td><code>BREVO_API_KEY</code></td><td>Brevo email API key</td></tr>
   </table>
 

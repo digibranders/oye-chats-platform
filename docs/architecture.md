@@ -26,7 +26,7 @@ The central nervous system. Handles all business logic, data persistence, and AI
 - **Embeddings:** OpenAI `text-embedding-3-small` (1536 dimensions)
 - **Document Processing:** pypdf, python-docx for extraction; langchain-text-splitters for chunking
 - **Web Crawling:** Playwright (Chromium) for scraping customer websites
-- **Cloud Storage:** Backblaze B2 (S3-compatible) for document archival
+- **Cloud Storage:** Cloudflare R2 (S3-compatible) for document and chat-file storage
 - **Observability:** Langfuse (LLM traces) + Sentry (error tracking)
 
 ### Chat Widget (`widget/`)
@@ -144,6 +144,6 @@ Runtime errors are captured by Sentry with automatic endpoint tagging.
 | Backend | FastAPI + SQLAlchemy + Alembic | 0.115+ / 2.0 |
 | Frontend | React + Vite + Tailwind CSS | 19 / 7-8 / 4 |
 | Web Scraping | Playwright (Chromium) | — |
-| Cloud Storage | Backblaze B2 (S3-compatible) | — |
+| Cloud Storage | Cloudflare R2 (S3-compatible) | — |
 | Observability | Langfuse + Sentry | — |
 | Package Mgmt | uv (Python) + npm (JS) | — |

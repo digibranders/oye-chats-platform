@@ -130,7 +130,7 @@ The `build_hybrid_prompt()` function constructs the final LLM prompt:
 
 The assembled prompt is sent to the LLM via LiteLLM (`api/app/services/llm_service.py`):
 
-- **Default Model:** Configured via `LLM_MODEL` env var (e.g., `openai/gpt-5-mini`)
+- **Default Model:** Configured via `LLM_MODEL` env var (default: `openai/gpt-5.4-mini`)
 - **Streaming:** `generate_response_stream()` yields text chunks for SSE
 - **Non-streaming:** `generate_response()` returns the complete response
 - **Tracing:** Every call is auto-instrumented by Langfuse via LiteLLM callbacks
@@ -173,10 +173,10 @@ The widget's `sendMessageStream()` function in `widget/src/services/api.js` pars
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_MODEL` | `openai/gpt-5-mini` | LiteLLM model identifier |
+| `LLM_MODEL` | `openai/gpt-5.4-mini` | LiteLLM model identifier |
 | `OPENAI_API_KEY` | — | Required for embeddings and OpenAI LLMs |
-| `CHUNK_SIZE` | `2000` | Characters per chunk |
-| `CHUNK_OVERLAP` | `300` | Overlap between adjacent chunks |
+| `CHUNK_SIZE` | `1000` | Characters per chunk |
+| `CHUNK_OVERLAP` | `200` | Overlap between adjacent chunks |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
 
 ## Key Files

@@ -1,0 +1,368 @@
+/* Force light mode globally — disable dark mode toggle and override prefers-color-scheme */
+html,
+html.dark {
+  color-scheme: light !important;
+}
+html.dark {
+  /* If dark class somehow gets applied, neutralize it */
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-soft: #f6f7fb;
+  --vp-c-bg-alt: #ffffff;
+  --vp-c-text-1: #213547;
+  --vp-c-text-2: #4b5563;
+  --vp-c-text-3: #6b7280;
+  --vp-c-divider: #e5e7eb;
+  --vp-c-border: #e5e7eb;
+}
+
+:root {
+  --vp-c-brand-1: #5b6cff;
+  --vp-c-brand-2: #4858e8;
+  --vp-c-brand-3: #3a48c4;
+  --vp-c-brand-soft: rgba(91, 108, 255, 0.14);
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-soft: #f6f7fb;
+  --vp-c-text-1: #213547;
+}
+
+/* Pre-enhancement Mermaid block (briefly visible before pan-zoom hooks in) */
+.mermaid:not([data-mermaid-enhanced]),
+.mermaid-zoomable:not([data-mermaid-enhanced]) {
+  background: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  overflow: auto;
+}
+
+/* ===== Pan/zoom-enhanced Mermaid ===== */
+.oc-mermaid-wrapper {
+  position: relative;
+  margin: 24px 0;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #fafbff 100%
+  );
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 4px 12px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+  /* Subtle dot grid for visual depth */
+  background-image:
+    radial-gradient(rgba(91, 108, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(180deg, #ffffff 0%, #fafbff 100%);
+  background-size: 22px 22px, 100% 100%;
+}
+
+.oc-mermaid-wrapper .oc-mermaid-viewport {
+  width: 100%;
+  height: 75vh;
+  min-height: 520px;
+  max-height: 820px;
+  cursor: grab;
+  user-select: none;
+}
+
+@media (max-width: 720px) {
+  .oc-mermaid-wrapper .oc-mermaid-viewport {
+    height: 60vh;
+    min-height: 400px;
+    max-height: 560px;
+  }
+}
+
+.oc-mermaid-wrapper .oc-mermaid-viewport:active {
+  cursor: grabbing;
+}
+
+.oc-mermaid-wrapper .mermaid,
+.oc-mermaid-wrapper .mermaid-zoomable {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+
+.oc-mermaid-wrapper .mermaid svg,
+.oc-mermaid-wrapper .mermaid-zoomable svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  display: block;
+}
+
+/* Floating control cluster */
+.oc-mermaid-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 4px;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(6px);
+  z-index: 5;
+}
+
+.oc-mermaid-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--vp-c-divider);
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--vp-c-text-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.oc-mermaid-btn:hover {
+  background: var(--vp-c-brand-soft);
+  border-color: var(--vp-c-brand-1);
+}
+
+.oc-mermaid-btn:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 1px;
+}
+
+/* Subtle hint at bottom-left so users discover panning */
+.oc-mermaid-wrapper::after {
+  content: "Drag to pan · scroll/double-click to zoom";
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  font-size: 11px;
+  color: var(--vp-c-text-3);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 2px 8px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* ===== Mermaid label sizing — fix text truncation in nodes ===== */
+.mermaid-zoomable .nodeLabel,
+.mermaid .nodeLabel,
+.mermaid-zoomable .label foreignObject,
+.mermaid .label foreignObject {
+  overflow: visible !important;
+}
+
+.mermaid-zoomable .nodeLabel,
+.mermaid .nodeLabel {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #0f172a;
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* Allow the inner div used by htmlLabels to size to its content */
+.mermaid-zoomable .label foreignObject > div,
+.mermaid .label foreignObject > div {
+  height: auto !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  white-space: normal !important;
+  text-align: center;
+  padding: 4px 6px;
+}
+
+/* Subgraph titles need a touch more breathing room too */
+.mermaid-zoomable .cluster-label foreignObject > div,
+.mermaid .cluster-label foreignObject > div {
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+/* Edge labels — the chip behind labelled arrows */
+.mermaid-zoomable .edgeLabel,
+.mermaid .edgeLabel {
+  background-color: #ffffff !important;
+  font-size: 13px;
+  border-radius: 4px;
+  padding: 2px 6px !important;
+}
+
+/* Sequence diagram message text */
+.mermaid-zoomable .messageText,
+.mermaid .messageText {
+  font-size: 13px !important;
+  fill: #0f172a !important;
+}
+
+.mermaid-zoomable .actor,
+.mermaid .actor {
+  stroke: #5b6cff !important;
+  fill: #eef2ff !important;
+}
+
+.mermaid-zoomable .actor-line,
+.mermaid .actor-line {
+  stroke: #c7d2fe !important;
+}
+
+/* ER diagram — make entity headers more readable */
+.mermaid-zoomable .er.entityLabel,
+.mermaid .er.entityLabel {
+  font-weight: 600;
+  fill: #1e293b !important;
+}
+
+/* State-machine node labels */
+.mermaid-zoomable .stateLabel,
+.mermaid .stateLabel {
+  font-size: 14px;
+}
+
+/* Fullscreen mode */
+.oc-mermaid-wrapper.oc-mermaid-fullscreen {
+  position: fixed;
+  inset: 24px;
+  z-index: 1000;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.25);
+}
+
+.oc-mermaid-wrapper.oc-mermaid-fullscreen .oc-mermaid-viewport {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
+/* Backdrop dimmer behind fullscreen diagram */
+.oc-mermaid-body-locked {
+  overflow: hidden;
+}
+
+.oc-mermaid-body-locked::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 999;
+  pointer-events: none;
+}
+
+/* Close (X) button — only visible in fullscreen */
+.oc-mermaid-btn-close {
+  display: none;
+}
+
+.oc-mermaid-wrapper.oc-mermaid-fullscreen .oc-mermaid-btn-close {
+  display: inline-flex;
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.oc-mermaid-wrapper.oc-mermaid-fullscreen .oc-mermaid-btn-close:hover {
+  background: #fecaca;
+  border-color: #ef4444;
+}
+
+/* In fullscreen, controls float a bit further from the edge for breathing room */
+.oc-mermaid-wrapper.oc-mermaid-fullscreen .oc-mermaid-controls {
+  top: 14px;
+  right: 14px;
+  padding: 6px;
+}
+
+/* Hint label for fullscreen — shows "Press Esc to close" */
+.oc-mermaid-wrapper.oc-mermaid-fullscreen::after {
+  content: "Drag to pan · scroll to zoom · press Esc or click ✕ to close";
+  bottom: 14px;
+  left: 16px;
+  font-size: 12px;
+}
+
+.mermaid-zoomable svg,
+.mermaid svg {
+  max-width: 100% !important;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.zoomable-wrapper {
+  position: relative;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+  margin: 16px 0;
+}
+
+.zoomable-wrapper .controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+}
+
+.zoomable-wrapper .controls button {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.zoomable-wrapper .controls button:hover {
+  background: var(--vp-c-brand-soft);
+}
+
+.zoomable-wrapper .viewport {
+  width: 100%;
+  height: 600px;
+  overflow: hidden;
+}
+
+.zoomable-wrapper .viewport :deep(svg) {
+  width: 100%;
+  height: 100%;
+}
+
+/* Page-level helpers */
+.tldr-block {
+  border-left: 4px solid var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+  padding: 12px 16px;
+  border-radius: 0 6px 6px 0;
+  margin: 16px 0;
+}
+
+.audience-meta {
+  font-size: 0.85em;
+  color: var(--vp-c-text-2);
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--vp-c-divider);
+}

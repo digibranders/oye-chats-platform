@@ -1,11 +1,13 @@
 # Local Development Setup
 
+> This page is for **local developer machines only**. Production runs Python under systemd on a DigitalOcean droplet — no conda environment is involved on the server.
+
 ## Prerequisites
 
-- **Python 3.11+** (via Miniconda/Anaconda)
+- **Python 3.11+** (Miniconda/Anaconda recommended locally to isolate from system Python; not used in prod)
 - **Node.js 20+** and npm
 - **PostgreSQL 16** with the `pgvector` extension enabled
-- **uv** — Python dependency manager (installed inside conda env)
+- **uv** — Python dependency manager (works inside conda env or stand-alone)
 - **Playwright** — for web crawling (Chromium browser auto-installed)
 
 ## Initial Setup
