@@ -49,7 +49,7 @@ User message: "{question}"
 
 Respond with ONLY the word YES or NO. No explanation."""
 
-    response = generate_response(prompt, temperature=0, max_tokens=3, metadata={"generation_name": "intent-detection"})
+    response = generate_response(prompt, temperature=0, max_tokens=16, metadata={"generation_name": "intent-detection"})
     result = response.strip().upper()
     has_intent = "YES" in result
     logger.info("Sales Intent Detection for '%s': %s", question, result)
@@ -95,7 +95,7 @@ User message: "{question}"
 
 Respond with ONLY the word YES or NO. No explanation."""
     response = generate_response(
-        prompt, temperature=0, max_tokens=3, metadata={"generation_name": "handoff-intent-detection"}
+        prompt, temperature=0, max_tokens=16, metadata={"generation_name": "handoff-intent-detection"}
     )
     result = response.strip().upper()
     has_intent = "YES" in result

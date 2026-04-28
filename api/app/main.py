@@ -63,6 +63,25 @@ import litellm as _litellm  # noqa: E402
 
 _litellm.drop_params = True
 
+# Register the lightweight Langfuse callback so every LiteLLM completion is
+# logged as a `generation` observation with the model name, prompt/completion
+# tokens, cost, and latency populated. Without this, the rag-pipeline trace
+# wrapper in rag_service.py only emits a `chain` span — explaining the
+# "model: unknown / 0 tokens / $0" gap surfaced on /observability.
+#
+# We use the plain "langfuse" callback (REST API) instead of "langfuse_otel"
+# because the OTEL variant caused APIConnectionError under memory pressure on
+# the production droplet — see CLAUDE.md and config.LANGFUSE_FORCE_DISABLE.
+from app.config import LANGFUSE_ENABLED  # noqa: E402
+
+if LANGFUSE_ENABLED:
+    _existing = list(getattr(_litellm, "callbacks", []) or [])
+    if "langfuse" not in _existing:
+        _existing.append("langfuse")
+    _litellm.callbacks = _existing
+    _litellm.success_callback = list({*(_litellm.success_callback or []), "langfuse"})
+    _litellm.failure_callback = list({*(_litellm.failure_callback or []), "langfuse"})
+
 # Initialize Sentry (must be before FastAPI app creation)
 if SENTRY_ENABLED:
     import sentry_sdk

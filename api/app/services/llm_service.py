@@ -8,6 +8,38 @@ from app.config import FALLBACK_MODEL, FALLBACK_MODEL_KEY_SET, LLM_FALLBACKS, LL
 logger = logging.getLogger(__name__)
 
 
+def _bare_model(model: str) -> str:
+    """Strip a LiteLLM provider prefix (``openai/``, ``azure/`` …) from a model id."""
+    return model.split("/", 1)[1] if "/" in model else model
+
+
+def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
+    """Inject family-specific parameters into a LiteLLM ``completion`` kwargs dict.
+
+    gpt-5 family models default to ``reasoning_effort="medium"``, which spends
+    most of the output-token budget on hidden reasoning tokens before any
+    visible content is produced. With our typical RAG prompts (≈25k chars of
+    context) this manifests as empty completions — Sentry: "LLM returned empty
+    response". The two sub-families use different "no reasoning" sentinels:
+
+    * gpt-5.4 family (gpt-5.4, gpt-5.4-mini, …): ``reasoning_effort="none"``
+      (``"minimal"`` is rejected with ``Unsupported value`` from OpenAI;
+      valid values are ``none|low|medium|high|xhigh``).
+    * Older gpt-5 family (gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-codex):
+      ``reasoning_effort="minimal"`` (``"none"`` is not supported there;
+      valid values are ``minimal|low|medium|high``).
+
+    ``litellm.drop_params=True`` (set in ``app/main.py`` and
+    ``app/worker/settings.py``) silently strips this for non-OpenAI providers
+    if the LiteLLM fallback path retries with Gemini.
+    """
+    bare = _bare_model(model)
+    if bare.startswith("gpt-5.4"):
+        kwargs.setdefault("reasoning_effort", "none")
+    elif bare.startswith("gpt-5"):
+        kwargs.setdefault("reasoning_effort", "minimal")
+
+
 def generate_response(
     prompt: str,
     *,
@@ -31,6 +63,7 @@ def generate_response(
             kwargs["max_tokens"] = max_tokens
         if temperature is not None:
             kwargs["temperature"] = temperature
+        _apply_model_family_kwargs(kwargs, LLM_MODEL)
         response = litellm.completion(**kwargs)
         content = response.choices[0].message.content
         if content:
@@ -67,13 +100,15 @@ Website content:
 
 Return ONLY the tone description, nothing else."""
 
-        response = litellm.completion(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
-            metadata=metadata or {"generation_name": "brand-tone-extraction"},
-            fallbacks=LLM_FALLBACKS,
-        )
+        kwargs: dict = {
+            "model": LLM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 100,
+            "metadata": metadata or {"generation_name": "brand-tone-extraction"},
+            "fallbacks": LLM_FALLBACKS,
+        }
+        _apply_model_family_kwargs(kwargs, LLM_MODEL)
+        response = litellm.completion(**kwargs)
         tone = (response.choices[0].message.content or "").strip()
         if tone and len(tone) < 500:
             logger.info(f"Brand tone extracted: {tone[:80]}...")
@@ -109,13 +144,15 @@ DESCRIPTION: Fynix Digital is a branding and marketing agency based in India. Th
 Website content:
 {content_sample[:4000]}"""
 
-        response = litellm.completion(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=250,
-            metadata=metadata or {"generation_name": "company-context-extraction"},
-            fallbacks=LLM_FALLBACKS,
-        )
+        kwargs: dict = {
+            "model": LLM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 250,
+            "metadata": metadata or {"generation_name": "company-context-extraction"},
+            "fallbacks": LLM_FALLBACKS,
+        }
+        _apply_model_family_kwargs(kwargs, LLM_MODEL)
+        response = litellm.completion(**kwargs)
         text = (response.choices[0].message.content or "").strip()
         if not text:
             return None
@@ -169,6 +206,11 @@ async def _stream_from_model(
     ``TimeoutError`` within ``_STREAM_CHUNK_TIMEOUT_S`` seconds.
 
     Raises on connection / API error so the caller can fall back to another model.
+
+    The underlying LiteLLM stream wrapper holds an httpx ``AsyncClient`` stream;
+    if the SSE consumer disconnects mid-response the generator is closed via
+    ``GeneratorExit`` and the httpx task leaks (Sentry: "Task was destroyed but
+    it is pending!"). The ``finally`` block below explicitly aborts the wrapper.
     """
     kwargs: dict = {
         "model": model,
@@ -180,21 +222,30 @@ async def _stream_from_model(
         kwargs["max_tokens"] = max_tokens
     if temperature is not None:
         kwargs["temperature"] = temperature
+    _apply_model_family_kwargs(kwargs, model)
     response = await litellm.acompletion(**kwargs)
-    response_iter = response.__aiter__()
-    while True:
-        try:
-            chunk = await asyncio.wait_for(
-                response_iter.__anext__(),
-                timeout=_STREAM_CHUNK_TIMEOUT_S,
-            )
-        except StopAsyncIteration:
-            break
-        except TimeoutError as exc:
-            raise TimeoutError(f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled") from exc
-        content = chunk.choices[0].delta.content
-        if content:
-            yield content
+    try:
+        response_iter = response.__aiter__()
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    response_iter.__anext__(),
+                    timeout=_STREAM_CHUNK_TIMEOUT_S,
+                )
+            except StopAsyncIteration:
+                break
+            except TimeoutError as exc:
+                raise TimeoutError(f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled") from exc
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+    finally:
+        aclose = getattr(response, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception as close_err:
+                logger.debug(f"LiteLLM stream aclose() raised on cleanup: {close_err}")
 
 
 async def generate_response_stream(

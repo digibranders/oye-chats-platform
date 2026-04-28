@@ -2,29 +2,33 @@
 
 ## Infrastructure Overview
 
-| Service | Domain | Hosted On | Cost |
-|---------|--------|-----------|------|
-| Landing Page | `oyechats.com` | Vercel | Free |
-| Admin Dashboard | `admin.oyechats.com` | Vercel (monorepo) | Free |
-| Backend API | `api.oyechats.com` | DigitalOcean Droplet | $12/mo |
-| Widget CDN | `cdn.oyechats.com` | Cloudflare R2 | ~$0 |
-| Database | (on droplet) | PostgreSQL 16 + pgvector | $0 (included) |
-| **Total** | | | **~$12/mo** |
+| Service | Domain | Hosted On | Vercel Project | Cost |
+|---------|--------|-----------|----------------|------|
+| Landing Page | `oyechats.com` · `www.oyechats.com` | Vercel | `oyechats-website` | Free |
+| Customer Admin Dashboard | `app.oyechats.com` | Vercel (monorepo, root = `app/`) | `oye-chats-platform` | Free |
+| Super Admin Console | `admin.oyechats.com` | Vercel (separate repo `digibranders/oyechats-admin`) | `superadmin` | Free |
+| Backend API | `api.oyechats.com` | DigitalOcean Droplet | — | $12/mo |
+| Widget CDN | `cdn.oyechats.com` | Cloudflare R2 | — | ~$0 |
+| Database | (on droplet) | PostgreSQL 16 + pgvector | — | $0 (included) |
+| **Total** | | | | **~$12/mo** |
 
 ## GitHub Repos
 
-- **`digibranders/oye-chats-platform`** (monorepo) — Backend, Widget, Admin
-- **`oyechats/landing`** (separate) — Next.js landing page
+- **`digibranders/oye-chats-platform`** — Backend (`api/`), Widget (`widget/`), Customer Admin (`app/`)
+- **`digibranders/oyechats-admin`** — Super Admin console (Next.js)
+- **`oyechats-website`** — Marketing site (Next.js)
 
 ## DNS Records
 
 Set these at your domain registrar:
 
 ```
-oyechats.com          CNAME   cname.vercel-dns.com
-admin.oyechats.com    CNAME   cname.vercel-dns.com
-api.oyechats.com      A       <droplet-ip>
-cdn.oyechats.com      CNAME   <r2-public-domain>
+oyechats.com          CNAME   cname.vercel-dns.com   # marketing site
+www.oyechats.com      CNAME   cname.vercel-dns.com   # marketing site
+app.oyechats.com      CNAME   cname.vercel-dns.com   # customer admin dashboard
+admin.oyechats.com    CNAME   cname.vercel-dns.com   # super admin console
+api.oyechats.com      A       <droplet-ip>           # backend
+cdn.oyechats.com      CNAME   <r2-public-domain>     # widget CDN
 ```
 
 ---
@@ -93,12 +97,12 @@ DB_URL=postgresql://oyechats:<STRONG_PASSWORD>@localhost:5432/oyechats
 OPENAI_API_KEY=<your-openai-api-key>
 GOOGLE_API_KEY=<your-gemini-api-key>
 APP_ENV=production
-CORS_ORIGINS=https://oyechats.com,https://admin.oyechats.com,https://www.oyechats.com
+CORS_ORIGINS=https://oyechats.com,https://www.oyechats.com,https://app.oyechats.com,https://admin.oyechats.com
 ```
 
 **Optional .env values:**
 ```
-LLM_MODEL=openai/gpt-5-mini
+LLM_MODEL=openai/gpt-5.4-mini
 R2_KEY_ID=<backblaze-key-id>
 R2_APPLICATION_KEY=<backblaze-app-key>
 R2_BUCKET_NAME=<bucket-name>
@@ -236,7 +240,7 @@ After this, GitHub Actions handles subsequent deploys automatically.
 
 ## Step 3: Vercel (Admin + Landing Page)
 
-### Admin Dashboard
+### Customer Admin Dashboard
 1. Go to **vercel.com** → Import `digibranders/oye-chats-platform` repo
 2. Configure:
    - **Root Directory**: `app`
@@ -244,14 +248,20 @@ After this, GitHub Actions handles subsequent deploys automatically.
    - **Build Command**: `npm run build`
    - **Output Directory**: `dist`
 3. Add environment variable: `VITE_API_URL` = `https://api.oyechats.com`
+4. Add custom domain: `app.oyechats.com`
+
+### Super Admin Console
+1. Import `digibranders/oyechats-admin` repo in Vercel (separate repo, lives in sibling `superadmin/` directory locally)
+2. Framework auto-detected as Next.js (root = repo root)
+3. Add environment variable: `NEXT_PUBLIC_API_URL` = `https://api.oyechats.com`
 4. Add custom domain: `admin.oyechats.com`
 
 ### Landing Page
-1. Import `oyechats/landing` repo in Vercel
+1. Import `oyechats-website` repo in Vercel
 2. Framework auto-detected as Next.js
-3. Add custom domain: `oyechats.com`
+3. Add custom domains: `oyechats.com` and `www.oyechats.com`
 
-Both auto-deploy on every push to `main`.
+All three auto-deploy on every push to `main`.
 
 ---
 
@@ -268,7 +278,7 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 | `DB_URL` | `postgresql://oyechats:<PASSWORD>@localhost:5432/oyechats` |
 | `GOOGLE_API_KEY` | Google Gemini API key (LiteLLM fallback) |
 | `OPENAI_API_KEY` | OpenAI API key (primary LLM) |
-| `CORS_ORIGINS` | `https://oyechats.com,https://admin.oyechats.com,https://www.oyechats.com` |
+| `CORS_ORIGINS` | `https://oyechats.com,https://www.oyechats.com,https://app.oyechats.com,https://admin.oyechats.com` |
 | `R2_KEY_ID` | Backblaze B2 key ID |
 | `R2_APPLICATION_KEY` | Backblaze B2 application key |
 | `R2_BUCKET_NAME` | Backblaze B2 bucket name |
