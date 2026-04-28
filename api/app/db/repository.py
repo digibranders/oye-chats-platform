@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import case, desc, func, insert, select, text
+from sqlalchemy.exc import IntegrityError
 
+from app.core.exceptions import SessionOwnershipError
 from app.db.models import BANTSignal, Bot, BotGrowthEvent, ChatMessage, ChatSession, Client, Document, LeadInfo
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -22,37 +24,85 @@ def _resolve_owner(bot_id=None, client_id=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _get_session_for_bot(session, session_id: str, bot_id: int | None) -> ChatSession | None:
+    """Look up a chat session by primary key and validate ownership.
+
+    ``id`` is the primary key on ``chat_sessions`` — there can only ever be one
+    row for a given ``session_id``. Earlier code filtered by ``bot_id`` in the
+    ``WHERE`` clause, which silently turned ownership mismatches into PK
+    collisions on subsequent INSERTs. The fix is to look up by ``id`` only and
+    validate ownership in Python.
+
+    Returns ``None`` when no row exists (caller may then INSERT). Raises
+    ``SessionOwnershipError`` when a row exists but doesn't belong to
+    ``bot_id`` — covers two cases:
+
+    * ``chat_session.bot_id is None`` (legacy / pre-multi-bot data). We do not
+      auto-claim these at runtime; the Alembic backfill migration handles
+      unambiguous single-bot-client cases and the rest get a 404.
+    * ``chat_session.bot_id != bot_id`` (cross-bot access). Reject explicitly.
+
+    When ``bot_id`` is ``None`` the caller has opted out of validation
+    (legacy ``client_id``-only flows) and any existing row is returned as-is.
+    """
+    chat_session = session.execute(
+        select(ChatSession).where(ChatSession.id == session_id).limit(1)
+    ).scalar_one_or_none()
+    if chat_session is None:
+        return None
+    if bot_id is not None and chat_session.bot_id != bot_id:
+        raise SessionOwnershipError(session_id, bot_id, chat_session.bot_id)
+    return chat_session
+
+
 def ensure_chat_session(
-    session, session_id: str, client_id: int = None, bot_id: int = None, location: str = None, device: str = None
-):
-    """
-    Check if a session exists, if not create it.
-    Updates last_active_at if it exists.
-    Supports both client_id (legacy) and bot_id (new).
-    """
-    # Try to find existing session
-    stmt = select(ChatSession).where(ChatSession.id == session_id).limit(1)
-    if bot_id:
-        stmt = stmt.where(ChatSession.bot_id == bot_id)
-    elif client_id:
-        stmt = stmt.where(ChatSession.client_id == client_id)
+    session,
+    session_id: str,
+    client_id: int = None,
+    bot_id: int = None,
+    location: str = None,
+    device: str = None,
+) -> ChatSession:
+    """Get-or-create a chat session, returning the row.
 
-    chat_session = session.execute(stmt).scalar_one_or_none()
+    * Looks up by primary key only — ``id`` uniquely identifies a session.
+    * If the row exists and belongs to ``bot_id``, updates ``last_active_at``
+      (plus optional ``location`` / ``device``) and returns it.
+    * If the row exists but ``bot_id`` doesn't match, raises
+      ``SessionOwnershipError`` (handled as HTTP 404 at the API layer).
+    * If no row exists, INSERTs and returns. ``IntegrityError`` from a
+      concurrent insert is caught and the winner's row is fetched instead.
+    """
+    chat_session = _get_session_for_bot(session, session_id, bot_id)
 
-    if not chat_session:
-        new_session = ChatSession(id=session_id, client_id=client_id, bot_id=bot_id, location=location, device=device)
-        session.add(new_session)
-        session.flush()
-    else:
-        chat_session.last_active_at = func.now()
-        if location:
-            chat_session.location = location
-        if device:
-            chat_session.device = device
-        # Backfill bot_id if missing
-        if bot_id and not chat_session.bot_id:
-            chat_session.bot_id = bot_id
-        session.flush()
+    if chat_session is None:
+        try:
+            chat_session = ChatSession(
+                id=session_id,
+                client_id=client_id,
+                bot_id=bot_id,
+                location=location,
+                device=device,
+            )
+            session.add(chat_session)
+            session.flush()
+        except IntegrityError:
+            # A concurrent request inserted the same session_id between our
+            # SELECT and INSERT. Fall back to fetching the winning row and
+            # re-validating ownership.
+            session.rollback()
+            chat_session = _get_session_for_bot(session, session_id, bot_id)
+            if chat_session is None:
+                raise
+        return chat_session
+
+    chat_session.last_active_at = func.now()
+    if location:
+        chat_session.location = location
+    if device:
+        chat_session.device = device
+    session.flush()
+    return chat_session
 
 
 _BANT_ALLOWED_FIELDS = frozenset(
@@ -81,14 +131,12 @@ _BANT_ALLOWED_FIELDS = frozenset(
 
 
 def update_session_bant(session, session_id: str, client_id: int = None, bant_data: dict = None, bot_id: int = None):
-    """Update the BANT qualification state for a session."""
-    stmt = select(ChatSession).where(ChatSession.id == session_id).limit(1)
-    if bot_id:
-        stmt = stmt.where(ChatSession.bot_id == bot_id)
-    elif client_id:
-        stmt = stmt.where(ChatSession.client_id == client_id)
+    """Update the BANT qualification state for a session.
 
-    chat_session = session.execute(stmt).scalar_one_or_none()
+    Raises ``SessionOwnershipError`` when the session row exists but doesn't
+    belong to ``bot_id`` (handled as HTTP 404 at the API layer).
+    """
+    chat_session = _get_session_for_bot(session, session_id, bot_id)
 
     if chat_session and bant_data:
         for key, value in bant_data.items():
@@ -129,15 +177,13 @@ def add_chat_message(
 
 
 def get_chat_history(session, session_id: str, client_id: int = None, limit=10, bot_id: int = None):
-    """Get the last N messages for a session."""
-    # Verify session belongs to client/bot
-    stmt_check = select(ChatSession.id).where(ChatSession.id == session_id)
-    if bot_id:
-        stmt_check = stmt_check.where(ChatSession.bot_id == bot_id)
-    elif client_id:
-        stmt_check = stmt_check.where(ChatSession.client_id == client_id)
+    """Get the last N messages for a session.
 
-    if not session.execute(stmt_check).first():
+    Returns ``[]`` when the session does not exist. Raises
+    ``SessionOwnershipError`` when the session exists but belongs to a
+    different bot (handled as HTTP 404 at the API layer).
+    """
+    if _get_session_for_bot(session, session_id, bot_id) is None:
         return []
 
     stmt = (

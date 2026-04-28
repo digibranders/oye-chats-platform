@@ -260,21 +260,21 @@ class TestBehavioralSignals:
         app = _build_app(bot_override=bot)
         tc = TestClient(app)
 
+        cs = SimpleNamespace(
+            id="s1",
+            bot_id=1,
+            page_url=None,
+            referrer=None,
+            utm_params=None,
+            visit_count=0,
+            behavioral_score=0,
+        )
         with (
             patch("app.api.chat_routes.get_session") as mock_gs,
-            patch("app.api.chat_routes.ensure_chat_session"),
+            patch("app.api.chat_routes.ensure_chat_session", return_value=cs),
             patch("app.services.behavioral_service.score_behavioral_signals", return_value=25),
         ):
             session = MagicMock()
-            cs = SimpleNamespace(
-                id="s1",
-                bot_id=1,
-                page_url=None,
-                referrer=None,
-                utm_params=None,
-                visit_count=0,
-                behavioral_score=0,
-            )
             session.execute.return_value.scalar_one.return_value = cs
             session.execute.return_value.scalar_one_or_none.return_value = cs
             mock_gs.return_value = _session_ctx(session)

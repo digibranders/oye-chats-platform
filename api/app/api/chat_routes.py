@@ -14,6 +14,7 @@ from pydantic import Field, field_validator
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
+from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
 from app.core.thread_pool import submit_background
@@ -246,6 +247,8 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
         return result
     except HTTPException:
         raise
+    except SessionOwnershipError:
+        raise
     except Exception as e:
         bot_id = getattr(bot, "id", "?")
         err_type = type(e).__name__
@@ -350,6 +353,8 @@ def lead_capture_endpoint(body: LeadCaptureRequest, request: Request, bot: Bot =
             except Exception as wh_err:
                 logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
             return {"success": True, "session_id": body.session_id}
+    except SessionOwnershipError:
+        raise
     except Exception as e:
         logger.error(f"Lead capture failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to capture lead information.") from e
@@ -368,10 +373,7 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
 
     try:
         with get_session() as session:
-            ensure_chat_session(session, body.session_id, bot_id=bot.id)
-            chat_session = session.execute(
-                select(ChatSession).where(ChatSession.id == body.session_id, ChatSession.bot_id == bot.id)
-            ).scalar_one()
+            chat_session = ensure_chat_session(session, body.session_id, bot_id=bot.id)
 
             # Store page context on the session (first call wins for URL/referrer)
             safe_page_url = _sanitize_url(body.page_url)
@@ -443,6 +445,9 @@ def behavioral_signals_endpoint(body: BehavioralSignalsRequest, request: Request
             session.commit()
             logger.info(f"Behavioral signals recorded | bot={bot.id} session={body.session_id} score={new_score}")
             return {"success": True, "behavioral_score": chat_session.behavioral_score}
+    except SessionOwnershipError:
+        # Let the global handler turn this into a clean 404 — don't mask as 500.
+        raise
     except Exception as e:
         logger.error(f"Behavioral signals failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to record behavioral signals.") from e
@@ -491,6 +496,8 @@ def meeting_booked_endpoint(body: MeetingBookedRequest, request: Request, bot: B
                 logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
 
             return {"success": True}
+    except SessionOwnershipError:
+        raise
     except Exception as e:
         logger.error(f"Meeting booking save failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to save meeting booking.") from e
@@ -581,26 +588,32 @@ def get_history_endpoint(
     Accepts both admin auth (X-API-Key / X-Operator-Key) and widget auth (X-Bot-Key).
     Supports cursor-based pagination via `before` param.
     """
-    # Dual auth: try client/operator first, fall back to bot key (widget)
+    # Dual auth: try client/operator first, fall back to bot key (widget).
+    # Only fall back to bot-key when NO admin auth headers were provided.
+    # If admin headers are present but invalid, propagate the error —
+    # otherwise a deactivated operator with a valid bot key could still
+    # read chat history by triggering the silent fallback.
     auth = None
     resolved_bot_id = bot_id
-    try:
+    has_admin_auth = bool(
+        request.headers.get("X-API-Key") or request.headers.get("X-Operator-Key") or request.headers.get("X-Agent-Key")
+    )
+    if has_admin_auth:
         auth = get_current_client_or_operator(
             api_key=request.headers.get("X-API-Key"),
             operator_key=request.headers.get("X-Operator-Key"),
             legacy_agent_key=request.headers.get("X-Agent-Key"),
         )
-    except (HTTPException, Exception):
-        # Fall back to bot key auth for widget access
+    else:
         raw_bot_key = request.headers.get("X-Bot-Key")
         if not raw_bot_key:
-            raise HTTPException(status_code=401, detail="Authentication required") from None
+            raise HTTPException(status_code=401, detail="Authentication required")
         with get_session() as db:
             bot_obj = db.execute(
                 select(Bot).where(Bot.bot_key == raw_bot_key, Bot.is_active.is_(True))
             ).scalar_one_or_none()
             if not bot_obj:
-                raise HTTPException(status_code=401, detail="Invalid bot key") from None
+                raise HTTPException(status_code=401, detail="Invalid bot key")
             resolved_bot_id = bot_obj.id
             auth = {"client_id": bot_obj.client_id, "type": "bot"}
 

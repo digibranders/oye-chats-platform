@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
@@ -7,12 +8,14 @@ import threading
 import time
 import urllib.request
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 
 from app.core.thread_pool import submit_background
 from app.db.models import Webhook, WebhookDelivery
 from app.db.session import get_session
+from app.schemas.client import _is_public_hostname
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +80,41 @@ def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
             queue_webhook_delivery(webhook.id, event_type, data)
 
 
+def _is_safe_webhook_url(url: str) -> bool:
+    """Re-validate webhook URL at delivery time to block DNS rebinding SSRF."""
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    try:
+        ip = ipaddress.ip_address(hostname)
+        return not (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local)
+    except ValueError:
+        return _is_public_hostname(hostname)
+
+
 def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int = 1) -> None:
     """Deliver a single webhook — called in background thread."""
     with get_session() as session:
         webhook = session.execute(select(Webhook).where(Webhook.id == webhook_id)).scalar_one_or_none()
         if not webhook:
+            return
+
+        if not _is_safe_webhook_url(webhook.url):
+            logger.warning("Webhook %s blocked: URL %r resolves to internal address", webhook_id, webhook.url)
+            session.add(
+                WebhookDelivery(
+                    webhook_id=webhook.id,
+                    event_type=event_type,
+                    payload=data,
+                    status_code=0,
+                    response_body="Blocked: URL resolves to a private/internal address (DNS rebinding protection)",
+                    attempt=attempt,
+                    next_retry_at=None,
+                    delivered_at=None,
+                )
+            )
+            session.commit()
             return
 
         now = datetime.now(UTC)

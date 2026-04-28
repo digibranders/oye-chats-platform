@@ -114,8 +114,14 @@ const ChatWidget = () => {
 
     window.addEventListener('message', handleMessage);
     // Signal readiness so the parent flushes the initial draft settings.
+    // Use document.referrer origin instead of '*' to avoid leaking messages
+    // to arbitrary parent frames.
     try {
-      window.parent.postMessage({ type: 'oyechats:preview-ready' }, '*');
+      let targetOrigin = '*';
+      if (document.referrer) {
+        try { targetOrigin = new URL(document.referrer).origin; } catch { /* keep '*' */ }
+      }
+      window.parent.postMessage({ type: 'oyechats:preview-ready' }, targetOrigin);
     } catch (error) {
       console.warn('[OyeChats] Preview ready signal failed:', error);
     }
