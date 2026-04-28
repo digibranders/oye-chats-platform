@@ -37,11 +37,23 @@ jobs:
           CHUNK_ENRICHMENT_ENABLED: ${{ secrets.CHUNK_ENRICHMENT_ENABLED }}
           CRAWLER_JS_ALL_PAGES: ${{ secrets.CRAWLER_JS_ALL_PAGES }}
           RERANK_ENABLED: ${{ secrets.RERANK_ENABLED }}
+          # Billing — Stripe (international) + Razorpay (primary, INR/UPI).
+          # Missing values become empty strings on the droplet, which
+          # config.py treats as "provider disabled". Webhook secrets are
+          # required for inbound callback signature verification.
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          # Frontend URL for Stripe success/cancel and Razorpay return redirects.
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,FRONTEND_URL
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -100,6 +112,13 @@ jobs:
               "CRAWLER_JS_ALL_PAGES=${CRAWLER_JS_ALL_PAGES}" \
               "WORKER_ENABLED=true" \
               "MODERATION_ENABLED=true" \
+              "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}" \
+              "STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}" \
+              "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}" \
+              "RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}" \
+              "RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}" \
+              "RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET}" \
+              "FRONTEND_URL=${FRONTEND_URL}" \
               > api/.env
 
             # Sync dependencies
