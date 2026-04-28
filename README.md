@@ -1,330 +1,299 @@
-# OyeChat
+# OyeChats
 
-A production-ready RAG-powered chatbot platform with multi-bot support, BANT sales qualification, admin analytics dashboard, and an embeddable widget for any website.
+A SaaS chatbot platform: customers sign up, create chatbot instances, upload a knowledge base, and embed a RAG-powered chatbot on their website with one `<script>` tag. Includes live-chat handoff to human operators, BANT/MEDDIC lead qualification, and a Razorpay/Stripe billing system.
 
-## Architecture
+## Modules
 
 | Module | Stack | Purpose |
 |--------|-------|---------|
-| `api/` | FastAPI, SQLAlchemy, pgvector, Google Gemini | RAG pipeline, REST API, auth, document ingestion |
-| `widget/` | React 19, Vite, Tailwind CSS | Embeddable chat widget (`oyechats-widget.js`) |
-| `admin/` | React 19, Vite, React Router, Recharts | Admin dashboard with analytics |
-| `aiorb-preview/` | React 19, Three.js | 3D animated chatbot orb preview |
+| [`api/`](./api/) | FastAPI · SQLAlchemy 2.0 · pgvector · LiteLLM · ARQ | REST + SSE + WebSocket; RAG pipeline; auth; ingestion; billing |
+| [`widget/`](./widget/) | React 19 · Vite 7 · Tailwind v4 | Embeddable chat widget IIFE (`oyechats-widget.js`) |
+| [`app/`](./app/) | React 19 · Vite 8 · React Router 7 · Recharts | Admin dashboard (bot config, KB, leads, billing, operator console) |
+
+The marketing site lives in a separate sibling repo (`oyechats-website/`, Next.js 16) and is not part of this monorepo.
 
 ## Prerequisites
 
-- **Python 3.11** (pinned via `.python-version`)
-- **Node.js 18+**
-- **PostgreSQL 16+** with [pgvector](https://github.com/pgvector/pgvector) extension
-- **uv** (Python dependency manager) — [install guide](https://docs.astral.sh/uv/getting-started/installation/)
-- **conda** (optional, for local env management)
+- **Python 3.11** (pinned in `api/.python-version`)
+- **Node.js 20+** and npm
+- **PostgreSQL 16+** with the [pgvector](https://github.com/pgvector/pgvector) extension
+- **Redis 7+** (queue · cache · rate-limit; required in production, optional in dev)
+- **uv** — Python dependency manager — [install](https://docs.astral.sh/uv/getting-started/installation/)
+- **conda** — optional, for local Python isolation only. Production runs Python under systemd directly; there is no conda env on the server.
 
-## Quick Start
+## Quick start
 
-### Option 1: Docker (Recommended)
+### Option 1 — Docker (recommended)
 
-Spins up PostgreSQL + pgvector and the FastAPI backend in containers.
+Brings up Postgres + pgvector and the FastAPI backend in containers.
 
 ```bash
-# 1. Clone and configure
 git clone <repo-url> && cd platform
-cp api/.env.example api/.env
-# Edit api/.env — at minimum set GOOGLE_API_KEY
-
-# 2. Start all services
+cp api/.env.example api/.env       # edit at minimum: OPENAI_API_KEY, GOOGLE_API_KEY
 docker compose up --build
 ```
 
 | Service | URL |
 |---------|-----|
 | Backend API | http://localhost:8000 |
-| Swagger Docs | http://localhost:8000/docs |
-| PostgreSQL | localhost:5432 |
+| Swagger UI  | http://localhost:8000/docs |
+| Postgres    | localhost:5432 (db `oyechats`, user `oyechats`) |
 
-### Option 2: Local Development (with conda + uv)
+### Option 2 — Native (conda + uv)
 
-#### 1. Set up the conda environment
+> conda is a local-development convenience. Production uses systemd directly.
 
 ```bash
-# Create conda env (one-time)
+# 1. Python env
 conda create -n oye python=3.11 -y
 conda activate oye
-```
+pip install uv          # or: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-#### 2. Install uv
-
-```bash
-# Option A: via pip inside conda
-pip install uv
-
-# Option B: standalone installer
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-#### 3. Configure environment variables
-
-```bash
+# 2. Configure
 cp api/.env.example api/.env
-# Edit api/.env with your API keys (see Environment Variables section below)
-```
+# Edit api/.env — see "Environment variables" below
 
-#### 4. Install backend dependencies
-
-```bash
+# 3. Install backend deps
 cd api
-uv sync          # Installs all deps from uv.lock into .venv
-```
+uv sync
 
-#### 5. Set up the database
-
-If running PostgreSQL locally (not via Docker):
-
-```bash
-# Ensure pgvector extension is installed, then:
-createdb ragpro
-
-# Run migrations
+# 4. Database
+createdb oyechats         # ensure pgvector extension is installed
 uv run alembic upgrade head
-```
 
-Or use Docker for just the database:
-
-```bash
-docker compose up db -d
-uv run alembic upgrade head
-```
-
-#### 6. Start the backend
-
-```bash
-cd api
+# 5. Run dev server
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-#### 7. Start the frontend apps
-
-Each frontend runs independently. Open separate terminals:
-
-**Chat Widget:**
+### Frontends
 
 ```bash
-cd widget
-npm install
-npm run dev        # → http://localhost:5173
+# Chat widget (host-page-embeddable IIFE)
+cd widget && npm install && npm run dev      # http://localhost:5173
+
+# Admin dashboard (SPA)
+cd app && npm install && npm run dev          # http://localhost:5174
 ```
 
-**Admin Dashboard:**
+> The Vite dev server on port 5173 cannot be embedded on external sites because of the React Fast Refresh preamble. To test embedding, run `npm run build && npx vite preview --port 4173` in `widget/`.
 
-```bash
-cd admin
-npm install
-npm run dev        # → http://localhost:5174 (or next available port)
-```
+## Environment variables
 
-**3D Orb Preview (optional):**
+Create `api/.env` from `api/.env.example`. The full list with defaults lives in [`api/app/config.py`](./api/app/config.py); the most important ones:
 
-```bash
-cd aiorb-preview
-npm install
-npm run dev        # → http://localhost:5175 (or next available port)
-```
+### Required
 
-## Environment Variables
+| Variable | Description |
+|----------|-------------|
+| `DB_URL` | Postgres connection string (`postgresql://oyechats:oyechats@localhost:5432/oyechats`) |
+| `APP_ENV` | `development`, `testing`, or `production` |
+| `OPENAI_API_KEY` | OpenAI key — used for embeddings (`text-embedding-3-small`) and primary chat completions |
+| `GOOGLE_API_KEY` | Google Gemini key — fallback chat model and gate / enrichment LLM |
 
-Create `api/.env` from the example file. Variables marked required must be set for the backend to function.
+### Required in production
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DB_URL` | Yes | — | PostgreSQL connection string (`postgresql://user:pass@host:5432/ragpro`) |
-| `GOOGLE_API_KEY` | Yes | — | Google Gemini API key |
-| `GOOGLE_API_KEY` | No | — | Fallback Gemini API key (used if `GOOGLE_API_KEY` is unset) |
-| `APP_ENV` | No | `development` | `development` or `production` |
-| `CORS_ORIGINS` | No | `*` (dev) | Comma-separated allowed origins (production only) |
-| `B2_KEY_ID` | No | — | Backblaze B2 storage key ID |
-| `B2_APPLICATION_KEY` | No | — | Backblaze B2 application key |
-| `B2_BUCKET_NAME` | No | — | B2 bucket name |
-| `B2_ENDPOINT` | No | — | B2 S3-compatible endpoint URL |
-| `SENTRY_DSN` | No | — | Sentry error tracking DSN (leave blank to disable) |
-| `LANGFUSE_SECRET_KEY` | No | — | Langfuse LLM observability secret key |
-| `LANGFUSE_PUBLIC_KEY` | No | — | Langfuse public key |
-| `LANGFUSE_HOST` | No | `https://cloud.langfuse.com` | Langfuse host URL |
+| Variable | Description |
+|----------|-------------|
+| `REDIS_URL` | Redis connection string (queue · cache · rate-limit). App fails fast on startup without it in production. |
+| `CORS_ORIGINS` | Comma-separated allowlist (no wildcard with credentials) |
+| `R2_KEY_ID`, `R2_APPLICATION_KEY`, `R2_BUCKET_NAME`, `R2_ENDPOINT` | Cloudflare R2 (S3-compatible) for file storage. Legacy `B2_*` env names are accepted as fallbacks. |
+| `BREVO_API_KEY` | Transactional email |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Primary payment provider (INR) |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Fallback payment provider |
+| `BILLING_PROVIDER` | `razorpay` (default) or `stripe` |
+| `SENTRY_DSN_BACKEND` | Error tracking |
 
-## Common Commands
+### Tunable feature flags
 
-All backend commands assume you're in the `api/` directory with the conda `oye` environment active.
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `LLM_MODEL` | `openai/gpt-5.4-mini` | Primary chat model (LiteLLM identifier) |
+| `FALLBACK_MODEL` | `gemini/gemini-2.5-flash` | Auto-fallback chain |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding (1536-dim) |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Document chunking |
+| `MODERATION_ENABLED` | `true` | OpenAI moderation pre-check |
+| `CAG_LITE_THRESHOLD` | `20` | Skip retrieval for bots with ≤ N chunks |
+| `RELEVANCE_GATE_ENABLED` | `false` | CRAG-style relevance scoring |
+| `RERANK_ENABLED` | `false` | FlashRank cross-encoder rerank |
+| `WORKER_ENABLED` | `true` | If `false`, worker tasks fall back to in-process thread pool |
+| `LANGFUSE_FORCE_DISABLE` | — | Escape hatch for low-memory hosts |
+
+Full reference: [docs/configuration.md](./docs/configuration.md) and the system-design [environments page](./docs/system-design/docs/07-deployment/environments.md).
+
+## Common commands
 
 ### Backend
 
 ```bash
-# Activate environment
-conda activate oye
-
-# Install / sync dependencies
-uv sync
-
-# Add a new dependency
-uv add <package-name>
-
-# Start dev server
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Run database migrations
-uv run alembic upgrade head
-
-# Create a new migration
-uv run alembic revision --autogenerate -m "description"
-
-# Run tests
-uv run pytest
-
-# Run linter
-uv run ruff check .
-
-# Auto-fix lint issues
-uv run ruff check . --fix
+# All commands assume conda env `oye` is active and cwd is api/
+uv sync                                                 # install / sync deps
+uv run uvicorn app.main:app --reload --port 8000        # dev server
+uv run pytest                                           # tests
+uv run ruff check .                                     # lint
+uv run ruff format .                                    # format
+uv run alembic upgrade head                             # run migrations
+uv run alembic revision --autogenerate -m "<message>"   # new migration
 ```
 
-### Frontend / Admin
+### Frontends
 
 ```bash
-# Install dependencies
-npm install
-
-# Start dev server
-npm run dev
-
-# Production build
-npm run build
+cd widget && npm run lint && npm run build              # widget
+cd app && npm run lint && npm run build                 # admin
 ```
 
 ### Docker
 
 ```bash
-# Start everything
-docker compose up --build
-
-# Start only the database
-docker compose up db -d
-
-# Rebuild backend after dependency changes
-docker compose build backend
-
-# View logs
-docker compose logs -f backend
-
-# Tear down (preserves data volume)
-docker compose down
-
-# Tear down and delete database volume
-docker compose down -v
+docker compose up --build         # full stack
+docker compose up db -d            # database only
+docker compose down                 # stop (preserves volume)
+docker compose down -v              # stop + delete data volume
 ```
 
-## API Documentation
+## API surface
 
-Once the backend is running, interactive API docs are available at:
+Once the backend is running:
 
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+- **Swagger UI** — http://localhost:8000/docs
+- **ReDoc** — http://localhost:8000/redoc
+- **Health** — `/health` (DB + Redis), `/health/full` (+ worker heartbeat), `/health/live`
 
-### Key API Routes
+Routers (each is mounted at the root, no `/api` prefix):
 
-| Route Prefix | Description |
-|--------------|-------------|
-| `/api/auth/` | Registration, login, API key management |
-| `/api/superadmin/` | Super admin operations |
-| `/api/bots/` | Bot CRUD, customization |
-| `/api/chat/` | Chat sessions, messages, SDR/BANT, feedback |
-| `/api/documents/` | Document upload, ingestion, web crawling |
-| `/api/analytics/` | Dashboard statistics |
-| `/api/client/` | Client-facing settings |
+| Prefix | File | Purpose |
+|--------|------|---------|
+| `/auth/*` | `api/app/api/auth_routes.py` | Register, login, OTP password reset |
+| `/bots/*` | `api/app/api/bot_routes.py` | Bot CRUD, public widget settings |
+| `/chat/*` | `api/app/api/chat_routes.py` | SSE chat stream, history, feedback |
+| `/ws/*` | `api/app/api/ws_routes.py` | WebSocket live-chat |
+| `/documents/*` | `api/app/api/document_routes.py` | Upload, crawl, list, delete |
+| `/leads/*` | `api/app/api/lead_routes.py` | Leads, BANT signals, qualification config |
+| `/operators/*` | `api/app/api/operator_routes.py` | Operator CRUD, handoff, assignment |
+| `/canned-responses/*` | `api/app/api/canned_response_routes.py` | Snippet CRUD |
+| `/offline-messages/*` | `api/app/api/offline_message_routes.py` | Offline form submissions |
+| `/analytics/*` | `api/app/api/analytics_routes.py` | Dashboard metrics |
+| `/subscriptions/*`, `/credits/*` | `api/app/api/subscription_routes.py` | Plans, invoices, top-ups |
+| `/webhooks/*` | `api/app/api/webhook_routes.py` | Customer webhook registrations |
+| `/webhooks/billing/*` | `api/app/api/webhook_billing_routes.py` | Inbound Razorpay + Stripe webhooks |
+| `/superadmin/*` | `api/app/api/superadmin_routes.py` + `superadmin_plan_routes.py` | Super-admin only |
+| `/client/*` | `api/app/api/client_routes.py` | Client account settings |
 
-## Testing
+## Tests
 
 ```bash
 cd api
-uv run pytest                    # Run all tests
-uv run pytest tests/test_sentry.py  # Run a specific test file
-uv run pytest -v                 # Verbose output
+uv run pytest                       # all
+uv run pytest tests/test_chat_security.py
+uv run pytest -v                    # verbose
 ```
 
-## Embedding the Widget
-
-Build the widget and host the output file:
+## Embedding the widget
 
 ```bash
-cd widget
-npm run build
-# Output: dist/oyechats-widget.js
+cd widget && npm run build          # → dist/oyechats-widget.js + dist/app/*
 ```
-
-Add to any webpage:
 
 ```html
-<script src="https://your-cdn.com/oyechats-widget.js" data-bot-key="bot-YOUR_KEY_HERE"></script>
+<script src="https://cdn.oyechats.com/oyechats-widget.js" data-bot-key="bot-xxx"></script>
 ```
 
-## Project Structure
+The widget reads `data-bot-key` from its own `<script>` tag, mounts a `<div id="oyechats-widget-root">`, and lazy-loads its React bundle. See [`widget/README.md`](./widget/README.md) for the loader/chunk strategy.
+
+## Project structure
 
 ```
 platform/
-├── api/
+├── api/                              # FastAPI + ARQ + RAG
 │   ├── app/
-│   │   ├── main.py              # FastAPI app entry point
-│   │   ├── config.py            # Environment configuration
-│   │   ├── api/                 # Route handlers
-│   │   │   ├── auth_routes.py   # Login / register
-│   │   │   ├── bot_routes.py    # Bot CRUD
-│   │   │   ├── chat_routes.py   # Chat + SDR + feedback
-│   │   │   ├── document_routes.py  # Ingestion + crawling
-│   │   │   ├── analytics_routes.py # Dashboard stats
-│   │   │   ├── client_routes.py    # Client settings
-│   │   │   └── superadmin_routes.py
-│   │   ├── db/                  # Database layer
-│   │   │   ├── models.py        # SQLAlchemy ORM models
-│   │   │   ├── session.py       # Connection management
-│   │   │   └── repository.py    # Data access queries
-│   │   ├── services/            # Business logic
-│   │   │   ├── rag_service.py   # Hybrid RAG (vector + keyword)
-│   │   │   ├── llm_service.py   # Google Gemini integration
-│   │   │   ├── qualification_service.py # BANT/MEDDIC/CHAMP qualification frameworks
-│   │   │   ├── intent_service.py # Intent classification
-│   │   │   ├── crawler_service.py # Web crawling (Playwright)
-│   │   │   └── b2_service.py    # Backblaze B2 storage
-│   │   ├── ingestion/           # Document processing pipeline
-│   │   │   ├── pipeline.py      # Orchestrator
-│   │   │   ├── extraction.py    # PDF / DOCX / TXT extraction
-│   │   │   ├── chunking.py      # Recursive text splitting
-│   │   │   ├── embedder.py      # FastEmbed vector generation
-│   │   │   └── cleaner.py       # Text preprocessing
-│   │   ├── core/                # Cross-cutting concerns
-│   │   │   ├── security.py      # Password hashing (bcrypt)
-│   │   │   ├── middleware.py     # Error handling, CORS
-│   │   │   └── langfuse_client.py # LLM observability
-│   │   └── schemas/             # Pydantic request/response models
-│   ├── alembic/                 # Database migrations
-│   ├── tests/                   # Test suite
-│   ├── pyproject.toml           # Dependencies & tool config
-│   ├── uv.lock                  # Locked dependency versions
-│   ├── Dockerfile               # Container build (uv-based)
-│   └── .python-version          # Python 3.11
-├── widget/                      # Embeddable chat widget
-├── admin/                       # Admin dashboard
-├── aiorb-preview/               # 3D orb preview
-├── docker-compose.yml           # PostgreSQL + api
-└── CLAUDE.md                    # AI assistant conventions
+│   │   ├── main.py                   # entry · middleware · router wiring
+│   │   ├── config.py                 # env-driven settings
+│   │   ├── api/                      # route modules (17 routers)
+│   │   │   ├── auth.py               # auth dependencies (get_current_*)
+│   │   │   ├── auth_routes.py        # register · login · OTP reset
+│   │   │   ├── bot_routes.py         # bot CRUD
+│   │   │   ├── chat_routes.py        # SSE chat stream
+│   │   │   ├── ws_routes.py          # WebSocket live-chat
+│   │   │   ├── document_routes.py    # upload + crawl
+│   │   │   ├── lead_routes.py        # leads + BANT
+│   │   │   ├── operator_routes.py    # live-chat staff
+│   │   │   ├── subscription_routes.py # plans + credits + top-ups
+│   │   │   ├── webhook_routes.py     # customer webhook regs
+│   │   │   ├── webhook_billing_routes.py # inbound Razorpay/Stripe
+│   │   │   └── …
+│   │   ├── services/                 # business logic
+│   │   │   ├── rag_service.py        # hybrid search + context assembly
+│   │   │   ├── llm_service.py        # LiteLLM wrapper (OpenAI → Gemini)
+│   │   │   ├── live_chat_service.py  # WebSocket ConnectionManager
+│   │   │   ├── billing_service.py    # Stripe
+│   │   │   ├── razorpay_service.py   # Razorpay (primary)
+│   │   │   ├── credit_service.py     # FIFO credit ledger
+│   │   │   ├── qualification_service.py # BANT / MEDDIC
+│   │   │   ├── lead_service.py       # tier transitions + decay
+│   │   │   ├── webhook_service.py    # outbound HMAC + retry
+│   │   │   ├── email_service.py      # Brevo
+│   │   │   ├── crawler_service.py    # Playwright + crawl4ai
+│   │   │   ├── intent_service.py     # intent routing
+│   │   │   ├── relevance_gate.py     # CRAG-style gate
+│   │   │   ├── reranker.py           # FlashRank
+│   │   │   └── r2_service.py         # Cloudflare R2 (S3-compat)
+│   │   ├── ingestion/                # RAG input pipeline
+│   │   │   ├── pipeline.py           # orchestrator
+│   │   │   ├── extraction.py         # pypdf · python-docx · text
+│   │   │   ├── cleaner.py
+│   │   │   ├── chunking.py           # recursive splitter
+│   │   │   ├── embedder.py           # OpenAI text-embedding-3-small
+│   │   │   └── enrichment.py         # optional Gemini chunk-summary
+│   │   ├── worker/                   # ARQ tasks
+│   │   ├── db/                       # models · session · repository
+│   │   ├── core/                     # middleware · security · thread-pool
+│   │   └── schemas/                  # Pydantic v2
+│   ├── alembic/                      # migrations
+│   ├── tests/
+│   ├── systemd/                      # production unit files
+│   ├── nginx/                        # production nginx config
+│   └── scripts/                      # backup.sh, seed scripts
+├── widget/                           # embeddable IIFE
+├── app/                              # admin dashboard SPA
+├── docs/                             # markdown + interactive system-design site
+│   └── system-design/                # VitePress site (28+ pages, 44+ diagrams)
+├── docker-compose.yml                # local dev stack
+├── CLAUDE.md                         # AI-assistant conventions
+└── README.md                         # this file
 ```
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
 |-------|-----------|
-| LLM | Google Gemini 2.5 Flash |
-| Embeddings | FastEmbed (BAAI/bge-small-en-v1.5) |
-| Vector DB | PostgreSQL 16 + pgvector |
-| Backend | FastAPI + SQLAlchemy + Alembic |
-| Frontend | React 19 + Vite + Tailwind CSS |
-| Web Scraping | Playwright (Chromium) |
-| Cloud Storage | Backblaze B2 (S3-compatible) |
-| Observability | Langfuse (LLM traces) + Sentry (errors) |
-| Dependency Mgmt | uv (Python) + npm (JavaScript) |
-| Containerization | Docker + Docker Compose |
+| LLM (primary) | OpenAI `gpt-5.4-mini` via LiteLLM |
+| LLM (fallback) | Google `gemini-2.5-flash` |
+| Embeddings | OpenAI `text-embedding-3-small` (1536-dim) |
+| Vector DB | PostgreSQL 16 + pgvector (hybrid search with `TSVECTOR` keyword) |
+| Backend | FastAPI · SQLAlchemy 2.0 · Alembic · Pydantic v2 |
+| Background queue | ARQ on Redis |
+| Frontend | React 19 · Vite 7/8 · Tailwind v4 · React Router 7 |
+| Web crawl | Playwright (Chromium) + crawl4ai |
+| File storage | Cloudflare R2 (S3-compatible) |
+| Email | Brevo |
+| Payments | Razorpay (primary, INR) + Stripe (fallback) |
+| Real-time | WebSocket (`ws_routes.py`) |
+| Rate limiting | SlowAPI on Redis |
+| Observability | Sentry · Langfuse (currently disabled in prod due to memory) |
+| CDN | Cloudflare R2 + CDN — `cdn.oyechats.com/oyechats-widget.js` |
+| Deploy | DigitalOcean droplet · systemd · Nginx · GitHub Actions |
+| Dependency mgmt | `uv` (Python) + `npm` (JavaScript) |
+| Containerisation | Docker + Docker Compose (local dev only) |
+
+## Documentation
+
+- [`CLAUDE.md`](./CLAUDE.md) — engineering conventions and AI-assistant guide
+- [`docs/`](./docs/) — markdown reference (architecture, configuration, RAG pipeline, runbooks)
+- [`docs/system-design/`](./docs/system-design/) — VitePress site with C4 diagrams, critical-flow sequence diagrams, ER diagrams, and deployment topology. Run locally:
+  ```bash
+  cd docs/system-design && npm install && npm run dev
+  ```
+
+## Contributing
+
+The git repo is `digibranders/oye-chats-platform` on GitHub. All work happens on the `development` branch; production is `main` and updates only via PR merge. See [`CLAUDE.md`](./CLAUDE.md#git-workflow) for the full workflow and pre-commit checks (`ruff`, `pytest`, `npm run lint`, `npm run build`).

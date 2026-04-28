@@ -121,8 +121,8 @@ class TestUploadValidation:
         tc = TestClient(app)
 
         with (
-            patch("app.services.b2_service.generate_presigned_put", return_value="https://presigned-url"),
-            patch("app.services.b2_service._build_public_url", return_value="https://public-url"),
+            patch("app.services.r2_service.generate_presigned_put", return_value="https://presigned-url"),
+            patch("app.services.r2_service._build_public_url", return_value="https://public-url"),
         ):
             response = tc.post(
                 "/chat/upload-url",

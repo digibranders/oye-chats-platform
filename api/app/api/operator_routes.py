@@ -1060,7 +1060,7 @@ async def upload_chat_file_route(
         if not bot_obj or bot_obj.client_id != auth["client_id"]:
             raise HTTPException(status_code=403, detail="Access denied.")
 
-    from app.services.b2_service import _build_public_url, upload_chat_file
+    from app.services.r2_service import _build_public_url, upload_chat_file
 
     key = upload_chat_file(file_data, file.filename or "file", file.content_type)
     url = _build_public_url(key)

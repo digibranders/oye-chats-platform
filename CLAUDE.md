@@ -13,7 +13,7 @@ Run only the checks relevant to the files you changed:
 ### JavaScript / TypeScript Projects
 | Project | Directory | Lint | Typecheck | Build |
 |---------|-----------|------|-----------|-------|
-| Admin Dashboard | `admin/` | `npm run lint` | — (JS) | `npm run build` |
+| Admin Dashboard | `app/` | `npm run lint` | — (JS) | `npm run build` |
 | Chat Widget | `widget/` | `npm run lint` | — (JS) | `npm run build` |
 
 ### Python Backend
@@ -52,28 +52,28 @@ Run only the checks relevant to the files you changed:
 6. **Visitors see a chat widget** (floating button, bottom-right) → click to open → ask questions
 7. **Widget sends question** to backend API with `X-Bot-Key` header
 8. **RAG pipeline** performs hybrid search (vector + keyword) over that bot's documents
-9. **Google Gemini** generates a response using retrieved context
-10. **Response streams back** to the widget
+9. **LiteLLM** routes to primary model (OpenAI `gpt-5.4-mini`) → fallback (Google `gemini-2.5-flash`); response streams back to the widget
+10. **Background BANT/MEDDIC extraction** runs after the stream closes; tier transitions emit webhooks + emails
 
-## Architecture (4 Applications)
+## Architecture (3 apps in this repo + 1 sibling)
 
 ```
 oye-chats/
-├── platform/                     # Main platform (this repo)
-│   ├── api/                     # FastAPI REST API + RAG pipeline
-│   ├── widget/                  # Embeddable chat widget (builds to oyechats-widget.js)
-│   ├── admin/                   # React admin dashboard (bot management, analytics)
-│   └── aiorb-preview/           # 3D animated orb preview (optional)
-├── landing/                     # Next.js marketing landing page
-└── CLAUDE.md                    # Root orientation (see platform/CLAUDE.md for details)
+├── platform/                     # Main platform repo (this CLAUDE.md is here)
+│   ├── api/                     # FastAPI REST + WebSocket + ARQ worker
+│   ├── widget/                  # Embeddable chat widget IIFE (oyechats-widget.js)
+│   ├── app/                     # React admin dashboard SPA
+│   ├── docs/                    # Markdown + interactive system-design site
+│   └── docker-compose.yml       # Local dev: db + api with hot-reload
+└── oyechats-website/            # Next.js marketing site (separate project, NOT in platform repo)
 ```
 
 | App | Directory | Port | Stack | Purpose |
 |-----|-----------|------|-------|---------|
-| Backend API | `api/` | 8000 | FastAPI, SQLAlchemy, pgvector | REST API, RAG pipeline, auth, document ingestion |
-| Chat Widget | `widget/` | 5173 (dev) / 4173 (preview) | React 19, Vite, Tailwind | Embeddable chat widget for customer websites |
-| Admin Dashboard | `admin/` | 5174 | React 19, Vite, React Router | Bot management, knowledge base, analytics, settings |
-| Landing Page | `../landing/` | 3000 | Next.js 16, React 19, Tailwind v4 | Marketing site at oyechats.com |
+| Backend API | `api/` | 8000 | FastAPI · SQLAlchemy 2.0 · pgvector · LiteLLM · ARQ | REST + SSE + WebSocket; RAG; auth; ingestion; billing |
+| Chat Widget | `widget/` | 5173 (dev) / 4173 (preview) | React 19 · Vite 7 · Tailwind v4 | Embeddable chat widget for customer websites (IIFE bundle) |
+| Admin Dashboard | `app/` | 5174 | React 19 · Vite 8 · React Router 7 · Recharts | Bot mgmt, knowledge base, leads, billing, live chat operator console |
+| Landing Page | `../oyechats-website/` | 3000 | Next.js 16 · React 19 · Tailwind v4 | Marketing site at oyechats.com (separate repo) |
 
 ## Widget Embedding — How It Works
 
@@ -111,35 +111,72 @@ Then embed:
 
 ```
 Document Upload/Crawl
-  → Extraction (PDF/DOCX/TXT via extraction.py)
-  → Cleaning (cleaner.py)
-  → Chunking (recursive splitting, 2000 chars, 300 overlap — chunking.py, env-configurable)
-  → Embedding (OpenAI text-embedding-3-small, 1536-dim vectors — embedder.py)
-  → Storage (PostgreSQL pgvector — repository.py)
+  → Extraction      (PDF via pypdf · DOCX via python-docx · TXT — extraction.py)
+  → Cleaning        (cleaner.py)
+  → Chunking        (recursive splitting, default 1000 chars, 200 overlap — chunking.py, env-configurable)
+  → Embedding       (OpenAI text-embedding-3-small, 1536-dim — embedder.py)
+  → Storage         (PostgreSQL pgvector + TSVECTOR — repository.py)
 
 User Question
-  → Hybrid Search (vector similarity + full-text TSVECTOR — rag_service.py)
-  → Context Building (top chunks + chat history)
-  → LLM Generation (Google Gemini 2.5 Flash, streaming — llm_service.py)
-  → BANT Tracking (optional sales qualification — rag_service.py)
-  → Response → Widget
+  → Hybrid Search   (vector similarity + full-text TSVECTOR — rag_service.py)
+  → CAG-lite        (skip retrieval if ≤ CAG_LITE_THRESHOLD chunks — default 20)
+  → Relevance Gate  (optional, RELEVANCE_GATE_ENABLED — Gemini scores chunks)
+  → Rerank          (optional, RERANK_ENABLED — FlashRank cross-encoder)
+  → Context Build   (top chunks + chat history + system prompt)
+  → LLM Generation  (LiteLLM → OpenAI gpt-5.4-mini → Gemini 2.5 Flash fallback, streaming — llm_service.py)
+  → SSE → Widget
+  → BANT/MEDDIC extraction runs in ARQ background after stream closes (qualification_service.py)
 ```
 
-## Database Schema (Key Models)
+## Database Schema (25 tables)
 
-- **Client** — User account (email, hashed password, API key, max bots)
-- **Bot** — Chatbot instance (bot_key, name, system_prompt, settings, colors, logos)
-- **Document** — Ingested content (text chunks + Vector(384) embeddings + TSVECTOR)
-- **ChatSession** — Conversation session (visitor tracking, BANT state, geolocation)
-- **ChatMessage** — Individual messages (role, content, feedback, Langfuse trace ID)
+**Core**
+- **Client** — Account (email, hashed_password, api_key, max_bots, is_superadmin, is_bot_manager)
+- **Bot** — Chatbot instance (bot_key, system_prompt, colors, logos, business_hours, live_chat_enabled, qualification_framework)
+- **Document** — Ingested content chunks (text + `Vector(1536)` + TSVECTOR)
+- **ChatSession** — Conversation (status: bot|waiting|live|closed, BANT scores/tier, visitor_rating, assigned_operator_id)
+- **ChatMessage** — Individual messages (role: user|bot|operator|system, trace_id)
+- **LeadInfo** — Captured contact (1:1 with session)
+- **MeetingBooking** — Calendly/Zcal booking confirmations
 
-Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessage`
+**Live chat**
+- **Operator** — Team member (separate operator_api_key, role owner|admin|operator, max_concurrent_chats)
+- **Department** — Operator grouping
+- **ChatAuditLog** — Immutable transition log
+- **CannedResponse** — `/shortcut` snippets
+- **OfflineMessage** — Form submissions while offline
+
+**Qualification**
+- **BANTSignal** — Append-only audit (dimension, score_before/after, source: llm|cta_click)
+- **VisitorEvent** — Behavioral signals (page_view, return_visit, UTM)
+- **BotGrowthEvent** — Per-bot business events
+
+**Billing (Razorpay primary INR + Stripe fallback)**
+- **Plan** — Tier definition (price, credits_per_month, included seats, feature_flags, provider IDs)
+- **Subscription** — status: trialing|active|past_due|canceled|paused|expired
+- **UsageRecord** — Per-period counters
+- **Invoice** — Synced from providers
+- **PaymentMethod** — Card / UPI / bank refs
+- **CreditLedger** — Append-only event-sourced credit balance; FIFO topup expiry via self-FK `grant_id`
+- **PricingConfig** — Super-admin tunable key/value (credit costs, kill switch)
+- **ProcessedWebhook** — Idempotency for inbound provider webhooks
+
+**Outbound webhooks**
+- **Webhook** — Customer registration (URL, secret, event_filter)
+- **WebhookDelivery** — Per-attempt log (5 retries: 30s/2m/10m/1h/4h)
+
+Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessage`, `Client → Operator → Department`, `Subscription → Invoice`, every credit grant/deduction in `CreditLedger`.
 
 ## API Headers & Auth
 
-- **Admin auth**: API key in `X-API-Key` header (set during login)
-- **Widget auth**: Bot key in `X-Bot-Key` header (from embed script's `data-bot-key`)
-- Backend resolves the bot from `X-Bot-Key` via `get_current_bot()` middleware
+| Persona | Header | Source |
+|---|---|---|
+| Customer / Admin / Super-admin | `X-API-Key` | Generated at register/login, stored in `localStorage` |
+| Widget (visitor) | `X-Bot-Key` | `data-bot-key` attribute on embed script (public) |
+| Operator | `X-Operator-Key` | `operators.operator_api_key` |
+| Operator (legacy alias) | `X-Agent-Key` | Backward-compat during agent → operator rename |
+
+Resolved via FastAPI dependencies in `api/app/api/auth.py`: `get_current_bot`, `get_current_client`, `get_current_client_strict`, `get_current_operator`, `get_current_client_or_operator`. Super-admin gating uses `get_current_client_strict` plus an `is_superadmin` check inside the route.
 
 ## Key Naming Conventions
 
@@ -152,10 +189,12 @@ Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessa
 | Production CDN | `cdn.oyechats.com/oyechats-widget.js` |
 | Contact email | `developer@oyechats.com` |
 
-## Environment Setup
+## Environment Setup (local development only)
 
-- **Conda environment**: `oye` (Python 3.11)
-- **Dependency manager**: `uv` (inside conda env)
+> **Conda is a local-dev convenience, not a runtime requirement.** The production droplet runs Python 3.11 + `uv`-managed deps under systemd directly — there is no conda env on the server. The `oye` conda env below is only for keeping local Python isolated from system Python.
+
+- **Conda environment**: `oye` (Python 3.11) — local only
+- **Dependency manager**: `uv` (works the same with or without conda)
 
 ## Production Access
 
@@ -172,7 +211,7 @@ Relationships: `Client → Bot → Document`, `Bot → ChatSession → ChatMessa
 ## Development Commands
 
 ### API (Backend)
-All backend commands MUST run within the conda `oye` environment.
+All backend commands MUST run within the conda `oye` environment **on a developer machine**. (Production uses `oyechats-api.service` / `oyechats-worker.service` on the droplet — no conda there; do not try to `conda activate` over SSH.)
 
 ```bash
 conda activate oye && cd api
@@ -200,13 +239,20 @@ npx vite preview --port 4173     # Serve built widget for embedding tests
 
 ### Admin Dashboard
 ```bash
-cd admin
+cd app
 npm install && npm run dev       # Dev server (localhost:5174)
+npm run build                    # Production build (consumed by Vercel)
+```
+
+### Local dev — Docker Compose alternative
+```bash
+cd platform
+docker compose up                # brings up pgvector/postgres + api with hot-reload
 ```
 
 ### Landing Page
 ```bash
-cd ../landing
+cd ../oyechats-website
 npm install && npm run dev       # Dev server (localhost:3000)
 ```
 
@@ -214,35 +260,68 @@ npm install && npm run dev       # Dev server (localhost:3000)
 
 | Purpose | File |
 |---------|------|
-| Backend entry | `api/app/main.py` |
+| Backend entry · middleware · router wiring | `api/app/main.py` |
+| Config (env vars, LLM models, RAG flags) | `api/app/config.py` |
+| Auth dependencies | `api/app/api/auth.py` |
 | RAG pipeline | `api/app/services/rag_service.py` |
-| LLM service | `api/app/services/llm_service.py` |
-| DB models | `api/app/db/models.py` |
-| Bot routes | `api/app/api/bot_routes.py` |
-| Chat routes | `api/app/api/chat_routes.py` |
+| LLM service (LiteLLM router) | `api/app/services/llm_service.py` |
+| Live chat ConnectionManager | `api/app/services/live_chat_service.py` |
+| Billing (Stripe) | `api/app/services/billing_service.py` |
+| Razorpay (primary) | `api/app/services/razorpay_service.py` |
+| Credit ledger | `api/app/services/credit_service.py` |
+| Qualification (BANT/MEDDIC) | `api/app/services/qualification_service.py` |
+| Outbound webhooks (HMAC + retry) | `api/app/services/webhook_service.py` |
+| Email (Brevo) | `api/app/services/email_service.py` |
+| DB models — single source of truth for ER | `api/app/db/models.py` |
+| Repository (queries / CRUD) | `api/app/db/repository.py` |
 | Document ingestion | `api/app/ingestion/pipeline.py` |
 | Embedding generation | `api/app/ingestion/embedder.py` |
-| Widget entry point | `widget/src/main.jsx` |
+| Crawler (Playwright + crawl4ai) | `api/app/ingestion/crawler.py` |
+| ARQ worker tasks | `api/app/worker/tasks.py` |
+| WebSocket live chat | `api/app/api/ws_routes.py` |
+| Chat routes (SSE) | `api/app/api/chat_routes.py` |
+| Subscription / billing routes | `api/app/api/subscription_routes.py` |
+| Inbound Stripe + Razorpay webhooks | `api/app/api/webhook_billing_routes.py` |
+| Gunicorn config | `api/gunicorn.conf.py` |
+| systemd units | `api/systemd/oyechats-api.service` · `oyechats-worker.service` |
+| Nginx config | `api/nginx/oyechats-api.conf` · `oyechats-locations.conf` |
+| DB backup script | `api/scripts/backup.sh` |
+| Standard plan seed | `api/scripts/seed_standard_plus_10k.py` |
+| Widget entry point (IIFE) | `widget/src/main.jsx` |
 | Widget API client | `widget/src/services/api.js` |
 | Widget chat UI | `widget/src/components/ChatWindow.jsx` |
+| Widget live-chat UI | `widget/src/components/LiveChatMode.jsx` |
 | Vite build config | `widget/vite.config.js` |
-| Admin embed scripts | `admin/src/pages/Chatbot.jsx` |
-| Admin bot settings UI | `admin/src/pages/Interface.jsx` |
-| Landing page layout | `../landing/src/app/layout.tsx` |
+| Admin app router | `app/src/App.jsx` |
+| Admin embed UI | `app/src/pages/Chatbot.jsx` (was `Interface.jsx`, now a tab) |
+| Admin bot settings tabs | `app/src/pages/Settings.jsx` (+ BrandingTab/MessagesTab/AdvancedSettingsTab) |
+| Admin live-chat operator console | `app/src/pages/LiveChat.jsx` (rendered inside `Support.jsx`) |
+| Admin leads | `app/src/pages/Leads.jsx` |
+| Admin billing | `app/src/pages/Billing.jsx` |
+| Admin qualification config | `app/src/pages/Qualification.jsx` |
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| LLM | Google Gemini 2.5 Flash |
-| Embeddings | OpenAI text-embedding-3-small (1536-dim, API-based) |
-| Vector DB | PostgreSQL 16 + pgvector |
-| Backend | FastAPI + SQLAlchemy + Alembic |
-| Frontend | React 19 + Vite + Tailwind CSS |
-| Web Scraping | Playwright (Chromium) |
-| Cloud Storage | Backblaze B2 (S3-compatible) |
-| Observability | Langfuse (LLM traces) + Sentry (errors) |
-| Dependency Mgmt | uv (Python) + npm (JavaScript) |
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| LLM (primary) | OpenAI `gpt-5.4-mini` | Routed via LiteLLM |
+| LLM (fallback) | Google `gemini-2.5-flash` | Auto-fallback in LiteLLM |
+| Gate / enrichment LLM | `gemini-2.5-flash` | CRAG relevance gate + chunk enrichment (off by default) |
+| Embeddings | OpenAI `text-embedding-3-small` | 1536-dim, batched |
+| Vector DB | PostgreSQL 16 + pgvector | Hybrid search: `Vector(1536)` + `TSVECTOR` |
+| Backend | FastAPI · SQLAlchemy 2.0 · Alembic | Python 3.11; `uv` for deps |
+| Background queue | ARQ on Redis | `oyechats-worker.service` |
+| Frontend | React 19 · Vite 7/8 · Tailwind v4 | Widget = IIFE; Admin = SPA |
+| Web Scraping | Playwright (Chromium) + crawl4ai | URL ingestion |
+| File Storage | Cloudflare R2 (S3-compatible) | Env vars use `R2_` prefix; internal code module name is still `b2_service.py` for legacy reasons but the bucket is on Cloudflare R2 in production |
+| Email | Brevo (Sendinblue) | Transactional |
+| Payments | Razorpay (primary, INR) + Stripe (fallback) | Webhook idempotency via `processed_webhooks` |
+| Real-time | WebSocket (`ws_routes.py`) | Live chat bidirectional messaging |
+| Rate limiting | SlowAPI on Redis | Per-route + IP/key |
+| Observability | Langfuse + Sentry | Langfuse currently disabled in prod (memory pressure) |
+| CDN | Cloudflare R2 | `cdn.oyechats.com/oyechats-widget.js` |
+| CI/CD | GitHub Actions | `ci.yml`, `deploy-api.yml`, `deploy-widget.yml` |
+| Dependency Mgmt | uv (Python) + npm (JavaScript) | |
 
 ## Skill routing
 

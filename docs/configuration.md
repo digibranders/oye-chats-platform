@@ -17,24 +17,26 @@ All configuration is managed through environment variables. Each application has
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `OPENAI_API_KEY` | Yes | — | OpenAI API key (used for embeddings and optionally for LLM) |
-| `LLM_MODEL` | No | `openai/gpt-5-mini` | LiteLLM model identifier. Supports any LiteLLM-compatible model string |
+| `LLM_MODEL` | No | `openai/gpt-5.4-mini` | LiteLLM model identifier. Supports any LiteLLM-compatible model string |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model name |
 
 ### Document Ingestion
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CHUNK_SIZE` | No | `2000` | Maximum characters per document chunk |
-| `CHUNK_OVERLAP` | No | `300` | Character overlap between adjacent chunks |
+| `CHUNK_SIZE` | No | `1000` | Maximum characters per document chunk |
+| `CHUNK_OVERLAP` | No | `200` | Character overlap between adjacent chunks |
 
-### Cloud Storage (Backblaze B2)
+### Cloud Storage (Cloudflare R2)
+
+S3-compatible object storage for documents, logos, and chat file uploads. Legacy `B2_*` env-var names are still accepted as fallbacks (see `api/app/config.py`).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `R2_KEY_ID` | No | — | Backblaze B2 application key ID |
-| `R2_APPLICATION_KEY` | No | — | Backblaze B2 application key |
-| `R2_BUCKET_NAME` | No | — | B2 bucket name for document storage |
-| `R2_ENDPOINT` | No | — | B2 S3-compatible endpoint URL |
+| `R2_KEY_ID` | No | — | Cloudflare R2 access key ID |
+| `R2_APPLICATION_KEY` | No | — | Cloudflare R2 secret access key |
+| `R2_BUCKET_NAME` | No | — | R2 bucket name for document and file storage |
+| `R2_ENDPOINT` | No | — | R2 S3-compatible endpoint URL |
 
 ### Observability
 
