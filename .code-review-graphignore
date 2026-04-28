@@ -1,0 +1,13 @@
+node_modules/
+.next/
+dist/
+build/
+.code-review-graph/
+__pycache__/
+*.min.js
+*.map
+*.lock
+package-lock.json
+*.pyc
+.venv/
+.git/
