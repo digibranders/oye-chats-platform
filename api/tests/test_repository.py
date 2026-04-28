@@ -3,6 +3,10 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
+from app.core.exceptions import SessionOwnershipError
+
 
 class _ScalarExecResult:
     def __init__(self, value):
@@ -55,38 +59,90 @@ class TestEnsureChatSession:
         from app.db.repository import ensure_chat_session
 
         session = MagicMock()
-        # ensure_chat_session calls session.execute(stmt).scalar_one_or_none()
         session.execute.return_value.scalar_one_or_none.return_value = None
 
-        ensure_chat_session(session, "new-session-id", client_id=1, bot_id=5)
+        result = ensure_chat_session(session, "new-session-id", client_id=1, bot_id=5)
 
         session.add.assert_called_once()
         session.flush.assert_called_once()
+        # Returns the newly-created row
+        assert result is session.add.call_args.args[0]
 
-    def test_updates_existing_session(self):
+    def test_updates_existing_session_when_bot_matches(self):
         from app.db.repository import ensure_chat_session
 
-        existing = MagicMock()
-        existing.bot_id = 5
+        existing = SimpleNamespace(bot_id=5, location=None, device=None, last_active_at=None)
         session = MagicMock()
         session.execute.return_value.scalar_one_or_none.return_value = existing
 
-        ensure_chat_session(session, "existing-id", client_id=1, bot_id=5, location="NYC")
+        result = ensure_chat_session(session, "existing-id", client_id=1, bot_id=5, location="NYC")
 
         session.add.assert_not_called()
         assert existing.location == "NYC"
+        assert result is existing
 
-    def test_backfills_bot_id(self):
+    def test_rejects_orphan_legacy_session_with_null_bot_id(self):
+        """Pre-multi-bot rows have bot_id=None — runtime must NOT auto-claim them."""
         from app.db.repository import ensure_chat_session
 
-        existing = MagicMock()
-        existing.bot_id = None
+        existing = SimpleNamespace(bot_id=None)
         session = MagicMock()
         session.execute.return_value.scalar_one_or_none.return_value = existing
 
-        ensure_chat_session(session, "old-id", client_id=1, bot_id=7)
+        with pytest.raises(SessionOwnershipError) as excinfo:
+            ensure_chat_session(session, "legacy-id", client_id=1, bot_id=7)
 
-        assert existing.bot_id == 7
+        assert excinfo.value.session_id == "legacy-id"
+        assert excinfo.value.expected_bot_id == 7
+        assert excinfo.value.actual_bot_id is None
+        # Existing row must NOT be mutated
+        assert existing.bot_id is None
+        session.add.assert_not_called()
+
+    def test_rejects_cross_bot_access(self):
+        from app.db.repository import ensure_chat_session
+
+        existing = SimpleNamespace(bot_id=99)
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = existing
+
+        with pytest.raises(SessionOwnershipError) as excinfo:
+            ensure_chat_session(session, "other-bots-session", bot_id=7)
+
+        assert excinfo.value.expected_bot_id == 7
+        assert excinfo.value.actual_bot_id == 99
+        session.add.assert_not_called()
+
+    def test_concurrent_create_recovers_via_refetch(self):
+        """If a parallel writer wins the INSERT race, fall back to fetching their row."""
+        from sqlalchemy.exc import IntegrityError
+
+        from app.db.repository import ensure_chat_session
+
+        winner_row = SimpleNamespace(bot_id=5, location=None, device=None, last_active_at=None)
+        session = MagicMock()
+        # First lookup → no row. Second lookup (after IntegrityError) → winner.
+        session.execute.return_value.scalar_one_or_none.side_effect = [None, winner_row]
+        session.flush.side_effect = [IntegrityError("INSERT", {}, Exception("dup pkey")), None]
+
+        result = ensure_chat_session(session, "raced-id", bot_id=5)
+
+        assert result is winner_row
+        session.rollback.assert_called_once()
+
+    def test_concurrent_create_then_cross_bot_winner_raises(self):
+        """Race winner belongs to a different bot — surface the ownership error."""
+        from sqlalchemy.exc import IntegrityError
+
+        from app.db.repository import ensure_chat_session
+
+        attacker_row = SimpleNamespace(bot_id=99)
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.side_effect = [None, attacker_row]
+        session.flush.side_effect = [IntegrityError("INSERT", {}, Exception("dup pkey"))]
+
+        with pytest.raises(SessionOwnershipError):
+            ensure_chat_session(session, "raced-id", bot_id=5)
 
 
 # ── add_chat_message ─────────────────────────────────────────────────────────
@@ -98,8 +154,10 @@ class TestAddChatMessage:
 
         session = MagicMock()
         # add_chat_message calls ensure_chat_session internally, which uses
-        # session.execute(stmt).scalar_one_or_none()
-        session.execute.return_value.scalar_one_or_none.return_value = MagicMock(bot_id=1)
+        # session.execute(stmt).scalar_one_or_none(). Ownership-validated: same bot.
+        session.execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(
+            bot_id=1, location=None, device=None, last_active_at=None
+        )
 
         add_chat_message(session, "s1", client_id=1, role="user", content="Hello", bot_id=1)
 
@@ -115,9 +173,9 @@ class TestGetChatHistory:
         from app.db.repository import get_chat_history
 
         session = MagicMock()
-        # get_chat_history first checks session existence via
-        # session.execute(stmt_check).first() — returns None for missing
-        session.execute.return_value.first.return_value = None
+        # New behavior: existence check goes through _get_session_for_bot
+        # which calls session.execute(stmt).scalar_one_or_none()
+        session.execute.return_value.scalar_one_or_none.return_value = None
 
         result = get_chat_history(session, "no-session", client_id=1, bot_id=1)
         assert result == []
@@ -125,26 +183,32 @@ class TestGetChatHistory:
     def test_returns_chronological_order(self):
         from app.db.repository import get_chat_history
 
-        session = MagicMock()
-
-        # Messages returned in DESC order (newest first)
+        # First execute() → existence/ownership check → returns the session row.
+        # Second execute() → message fetch → returns rows in DESC order.
+        existing = SimpleNamespace(bot_id=1)
         msg1 = SimpleNamespace(id=1, role="user", content="First")
         msg2 = SimpleNamespace(id=2, role="bot", content="Second")
 
-        # get_chat_history makes two session.execute() calls:
-        #   1) session.execute(stmt_check).first()  → existence check
-        #   2) session.execute(stmt).scalars().all() → fetch messages
         check_result = MagicMock()
-        check_result.first.return_value = ("s1",)  # session exists
-
+        check_result.scalar_one_or_none.return_value = existing
         messages_result = MagicMock()
         messages_result.scalars.return_value.all.return_value = [msg2, msg1]
 
+        session = MagicMock()
         session.execute.side_effect = [check_result, messages_result]
 
         result = get_chat_history(session, "s1", client_id=1, bot_id=1)
-        # Should be reversed to chronological
+        # Reversed back to chronological order
         assert result == [msg1, msg2]
+
+    def test_raises_on_cross_bot_access(self):
+        from app.db.repository import get_chat_history
+
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(bot_id=99)
+
+        with pytest.raises(SessionOwnershipError):
+            get_chat_history(session, "s1", bot_id=5)
 
 
 # ── update_session_bant ──────────────────────────────────────────────────────
@@ -154,9 +218,8 @@ class TestUpdateSessionBant:
     def test_updates_bant_fields(self):
         from app.db.repository import update_session_bant
 
-        cs = MagicMock()
+        cs = SimpleNamespace(bot_id=1, bant_need=None, bant_need_score=None)
         session = MagicMock()
-        # update_session_bant calls session.execute(stmt).scalar_one_or_none()
         session.execute.return_value.scalar_one_or_none.return_value = cs
 
         result = update_session_bant(
@@ -168,6 +231,8 @@ class TestUpdateSessionBant:
         )
 
         assert result is True
+        assert cs.bant_need == "Scale ops"
+        assert cs.bant_need_score == 15
 
     def test_returns_false_for_missing_session(self):
         from app.db.repository import update_session_bant
@@ -182,8 +247,18 @@ class TestUpdateSessionBant:
         from app.db.repository import update_session_bant
 
         session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = None
         result = update_session_bant(session, "s1", bant_data=None)
         assert result is False
+
+    def test_raises_on_cross_bot_access(self):
+        from app.db.repository import update_session_bant
+
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(bot_id=99)
+
+        with pytest.raises(SessionOwnershipError):
+            update_session_bant(session, "s1", bant_data={"bant_need": "X"}, bot_id=5)
 
 
 # ── create_or_update_lead_info ───────────────────────────────────────────────

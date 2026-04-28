@@ -52,6 +52,26 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+async def session_ownership_exception_handler(request: Request, exc):
+    """Handle ``SessionOwnershipError`` by returning a 404 ``session_not_found``.
+
+    Logged at INFO (not ERROR): this is an expected outcome for stale legacy
+    session_ids, not a bug. The widget retries with a fresh session_id.
+    """
+    logger.info(
+        "Session ownership rejected on %s %s: session_id=%s expected_bot=%s actual_bot=%s",
+        request.method,
+        request.url.path,
+        getattr(exc, "session_id", None),
+        getattr(exc, "expected_bot_id", None),
+        getattr(exc, "actual_bot_id", None),
+    )
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Session not found", "code": "session_not_found"},
+    )
+
+
 async def generic_exception_handler(request: Request, exc: Exception):
     """Catch-all handler for unhandled exceptions. Tags Sentry events with request context."""
     logger.error(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}", exc_info=True)

@@ -35,10 +35,12 @@ from app.api.webhook_billing_routes import router as webhook_billing_router
 from app.api.webhook_routes import router as webhook_router
 from app.api.ws_routes import router as ws_router
 from app.config import APP_ENV, DOCUMENTS_DIR, SENTRY_DSN, SENTRY_ENABLED
+from app.core.exceptions import SessionOwnershipError
 from app.core.middleware import (
     TimeoutMiddleware,
     generic_exception_handler,
     get_cors_origins,
+    session_ownership_exception_handler,
     validation_exception_handler,
 )
 from app.core.rate_limit import limiter
@@ -114,6 +116,7 @@ app.include_router(webhook_billing_router)
 
 # --- Exception Handlers ---
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(SessionOwnershipError, session_ownership_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # --- Database Initialization ---
