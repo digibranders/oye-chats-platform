@@ -1457,7 +1457,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setShowLeaveMessageCard(false)}
+                                onClick={() => {
+                                    setShowLeaveMessageCard(false);
+                                    // Allow the card to re-trigger if the visitor
+                                    // asks again — without this, the per-session
+                                    // ref locks the card out for the rest of the chat.
+                                    leaveMessageCardShownRef.current = false;
+                                }}
                                 className="px-4 py-2 rounded-xl border border-gray-200 text-[13px] font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                             >
                                 Not now

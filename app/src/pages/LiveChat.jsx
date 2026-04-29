@@ -125,6 +125,35 @@ export default function LiveChat({ embedded = false }) {
     const queueSnapshotRef = useRef(new Set());
     const chatNamesRef = useRef({});
     const typingTimeoutRef = useRef(null);
+    // session_id → highest user message dbId acknowledged via read_receipt.
+    // Prevents duplicate WS sends when messages re-render or the tab toggles.
+    const lastSentReadIdRef = useRef({});
+
+    const emitReadReceiptForSelected = useCallback(() => {
+        const sessionId = selectedChatRef.current;
+        if (!sessionId) return;
+        const socket = wsRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+        let maxDbId = 0;
+        for (const m of messages) {
+            if (m.role === 'user' && typeof m.dbId === 'number' && m.dbId > maxDbId) {
+                maxDbId = m.dbId;
+            }
+        }
+        if (!maxDbId) return;
+        if ((lastSentReadIdRef.current[sessionId] || 0) >= maxDbId) return;
+
+        try {
+            socket.send(JSON.stringify({
+                type: 'read_receipt',
+                session_id: sessionId,
+                last_read_id: maxDbId,
+            }));
+            lastSentReadIdRef.current[sessionId] = maxDbId;
+        } catch { /* socket flaked — visibility/select effect will retry */ }
+    }, [messages]);
 
     // Keep selectedChatRef in sync and react to chat selection
     useEffect(() => {
@@ -142,6 +171,20 @@ export default function LiveChat({ embedded = false }) {
             setSessionInfo(null);
         }
     }, [selectedChat]);
+
+    // Send read_receipt to the visitor whenever the operator opens a chat
+    // or new user messages render while the chat is the selected one.
+    useEffect(() => {
+        emitReadReceiptForSelected();
+    }, [emitReadReceiptForSelected, selectedChat]);
+
+    // Re-emit when the operator's tab regains focus — covers the case where
+    // user messages arrived while the tab was hidden.
+    useEffect(() => {
+        const handler = () => emitReadReceiptForSelected();
+        document.addEventListener('visibilitychange', handler);
+        return () => document.removeEventListener('visibilitychange', handler);
+    }, [emitReadReceiptForSelected]);
 
     // Keep chatNamesRef in sync to avoid stale closures in WS handler
     useEffect(() => { chatNamesRef.current = chatNames; }, [chatNames]);
