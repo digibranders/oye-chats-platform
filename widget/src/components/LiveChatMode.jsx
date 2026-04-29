@@ -159,54 +159,57 @@ const LiveChatMode = ({
                             setOperatorName(data.operator_name || 'Support');
                             setOperatorDepartment?.(data.operator_department || null);
                             onConnectionStatusChange?.('connected');
-                            // On reconnect/refresh, restore chat history from backend
-                            if (!historyLoadedRef.current) {
-                                historyLoadedRef.current = true;
-                                getChatHistory(sessionId)
-                                    .then(history => {
-                                        if (history && history.length > 0) {
-                                            // Match file messages stored as markdown: [File: name](url)
-                                            const fileRe = /^\[File:\s*(.+?)\]\((.+?)\)$/;
-                                            const restored = history
-                                                .filter(m => m.role === 'user' || m.role === 'operator')
-                                                .map((m) => {
-                                                    const fileMatch = m.content?.match(fileRe);
-                                                    const base = {
-                                                        id: m.id ? `srv-${m.id}` : `restored-${Date.now()}-${Math.random()}`,
-                                                        sender: m.role === 'operator' ? 'operator' : 'user',
-                                                        operatorName: m.role === 'operator' ? (data.operator_name || 'Support') : undefined,
-                                                        timestamp: m.timestamp || m.created_at,
-                                                    };
-                                                    if (fileMatch) {
-                                                        const filename = fileMatch[1];
-                                                        const url = fileMatch[2];
-                                                        const ext = filename.split('.').pop()?.toLowerCase() || '';
-                                                        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
-                                                        return {
-                                                            ...base,
-                                                            file_url: url,
-                                                            filename,
-                                                            content_type: imageExts.includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : (ext === 'pdf' ? 'application/pdf' : 'text/plain'),
-                                                        };
-                                                    }
-                                                    return { ...base, text: m.content };
-                                                });
-                                            onLiveMessagesChange?.(prev => {
-                                                if (!Array.isArray(prev) || prev.length === 0) return restored;
-                                                // Deduplicate: match by text+timestamp to catch live messages
-                                                // that were already received via WS before history loaded
-                                                const existingKeys = new Set(prev.map(m =>
-                                                    `${m.text || ''}|${m.sender || ''}|${(m.timestamp || '').slice(0, 19)}`
-                                                ));
-                                                const newMsgs = restored.filter(m =>
-                                                    !existingKeys.has(`${m.text || ''}|${m.sender || ''}|${(m.timestamp || '').slice(0, 19)}`)
-                                                );
-                                                return newMsgs.length > 0 ? [...newMsgs, ...prev] : prev;
-                                            });
-                                        }
-                                    })
-                                    .catch(() => { /* non-fatal */ });
-                            }
+                            // Always re-fetch history on (re)connect — covers the
+                            // window where the visitor's WS dropped and operator
+                            // messages were sent into a dead socket. Without this,
+                            // those messages live in the DB but never reach the UI.
+                            historyLoadedRef.current = true;
+                            getChatHistory(sessionId)
+                                .then(history => {
+                                    if (!history || history.length === 0) return;
+                                    // Match file messages stored as markdown: [File: name](url)
+                                    const fileRe = /^\[File:\s*(.+?)\]\((.+?)\)$/;
+                                    const restored = history
+                                        .filter(m => m.role === 'user' || m.role === 'operator')
+                                        .map((m) => {
+                                            const fileMatch = m.content?.match(fileRe);
+                                            const base = {
+                                                id: m.id ? `srv-${m.id}` : `restored-${Date.now()}-${Math.random()}`,
+                                                sender: m.role === 'operator' ? 'operator' : 'user',
+                                                operatorName: m.role === 'operator' ? (data.operator_name || 'Support') : undefined,
+                                                timestamp: m.timestamp || m.created_at,
+                                            };
+                                            if (fileMatch) {
+                                                const filename = fileMatch[1];
+                                                const url = fileMatch[2];
+                                                const ext = filename.split('.').pop()?.toLowerCase() || '';
+                                                const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+                                                return {
+                                                    ...base,
+                                                    file_url: url,
+                                                    filename,
+                                                    content_type: imageExts.includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : (ext === 'pdf' ? 'application/pdf' : 'text/plain'),
+                                                };
+                                            }
+                                            return { ...base, text: m.content };
+                                        });
+                                    onLiveMessagesChange?.(prev => {
+                                        if (!Array.isArray(prev) || prev.length === 0) return restored;
+                                        // Append-by-timestamp: pick up messages that
+                                        // arrived in the DB after the last one we
+                                        // already have in memory. Preserves local
+                                        // state (failed/sent flags) on existing
+                                        // entries instead of clobbering with a full
+                                        // replace.
+                                        const latestTs = prev.reduce((max, m) => {
+                                            const ts = m.timestamp || '';
+                                            return ts > max ? ts : max;
+                                        }, '');
+                                        const toAppend = restored.filter(m => (m.timestamp || '') > latestTs);
+                                        return toAppend.length > 0 ? [...prev, ...toAppend] : prev;
+                                    });
+                                })
+                                .catch(() => { /* non-fatal */ });
                         } else if (data.status === 'closed') {
                             intentionalClose.current = true;
                             socket.close();
