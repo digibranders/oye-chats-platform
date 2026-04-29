@@ -3,7 +3,27 @@ import logging
 
 import litellm
 
-from app.config import FALLBACK_MODEL, FALLBACK_MODEL_KEY_SET, LLM_FALLBACKS, LLM_MODEL, PRIMARY_MODEL_KEY_SET
+from app.config import FALLBACK_MODEL_KEY_SET, PRIMARY_MODEL_KEY_SET
+from app.services import runtime_config
+
+
+def _primary_model() -> str:
+    """Resolve the primary LLM model at call time so super-admins can swap it
+    via /superadmin/model-config without a restart."""
+    return runtime_config.get_primary_model()
+
+
+def _fallback_model() -> str:
+    return runtime_config.get_fallback_model()
+
+
+def _llm_fallbacks() -> list[dict[str, list[str]]] | None:
+    """LiteLLM fallback chain for the current primary→fallback pair, or None
+    when keys aren't configured for both models."""
+    if PRIMARY_MODEL_KEY_SET and FALLBACK_MODEL_KEY_SET:
+        return [{_primary_model(): [_fallback_model()]}]
+    return None
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,21 +69,21 @@ def generate_response(
 ) -> str:
     """Generate a non-streaming response via LiteLLM."""
     if not PRIMARY_MODEL_KEY_SET:
-        logger.error(f"Cannot generate response: API key for primary model '{LLM_MODEL}' is not set.")
+        logger.error(f"Cannot generate response: API key for primary model '{_primary_model()}' is not set.")
         return "Configuration error: AI service is not configured. Please contact the administrator."
     try:
-        logger.info(f"Generating LLM response | model={LLM_MODEL} | prompt_length={len(prompt)}")
+        logger.info(f"Generating LLM response | model={_primary_model()} | prompt_length={len(prompt)}")
         kwargs: dict = {
-            "model": LLM_MODEL,
+            "model": _primary_model(),
             "messages": [{"role": "user", "content": prompt}],
             "metadata": metadata,
-            "fallbacks": LLM_FALLBACKS,
+            "fallbacks": _llm_fallbacks(),
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         if temperature is not None:
             kwargs["temperature"] = temperature
-        _apply_model_family_kwargs(kwargs, LLM_MODEL)
+        _apply_model_family_kwargs(kwargs, _primary_model())
         response = litellm.completion(**kwargs)
         content = response.choices[0].message.content
         if content:
@@ -101,13 +121,13 @@ Website content:
 Return ONLY the tone description, nothing else."""
 
         kwargs: dict = {
-            "model": LLM_MODEL,
+            "model": _primary_model(),
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 100,
             "metadata": metadata or {"generation_name": "brand-tone-extraction"},
-            "fallbacks": LLM_FALLBACKS,
+            "fallbacks": _llm_fallbacks(),
         }
-        _apply_model_family_kwargs(kwargs, LLM_MODEL)
+        _apply_model_family_kwargs(kwargs, _primary_model())
         response = litellm.completion(**kwargs)
         tone = (response.choices[0].message.content or "").strip()
         if tone and len(tone) < 500:
@@ -145,13 +165,13 @@ Website content:
 {content_sample[:4000]}"""
 
         kwargs: dict = {
-            "model": LLM_MODEL,
+            "model": _primary_model(),
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 250,
             "metadata": metadata or {"generation_name": "company-context-extraction"},
-            "fallbacks": LLM_FALLBACKS,
+            "fallbacks": _llm_fallbacks(),
         }
-        _apply_model_family_kwargs(kwargs, LLM_MODEL)
+        _apply_model_family_kwargs(kwargs, _primary_model())
         response = litellm.completion(**kwargs)
         text = (response.choices[0].message.content or "").strip()
         if not text:
@@ -267,13 +287,13 @@ async def generate_response_stream(
     blocking the event loop forever.
     """
     if not PRIMARY_MODEL_KEY_SET:
-        logger.error(f"Cannot stream response: API key for primary model '{LLM_MODEL}' is not set.")
+        logger.error(f"Cannot stream response: API key for primary model '{_primary_model()}' is not set.")
         yield "Configuration error: AI service is not configured. Please contact the administrator."
         return
 
-    logger.info(f"Starting LLM stream | model={LLM_MODEL} | prompt_length={len(prompt)}")
+    logger.info(f"Starting LLM stream | model={_primary_model()} | prompt_length={len(prompt)}")
     try:
-        async for chunk in _stream_from_model(LLM_MODEL, prompt, max_tokens, metadata, temperature):
+        async for chunk in _stream_from_model(_primary_model(), prompt, max_tokens, metadata, temperature):
             yield chunk
         return
     except TimeoutError as e:
@@ -283,18 +303,18 @@ async def generate_response_stream(
     except Exception as primary_err:
         logger.warning(
             f"Primary LLM stream failed ({type(primary_err).__name__}): {primary_err} "
-            f"— attempting fallback to {FALLBACK_MODEL}"
+            f"— attempting fallback to {_fallback_model()}"
         )
 
     # Fallback to secondary model
     if not FALLBACK_MODEL_KEY_SET:
-        logger.error(f"Fallback model unavailable: API key for '{FALLBACK_MODEL}' is not set.")
+        logger.error(f"Fallback model unavailable: API key for '{_fallback_model()}' is not set.")
         yield " [I encountered an error. Please try again.]"
         return
 
     try:
-        logger.info(f"LLM stream fallback | model={FALLBACK_MODEL}")
-        async for chunk in _stream_from_model(FALLBACK_MODEL, prompt, max_tokens, metadata, temperature):
+        logger.info(f"LLM stream fallback | model={_fallback_model()}")
+        async for chunk in _stream_from_model(_fallback_model(), prompt, max_tokens, metadata, temperature):
             yield chunk
     except TimeoutError as e:
         logger.error(f"Fallback stream timed out: {e}")

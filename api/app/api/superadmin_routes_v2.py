@@ -762,6 +762,121 @@ def llm_usage(
         ]
 
 
+# ── Model & RAG runtime config ──────────────────────────────────────────────
+
+
+_KNOWN_MODELS = [
+    # OpenAI
+    {"id": "openai/gpt-5-mini", "label": "GPT-5 Mini", "provider": "OpenAI", "tier": "fast"},
+    {"id": "openai/gpt-5", "label": "GPT-5", "provider": "OpenAI", "tier": "frontier"},
+    {"id": "openai/gpt-5-nano", "label": "GPT-5 Nano", "provider": "OpenAI", "tier": "cheap"},
+    {"id": "openai/gpt-5.4-mini", "label": "GPT-5.4 Mini", "provider": "OpenAI", "tier": "fast"},
+    {"id": "openai/gpt-4o-mini", "label": "GPT-4o Mini", "provider": "OpenAI", "tier": "fast"},
+    {"id": "openai/gpt-4o", "label": "GPT-4o", "provider": "OpenAI", "tier": "frontier"},
+    # Google
+    {"id": "gemini/gemini-2.5-flash", "label": "Gemini 2.5 Flash", "provider": "Google", "tier": "fast"},
+    {"id": "gemini/gemini-2.5-pro", "label": "Gemini 2.5 Pro", "provider": "Google", "tier": "frontier"},
+    {"id": "gemini/gemini-1.5-flash", "label": "Gemini 1.5 Flash", "provider": "Google", "tier": "cheap"},
+    # Anthropic (LiteLLM-compatible)
+    {"id": "anthropic/claude-sonnet-4.5", "label": "Claude Sonnet 4.5", "provider": "Anthropic", "tier": "frontier"},
+    {"id": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5", "provider": "Anthropic", "tier": "fast"},
+]
+
+
+@router.get("/model-config")
+def get_model_config(_admin: Client = Depends(get_superadmin)):
+    """Return the active model + RAG knobs and the catalog of selectable models."""
+    from app.services import runtime_config
+
+    return {
+        "primary_model": runtime_config.get_primary_model(),
+        "fallback_model": runtime_config.get_fallback_model(),
+        "gate_model": runtime_config.get_gate_model(),
+        "rag": {
+            "chunk_size": runtime_config.get_chunk_size(),
+            "chunk_overlap": runtime_config.get_chunk_overlap(),
+            "rerank_top_n": runtime_config.get_rerank_top_n(),
+            "relevance_threshold": runtime_config.get_relevance_threshold(),
+        },
+        "known_models": _KNOWN_MODELS,
+    }
+
+
+class ModelConfigPatch(BaseModel):
+    primary_model: str | None = None
+    fallback_model: str | None = None
+    gate_model: str | None = None
+    chunk_size: int | None = Field(default=None, ge=200, le=8000)
+    chunk_overlap: int | None = Field(default=None, ge=0, le=2000)
+    rerank_top_n: int | None = Field(default=None, ge=1, le=20)
+    relevance_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+@router.put("/model-config")
+def patch_model_config(
+    body: ModelConfigPatch,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Update LLM models or RAG knobs at runtime.
+
+    Each set of changes lands in ``pricing_config`` (the existing super-admin
+    key/value store) and the runtime_config in-memory cache is invalidated so
+    new chat requests see the change within a few seconds.
+    """
+    _require_write(admin)
+    from app.services import runtime_config
+
+    # Map field name -> pricing_config key
+    field_to_key = {
+        "primary_model": "model.primary",
+        "fallback_model": "model.fallback",
+        "gate_model": "model.gate",
+        "chunk_size": "rag.chunk_size",
+        "chunk_overlap": "rag.chunk_overlap",
+        "rerank_top_n": "rag.rerank_top_n",
+        "relevance_threshold": "rag.relevance_threshold",
+    }
+
+    changed: dict[str, Any] = {}
+    with get_session() as session:
+        for field, key in field_to_key.items():
+            new_value = getattr(body, field)
+            if new_value is None:
+                continue
+            existing = session.get(PricingConfig, key)
+            before = existing.value if existing else None
+            if existing:
+                existing.value = new_value
+                existing.updated_by = admin.id
+            else:
+                session.add(PricingConfig(key=key, value=new_value, updated_by=admin.id))
+            changed[key] = {"before": before, "after": new_value}
+
+        if changed:
+            record_audit(
+                session,
+                actor=admin,
+                action="model_config.update",
+                target_type="model_config",
+                target_id="*",
+                before={k: v["before"] for k, v in changed.items()},
+                after={k: v["after"] for k, v in changed.items()},
+                request=request,
+            )
+        session.commit()
+
+    runtime_config.invalidate_runtime_config_cache()
+
+    return {
+        "ok": True,
+        "changed": list(changed.keys()),
+        "primary_model": runtime_config.get_primary_model(),
+        "fallback_model": runtime_config.get_fallback_model(),
+        "gate_model": runtime_config.get_gate_model(),
+    }
+
+
 # ── Email templates (Brevo) ─────────────────────────────────────────────────
 
 
