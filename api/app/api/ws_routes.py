@@ -277,7 +277,7 @@ def _resolve_operator_from_key(key: str, key_type: str) -> tuple[int, str, int, 
     with get_session() as session:
         if key_type == "operator_key":
             operator = session.execute(select(Operator).where(Operator.operator_api_key == key)).scalar_one_or_none()
-            if not operator:
+            if not operator or not operator.is_active:
                 return None
             operator.is_online = True
             session.commit()
