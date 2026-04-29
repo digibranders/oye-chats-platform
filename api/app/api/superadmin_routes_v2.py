@@ -979,6 +979,36 @@ def email_templates(_admin: Client = Depends(get_superadmin)):
     }
 
 
+# ── Server logs (journalctl) ────────────────────────────────────────────────
+
+
+@router.get("/logs")
+def server_logs(
+    service: str = Query(default="oyechats-api"),
+    lines: int = Query(default=500, ge=10, le=5_000),
+    level: str | None = Query(default=None),
+    grep: str | None = Query(default=None),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Tail journalctl for the API or worker systemd unit.
+
+    Saves the operator from SSH-ing in for routine log checks. The service
+    name is allowlisted inside ``logs_service.fetch_logs`` so this endpoint
+    cannot be coerced into reading arbitrary units.
+    """
+    from app.services.logs_service import ALLOWED_SERVICES, fetch_logs
+
+    try:
+        return fetch_logs(service=service, lines=lines, level=level, grep=grep)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+    finally:
+        _ = ALLOWED_SERVICES  # imported for side-effect only; keep ruff quiet
+
+
 # ── AI observability (Langfuse) ─────────────────────────────────────────────
 
 
