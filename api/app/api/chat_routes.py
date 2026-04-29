@@ -224,6 +224,38 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
     and generates a standalone answer.
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
+    # ── Credit enforcement: must match /chat/stream ──
+    from app.services import credit_service
+
+    with get_session() as db:
+        cost = credit_service.get_credit_cost(db, "ai_chat")
+        try:
+            credit_service.check_and_deduct(
+                db,
+                bot.client_id,
+                cost,
+                reason="ai_chat",
+                reference_id=bot.id,
+            )
+            db.commit()
+        except credit_service.InsufficientCredits as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_credits",
+                    "required": exc.required,
+                    "available": exc.available,
+                    "message": "You're out of credits. Upgrade your plan or buy a top-up to keep chatting.",
+                },
+            ) from exc
+        except credit_service.KillSwitchActive as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "billing_paused", "message": "Billing is temporarily paused for maintenance."},
+            ) from exc
+
     try:
         ip_address, formatted_device = _parse_request_context(request)
         location = f"IP: {ip_address}"
