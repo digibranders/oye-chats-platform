@@ -61,7 +61,12 @@ class TestChatEndpoint:
         app = _build_app(bot_override=bot)
         tc = TestClient(app)
 
+        mock_session = MagicMock()
+
         with (
+            patch("app.api.chat_routes.get_session") as mock_gs,
+            patch("app.services.credit_service.get_credit_cost", return_value=1),
+            patch("app.services.credit_service.check_and_deduct"),
             patch("app.api.chat_routes._resolve_session_id", return_value="session-1"),
             patch("app.api.chat_routes._parse_request_context", return_value=("1.2.3.4", "Desktop Chrome")),
             patch("app.api.chat_routes.submit_background"),
@@ -75,6 +80,7 @@ class TestChatEndpoint:
                 },
             ),
         ):
+            mock_gs.return_value = _session_ctx(mock_session)
             response = tc.post(
                 "/chat",
                 json={"question": "Hello"},
