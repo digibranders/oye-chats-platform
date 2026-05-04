@@ -1,8 +1,10 @@
 import asyncio
 import contextlib
+import ctypes
 import json
 import logging
 import os
+import signal
 import sys
 import tempfile
 
@@ -10,6 +12,65 @@ logger = logging.getLogger(__name__)
 
 # Maximum wall-clock time for the crawler subprocess (10 minutes)
 _SUBPROCESS_TIMEOUT = int(os.getenv("CRAWL_SUBPROCESS_TIMEOUT", "600"))
+
+# Time to wait between SIGTERM and SIGKILL when tearing down a stuck crawler.
+_SUBPROCESS_KILL_GRACE = 5
+
+# Linux prctl(2) constants. PR_SET_PDEATHSIG asks the kernel to deliver `sig`
+# to this process when its parent dies, so an orphaned crawler subprocess gets
+# torn down automatically if the gunicorn worker is killed mid-crawl.
+_PR_SET_PDEATHSIG = 1
+
+
+def _set_pdeathsig() -> None:
+    """preexec_fn that wires the crawler subprocess to die with its parent.
+
+    Runs in the forked child between fork() and execve(). On Linux, asks the
+    kernel for SIGTERM when the parent (gunicorn worker) exits. No-op on any
+    other platform; failure to load libc is tolerated so the crawl still runs.
+    """
+    if sys.platform != "linux":
+        return
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+    except OSError:
+        pass
+
+
+async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Kill the crawler subprocess and any descendants (Playwright + Chromium).
+
+    Sends SIGTERM to the whole process group, waits up to
+    ``_SUBPROCESS_KILL_GRACE`` seconds for clean exit, then SIGKILLs the group.
+    Tolerates already-dead processes. Never raises.
+    """
+    if process.returncode is not None:
+        return
+
+    pid = process.pid
+    pgid: int | None = None
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        pgid = os.getpgid(pid)
+
+    def _signal_group(sig: int) -> None:
+        if pgid is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                os.killpg(pgid, sig)
+        else:
+            with contextlib.suppress(ProcessLookupError):
+                process.send_signal(sig)
+
+    _signal_group(signal.SIGTERM)
+    try:
+        await asyncio.wait_for(process.wait(), timeout=_SUBPROCESS_KILL_GRACE)
+        return
+    except TimeoutError:
+        pass
+
+    _signal_group(signal.SIGKILL)
+    with contextlib.suppress(Exception):
+        await process.wait()
 
 
 class CrawlerError(RuntimeError):
@@ -119,7 +180,13 @@ async def crawl_website(
     if client_id is not None:
         _progress_files[client_id] = progress_path
 
+    process: asyncio.subprocess.Process | None = None
     try:
+        # ``start_new_session`` puts the subprocess (and its Playwright /
+        # Chromium descendants) in their own process group, so we can take
+        # the entire tree down with one os.killpg() call. ``preexec_fn``
+        # runs PR_SET_PDEATHSIG so the kernel kills the crawler if the
+        # gunicorn worker dies before we get a chance to clean up.
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             script_path,
@@ -129,6 +196,8 @@ async def crawl_website(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            start_new_session=True,
+            preexec_fn=_set_pdeathsig,
         )
 
         try:
@@ -137,8 +206,7 @@ async def crawl_website(
                 timeout=_SUBPROCESS_TIMEOUT,
             )
         except TimeoutError as e:
-            process.kill()
-            await process.wait()
+            await _terminate_process_tree(process)
             msg = f"Crawler subprocess timed out after {_SUBPROCESS_TIMEOUT}s for {url}"
             logger.error(msg)
             raise CrawlerError(msg) from e
@@ -177,11 +245,21 @@ async def crawl_website(
 
     except CrawlerError:
         raise
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        # Propagate the cancellation, but only after taking the subprocess
+        # tree down so we never leak Playwright/Chromium when the parent
+        # request is cancelled or the worker is shutting down.
+        if process is not None:
+            await _terminate_process_tree(process)
+        raise
     except Exception as e:
         logger.error("Subprocess exception: %s", e)
         raise CrawlerError(str(e)) from e
     finally:
-        # Always clean up: remove progress file and deregister client
+        # Always clean up: kill the subprocess tree if it's somehow still
+        # alive, remove the progress file, and deregister the client.
+        if process is not None:
+            await _terminate_process_tree(process)
         if client_id is not None:
             _progress_files.pop(client_id, None)
         with contextlib.suppress(OSError):
