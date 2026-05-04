@@ -22,7 +22,18 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
         detail = msg.replace('Value error, ', '');
     }
 
-    const message = (typeof detail === 'string' ? detail : null) || error.message || fallbackMessage;
+    // Structured FastAPI errors (e.g. 402 insufficient_credits) put a
+    // human-readable string under detail.message — surface that instead of
+    // letting axios's "Request failed with status code 402" leak through.
+    let message;
+    if (typeof detail === 'string') {
+        message = detail;
+    } else if (detail && typeof detail === 'object' && typeof detail.message === 'string') {
+        message = detail.message;
+    } else {
+        message = error.message || fallbackMessage;
+    }
+
     const apiError = new Error(message);
     apiError.status = status;
     apiError.data = data;

@@ -178,7 +178,15 @@ def get_or_create_usage_record(session: Session, client_id: int) -> UsageRecord:
 
 
 def assign_default_plan_to_client(session: Session, client_id: int) -> Subscription:
-    """Create a free-tier subscription for a new client signup."""
+    """Create a free-tier subscription for a new client signup AND grant the
+    first period's credits.
+
+    The credit grant is part of the contract here — without it, a brand-new
+    free-tier signup has a valid subscription but a zero balance, which
+    blocks every credit-gated action (crawl, chat, document upload) until
+    the next monthly cron tick. Paid plans get their grant from the payment
+    webhook; free plans need it inline because no payment ever arrives.
+    """
     default_plan = get_default_plan(session) or get_plan_by_slug(session, "free")
     if not default_plan:
         raise RuntimeError("No default plan found. Run the seed migration.")
@@ -204,8 +212,23 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
         current_period_end=period_end,
         payment_provider="manual",
     )
+    # Bind the relationship so grant_for_subscription can read `sub.plan`
+    # without re-querying after flush.
+    sub.plan = default_plan
     session.add(sub)
     session.flush()
 
-    logger.info(f"Assigned default plan '{default_plan.slug}' to client {client_id}")
+    # Grant the initial period's credits. ``grant_for_subscription`` is a
+    # no-op for plans with zero credits_per_month, so this is safe even if
+    # someone later creates a "free" plan with no allowance.
+    from app.services import credit_service
+
+    credit_service.grant_for_subscription(session, sub)
+
+    logger.info(
+        "Assigned default plan '%s' to client %s and granted %d credits",
+        default_plan.slug,
+        client_id,
+        int(default_plan.credits_per_month or 0),
+    )
     return sub
