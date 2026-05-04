@@ -28,14 +28,23 @@ bind = os.getenv("GUNICORN_BIND", "127.0.0.1:8000")
 # Workers stuck beyond 120s are killed (covers the 60s app timeout in
 # middleware.py plus margin for streaming/WebSocket handshake).
 timeout = 120
-graceful_timeout = 30
+# Give a recycling worker enough headroom to finish any in-flight crawl
+# (CRAWL_SUBPROCESS_TIMEOUT defaults to 600s) before gunicorn SIGKILLs it.
+# Gunicorn spawns the replacement worker immediately, so new traffic is not
+# blocked by the draining worker.
+graceful_timeout = int(os.getenv("GUNICORN_GRACEFUL_TIMEOUT", "650"))
 keepalive = 5
 
 # ── Worker recycling ────────────────────────────────────────────────────────
-# Recycle workers after ~1000 requests to prevent memory leaks (Playwright
-# browser instances, large document ingestion buffers).
-max_requests = 1000
-max_requests_jitter = 100
+# Workers recycle every N requests to defend against any residual memory
+# leaks. Raised from the original 1000 because the previous limit consistently
+# fired in the middle of long Playwright crawls and silently killed them
+# (the response never reached the client → "Network Error" in the UI). The
+# crawler subprocess now PR_SET_PDEATHSIG-ties to the worker and is torn down
+# cleanly on any exit path, so the leak this guard was working around is no
+# longer the dominant one.
+max_requests = int(os.getenv("GUNICORN_MAX_REQUESTS", "10000"))
+max_requests_jitter = int(os.getenv("GUNICORN_MAX_REQUESTS_JITTER", "1000"))
 
 # ── Preloading ──────────────────────────────────────────────────────────────
 # Cannot preload: the in-memory ConnectionManager and ThreadPoolExecutor

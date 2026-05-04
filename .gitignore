@@ -45,3 +45,9 @@ brain/
 .claude/
 
 widget/.wrangler/
+
+# Brevo template backups (created by scripts/upload_brevo_templates.py)
+api/emails/.backup/
+
+# Email rendering preview (generated artifact, not source-of-truth)
+api/emails/preview/

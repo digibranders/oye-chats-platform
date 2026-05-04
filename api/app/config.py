@@ -107,6 +107,22 @@ EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "OyeChats")
 EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "notifications@oyechats.com")
 EMAIL_ENABLED = bool(BREVO_API_KEY)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Brand & public URLs (used by email templates and any other branded surface)
+# ─────────────────────────────────────────────────────────────────────────────
+# Public marketing site root, e.g. "https://oyechats.com". No trailing slash.
+MARKETING_URL = os.getenv("MARKETING_URL", "https://oyechats.com").rstrip("/")
+# Customer admin dashboard root, e.g. "https://app.oyechats.com". No trailing slash.
+# Note: distinct from FRONTEND_URL (below) which can point to localhost in dev.
+APP_URL = os.getenv("APP_URL", "https://app.oyechats.com").rstrip("/")
+# Address users should reach out to for help. Different from EMAIL_FROM_ADDRESS,
+# which is the no-reply sender. SUPPORT_EMAIL is what appears in "Contact us".
+SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "developer@oyechats.com")
+# Display brand name + taglines used by email headers/footers.
+BRAND_NAME = os.getenv("BRAND_NAME", "OyeChats")
+BRAND_TAGLINE_HEADER = os.getenv("BRAND_TAGLINE_HEADER", "AI-Powered Customer Conversations")
+BRAND_TAGLINE_FOOTER = os.getenv("BRAND_TAGLINE_FOOTER", "AI Customer Support, on every site")
+
 if EMAIL_ENABLED:
     logger.info("Email notifications enabled (Brevo)")
 else:

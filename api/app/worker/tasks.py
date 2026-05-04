@@ -38,16 +38,65 @@ async def task_ingest_documents(ctx: dict, client_id: int, folder_path: str, bot
     return count
 
 
+async def task_crawl_and_ingest(
+    ctx: dict,
+    client_id: int,
+    bot_id: int | None,
+    url: str,
+    max_pages: int | None,
+    use_js: bool,
+    replace_source: str | None,
+    cost_per_page: int,
+) -> dict:
+    """Run a full website crawl + ingestion pipeline in the background.
+
+    Decouples the crawl (Playwright + Chromium, multi-minute, memory-heavy)
+    from the HTTP request that triggered it. The route handler enqueues this
+    task and returns 202 immediately; the worker owns the lock for the
+    duration of the crawl and publishes terminal status to Redis so the
+    frontend can pick it up via ``GET /crawl/progress``.
+
+    Returns the same payload that the legacy synchronous ``POST /crawl``
+    used to return (so it's also visible via ``GET /ingest/status/{job_id}``
+    once the job completes).
+    """
+    from app.services.crawl_orchestrator import run_full_crawl
+
+    logger.info(
+        "task_crawl_and_ingest: client_id=%d, bot_id=%s, url=%s, max_pages=%s, use_js=%s",
+        client_id,
+        bot_id,
+        url,
+        max_pages,
+        use_js,
+    )
+
+    return await run_full_crawl(
+        client_id=client_id,
+        bot_id=bot_id,
+        url=url,
+        max_pages=max_pages,
+        use_js=use_js,
+        replace_source=replace_source,
+        cost_per_page=cost_per_page,
+    )
+
+
 async def task_ingest_web_batch(
     ctx: dict,
     client_id: int,
     pages: list[dict],
     bot_id: int | None = None,
-) -> int:
+    cost_per_page: int = 0,
+    deduct_reason: str = "url_scan",
+    deduct_reference_id: int | None = None,
+) -> dict:
     """Ingest a batch of web-crawled pages.
 
     Calls the existing synchronous ``batch_web_ingestion()`` pipeline.
-    Returns the total number of chunks processed.
+    Returns ``{"chunks": int, "pages_charged": int, "credits_deducted": int}``.
+    When ``cost_per_page`` is greater than zero, per-page credit deductions
+    occur in the same DB transaction as the chunk inserts.
     """
     import asyncio
 
@@ -56,13 +105,25 @@ async def task_ingest_web_batch(
     logger.info("task_ingest_web_batch: client_id=%d, pages=%d, bot_id=%s", client_id, len(pages), bot_id)
 
     loop = asyncio.get_running_loop()
-    chunk_count = await loop.run_in_executor(
+    result = await loop.run_in_executor(
         None,
-        lambda: batch_web_ingestion(client_id, pages, bot_id=bot_id),
+        lambda: batch_web_ingestion(
+            client_id,
+            pages,
+            bot_id=bot_id,
+            cost_per_page=cost_per_page,
+            deduct_reason=deduct_reason,
+            deduct_reference_id=deduct_reference_id,
+        ),
     )
 
-    logger.info("task_ingest_web_batch: completed, %d chunks processed", chunk_count)
-    return chunk_count
+    logger.info(
+        "task_ingest_web_batch: completed, %d chunks processed (charged: %d page(s), %d credit(s))",
+        result["chunks"],
+        result["pages_charged"],
+        result["credits_deducted"],
+    )
+    return result
 
 
 # ── Webhook Delivery ────────────────────────────────────────────────────────

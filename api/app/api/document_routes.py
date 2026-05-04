@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from pathlib import Path
 
@@ -9,13 +8,17 @@ from app.api.auth import get_current_client_or_operator
 from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.core.rate_limit import key_from_api_key, limiter
-from app.db.models import Bot, Client, Document
+from app.db.models import Bot, Document
 from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
-from app.ingestion.pipeline import batch_web_ingestion, run_folder_ingestion
+from app.ingestion.pipeline import run_folder_ingestion
 from app.schemas.client import CrawlRequest, DocumentPagesResponse
-from app.services.crawler_service import CrawlerError, crawl_website, get_crawl_progress
-from app.services.llm_service import extract_brand_tone, extract_company_context
+from app.services.crawler_service import (
+    acquire_crawl_lock,
+    get_crawl_progress,
+    release_crawl_lock,
+    set_crawl_progress,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,17 +27,6 @@ router = APIRouter(tags=["documents"])
 # Upload limits (bytes)
 _MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB per file
 _MAX_TOTAL_UPLOAD = 60 * 1024 * 1024  # 60 MB per request
-
-# Per-client crawl locks: each customer can run 1 crawl at a time without
-# blocking other customers.  Memory: ~200 bytes per lock × N clients.
-_crawl_locks: dict[int, asyncio.Lock] = {}
-
-
-def _get_crawl_lock(client_id: int) -> asyncio.Lock:
-    """Return a per-client asyncio.Lock, creating one if needed."""
-    if client_id not in _crawl_locks:
-        _crawl_locks[client_id] = asyncio.Lock()
-    return _crawl_locks[client_id]
 
 
 def _check_memory():
@@ -298,24 +290,35 @@ async def ingest_status_endpoint(
 
 @router.get("/crawl/progress")
 def crawl_progress_endpoint(auth: dict = Depends(get_current_client_or_operator)):
-    """Return URLs discovered so far for the caller's in-progress crawl.
+    """Return live progress + terminal status for the caller's crawl.
 
-    Polled by the frontend every few seconds to show real-time crawl progress.
-    The response is a trivial file read — no DB queries, negligible server load.
-    Returns an empty list when no crawl is running or hasn't started yet.
+    Polled by the frontend every few seconds. Reads from Redis so the same
+    state is visible whether the crawl is running in this API process or in
+    the ARQ worker. The response always contains ``status`` (one of
+    ``"idle" | "running" | "done" | "failed"``) and ``urls`` (list of URLs
+    discovered so far). When status is ``"done"`` the response also contains
+    ``result`` (the same payload the original ``POST /crawl`` would have
+    returned); when ``"failed"`` it contains ``error``.
     """
-    return {"urls": get_crawl_progress(auth["client_id"])}
+    return get_crawl_progress(auth["client_id"])
 
 
-@router.post("/crawl")
+@router.post("/crawl", status_code=202)
 @limiter.limit("3/hour", key_func=key_from_api_key)
 async def crawl_endpoint(
     crawl_request: CrawlRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Crawl a URL recursively and ingest content for a client."""
+    """Start a crawl + ingestion job for a client.
+
+    The actual crawl runs in the ARQ worker (or as a FastAPI BackgroundTask
+    when WORKER_ENABLED=false), so this endpoint returns 202 immediately
+    with a ``job_id``. Callers poll ``GET /crawl/progress`` to read live URL
+    discovery and the terminal ``done`` / ``failed`` state.
+    """
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
     _verify_bot_ownership(bot_id, client_id)
@@ -324,7 +327,7 @@ async def crawl_endpoint(
     # ── Credit pre-flight: reserve enough for the worst-case crawl ──
     # We charge per page actually ingested (not per request), so the pre-flight
     # uses ``max_pages * cost_per_page`` as an upper bound. The real deduction
-    # happens once we know ``pages_processed``.
+    # happens per-page atomically inside batch_web_ingestion.
     from app.services import credit_service
 
     with get_session() as db:
@@ -346,157 +349,65 @@ async def crawl_endpoint(
                 },
             )
 
-    # Per-client lock: each customer can run one crawl at a time.
-    # Other customers are not blocked.
-    lock = _get_crawl_lock(client_id)
-    if lock.locked():
+    # Per-client crawl lock — held in Redis so the ARQ worker and the API
+    # process see the same state. SETNX with TTL means a crashed holder
+    # eventually frees the lock automatically. The lock is released by
+    # ``run_full_crawl``'s finally block, regardless of which process runs it.
+    if not acquire_crawl_lock(client_id):
         raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
 
-    await lock.acquire()
+    # Publish an immediate "running" state so the UI's progress poll picks up
+    # the job before the worker even starts.
+    set_crawl_progress(client_id, status="running", urls=[])
+
+    job_id: str | None = None
     try:
-        logger.info(f"Crawling URL recursively: {crawl_request.url} for client {client_id}, bot_id={bot_id}")
-        crawl_data = await crawl_website(
-            crawl_request.url,
-            max_pages=crawl_request.max_pages,
-            use_js=crawl_request.use_js,
-            client_id=client_id,
-        )
+        from app.worker.enqueue import WORKER_ENABLED, enqueue
 
-        results = crawl_data.get("results")
-        recommended_colors = crawl_data.get("recommended_colors", [])
-
-        if not results:
-            raise HTTPException(status_code=400, detail="Failed to retrieve content from URL")
-
-        valid_pages = [p for p in results if p.get("url") and p.get("content")]
-        pages_processed = len(valid_pages)
-        logger.info(f"Batch ingesting {pages_processed} pages")
-        loop = asyncio.get_event_loop()
-        total_chunks = await loop.run_in_executor(
-            None,
-            lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
-        )
-
-        # ── Credit deduction: charge for actually-ingested pages ──
-        # Best-effort — a deduction failure here means the crawl already ran;
-        # we log and continue rather than 500-ing the whole request.
-        if pages_processed > 0:
-            with get_session() as billing_db:
-                deduction = cost_per_page * pages_processed
-                try:
-                    credit_service.check_and_deduct(
-                        billing_db,
-                        client_id,
-                        deduction,
-                        reason="url_scan",
-                        reference_id=bot_id,
-                    )
-                    billing_db.commit()
-                except credit_service.InsufficientCredits as exc:
-                    billing_db.rollback()
-                    logger.warning(
-                        "Crawl deduction skipped for client %s: insufficient (need %d, have %d). "
-                        "Pre-flight passed but balance changed mid-crawl.",
-                        client_id,
-                        exc.required,
-                        exc.available,
-                    )
-                except credit_service.KillSwitchActive:
-                    billing_db.rollback()
-                    logger.warning("Crawl deduction skipped for client %s: kill switch active.", client_id)
-
-        # Orphan sweep: after a successful recrawl, delete chunks for pages that
-        # existed in the previous crawl but were NOT visited this time — i.e. pages
-        # that have been removed from the site since the last crawl.
-        #
-        # Fix 1 (delete_chunks_for_url inside batch_web_ingestion) already replaced
-        # the chunks for every page that WAS crawled.  This sweep handles the ones
-        # that weren't visited at all this run — we must NOT delete the fresh chunks
-        # we just inserted, so we exclude document_name IN newly_crawled_urls.
-        if crawl_request.replace_source and total_chunks > 0:
-            newly_crawled_urls = [p["url"] for p in valid_pages]
-            with get_session() as del_session:
-                from sqlalchemy import func as sa_func
-
-                domain_expr = sa_func.coalesce(
-                    sa_func.replace(
-                        sa_func.substring(Document.document_name, r"^(https?://[^/]+)"),
-                        "www.",
-                        "",
-                    ),
-                    Document.document_name,
-                )
-                owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
-                deleted = (
-                    del_session.query(Document)
-                    .filter(
-                        domain_expr == crawl_request.replace_source,
-                        owner_filter,
-                        Document.document_name.notin_(newly_crawled_urls),
-                    )
-                    .delete(synchronize_session=False)
-                )
-                del_session.commit()
-                logger.info(
-                    f"Orphan sweep: removed {deleted} stale chunks for '{crawl_request.replace_source}' "
-                    f"(pages removed from site since last crawl). "
-                    f"{total_chunks} fresh chunks retained."
-                )
-
-        # Extract brand tone and company context from crawled content (non-blocking, best-effort)
-        brand_tone = None
-        company_context = None  # dict with "name" and "description" keys
-        if valid_pages and bot_id:
-            content_sample = "\n\n".join(p["content"][:1000] for p in valid_pages[:3])
-            brand_tone, company_context = await asyncio.gather(
-                loop.run_in_executor(None, lambda: extract_brand_tone(content_sample)),
-                loop.run_in_executor(None, lambda: extract_company_context(content_sample)),
+        if WORKER_ENABLED:
+            job = await enqueue(
+                "task_crawl_and_ingest",
+                client_id,
+                bot_id,
+                crawl_request.url,
+                crawl_request.max_pages,
+                crawl_request.use_js,
+                crawl_request.replace_source,
+                cost_per_page,
             )
+            job_id = job.job_id if job is not None else None
+            logger.info("Crawl enqueued for client %s: %s (job_id=%s)", client_id, crawl_request.url, job_id)
+        else:
+            # Local-dev fallback: run inline as a FastAPI BackgroundTask so
+            # the response still fires immediately and the existing polling
+            # behaviour matches production.
+            from app.services.crawl_orchestrator import run_full_crawl
 
-        if recommended_colors or brand_tone or company_context:
-            with get_session() as session:
-                if bot_id:
-                    bot_db = session.get(Bot, bot_id)
-                    if bot_db and bot_db.client_id == client_id:
-                        if recommended_colors:
-                            bot_db.recommended_colors = recommended_colors
-                        if brand_tone:
-                            bot_db.brand_tone = brand_tone
-                        if company_context:
-                            if company_context.get("name"):
-                                bot_db.company_name = company_context["name"]
-                            if company_context.get("description"):
-                                bot_db.company_description = company_context["description"]
-                        session.commit()
-                        logger.info(
-                            f"Saved crawl metadata for bot {bot_id}: "
-                            f"colors={len(recommended_colors) if recommended_colors else 0}, "
-                            f"tone={'yes' if brand_tone else 'no'}, "
-                            f"company_name={company_context.get('name') if company_context else 'no'}"
-                        )
-                elif recommended_colors:
-                    client_db = session.get(Client, client_id)
-                    if client_db:
-                        client_db.recommended_colors = recommended_colors
-                        session.commit()
-                        logger.info(f"Saved {len(recommended_colors)} recommended colors for client {client_id}")
+            background_tasks.add_task(
+                run_full_crawl,
+                client_id=client_id,
+                bot_id=bot_id,
+                url=crawl_request.url,
+                max_pages=crawl_request.max_pages,
+                use_js=crawl_request.use_js,
+                replace_source=crawl_request.replace_source,
+                cost_per_page=cost_per_page,
+            )
+            logger.info("Crawl scheduled inline (WORKER_ENABLED=false) for client %s", client_id)
+    except Exception as exc:
+        # Enqueue failed before the orchestrator could take ownership of the
+        # lock — release it here so the user isn't locked out indefinitely.
+        release_crawl_lock(client_id)
+        set_crawl_progress(client_id, status="failed", error="Failed to start crawl.")
+        logger.exception("Failed to enqueue crawl for client %s: %s", client_id, exc)
+        raise HTTPException(status_code=503, detail="Could not start crawl. Please try again.") from exc
 
-        return {
-            "message": "Crawling and ingestion completed successfully",
-            "root_url": crawl_request.url,
-            "pages_processed": pages_processed,
-            "chunks_processed": total_chunks,
-            "pages_crawled": [p["url"] for p in valid_pages],
-            "recommended_colors": recommended_colors,
-            "brand_tone": brand_tone,
-        }
-    except HTTPException:
-        raise
-    except CrawlerError as e:
-        logger.error(f"Crawling failed: {e}")
-        raise HTTPException(status_code=500, detail="Crawling failed. The target site may be unreachable.") from e
-    except Exception as e:
-        logger.error(f"Crawling failed unexpectedly: {e}")
-        raise HTTPException(status_code=500, detail="Crawling failed. Please try again.") from e
-    finally:
-        lock.release()
+    response: dict = {
+        "message": "Crawl started",
+        "status": "running",
+        "root_url": crawl_request.url,
+        "poll_url": "/crawl/progress",
+    }
+    if job_id:
+        response["job_id"] = job_id
+    return response

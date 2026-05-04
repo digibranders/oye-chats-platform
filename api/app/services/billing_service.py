@@ -32,7 +32,8 @@ def _record_or_skip_webhook(session: Session, event_id: str | None, provider: st
     no-op. Returns False if the event was already processed.
     """
     if not event_id:
-        return True  # No ID provided — process anyway (best-effort).
+        logger.warning("Webhook missing event ID — rejecting to prevent duplicate processing (provider=%s)", provider)
+        return False
     existing = session.get(ProcessedWebhook, event_id)
     if existing is not None:
         return False

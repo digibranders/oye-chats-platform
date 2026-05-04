@@ -102,8 +102,16 @@ const ChatWidget = () => {
     if (!window.__OYECHATS_PREVIEW_MODE__) return undefined;
     if (window.parent === window) return undefined;
 
+    const allowedOrigin = (() => {
+      if (document.referrer) {
+        try { return new URL(document.referrer).origin; } catch { /* fall through */ }
+      }
+      return null;
+    })();
+
     const handleMessage = (event) => {
       if (event.source !== window.parent) return;
+      if (allowedOrigin && event.origin !== allowedOrigin) return;
       const data = event.data;
       if (!data || typeof data !== 'object') return;
       if (data.type !== 'oyechats:preview-config') return;

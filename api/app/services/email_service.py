@@ -6,10 +6,22 @@ import html
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from app.config import BREVO_API_KEY, EMAIL_ENABLED, EMAIL_FROM_ADDRESS, EMAIL_FROM_NAME
+from app.config import (
+    APP_URL,
+    BRAND_NAME,
+    BRAND_TAGLINE_FOOTER,
+    BRAND_TAGLINE_HEADER,
+    BREVO_API_KEY,
+    EMAIL_ENABLED,
+    EMAIL_FROM_ADDRESS,
+    EMAIL_FROM_NAME,
+    MARKETING_URL,
+    SUPPORT_EMAIL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -358,8 +370,30 @@ def get_notification_recipients(bot, event_type: str) -> list[str]:
 
 
 def _branded_sender_name(bot_name: str) -> str:
-    """Build the 'BrandName via OyeChats' sender display name."""
-    return f"{bot_name} via OyeChats"
+    """Build the '<BotName> via <Brand>' sender display name."""
+    return f"{bot_name} via {BRAND_NAME}"
+
+
+def _brand_wordmark(*, color: str = "#0f0f1a") -> str:
+    """Render the configured brand name with a CamelCase color split.
+
+    For 'OyeChats': renders 'Oye' in `color` and 'Chats' in brand primary.
+    For brands without a CamelCase split (e.g. 'Acme'), the whole name
+    renders in brand primary for consistent emphasis. Brand name is HTML-
+    escaped so custom values can't break the markup.
+    """
+    name = BRAND_NAME
+    match = re.search(r"(?<=[a-z])(?=[A-Z])", name)
+    if match:
+        first = html.escape(name[: match.start()])
+        second = html.escape(name[match.start() :])
+        return f'<span style="color:{color};">{first}<span style="color:{_BRAND_PRIMARY};">{second}</span></span>'
+    return f'<span style="color:{_BRAND_PRIMARY};">{html.escape(name)}</span>'
+
+
+def _copyright_year() -> int:
+    """Current year in UTC. Computed per-render so long-running processes don't go stale."""
+    return datetime.now(UTC).year
 
 
 # ── Template Helpers ──
@@ -392,8 +426,175 @@ def _md_to_html(text: str) -> str:
     return text
 
 
+# ── Brand & Design Tokens ──
+#
+# Single source of truth for email styling. Update here once and every email
+# helper picks up the new value on next send. Light-mode locked: dark-mode
+# clients are explicitly opted out via color-scheme metadata + [data-ogsc]/
+# [data-ogsb] overrides set in _html_doc().
+
+_FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+_EMOJI_FONT_STACK = "'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"
+
+# Brand
+_BRAND_PRIMARY = "#4f46e5"  # Indigo — logo accent, default CTA
+_BRAND_PRIMARY_DARK = "#3730a3"  # Hover/contrast
+
+# Ink (text) palette
+_INK_900 = "#0f0f1a"  # Headings
+_INK_700 = "#1f2937"  # Strong body
+_INK_500 = "#4b5563"  # Body text
+_INK_400 = "#6b7280"  # Labels
+_INK_300 = "#9ca3af"  # Muted / footer
+
+# Surfaces
+_SURFACE_PAGE = "#f3f4fb"
+_SURFACE_CARD = "#ffffff"
+_SURFACE_FOOTER = "#f8f8fc"
+_RULE = "#e8e8f0"
+
+
+def _email_header() -> str:
+    """Branded header row — brand mark tile + wordmark + tagline.
+
+    Renders the top of every email with a consistent brand lockup. Pure
+    HTML/CSS (no images) so it works in image-blocked inboxes and offline.
+    Vertically aligns a 36×36 brand mark tile with the wordmark on a single
+    centered row, with the tagline on a second line. All brand strings
+    (name, tagline, marketing URL) come from ``app.config``.
+    """
+    brand_initial = html.escape(BRAND_NAME[:1].upper()) if BRAND_NAME else "O"
+    return (
+        f"<tr>"
+        f'<td style="background-color:{_SURFACE_CARD};border-radius:20px 20px 0 0;'
+        f'padding:30px 40px 26px 40px;text-align:center;">'
+        # Lockup row — brand mark + wordmark, side by side, centered
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"'
+        f' style="margin:0 auto;">'
+        f"<tr>"
+        # Brand mark tile (36×36 rounded square with the brand's first letter)
+        f'<td width="36" height="36" align="center" valign="middle"'
+        f' style="width:36px;height:36px;background-color:{_BRAND_PRIMARY};'
+        f'border-radius:10px;text-align:center;vertical-align:middle;">'
+        f'<a href="{MARKETING_URL}" style="text-decoration:none;color:#ffffff;'
+        f'display:block;line-height:36px;">'
+        f'<span style="font-family:{_FONT_STACK};font-size:18px;font-weight:800;'
+        f'color:#ffffff;letter-spacing:-0.5px;line-height:36px;">{brand_initial}</span>'
+        f"</a>"
+        f"</td>"
+        # 12px gap
+        f'<td width="12" style="width:12px;font-size:0;line-height:0;">&nbsp;</td>'
+        # Wordmark
+        f'<td valign="middle" style="vertical-align:middle;">'
+        f'<a href="{MARKETING_URL}" style="text-decoration:none;display:block;line-height:1;">'
+        f'<span style="font-family:{_FONT_STACK};font-size:24px;font-weight:800;'
+        f'letter-spacing:-0.5px;line-height:1;">'
+        f"{_brand_wordmark(color=_INK_900)}"
+        f"</span>"
+        f"</a>"
+        f"</td>"
+        f"</tr>"
+        f"</table>"
+        # Tagline
+        f'<p style="margin:10px 0 0 0;font-family:{_FONT_STACK};font-size:10px;'
+        f"font-weight:700;letter-spacing:0.16em;text-transform:uppercase;"
+        f'color:{_INK_300};">{html.escape(BRAND_TAGLINE_HEADER)}</p>'
+        f"</td>"
+        f"</tr>"
+    )
+
+
+def _email_footer(*, visitor: bool) -> str:
+    """Footer row inside the body card — brand row, link row, legal row.
+
+    Two variants, selected by the ``visitor`` flag:
+
+    - Operator footer (visitor=False): View Dashboard · Help Center · Contact
+    - Visitor footer (visitor=True):   Visit <Brand> · Privacy
+
+    All URLs and labels resolve from ``app.config`` (``MARKETING_URL``,
+    ``APP_URL``, ``SUPPORT_EMAIL``, ``BRAND_NAME``). Copyright year is
+    computed at render time so long-running processes never go stale.
+    """
+    brand_initial = html.escape(BRAND_NAME[:1].upper()) if BRAND_NAME else "O"
+    safe_brand = html.escape(BRAND_NAME)
+
+    if visitor:
+        link_row = (
+            f'<a href="{MARKETING_URL}"'
+            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Visit {safe_brand}</a>'
+            f'<span style="color:{_INK_300};">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span>'
+            f'<a href="{MARKETING_URL}/privacy"'
+            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Privacy</a>'
+        )
+    else:
+        link_row = (
+            f'<a href="{APP_URL}"'
+            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">View Dashboard</a>'
+            f'<span style="color:{_INK_300};">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span>'
+            f'<a href="{MARKETING_URL}/help"'
+            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Help Center</a>'
+            f'<span style="color:{_INK_300};">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span>'
+            f'<a href="mailto:{SUPPORT_EMAIL}"'
+            f' style="color:{_INK_400};text-decoration:none;font-weight:600;">Contact Support</a>'
+        )
+
+    return (
+        # Footer row — sits inside the same card as the body, separated only by
+        # a 1px hairline rule. Bottom corners pick up the card's border-radius.
+        f"<tr>"
+        f'<td class="oc-footer oc-pad-x" style="background-color:{_SURFACE_FOOTER};'
+        f"border-top:1px solid {_RULE};border-radius:0 0 20px 20px;"
+        f'padding:26px 40px;text-align:center;">'
+        # Brand row — small logo lockup
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"'
+        f' style="margin:0 auto 6px auto;">'
+        f"<tr>"
+        f'<td width="22" height="22" align="center" valign="middle"'
+        f' style="width:22px;height:22px;background-color:{_BRAND_PRIMARY};'
+        f'border-radius:6px;text-align:center;vertical-align:middle;">'
+        f'<span style="font-family:{_FONT_STACK};font-size:11px;font-weight:800;'
+        f'color:#ffffff;letter-spacing:-0.3px;line-height:22px;">{brand_initial}</span>'
+        f"</td>"
+        f'<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>'
+        f'<td valign="middle" style="vertical-align:middle;">'
+        f'<a href="{MARKETING_URL}" style="text-decoration:none;display:block;line-height:1;">'
+        f'<span style="font-family:{_FONT_STACK};font-size:14px;font-weight:800;'
+        f'letter-spacing:-0.3px;line-height:1;">'
+        f"{_brand_wordmark(color=_INK_900)}"
+        f"</span>"
+        f"</a>"
+        f"</td>"
+        f"</tr>"
+        f"</table>"
+        # Tagline
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:10px;'
+        f"font-weight:700;letter-spacing:0.14em;text-transform:uppercase;"
+        f'color:{_INK_300};">{html.escape(BRAND_TAGLINE_FOOTER)}</p>'
+        # Hairline divider
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="60"'
+        f' align="center" style="margin:0 auto 14px auto;">'
+        f'<tr><td style="border-top:1px solid {_RULE};font-size:0;line-height:0;">&nbsp;</td></tr>'
+        f"</table>"
+        # Link row
+        f'<p style="margin:0 0 10px 0;font-family:{_FONT_STACK};font-size:12px;'
+        f'color:{_INK_400};line-height:1.5;">{link_row}</p>'
+        # Legal row — year computed per render
+        f'<p style="margin:0;font-family:{_FONT_STACK};font-size:11px;'
+        f'color:{_INK_300};line-height:1.5;">'
+        f"&copy; {_copyright_year()} {safe_brand}. All rights reserved."
+        f"</p>"
+        f"</td>"
+        f"</tr>"
+    )
+
+
 def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
     """Wrap email body in a full HTML document with header, footer, and email meta tags.
+
+    Light-mode locked: every email opts out of dark-mode rendering via
+    color-scheme metadata, [data-ogsc]/[data-ogsb] selectors (Outlook.com),
+    and explicit background-color on every surface.
 
     Args:
         preheader: Hidden preview text shown in email client inbox listings.
@@ -402,26 +603,11 @@ def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
                  Set to True for emails sent to website visitors (transcript, confirmation).
     """
     preheader_html = (
-        f'<span style="display:none;font-size:1px;color:#eeeef4;max-height:0;'
+        f'<span style="display:none;font-size:1px;color:{_SURFACE_PAGE};max-height:0;'
         f'overflow:hidden;mso-hide:all;">{html.escape(preheader)}&zwnj;</span>'
         if preheader
         else ""
     )
-
-    if visitor:
-        footer_links = (
-            "<p style=\"margin:0 0 6px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-            'Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:#9ca3af;">'
-            "Powered by OyeChats &middot; AI Customer Support</p>"
-        )
-    else:
-        footer_links = (
-            "<p style=\"margin:0 0 6px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-            'Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:#9ca3af;">'
-            "Sent by OyeChats &nbsp;&middot;&nbsp; "
-            '<a href="https://app.oyechats.com" style="color:#9ca3af;text-decoration:underline;">View Dashboard</a>'
-            "</p>"
-        )
 
     return f"""<!DOCTYPE html>
 <html lang="en" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:v="urn:schemas-microsoft-com:vml">
@@ -430,45 +616,48 @@ def _html_doc(preheader: str, body_inner: str, *, visitor: bool = False) -> str:
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="format-detection" content="telephone=no,date=no,address=no,email=no">
-<title>OyeChats</title>
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
+<title>{html.escape(BRAND_NAME)}</title>
 <!--[if mso]>
 <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch><o:AllowPNG/></o:OfficeDocumentSettings></xml>
 <![endif]-->
+<style>
+  :root {{ color-scheme: light only; supported-color-schemes: light; }}
+  html, body {{ color-scheme: light only; }}
+  /* Outlook.com / Office 365 dark-mode override — keep light surfaces light */
+  [data-ogsc] body, [data-ogsb] body {{ background-color: {_SURFACE_PAGE} !important; }}
+  [data-ogsc] .oc-card, [data-ogsb] .oc-card {{ background-color: {_SURFACE_CARD} !important; }}
+  [data-ogsc] .oc-footer, [data-ogsb] .oc-footer {{ background-color: {_SURFACE_FOOTER} !important; }}
+  [data-ogsc] .oc-ink-900 {{ color: {_INK_900} !important; }}
+  [data-ogsc] .oc-ink-500 {{ color: {_INK_500} !important; }}
+  [data-ogsc] .oc-ink-300 {{ color: {_INK_300} !important; }}
+  /* Mobile tightening */
+  @media only screen and (max-width: 600px) {{
+    .oc-pad-x {{ padding-left: 24px !important; padding-right: 24px !important; }}
+    .oc-h1 {{ font-size: 22px !important; }}
+  }}
+</style>
 </head>
-<body style="margin:0;padding:0;background-color:#eeeef4;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<body style="margin:0;padding:0;background-color:{_SURFACE_PAGE};color-scheme:light only;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
 {preheader_html}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#eeeef4;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:{_SURFACE_PAGE};">
   <tr>
     <td align="center" style="padding:40px 16px;">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;">
 
-        <!-- Header -->
+        <!-- Unified card: header + content + footer in a single rounded card -->
         <tr>
-          <td style="background-color:#ffffff;border-radius:20px 20px 0 0;padding:28px 40px;text-align:center;border-bottom:1px solid #e8e8f0;">
-            <a href="https://oyechats.com" style="text-decoration:none;display:inline-block;">
-              <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:26px;font-weight:800;color:#0f0f1a;letter-spacing:-0.5px;">Oye<span style="color:#6366f1;">Chats</span></span>
-            </a>
-            <p style="margin:6px 0 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:10px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#9ca3af;">AI-Powered Customer Conversations</p>
-          </td>
-        </tr>
-
-        <!-- Body -->
-        <tr>
-          <td style="background-color:#ffffff;padding:0 0 40px 0;">
-            {body_inner}
-          </td>
-        </tr>
-
-        <!-- Footer -->
-        <tr>
-          <td style="background-color:#f8f8fc;border-radius:0 0 20px 20px;padding:28px 40px;text-align:center;border-top:1px solid #e8e8f0;">
-            <a href="https://oyechats.com" style="text-decoration:none;display:inline-block;margin-bottom:10px;">
-              <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:800;color:#6366f1;letter-spacing:-0.3px;">Oye<span style="color:#4f46e5;">Chats</span></span>
-            </a>
-            {footer_links}
-            <p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;color:#9ca3af;">
-              &copy; 2026 OyeChats. All rights reserved.
-            </p>
+          <td class="oc-card" style="background-color:{_SURFACE_CARD};border-radius:20px;border:1px solid {_RULE};">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+              {_email_header()}
+              <tr>
+                <td style="background-color:{_SURFACE_CARD};padding:0 0 36px 0;">
+                  {body_inner}
+                </td>
+              </tr>
+              {_email_footer(visitor=visitor)}
+            </table>
           </td>
         </tr>
 
@@ -485,7 +674,7 @@ def _base_template(
     content: str,
     *,
     preheader: str = "",
-    accent_color: str = "#6366f1",
+    accent_color: str = _BRAND_PRIMARY,
     accent_bg: str = "#eef2ff",
     accent_border: str = "#a5b4fc",
     accent_icon: str = "",
@@ -493,73 +682,76 @@ def _base_template(
     overline: str = "",
     visitor: bool = False,
 ) -> str:
-    """Build a premium email card with accent bar, icon badge, title, and content.
+    """Build a premium email card with accent bar, icon tile, title, and content.
 
     Args:
-        title: Card heading text (no emoji — use accent_icon for the badge).
+        title: Card heading text (no emoji — use accent_icon for the tile).
         content: Inner HTML content block.
         preheader: Hidden inbox preview text.
-        accent_color: Top accent bar and interactive element color.
-        accent_bg: Icon badge background color.
-        accent_border: Icon badge border color.
-        accent_icon: Emoji for the icon badge (skipped if empty).
-        category: Small uppercase label shown below the icon badge.
+        accent_color: Top accent bar, overline label, and CTA color.
+        accent_bg: Icon tile background color.
+        accent_border: Icon tile inner-ring color.
+        accent_icon: Emoji for the icon tile (skipped if empty).
+        category: Small uppercase label shown below the icon tile.
         overline: Small uppercase label shown above the h1 heading.
         visitor: When True, renders a visitor-safe footer (no "View Dashboard" link).
     """
-    # Accent stripe + halo (halo hidden from Outlook via MSO conditional)
+    # Accent stripe + soft halo (halo hidden from Outlook via MSO conditional)
     accent_bar_html = (
         f"\n    <!-- Accent stripe -->"
         f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f'\n      <tr><td style="height:6px;background-color:{accent_color};font-size:0;line-height:0;">&nbsp;</td></tr>'
+        f'\n      <tr><td style="height:5px;background-color:{accent_color};font-size:0;line-height:0;">&nbsp;</td></tr>'
         f"\n    </table>"
         f"\n    <!--[if !mso]><!-->"
         f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f'\n      <tr><td style="height:24px;background-color:#ffffff;'
-        f"background-image:linear-gradient(to bottom,rgba({_hex_to_rgba(accent_color)},0.10),"
+        f'\n      <tr><td style="height:28px;background-color:{_SURFACE_CARD};'
+        f"background-image:linear-gradient(to bottom,rgba({_hex_to_rgba(accent_color)},0.12),"
         f'rgba({_hex_to_rgba(accent_color)},0));font-size:0;line-height:0;">&nbsp;</td></tr>'
         f"\n    </table>"
         f"\n    <!--<![endif]-->"
     )
 
-    # Icon badge (72px table cell — renders as square in Outlook, circle elsewhere)
+    # Icon tile (64×64 rounded-square — feels like an app icon).
+    # Category label sits in its own full-width row so it never wraps.
     icon_html = ""
     if accent_icon:
-        category_label = (
-            f'\n            <tr><td align="center" style="padding:10px 0 0 0;">'
-            f"<span style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-            f'font-size:10px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:{accent_color};">'
-            f"{category}</span></td></tr>"
+        category_row = (
+            f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
+            f'\n      <tr><td align="center" style="padding:14px 40px 0 40px;text-align:center;">'
+            f'<span style="font-family:{_FONT_STACK};font-size:10px;font-weight:700;'
+            f"letter-spacing:0.16em;text-transform:uppercase;color:{accent_color};"
+            f'white-space:nowrap;">{category}</span>'
+            f"</td></tr>"
+            f"\n    </table>"
             if category
             else ""
         )
         icon_html = (
             f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-            f'\n      <tr><td align="center" style="padding:4px 40px 0 40px;">'
+            f'\n      <tr><td align="center" style="padding:0 40px;">'
             f'\n        <table role="presentation" cellpadding="0" cellspacing="0" border="0">'
-            f'\n          <tr><td width="72" height="72" align="center" valign="middle"'
-            f' style="width:72px;height:72px;border-radius:50%;background-color:{accent_bg};'
-            f"border:2px solid {accent_border};font-size:30px;text-align:center;vertical-align:middle;"
-            f"font-family:'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif;\">"
+            f'\n          <tr><td width="64" height="64" align="center" valign="middle"'
+            f' style="width:64px;height:64px;border-radius:18px;background-color:{accent_bg};'
+            f"border:1px solid {accent_border};font-size:30px;text-align:center;vertical-align:middle;"
+            f'font-family:{_EMOJI_FONT_STACK};line-height:64px;">'
             f"{accent_icon}</td></tr>"
-            f"{category_label}"
             f"\n        </table>"
             f"\n      </td></tr>"
             f"\n    </table>"
+            f"{category_row}"
         )
 
     # Overline label above h1
     overline_html = (
-        f'\n      <tr><td style="padding:20px 40px 0 40px;">'
-        f"<p style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-        f'font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:{accent_color};">'
+        f'\n      <tr><td class="oc-pad-x" style="padding:22px 40px 0 40px;text-align:center;">'
+        f'<p style="margin:0;font-family:{_FONT_STACK};font-size:11px;font-weight:700;'
+        f'letter-spacing:0.16em;text-transform:uppercase;color:{accent_color};">'
         f"{overline}</p></td></tr>"
         if overline
         else ""
     )
 
-    heading_top = "20px" if (accent_icon or overline) else "32px"
-    heading_padding = "8px 40px 0 40px" if overline else f"{heading_top} 40px 0 40px"
+    heading_top_pad = "8px" if overline else ("20px" if accent_icon else "36px")
 
     card_html = (
         f"{accent_bar_html}"
@@ -567,13 +759,14 @@ def _base_template(
         f"{icon_html}"
         f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
         f"{overline_html}"
-        f'\n      <tr><td style="padding:{heading_padding};">'
-        f"<h1 style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-        f'font-size:26px;font-weight:800;color:#0f0f1a;line-height:1.25;letter-spacing:-0.3px;">{title}</h1>'
+        f'\n      <tr><td class="oc-pad-x" style="padding:{heading_top_pad} 40px 0 40px;text-align:center;">'
+        f'<h1 class="oc-h1 oc-ink-900" style="margin:0;font-family:{_FONT_STACK};'
+        f'font-size:26px;font-weight:800;color:{_INK_900};line-height:1.25;letter-spacing:-0.4px;">'
+        f"{title}</h1>"
         f"</td></tr>"
         f"\n    </table>"
         f'\n    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
-        f'\n      <tr><td style="padding:16px 40px 0 40px;">'
+        f'\n      <tr><td class="oc-pad-x" style="padding:18px 40px 0 40px;">'
         f"\n        {content}"
         f"\n      </td></tr>"
         f"\n    </table>"
@@ -583,9 +776,19 @@ def _base_template(
 
 
 def _hex_to_rgba(hex_color: str) -> str:
-    """Convert a 6-digit hex color to an 'R,G,B' string for use in rgba() CSS values."""
+    """Convert a 6-digit hex color to an 'R,G,B' string for use in rgba() CSS values.
+
+    Returns "0,0,0" for any non-hex input (e.g. a Brevo `{{ params.accent_color }}`
+    placeholder when this helper is called during static-template generation) so
+    the halo gradient gracefully degrades to invisible without raising.
+    """
+    if not hex_color or not hex_color.startswith("#") or len(hex_color) != 7:
+        return "0,0,0"
     h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return "0,0,0"
     return f"{r},{g},{b}"
 
 
@@ -593,11 +796,11 @@ def _info_row(label: str, value: str) -> str:
     """Single key-value row for use inside _info_table."""
     return (
         f"<tr>"
-        f"<td style=\"padding:9px 16px 9px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-        f"font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#6b7280;"
+        f'<td style="padding:10px 16px 10px 0;font-family:{_FONT_STACK};'
+        f"font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:{_INK_400};"
         f'white-space:nowrap;vertical-align:top;width:110px;">{label}</td>'
-        f"<td style=\"padding:9px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-        f'font-size:14px;font-weight:500;color:#0f0f1a;vertical-align:top;line-height:1.5;">{value}</td>'
+        f'<td class="oc-ink-900" style="padding:10px 0;font-family:{_FONT_STACK};'
+        f'font-size:14px;font-weight:500;color:{_INK_900};vertical-align:top;line-height:1.5;">{value}</td>'
         f"</tr>"
     )
 
@@ -613,9 +816,9 @@ def _info_table(rows: list[str], *, bg: str, border_color: str) -> str:
     rows_html = "".join(rows)
     return (
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        f'style="background-color:{bg};border:1px solid {border_color};border-radius:16px;'
-        f'margin-bottom:20px;">'
-        f'<tr><td style="padding:8px 20px 4px 20px;">'
+        f'style="background-color:{bg};border:1px solid {border_color};border-radius:14px;'
+        f'margin-bottom:18px;">'
+        f'<tr><td style="padding:10px 20px 6px 20px;">'
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">'
         f"{rows_html}"
         f"</table>"
@@ -624,7 +827,7 @@ def _info_table(rows: list[str], *, bg: str, border_color: str) -> str:
     )
 
 
-def _cta_button(text: str, url: str, *, color: str = "#6366f1") -> str:
+def _cta_button(text: str, url: str, *, color: str = _BRAND_PRIMARY) -> str:
     """Outlook-compatible full-width pill CTA button.
 
     Args:
@@ -634,18 +837,18 @@ def _cta_button(text: str, url: str, *, color: str = "#6366f1") -> str:
     """
     label = f"{text} &#8594;"
     return (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:28px;">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:24px;">'
         f"<tr>"
         f'<td align="center" style="border-radius:100px;background-color:{color};">'
         f'<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" '
-        f'href="{url}" style="height:56px;v-text-anchor:middle;width:460px;" arcsize="50%" '
-        f'stroke="f" fillcolor="{color}"><w:anchorlock/><center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:700;">'
+        f'href="{url}" style="height:54px;v-text-anchor:middle;width:460px;" arcsize="50%" '
+        f'stroke="f" fillcolor="{color}"><w:anchorlock/><center style="color:#ffffff;font-family:sans-serif;font-size:15px;font-weight:700;">'
         f"{label}</center></v:roundrect><![endif]-->"
         f"<!--[if !mso]><!-->"
         f'<a href="{url}" style="display:block;background-color:{color};color:#ffffff;'
-        f"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
-        f"font-size:16px;font-weight:800;text-decoration:none;text-align:center;"
-        f'padding:17px 32px;border-radius:100px;letter-spacing:0.02em;line-height:1;">{label}</a>'
+        f"font-family:{_FONT_STACK};"
+        f"font-size:15px;font-weight:700;text-decoration:none;text-align:center;"
+        f'padding:16px 32px;border-radius:100px;letter-spacing:0.02em;line-height:1;">{label}</a>'
         f"<!--<![endif]-->"
         f"</td>"
         f"</tr>"
@@ -657,11 +860,11 @@ def _alert_box(text: str, *, bg: str, border_color: str, text_color: str) -> str
     """Inline alert/notice box with left accent border."""
     return (
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        f'style="margin-bottom:20px;">'
+        f'style="margin-bottom:18px;">'
         f"<tr>"
         f'<td style="background-color:{bg};border:1px solid {border_color};'
-        f'border-left:4px solid {border_color};border-radius:0 12px 12px 0;padding:16px 18px;">'
-        f"<p style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+        f'border-left:4px solid {border_color};border-radius:0 12px 12px 0;padding:14px 18px;">'
+        f'<p style="margin:0;font-family:{_FONT_STACK};'
         f'font-size:14px;color:{text_color};line-height:1.6;">{text}</p>'
         f"</td>"
         f"</tr>"
@@ -669,20 +872,20 @@ def _alert_box(text: str, *, bg: str, border_color: str, text_color: str) -> str
     )
 
 
-def _body_text(text: str, *, color: str = "#4b5563") -> str:
+def _body_text(text: str, *, color: str = _INK_500) -> str:
     """Standard body paragraph."""
     return (
-        f"<p style=\"margin:0 0 16px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-        f'Roboto,Helvetica,Arial,sans-serif;font-size:15px;color:{color};line-height:1.7;">{text}</p>'
+        f'<p class="oc-ink-500" style="margin:0 0 16px 0;font-family:{_FONT_STACK};'
+        f'font-size:15px;color:{color};line-height:1.7;">{text}</p>'
     )
 
 
 def _section_label(text: str) -> str:
     """Small uppercase section label above an info block."""
     return (
-        f"<p style=\"margin:0 0 8px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-        f"Roboto,Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;"
-        f'letter-spacing:0.12em;color:#6b7280;">{text}</p>'
+        f'<p style="margin:0 0 8px 0;font-family:{_FONT_STACK};'
+        f"font-size:10px;font-weight:700;text-transform:uppercase;"
+        f'letter-spacing:0.14em;color:{_INK_400};">{text}</p>'
     )
 
 
@@ -714,8 +917,14 @@ def send_qualified_lead_email(
         "SQL": "Sales Qualified Lead",
     }
     tier_label = tier_labels.get(tier_upper, f"{tier_upper} Lead")
-    badge_bg = "#dcfce7" if tier_upper == "SQL" else "#fef9c3"
-    badge_color = "#166534" if tier_upper == "SQL" else "#854d0e"
+    # Per-tier accent so the Brevo template can stay tier-aware:
+    # SQL — green (celebration), MQL — amber (early signal).
+    if tier_upper == "SQL":
+        badge_bg, badge_color = "#dcfce7", "#166534"
+        accent_color, accent_bg, accent_border = "#10b981", "#ecfdf5", "#6ee7b7"
+    else:
+        badge_bg, badge_color = "#fef9c3", "#854d0e"
+        accent_color, accent_bg, accent_border = "#f59e0b", "#fffbeb", "#fcd34d"
 
     params: dict = {
         "bot_name": _esc(bot_name),
@@ -723,6 +932,10 @@ def send_qualified_lead_email(
         "tier_label": tier_label,
         "badge_bg": badge_bg,
         "badge_color": badge_color,
+        # Tier-driven accent palette (referenced by the Brevo template)
+        "accent_color": accent_color,
+        "accent_bg": accent_bg,
+        "accent_border": accent_border,
         # BANT — use em-dash for missing fields so template rows always render
         "bant_need": _esc(bant.get("bant_need")) if bant.get("bant_need") else "&#8212;",
         "bant_budget": _esc(bant.get("bant_budget")) if bant.get("bant_budget") else "&#8212;",
@@ -941,9 +1154,10 @@ def send_transcript_email(
     )
 
     footer_note = (
-        f"<p style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-        f'Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:#94a3b8;text-align:center;">'
-        f'This transcript was sent from <strong style="color:#6b7280;">{_esc(bot_name)}</strong> via OyeChats</p>'
+        f'<p style="margin:0;font-family:{_FONT_STACK};'
+        f'font-size:12px;color:#94a3b8;text-align:center;">'
+        f'This transcript was sent from <strong style="color:#6b7280;">{_esc(bot_name)}</strong>'
+        f" via {html.escape(BRAND_NAME)}</p>"
     )
 
     content = (

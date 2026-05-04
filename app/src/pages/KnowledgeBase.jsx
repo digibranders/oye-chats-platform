@@ -55,17 +55,51 @@ export default function KnowledgeBase() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedBot?.id]);
 
-  // Poll real-time crawl progress every 3 s while a crawl is running.
-  // Each poll is a trivial file-read on the server — negligible overhead.
+  // Poll real-time crawl progress every 3s while a crawl is running.
+  // The crawl now executes in the ARQ worker; the API endpoint returns 202
+  // immediately and this poll is the only authoritative source of completion
+  // — when the response carries status "done" or "failed" we transition the
+  // UI without depending on the original POST response.
   useEffect(() => {
     if (!isCrawling) return;
+    let cancelled = false;
     const interval = setInterval(async () => {
-      const data = await getCrawlProgress();
-      if (data.urls && data.urls.length > 0) {
+      let data;
+      try {
+        data = await getCrawlProgress();
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      if (data?.urls?.length > 0) {
         setScanningUrls(data.urls.map(u => ({ url: u, status: 'scanning' })));
       }
+      if (data?.status === 'done') {
+        const result = data.result || {};
+        stopScanSimulation(result);
+        setCrawlStatus({
+          type: 'success',
+          message: `Crawled ${result.pages_processed || 0} pages and ingested ${result.chunks_processed || 0} chunks.`,
+        });
+        showToast('success', `Crawling done! ${result.pages_processed || 0} pages.`);
+        setUrl('');
+        setIsCrawling(false);
+        setRecrawlingDoc(null);
+        if (activeTab === 'list') fetchDocuments();
+        else setActiveTab('list');
+      } else if (data?.status === 'failed') {
+        stopScanSimulation(null);
+        setCrawlStatus({ type: 'error', message: data.error || 'Failed to crawl website.' });
+        showToast('error', `Crawl failed: ${data.error || 'unknown error'}`);
+        setIsCrawling(false);
+        setRecrawlingDoc(null);
+      }
     }, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCrawling]);
 
   if (!botsLoading && bots.length === 0) {
@@ -121,20 +155,15 @@ export default function KnowledgeBase() {
       setIsCrawling(true);
       startScanSimulation(crawlUrl);
 
-      const result = await crawlWebsite(crawlUrl, selectedBot?.id, false, replaceSource);
-
-      stopScanSimulation(result);
-      showToast('success', `Recrawled! ${result.pages_processed || 0} pages updated.`);
-      // Return to All Sources tab so user sees the refreshed source list
-      setActiveTab('list');
-      fetchDocuments();
+      // POST /crawl returns 202 immediately; the polling effect handles
+      // success / failure once the worker finishes.
+      await crawlWebsite(crawlUrl, selectedBot?.id, false, replaceSource);
     } catch (err) {
       stopScanSimulation(null);
       showToast('error', `Recrawl failed: ${err?.detail || err?.message || err}`);
       setActiveTab('list');
-    } finally {
-      setRecrawlingDoc(null);
       setIsCrawling(false);
+      setRecrawlingDoc(null);
     }
   };
 
@@ -156,19 +185,18 @@ export default function KnowledgeBase() {
   const handleCrawlSubmit = async (e) => {
     e.preventDefault();
     if (!url.trim()) return;
-    setIsCrawling(true); setCrawlStatus(null);
+    setIsCrawling(true);
+    setCrawlStatus(null);
     startScanSimulation(url);
     try {
-      const result = await crawlWebsite(url, selectedBot?.id, useJs);
-      stopScanSimulation(result);
-      setCrawlStatus({ type: 'success', message: `Crawled ${result.pages_processed || 0} pages and ingested ${result.chunks_processed || 0} chunks.` });
-      showToast('success', `Crawling done! ${result.pages_processed || 0} pages.`);
-      setUrl('');
-      if (activeTab === 'list') fetchDocuments();
+      // POST /crawl is async (202) — the polling effect transitions the UI
+      // when the worker writes status="done" or "failed" to /crawl/progress.
+      await crawlWebsite(url, selectedBot?.id, useJs);
     } catch (error) {
       stopScanSimulation(null);
-      setCrawlStatus({ type: 'error', message: error.detail || error.message || 'Failed to crawl website.' });
-    } finally { setIsCrawling(false); }
+      setCrawlStatus({ type: 'error', message: error.detail || error.message || 'Failed to start crawl.' });
+      setIsCrawling(false);
+    }
   };
 
   const renderStatus = (status) => {

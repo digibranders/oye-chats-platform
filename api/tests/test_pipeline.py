@@ -255,7 +255,8 @@ class TestRunWebIngestion:
 
 class TestBatchWebIngestion:
     def test_empty_pages_returns_zero(self):
-        assert batch_web_ingestion(1, []) == 0
+        result = batch_web_ingestion(1, [])
+        assert result == {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
 
     def test_skips_already_processed(self):
         session = MagicMock()
@@ -267,7 +268,9 @@ class TestBatchWebIngestion:
         ):
             result = batch_web_ingestion(1, [{"url": "https://a.com", "content": "text"}])
 
-        assert result == 0
+        assert result["chunks"] == 0
+        assert result["pages_charged"] == 0
+        assert result["credits_deducted"] == 0
 
     def test_processes_new_pages(self):
         session = MagicMock()
@@ -286,8 +289,93 @@ class TestBatchWebIngestion:
         ):
             result = batch_web_ingestion(1, [{"url": "https://a.com", "content": "text"}], bot_id=5)
 
-        assert result == 1
+        assert result["chunks"] == 1
+        # No cost_per_page passed → no charge.
+        assert result["pages_charged"] == 0
+        assert result["credits_deducted"] == 0
         session.commit.assert_called()
+
+    def test_atomic_per_page_credit_deduction(self):
+        session = MagicMock()
+        mock_chunk = MagicMock(page_content="chunk", metadata={"page": 1})
+
+        with (
+            patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
+            patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
+            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
+            patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
+            patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1], [0.2]]),
+            patch("app.ingestion.pipeline.insert_documents"),
+            patch("app.ingestion.pipeline.delete_chunks_for_url"),
+            patch("app.ingestion.pipeline.cache_delete_prefix"),
+            patch("app.services.credit_service.check_and_deduct") as mock_deduct,
+        ):
+            result = batch_web_ingestion(
+                1,
+                [
+                    {"url": "https://a.com", "content": "text1"},
+                    {"url": "https://b.com", "content": "text2"},
+                ],
+                bot_id=5,
+                cost_per_page=3,
+                deduct_reference_id=5,
+            )
+
+        assert result == {"chunks": 2, "pages_charged": 2, "credits_deducted": 6}
+        # One deduction per page, in the same session as the chunk insert.
+        assert mock_deduct.call_count == 2
+        for call in mock_deduct.call_args_list:
+            assert call.args[0] is session
+            assert call.args[1] == 1
+            assert call.args[2] == 3
+            assert call.kwargs["reason"] == "url_scan"
+            assert call.kwargs["reference_id"] == 5
+
+    def test_stops_on_insufficient_credits_mid_batch(self):
+        session = MagicMock()
+        mock_chunk = MagicMock(page_content="chunk", metadata={"page": 1})
+
+        from app.services.credit_service import InsufficientCredits
+
+        deduct_calls = {"n": 0}
+
+        def fake_deduct(*args, **kwargs):
+            deduct_calls["n"] += 1
+            if deduct_calls["n"] == 2:
+                raise InsufficientCredits(required=3, available=0)
+            return 100
+
+        with (
+            patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
+            patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
+            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
+            patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
+            patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1], [0.2], [0.3]]),
+            patch("app.ingestion.pipeline.insert_documents"),
+            patch("app.ingestion.pipeline.delete_chunks_for_url"),
+            patch("app.ingestion.pipeline.cache_delete_prefix"),
+            patch("app.services.credit_service.check_and_deduct", side_effect=fake_deduct),
+        ):
+            result = batch_web_ingestion(
+                1,
+                [
+                    {"url": "https://a.com", "content": "x"},
+                    {"url": "https://b.com", "content": "y"},
+                    {"url": "https://c.com", "content": "z"},
+                ],
+                bot_id=5,
+                cost_per_page=3,
+            )
+
+        # Only the first page lands; the second triggers InsufficientCredits
+        # which rolls back its chunks and aborts the rest of the batch.
+        assert result["chunks"] == 1
+        assert result["pages_charged"] == 1
+        assert result["credits_deducted"] == 3
+        # Second page's chunk insert was rolled back, so we expect a rollback call.
+        session.rollback.assert_called()
 
     def test_deletes_stale_chunks_before_insert(self):
         session = MagicMock()
@@ -341,7 +429,7 @@ class TestBatchWebIngestion:
             )
 
         # Second page should succeed even if first fails
-        assert result == 1
+        assert result["chunks"] == 1
 
 
 # ── move_to_archive ──────────────────────────────────────────────────────────
