@@ -7,6 +7,10 @@ import os
 import signal
 import sys
 import tempfile
+import time
+from typing import Any
+
+from app.core.cache import PREFIX, get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +24,135 @@ _SUBPROCESS_KILL_GRACE = 5
 # to this process when its parent dies, so an orphaned crawler subprocess gets
 # torn down automatically if the gunicorn worker is killed mid-crawl.
 _PR_SET_PDEATHSIG = 1
+
+# ── Cross-process crawl progress + lock (Redis) ─────────────────────────────
+# These let the API process surface live progress and terminal status for a
+# crawl that is actually executing in the ARQ worker process. Falls back to a
+# no-op when Redis is unavailable (callers continue to function; the progress
+# endpoint just returns "idle").
+
+_PROGRESS_KEY_PREFIX = f"{PREFIX}crawl:progress:"
+_LOCK_KEY_PREFIX = f"{PREFIX}crawl:lock:"
+_PROGRESS_TTL = 3600  # keep terminal state visible to the UI for an hour
+_DEFAULT_LOCK_TTL = _SUBPROCESS_TIMEOUT + 120  # subprocess + ingestion margin
+_PROGRESS_MIRROR_INTERVAL = 1.0  # seconds between temp-file → Redis mirror ticks
+
+
+def _progress_key(client_id: int) -> str:
+    return f"{_PROGRESS_KEY_PREFIX}{int(client_id)}"
+
+
+def _lock_key(client_id: int) -> str:
+    return f"{_LOCK_KEY_PREFIX}{int(client_id)}"
+
+
+def set_crawl_progress(
+    client_id: int,
+    *,
+    status: str,
+    urls: list[str] | None = None,
+    result: dict[str, Any] | None = None,
+    error: str | None = None,
+    started_at: float | None = None,
+) -> None:
+    """Write the current crawl progress for a client to Redis (best-effort).
+
+    ``status`` is one of ``"running" | "done" | "failed"``. The TTL is
+    refreshed on every write so terminal state is visible long enough for the
+    UI to poll it (an hour). No-op when Redis is unavailable.
+    """
+    client = get_redis()
+    if client is None:
+        return
+    payload: dict[str, Any] = {"status": status, "urls": urls or []}
+    if result is not None:
+        payload["result"] = result
+    if error is not None:
+        payload["error"] = error
+    if started_at is not None:
+        payload["started_at"] = started_at
+    try:
+        client.set(_progress_key(client_id), json.dumps(payload, default=str), ex=_PROGRESS_TTL)
+    except Exception:
+        logger.debug("set_crawl_progress failed for client=%s", client_id, exc_info=True)
+
+
+def clear_crawl_progress(client_id: int) -> None:
+    """Drop the progress key (e.g. when starting a new crawl). Best-effort."""
+    client = get_redis()
+    if client is None:
+        return
+    with contextlib.suppress(Exception):
+        client.delete(_progress_key(client_id))
+
+
+def acquire_crawl_lock(client_id: int, ttl: int = _DEFAULT_LOCK_TTL) -> bool:
+    """Try to take the per-client crawl lock. Returns True iff acquired.
+
+    Uses Redis ``SET NX EX`` so the lock survives across processes (API and
+    worker can both check it) and self-expires if the holder crashes. Returns
+    True (allow the crawl) when Redis is unavailable so we don't block crawls
+    on a Redis outage.
+    """
+    client = get_redis()
+    if client is None:
+        return True
+    try:
+        return bool(client.set(_lock_key(client_id), "1", nx=True, ex=ttl))
+    except Exception:
+        logger.debug("acquire_crawl_lock failed for client=%s", client_id, exc_info=True)
+        return True
+
+
+def release_crawl_lock(client_id: int) -> None:
+    """Release the per-client crawl lock. Best-effort and idempotent."""
+    client = get_redis()
+    if client is None:
+        return
+    with contextlib.suppress(Exception):
+        client.delete(_lock_key(client_id))
+
+
+def _read_urls_from_progress_file(path: str) -> list[str]:
+    """Re-read the subprocess progress temp file. Empty list on any error."""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        urls = data.get("urls", [])
+        return urls if isinstance(urls, list) else []
+    except Exception:
+        return []
+
+
+async def _mirror_progress_to_redis(client_id: int, progress_path: str, started_at: float) -> None:
+    """Poll the subprocess progress file and mirror discovered URLs to Redis.
+
+    Runs as a background task for the duration of one crawl. Cancelled by
+    ``crawl_website`` once the subprocess finishes (or is torn down). Writes
+    only when the URL list changes to keep Redis traffic minimal.
+    """
+    last_count = -1
+    try:
+        while True:
+            await asyncio.sleep(_PROGRESS_MIRROR_INTERVAL)
+            urls = _read_urls_from_progress_file(progress_path)
+            if len(urls) != last_count:
+                set_crawl_progress(
+                    client_id,
+                    status="running",
+                    urls=urls,
+                    started_at=started_at,
+                )
+                last_count = len(urls)
+    except asyncio.CancelledError:
+        # Final flush so the freshest URL list is always visible after the
+        # subprocess exits, even if the last mirror tick was skipped.
+        urls = _read_urls_from_progress_file(progress_path)
+        if urls and len(urls) != last_count:
+            set_crawl_progress(client_id, status="running", urls=urls, started_at=started_at)
+        raise
 
 
 def _set_pdeathsig() -> None:
@@ -77,26 +210,31 @@ class CrawlerError(RuntimeError):
     """Raised when the crawler subprocess fails or produces invalid output."""
 
 
-# Maps client_id → path of the temp progress file for an in-progress crawl.
-# Written by the subprocess; read by get_crawl_progress() via the progress endpoint.
-_progress_files: dict[int, str] = {}
+def get_crawl_progress(client_id: int) -> dict[str, Any]:
+    """Return the current crawl progress + terminal status for a client.
 
-
-def get_crawl_progress(client_id: int) -> list[str]:
-    """Return URLs discovered so far for an in-progress crawl.
-
-    Returns an empty list when no crawl is running or the file hasn't been
-    written yet.  Safe to call at any time; never raises.
+    Reads the Redis-backed state written by ``crawl_website`` (URL discovery)
+    and by the orchestrating task (final ``done``/``failed`` status). Always
+    returns a dict; callers can rely on ``status`` and ``urls`` keys at minimum.
+    Returns ``{"status": "idle", "urls": []}`` when no crawl has been recorded
+    yet (or Redis is unavailable).
     """
-    path = _progress_files.get(client_id)
-    if not path or not os.path.exists(path):
-        return []
+    client = get_redis()
+    if client is None:
+        return {"status": "idle", "urls": []}
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("urls", [])
+        raw = client.get(_progress_key(client_id))
     except Exception:
-        return []
+        return {"status": "idle", "urls": []}
+    if raw is None:
+        return {"status": "idle", "urls": []}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {"status": "idle", "urls": []}
+    data.setdefault("status", "idle")
+    data.setdefault("urls", [])
+    return data
 
 
 async def crawl_website(
@@ -181,13 +319,22 @@ async def crawl_website(
     if use_js:
         env["CRAWLER_JS_ALL_PAGES"] = "true"
 
-    # Create a temp file for real-time progress updates from the subprocess
+    # Create a temp file for real-time progress updates from the subprocess.
+    # The subprocess writes discovered URLs here; we mirror them to Redis below
+    # so the API process can see live progress even when the crawl runs in the
+    # ARQ worker.
     progress_fd, progress_path = tempfile.mkstemp(suffix=".json", prefix="oyecrawl_")
     os.close(progress_fd)
+    started_at = time.time()
     if client_id is not None:
-        _progress_files[client_id] = progress_path
+        # Reset any stale terminal state from a previous crawl by this client
+        # before announcing the new run; the mirror task will then publish
+        # discovered URLs as the subprocess writes them.
+        clear_crawl_progress(client_id)
+        set_crawl_progress(client_id, status="running", urls=[], started_at=started_at)
 
     process: asyncio.subprocess.Process | None = None
+    mirror_task: asyncio.Task[None] | None = None
     try:
         # ``start_new_session`` puts the subprocess (and its Playwright /
         # Chromium descendants) in their own process group, so we can take
@@ -206,6 +353,11 @@ async def crawl_website(
             start_new_session=True,
             preexec_fn=_set_pdeathsig,
         )
+
+        # Stream discovered URLs from the subprocess temp file to Redis so any
+        # process (API, worker) can render live progress for this client.
+        if client_id is not None:
+            mirror_task = asyncio.create_task(_mirror_progress_to_redis(client_id, progress_path, started_at))
 
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -263,11 +415,16 @@ async def crawl_website(
         logger.error("Subprocess exception: %s", e)
         raise CrawlerError(str(e)) from e
     finally:
-        # Always clean up: kill the subprocess tree if it's somehow still
-        # alive, remove the progress file, and deregister the client.
+        # Always clean up: stop mirroring, kill the subprocess tree if it's
+        # somehow still alive, and remove the progress file. The Redis status
+        # ("done" / "failed") is the caller's responsibility — we leave any
+        # in-progress "running" state for them to overwrite, since we don't
+        # know whether ingestion still has to run after the crawl returns.
+        if mirror_task is not None and not mirror_task.done():
+            mirror_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await mirror_task
         if process is not None:
             await _terminate_process_tree(process)
-        if client_id is not None:
-            _progress_files.pop(client_id, None)
         with contextlib.suppress(OSError):
             os.unlink(progress_path)

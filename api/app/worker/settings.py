@@ -22,6 +22,7 @@ from arq.connections import RedisSettings
 litellm.drop_params = True
 
 from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
+    task_crawl_and_ingest,
     task_deliver_webhook,
     task_expire_old_topups,
     task_ingest_documents,
@@ -106,6 +107,7 @@ class WorkerSettings:
     functions = [
         task_ingest_documents,
         task_ingest_web_batch,
+        task_crawl_and_ingest,
         task_deliver_webhook,
         task_send_email,
         task_send_template_email,
