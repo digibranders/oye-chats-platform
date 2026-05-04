@@ -372,38 +372,25 @@ async def crawl_endpoint(
         pages_processed = len(valid_pages)
         logger.info(f"Batch ingesting {pages_processed} pages")
         loop = asyncio.get_event_loop()
-        total_chunks = await loop.run_in_executor(
+        # Per-page chunk insert + credit deduction now run inside the same DB
+        # transaction (see batch_web_ingestion). A worker crash between the
+        # two operations can no longer leave chunks-without-charge or
+        # charge-without-chunks. Insufficient-credits and kill-switch errors
+        # are handled inside the function and stop the loop early.
+        ingest_result = await loop.run_in_executor(
             None,
-            lambda: batch_web_ingestion(client_id, valid_pages, bot_id=bot_id),
+            lambda: batch_web_ingestion(
+                client_id,
+                valid_pages,
+                bot_id=bot_id,
+                cost_per_page=cost_per_page,
+                deduct_reason="url_scan",
+                deduct_reference_id=bot_id,
+            ),
         )
-
-        # ── Credit deduction: charge for actually-ingested pages ──
-        # Best-effort — a deduction failure here means the crawl already ran;
-        # we log and continue rather than 500-ing the whole request.
-        if pages_processed > 0:
-            with get_session() as billing_db:
-                deduction = cost_per_page * pages_processed
-                try:
-                    credit_service.check_and_deduct(
-                        billing_db,
-                        client_id,
-                        deduction,
-                        reason="url_scan",
-                        reference_id=bot_id,
-                    )
-                    billing_db.commit()
-                except credit_service.InsufficientCredits as exc:
-                    billing_db.rollback()
-                    logger.warning(
-                        "Crawl deduction skipped for client %s: insufficient (need %d, have %d). "
-                        "Pre-flight passed but balance changed mid-crawl.",
-                        client_id,
-                        exc.required,
-                        exc.available,
-                    )
-                except credit_service.KillSwitchActive:
-                    billing_db.rollback()
-                    logger.warning("Crawl deduction skipped for client %s: kill switch active.", client_id)
+        total_chunks = ingest_result["chunks"]
+        pages_charged = ingest_result["pages_charged"]
+        credits_deducted = ingest_result["credits_deducted"]
 
         # Orphan sweep: after a successful recrawl, delete chunks for pages that
         # existed in the previous crawl but were NOT visited this time — i.e. pages
@@ -485,7 +472,9 @@ async def crawl_endpoint(
             "message": "Crawling and ingestion completed successfully",
             "root_url": crawl_request.url,
             "pages_processed": pages_processed,
+            "pages_charged": pages_charged,
             "chunks_processed": total_chunks,
+            "credits_deducted": credits_deducted,
             "pages_crawled": [p["url"] for p in valid_pages],
             "recommended_colors": recommended_colors,
             "brand_tone": brand_tone,

@@ -43,11 +43,16 @@ async def task_ingest_web_batch(
     client_id: int,
     pages: list[dict],
     bot_id: int | None = None,
-) -> int:
+    cost_per_page: int = 0,
+    deduct_reason: str = "url_scan",
+    deduct_reference_id: int | None = None,
+) -> dict:
     """Ingest a batch of web-crawled pages.
 
     Calls the existing synchronous ``batch_web_ingestion()`` pipeline.
-    Returns the total number of chunks processed.
+    Returns ``{"chunks": int, "pages_charged": int, "credits_deducted": int}``.
+    When ``cost_per_page`` is greater than zero, per-page credit deductions
+    occur in the same DB transaction as the chunk inserts.
     """
     import asyncio
 
@@ -56,13 +61,25 @@ async def task_ingest_web_batch(
     logger.info("task_ingest_web_batch: client_id=%d, pages=%d, bot_id=%s", client_id, len(pages), bot_id)
 
     loop = asyncio.get_running_loop()
-    chunk_count = await loop.run_in_executor(
+    result = await loop.run_in_executor(
         None,
-        lambda: batch_web_ingestion(client_id, pages, bot_id=bot_id),
+        lambda: batch_web_ingestion(
+            client_id,
+            pages,
+            bot_id=bot_id,
+            cost_per_page=cost_per_page,
+            deduct_reason=deduct_reason,
+            deduct_reference_id=deduct_reference_id,
+        ),
     )
 
-    logger.info("task_ingest_web_batch: completed, %d chunks processed", chunk_count)
-    return chunk_count
+    logger.info(
+        "task_ingest_web_batch: completed, %d chunks processed (charged: %d page(s), %d credit(s))",
+        result["chunks"],
+        result["pages_charged"],
+        result["credits_deducted"],
+    )
+    return result
 
 
 # ── Webhook Delivery ────────────────────────────────────────────────────────

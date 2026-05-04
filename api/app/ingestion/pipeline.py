@@ -182,7 +182,15 @@ def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int | None
         raise e
 
 
-def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = None) -> int:
+def batch_web_ingestion(
+    client_id: int,
+    pages: list[dict],
+    bot_id: int | None = None,
+    *,
+    cost_per_page: int = 0,
+    deduct_reason: str = "url_scan",
+    deduct_reference_id: int | None = None,
+) -> dict:
     """
     Batch ingest multiple web pages: chunk all, embed all at once, insert all.
     Much faster than per-page ingestion because embedding is batched.
@@ -191,12 +199,27 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
         client_id: The client ID
         pages: List of {"url": str, "content": str} dicts
         bot_id: Optional bot ID
+        cost_per_page: When > 0, deduct this many credits from ``client_id`` in
+            the SAME transaction that inserts each page's chunks. If the
+            deduction raises (insufficient credits / kill switch), the page's
+            chunks are rolled back and ingestion continues with the next page.
+            This guarantees the user is never charged for un-ingested chunks
+            and never gets free chunks for an un-charged page.
+        deduct_reason: Credit ledger reason code; ignored when ``cost_per_page``
+            is 0. Defaults to ``"url_scan"``.
+        deduct_reference_id: Optional reference id to write on the ledger row
+            (typically ``bot_id``); ignored when ``cost_per_page`` is 0.
 
     Returns:
-        Total number of chunks processed
+        ``{"chunks": int, "pages_charged": int, "credits_deducted": int}``.
     """
     if not pages:
-        return 0
+        return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
+
+    # Local import: credit_service depends on db.models which already imports
+    # heavily — keep this lazy so importing pipeline.py stays cheap and there
+    # is no risk of a circular import via app.services.
+    from app.services import credit_service
 
     all_chunk_contents: list[str] = []
     all_chunk_metadatas: list[dict] = []
@@ -255,7 +278,7 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
 
         if not all_chunk_contents:
             logger.info("No new content to process")
-            return 0
+            return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
 
         # Batch embed ALL chunks at once (major speedup)
         logger.info(f"Batch embedding {len(all_chunk_contents)} chunks from {len(page_boundaries)} pages")
@@ -269,6 +292,8 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
 
         # Insert per-page with individual commits to prevent rollback cascade
         total = 0
+        pages_charged = 0
+        credits_deducted = 0
         for boundary in page_boundaries:
             start = boundary["start_idx"]
             count = boundary["count"]
@@ -292,8 +317,43 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
                     page_metas,
                     bot_id=bot_id,
                 )
+                # Atomic billing: deduct in the same TX as the chunk insert so
+                # we never end up with chunks-without-charge or charge-without-
+                # chunks if the worker dies between the two operations.
+                if cost_per_page > 0:
+                    credit_service.check_and_deduct(
+                        session,
+                        client_id,
+                        cost_per_page,
+                        reason=deduct_reason,
+                        reference_id=deduct_reference_id,
+                    )
                 session.commit()
                 total += count
+                if cost_per_page > 0:
+                    pages_charged += 1
+                    credits_deducted += cost_per_page
+            except credit_service.InsufficientCredits as exc:
+                session.rollback()
+                logger.warning(
+                    "Crawl billing aborted at %s for client %s: insufficient credits "
+                    "(need %d, have %d). Remaining pages will be skipped.",
+                    boundary["url"],
+                    client_id,
+                    exc.required,
+                    exc.available,
+                )
+                # Stop ingesting further pages — the user can't pay for them.
+                break
+            except credit_service.KillSwitchActive:
+                session.rollback()
+                logger.warning(
+                    "Crawl billing aborted at %s for client %s: credit kill switch active. "
+                    "Remaining pages will be skipped.",
+                    boundary["url"],
+                    client_id,
+                )
+                break
             except Exception as e:
                 logger.error(f"Failed to insert chunks for {boundary['url']}: {e}")
                 session.rollback()
@@ -303,8 +363,18 @@ def batch_web_ingestion(client_id: int, pages: list[dict], bot_id: int | None = 
     if total > 0 and bot_id:
         cache_delete_prefix(qa_prefix_for_bot(bot_id))
 
-    logger.info(f"Batch ingestion complete: {total} chunks from {len(page_boundaries)} pages")
-    return total
+    logger.info(
+        "Batch ingestion complete: %d chunks from %d pages (charged: %d page(s), %d credit(s))",
+        total,
+        len(page_boundaries),
+        pages_charged,
+        credits_deducted,
+    )
+    return {
+        "chunks": total,
+        "pages_charged": pages_charged,
+        "credits_deducted": credits_deducted,
+    }
 
 
 def move_to_archive(file_path: str, filename: str):

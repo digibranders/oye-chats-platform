@@ -171,6 +171,13 @@ async def crawl_website(
     env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
     if max_pages is not None:
         env["MAX_CRAWL_PAGES"] = str(min(max(max_pages, 1), 100))
+    elif use_js:
+        # JS (Playwright/Chromium) crawls cost ~10x the memory of HTTP crawls
+        # (~150–300 MB per Chromium process tree on top of the ~1 GB API
+        # baseline). Cap the default tighter than the generic MAX_CRAWL_PAGES
+        # to protect a memory-tight host. An explicit ``max_pages`` argument
+        # always wins; this only fills in the default.
+        env["MAX_CRAWL_PAGES"] = os.getenv("MAX_CRAWL_PAGES_JS", "25")
     if use_js:
         env["CRAWLER_JS_ALL_PAGES"] = "true"
 
