@@ -383,6 +383,24 @@ export const getTopQuestions = async (botId) => {
  * @param {number} [botId] - Optional bot ID
  * @returns {Promise<Object>} Settings object
  */
+/**
+ * Fetches the authenticated client's profile (name, email, joined date,
+ * bot count). Used by the TopBar profile dropdown. Cached per session by
+ * the caller — re-fetched on menu open so bot_count stays fresh.
+ *
+ * @returns {Promise<Object>} { id, name, email, company_name, website,
+ *   created_at, bot_count, is_superadmin }
+ */
+export const getCurrentUser = async () => {
+    try {
+        const response = await api.get('/auth/me');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching current user:', error);
+        throw buildApiError(error, 'Failed to load profile');
+    }
+};
+
 export const getClientSettings = async (botId) => {
     try {
         if (botId) {
@@ -406,7 +424,17 @@ export const getClientSettings = async (botId) => {
                 notification_email: bot.notification_email,
                 email_on_qualified: bot.email_on_qualified,
                 email_on_handoff: bot.email_on_handoff,
-                operator_timeout_seconds: bot.operator_timeout_seconds
+                operator_timeout_seconds: bot.operator_timeout_seconds,
+                // Service-scoped answers (admin-defined, optional). Each entry
+                // is ``{name, url}``. Backend always returns objects, but we
+                // defensively normalize legacy string entries here so the UI
+                // never crashes if older bot data shows up.
+                services: Array.isArray(bot.services)
+                    ? bot.services
+                          .map((s) => (typeof s === 'string' ? { name: s, url: '' } : { name: s?.name || '', url: s?.url || '' }))
+                          .filter((s) => s.name.trim() !== '' || s.url.trim() !== '')
+                    : [],
+                services_url: bot.services_url || '',
             };
         }
         const response = await api.get('/client/settings');

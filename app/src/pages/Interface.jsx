@@ -144,6 +144,11 @@ export default function Interface({ embedded = false }) {
     const [widgetConfig, setWidgetConfig] = useState({});
     const [brandingText, setBrandingText] = useState('Powered by OyeChats');
     const [brandingUrl, setBrandingUrl] = useState('https://oyechats.com');
+    const [services, setServices] = useState([]);
+    // ``servicesUrl`` (legacy global URL) is still loaded + saved for
+    // backward compat with the database column, but is no longer surfaced
+    // in the Messages tab UI — per-service URLs replaced it.
+    const [servicesUrl, setServicesUrl] = useState('');
     const [activeTab, setActiveTab] = useState('General');
     const [previewState, setPreviewState] = useState('chat');
     const inputRef = useRef(null);
@@ -203,6 +208,12 @@ export default function Interface({ embedded = false }) {
                 setWidgetConfig(settings.widget_config || {});
                 setBrandingText(settings.branding_text || 'Powered by OyeChats');
                 setBrandingUrl(settings.branding_url || 'https://oyechats.com');
+                // ``services`` is now ``[{name, url}]`` per service. The api.js
+                // wrapper already normalizes legacy strings → objects, so we can
+                // store directly. Initialize to ``[]`` for bots that have no
+                // services configured yet.
+                setServices(Array.isArray(settings.services) ? settings.services : []);
+                setServicesUrl(settings.services_url || '');
                 if (settings.bot_logo) {
                     setLogo(settings.bot_logo);
                 } else {
@@ -384,6 +395,15 @@ export default function Interface({ embedded = false }) {
                 widget_config: widgetConfig,
                 branding_text: brandingText,
                 branding_url: brandingUrl,
+                // Save services as objects with trimmed name + URL. Drop blank
+                // rows so an empty placeholder doesn't end up in the prompt.
+                services: services
+                    .map((s) => ({
+                        name: (s?.name || '').trim(),
+                        url: (s?.url || '').trim() || null,
+                    }))
+                    .filter((s) => s.name !== ''),
+                services_url: (servicesUrl || '').trim() || null,
             };
             console.log('[Interface] Saving settings:', payload, 'botId:', selectedBot?.id);
             await updateClientSettings(payload, selectedBot?.id);
@@ -1244,8 +1264,18 @@ export default function Interface({ embedded = false }) {
                     ) : activeTab === 'Messages' ? (
                         <div className="animate-fade-in">
                             <MessagesTab
-                                settings={{ widget_messages: widgetMessages }}
-                                onSettingsChange={(updates) => setWidgetMessages(updates.widget_messages || {})}
+                                settings={{
+                                    widget_messages: widgetMessages,
+                                    services,
+                                }}
+                                onSettingsChange={(updates) => {
+                                    if (updates.widget_messages !== undefined) {
+                                        setWidgetMessages(updates.widget_messages || {});
+                                    }
+                                    if (updates.services !== undefined) {
+                                        setServices(updates.services || []);
+                                    }
+                                }}
                                 isSaving={isSaving}
                             />
                         </div>

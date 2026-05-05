@@ -54,9 +54,21 @@ function isWithinBusinessHours(businessHours) {
   }
 }
 
+// Read the persisted open state SYNCHRONOUSLY before the first render so a
+// page navigated to from a bot CTA renders the widget already open — no
+// "closed → opening → open" flicker. sessionStorage scope = same tab, so
+// this only kicks in for in-tab navigations, not for first-time visits.
+const _readPersistedOpen = () => {
+  try { return sessionStorage.getItem('oyechats_widget_open') === '1'; } catch { return false; }
+};
+
 const ChatWidget = () => {
-  const [isVisible, setIsVisible] = useState(false);   // controls DOM presence
-  const [isAnimating, setIsAnimating] = useState(null); // null=hidden(no anim), true=open, false=close
+  const initiallyOpen = _readPersistedOpen();
+  const [isVisible, setIsVisible] = useState(initiallyOpen);
+  // ``'done'`` skips the open animation entirely — the chat renders in its
+  // final open state on the very first paint, eliminating the flicker that
+  // otherwise comes from animating from closed → open after a navigation.
+  const [isAnimating, setIsAnimating] = useState(initiallyOpen ? 'done' : null);
   const closeTimer = useRef(null);
   const [settings, setSettings] = useState({
     bot_name: 'OyeChats AI',
@@ -183,6 +195,12 @@ const ChatWidget = () => {
     };
   }, [unlockBodyScroll]);
 
+  // Persist the open/closed state in sessionStorage so that clicking a link
+  // in a bot answer (which navigates the host page in the same tab) reopens
+  // the widget with the conversation intact. sessionStorage scope = same tab,
+  // same browsing session — closes when the visitor closes the tab.
+  const OPEN_STATE_KEY = 'oyechats_widget_open';
+
   const openChat = useCallback(() => {
     if (closeTimer.current) {
       clearTimeout(closeTimer.current);
@@ -190,6 +208,7 @@ const ChatWidget = () => {
     }
     setIsVisible(true);
     lockBodyScroll();
+    try { sessionStorage.setItem(OPEN_STATE_KEY, '1'); } catch { /* private mode */ }
     // Allow React to paint widget-hidden state, then trigger open animation
     setTimeout(() => {
       setIsAnimating(true);
@@ -200,12 +219,29 @@ const ChatWidget = () => {
 
   const closeChat = useCallback(() => {
     setIsAnimating(false); // triggers close animation
+    try { sessionStorage.removeItem(OPEN_STATE_KEY); } catch { /* private mode */ }
     closeTimer.current = setTimeout(() => {
       setIsVisible(false); // unmount after animation
       closeTimer.current = null;
       unlockBodyScroll();
     }, CLOSE_DURATION);
   }, [unlockBodyScroll]);
+
+  // On initial mount, if the chat was restored already-open from sessionStorage
+  // (handled synchronously in the useState above for flicker-free first paint),
+  // we still need to fire the mobile body-scroll lock — that side effect can't
+  // run synchronously during render. Runs exactly once.
+  const didRestoreRef = useRef(false);
+  useEffect(() => {
+    if (didRestoreRef.current) return;
+    didRestoreRef.current = true;
+    if (initiallyOpen) {
+      lockBodyScroll();
+    }
+    // ``initiallyOpen`` is captured at module-eval and never changes, so the
+    // dependency array is intentionally empty — no exhaustive-deps lint rule.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleChat = useCallback(() => {
     if (isVisible && (isAnimating === true || isAnimating === 'done')) {

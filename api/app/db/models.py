@@ -161,6 +161,13 @@ class Bot(Base):
     branding_text = Column(String, default="Powered by OyeChats", server_default="Powered by OyeChats", nullable=False)
     branding_url = Column(String, default="https://oyechats.com", server_default="https://oyechats.com", nullable=False)
 
+    # Service-scoped answers. When ``services`` is non-empty the bot is constrained
+    # to only answer about those services. ``services_url`` is appended as a CTA
+    # under each on-scope answer (e.g. "Learn more: [Our Services](url)") and
+    # auto-suggested from the URL crawl when not set explicitly by the admin.
+    services = Column(JSONB, nullable=True)  # list[str] of admin-defined service names
+    services_url = Column(String, nullable=True)
+
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

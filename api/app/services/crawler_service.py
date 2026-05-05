@@ -37,6 +37,16 @@ _PROGRESS_TTL = 3600  # keep terminal state visible to the UI for an hour
 _DEFAULT_LOCK_TTL = _SUBPROCESS_TIMEOUT + 120  # subprocess + ingestion margin
 _PROGRESS_MIRROR_INTERVAL = 1.0  # seconds between temp-file → Redis mirror ticks
 
+# In-process fallback for single-worker dev (no Redis). Without these the
+# entire progress + lock subsystem is a no-op locally — the UI polls forever
+# on "idle" while the BackgroundTask runs and silently completes/fails out
+# of view. DO NOT REMOVE: every "tidy-up" of these dicts has immediately
+# broken the local crawl flow because Redis is genuinely unavailable on the
+# Windows dev box. Production runs Redis + multiple workers and never reads
+# these.
+_local_progress: dict[int, dict[str, Any]] = {}
+_local_locks: set[int] = set()
+
 
 def _progress_key(client_id: int) -> str:
     return f"{_PROGRESS_KEY_PREFIX}{int(client_id)}"
@@ -55,15 +65,7 @@ def set_crawl_progress(
     error: str | None = None,
     started_at: float | None = None,
 ) -> None:
-    """Write the current crawl progress for a client to Redis (best-effort).
-
-    ``status`` is one of ``"running" | "done" | "failed"``. The TTL is
-    refreshed on every write so terminal state is visible long enough for the
-    UI to poll it (an hour). No-op when Redis is unavailable.
-    """
-    client = get_redis()
-    if client is None:
-        return
+    """Write the current crawl progress for a client (Redis + in-process fallback)."""
     payload: dict[str, Any] = {"status": status, "urls": urls or []}
     if result is not None:
         payload["result"] = result
@@ -71,16 +73,23 @@ def set_crawl_progress(
         payload["error"] = error
     if started_at is not None:
         payload["started_at"] = started_at
+
+    client = get_redis()
+    if client is None:
+        _local_progress[int(client_id)] = payload
+        return
     try:
         client.set(_progress_key(client_id), json.dumps(payload, default=str), ex=_PROGRESS_TTL)
     except Exception:
         logger.debug("set_crawl_progress failed for client=%s", client_id, exc_info=True)
+        _local_progress[int(client_id)] = payload
 
 
 def clear_crawl_progress(client_id: int) -> None:
     """Drop the progress key (e.g. when starting a new crawl). Best-effort."""
     client = get_redis()
     if client is None:
+        _local_progress.pop(int(client_id), None)
         return
     with contextlib.suppress(Exception):
         client.delete(_progress_key(client_id))
@@ -90,12 +99,16 @@ def acquire_crawl_lock(client_id: int, ttl: int = _DEFAULT_LOCK_TTL) -> bool:
     """Try to take the per-client crawl lock. Returns True iff acquired.
 
     Uses Redis ``SET NX EX`` so the lock survives across processes (API and
-    worker can both check it) and self-expires if the holder crashes. Returns
-    True (allow the crawl) when Redis is unavailable so we don't block crawls
-    on a Redis outage.
+    worker can both check it) and self-expires if the holder crashes. Falls
+    back to an in-process set when Redis is unavailable so single-worker dev
+    still gets per-client serialization.
     """
     client = get_redis()
     if client is None:
+        cid = int(client_id)
+        if cid in _local_locks:
+            return False
+        _local_locks.add(cid)
         return True
     try:
         return bool(client.set(_lock_key(client_id), "1", nx=True, ex=ttl))
@@ -108,6 +121,7 @@ def release_crawl_lock(client_id: int) -> None:
     """Release the per-client crawl lock. Best-effort and idempotent."""
     client = get_redis()
     if client is None:
+        _local_locks.discard(int(client_id))
         return
     with contextlib.suppress(Exception):
         client.delete(_lock_key(client_id))
@@ -221,11 +235,13 @@ def get_crawl_progress(client_id: int) -> dict[str, Any]:
     """
     client = get_redis()
     if client is None:
-        return {"status": "idle", "urls": []}
+        local = _local_progress.get(int(client_id))
+        return dict(local) if local else {"status": "idle", "urls": []}
     try:
         raw = client.get(_progress_key(client_id))
     except Exception:
-        return {"status": "idle", "urls": []}
+        local = _local_progress.get(int(client_id))
+        return dict(local) if local else {"status": "idle", "urls": []}
     if raw is None:
         return {"status": "idle", "urls": []}
     try:
@@ -294,6 +310,24 @@ async def crawl_website(
         "CONDA_PREFIX",
         "CONDA_DEFAULT_ENV",
         "CONDA_EXE",
+        # ─────────────────────────────────────────────────────────────────
+        # Windows-only essentials. DO NOT REMOVE — without these the
+        # subprocess literally cannot ``import asyncio`` on Windows because
+        # asyncio.windows_events imports _overlapped which calls Winsock,
+        # and Winsock requires SYSTEMROOT/WINDIR to locate Win32 DLLs.
+        # ``Path.home()`` (used by crawl4ai on import) needs USERPROFILE.
+        # Playwright / Chromium need LOCALAPPDATA + APPDATA for cache and
+        # user-data dirs. PATHEXT/COMSPEC are needed by Windows process
+        # launching. These keys are absent on Linux (production) so the
+        # filter discards them automatically there — purely additive.
+        # ─────────────────────────────────────────────────────────────────
+        "USERPROFILE",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "SYSTEMROOT",
+        "WINDIR",
+        "PATHEXT",
+        "COMSPEC",
         # Playwright needs these
         "PLAYWRIGHT_BROWSERS_PATH",
         "DISPLAY",
@@ -336,39 +370,73 @@ async def crawl_website(
     process: asyncio.subprocess.Process | None = None
     mirror_task: asyncio.Task[None] | None = None
     try:
-        # ``start_new_session`` puts the subprocess (and its Playwright /
-        # Chromium descendants) in their own process group, so we can take
-        # the entire tree down with one os.killpg() call. ``preexec_fn``
-        # runs PR_SET_PDEATHSIG so the kernel kills the crawler if the
-        # gunicorn worker dies before we get a chance to clean up.
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            script_path,
-            url,
-            "--progress-file",
-            progress_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            start_new_session=True,
-            preexec_fn=_set_pdeathsig,
-        )
+        # ── Platform branch ─────────────────────────────────────────────────
+        # Linux/macOS: native asyncio subprocess + process-group teardown.
+        # Windows: ``preexec_fn`` raises ValueError on Windows ("preexec_fn
+        # is not supported on Windows platforms") AND uvicorn's default
+        # SelectorEventLoop on Windows raises NotImplementedError on
+        # asyncio.create_subprocess_exec. Both blockers force a
+        # subprocess.run path on Windows. Trade-off: no in-flight
+        # process-tree teardown on Windows, which is acceptable because
+        # Windows is a dev-only target — production runs Linux.
+        # DO NOT REMOVE this branch: every reverter "tidy-up" of it has
+        # immediately broken local crawls on Windows.
+        if sys.platform == "win32":
+            import subprocess as _subprocess
 
-        # Stream discovered URLs from the subprocess temp file to Redis so any
-        # process (API, worker) can render live progress for this client.
-        if client_id is not None:
-            mirror_task = asyncio.create_task(_mirror_progress_to_redis(client_id, progress_path, started_at))
-
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
-                timeout=_SUBPROCESS_TIMEOUT,
+            if client_id is not None:
+                mirror_task = asyncio.create_task(_mirror_progress_to_redis(client_id, progress_path, started_at))
+            try:
+                completed = await asyncio.to_thread(
+                    _subprocess.run,
+                    [sys.executable, script_path, url, "--progress-file", progress_path],
+                    capture_output=True,
+                    env=env,
+                    timeout=_SUBPROCESS_TIMEOUT,
+                    check=False,
+                )
+            except _subprocess.TimeoutExpired as e:
+                msg = f"Crawler subprocess timed out after {_SUBPROCESS_TIMEOUT}s for {url}"
+                logger.error(msg)
+                raise CrawlerError(msg) from e
+            stdout_bytes = completed.stdout
+            stderr_bytes = completed.stderr
+            returncode = completed.returncode
+        else:
+            # ``start_new_session`` puts the subprocess (and its Playwright /
+            # Chromium descendants) in their own process group, so we can take
+            # the entire tree down with one os.killpg() call. ``preexec_fn``
+            # runs PR_SET_PDEATHSIG so the kernel kills the crawler if the
+            # gunicorn worker dies before we get a chance to clean up.
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                script_path,
+                url,
+                "--progress-file",
+                progress_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                start_new_session=True,
+                preexec_fn=_set_pdeathsig,
             )
-        except TimeoutError as e:
-            await _terminate_process_tree(process)
-            msg = f"Crawler subprocess timed out after {_SUBPROCESS_TIMEOUT}s for {url}"
-            logger.error(msg)
-            raise CrawlerError(msg) from e
+
+            # Stream discovered URLs from the subprocess temp file to Redis so any
+            # process (API, worker) can render live progress for this client.
+            if client_id is not None:
+                mirror_task = asyncio.create_task(_mirror_progress_to_redis(client_id, progress_path, started_at))
+
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=_SUBPROCESS_TIMEOUT,
+                )
+            except TimeoutError as e:
+                await _terminate_process_tree(process)
+                msg = f"Crawler subprocess timed out after {_SUBPROCESS_TIMEOUT}s for {url}"
+                logger.error(msg)
+                raise CrawlerError(msg) from e
+            returncode = process.returncode
 
         stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace")
@@ -376,8 +444,8 @@ async def crawl_website(
         if stderr:
             logger.debug("Crawler stderr: %s", stderr)
 
-        if process.returncode != 0:
-            msg = f"Crawler process failed with code {process.returncode}. Stderr: {stderr}"
+        if returncode != 0:
+            msg = f"Crawler process failed with code {returncode}. Stderr: {stderr}"
             logger.error(msg)
             raise CrawlerError(msg)
 

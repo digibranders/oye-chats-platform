@@ -111,12 +111,16 @@ def get_cors_origins() -> list[str]:
             return [o.strip() for o in origins_str.split(",") if o.strip()]
         return []
 
-    return [
-        "http://localhost",
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:8000",
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-    ]
+    # Dev origins — kept permissive for the local widget-on-test-site flow.
+    # The widget inherits the host page's origin, so the API has to accept
+    # whichever port the test page is being served from. Covers: Vite preview
+    # (4173), VSCode Live Server (5500), http-server / serve / python -m
+    # http.server (8080, 8000, 3000), Next.js (3000), CRA (3000), and the
+    # 127.0.0.1 aliases (browsers treat 127.0.0.1 and localhost as DIFFERENT
+    # origins for CORS — both must be allowlisted).
+    _dev_ports = ["3000", "3001", "4173", "5173", "5174", "5175", "5500", "5501", "8000", "8080", "8081", "8888"]
+    origins: list[str] = ["http://localhost", "http://127.0.0.1"]
+    for port in _dev_ports:
+        origins.append(f"http://localhost:{port}")
+        origins.append(f"http://127.0.0.1:{port}")
+    return origins
