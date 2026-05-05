@@ -313,9 +313,7 @@ def get_current_user_endpoint(client: Client = Depends(get_current_client_strict
     own bots, and ``get_current_client_strict`` rejects non-client tokens.
     """
     with get_session() as session:
-        bot_count = session.execute(
-            select(func.count(Bot.id)).where(Bot.client_id == client.id)
-        ).scalar_one()
+        bot_count = session.execute(select(func.count(Bot.id)).where(Bot.client_id == client.id)).scalar_one()
     return CurrentUserResponse(
         id=client.id,
         name=client.name,

@@ -20,9 +20,11 @@ const _linkText = (children) =>
         .join('')
         .trim();
 
-// Just an arrow glyph (optionally with whitespace) → render as a small
-// inline icon link beside the preceding text.
-const _isIconLink = (text) => /^[↗→»🔗]$/.test(text);
+// Just an arrow / link glyph → render as a small inline icon link beside the
+// preceding text. ``u`` flag is required because 🔗 is an astral codepoint
+// (surrogate pair); without ``u`` the regex parser flags it as an unexpected
+// surrogate pair and the file fails to lint/parse on stricter setups.
+const _isIconLink = (text) => /^[↗→»🔗]$/u.test(text);
 
 // Whole-text CTA phrase (optionally with arrow) → pill button.
 const _isPillCta = (text) => {

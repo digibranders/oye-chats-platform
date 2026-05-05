@@ -1214,8 +1214,7 @@ MEETING BOOKING (inline card):
 
     if cleaned_services:
         bullet_list = "\n".join(
-            f"  - {s['name']}" + (f"  (link: {s['url']})" if s.get("url") else "")
-            for s in cleaned_services
+            f"  - {s['name']}" + (f"  (link: {s['url']})" if s.get("url") else "") for s in cleaned_services
         )
         any_url = any(s.get("url") for s in cleaned_services)
         link_clause = ""
