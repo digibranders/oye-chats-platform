@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
-from app.api.auth import get_current_operator
+from app.api.auth import get_current_client_strict, get_current_operator
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
@@ -285,6 +285,47 @@ class RegisterResponse(BaseModel):
     company_name: str | None = None
     website: str | None = None
     message: str = "Account created successfully"
+
+
+class CurrentUserResponse(BaseModel):
+    """Profile payload for the authenticated client (TopBar profile dropdown).
+
+    Exposes the small set of profile fields the admin app needs to render the
+    user menu — never sensitive data (no api_key, no password hash).
+    """
+
+    id: int
+    name: str
+    email: str
+    company_name: str | None = None
+    website: str | None = None
+    created_at: str
+    bot_count: int
+    is_superadmin: bool = False
+
+
+@router.get("/me", response_model=CurrentUserResponse)
+def get_current_user_endpoint(client: Client = Depends(get_current_client_strict)):
+    """Return the authenticated client's profile + their bot count.
+
+    Used by the admin TopBar to populate the user-menu dropdown (email,
+    joining date, bots). Operators are explicitly out of scope: they don't
+    own bots, and ``get_current_client_strict`` rejects non-client tokens.
+    """
+    with get_session() as session:
+        bot_count = session.execute(
+            select(func.count(Bot.id)).where(Bot.client_id == client.id)
+        ).scalar_one()
+    return CurrentUserResponse(
+        id=client.id,
+        name=client.name,
+        email=client.email,
+        company_name=client.company_name,
+        website=client.website,
+        created_at=client.created_at.isoformat() if client.created_at else "",
+        bot_count=int(bot_count or 0),
+        is_superadmin=bool(client.is_superadmin),
+    )
 
 
 # ── Endpoints ──

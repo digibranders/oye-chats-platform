@@ -8,7 +8,6 @@ import {
 import { useBotContext } from '../context/BotContext';
 import { getAuthState } from '../utils/auth';
 import { getOfflineMessages, getLeadStats } from '../services/api';
-import Avatar from '../components/ui/Avatar';
 import { cn } from '../lib/utils';
 
 export default function Sidebar({ isOpen, isMobile, onClose }) {
@@ -18,7 +17,6 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const { isOperator: isOperatorRole, isBotManager } = getAuthState();
-  const adminName = localStorage.getItem('admin_name') || 'User';
   const [unreadMsgs, setUnreadMsgs] = useState(0);
   const [newLeads, setNewLeads] = useState(0);
 
@@ -291,7 +289,8 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         </div>
       </nav>
 
-      {/* Bottom: User + Settings */}
+      {/* Bottom: Settings link only — the user identity card lives in TopBar's
+          profile dropdown, so showing the avatar + name here is duplicate. */}
       <div className="shrink-0 p-3 border-t border-surface-200 dark:border-surface-800/50">
         <NavLink
           to="/settings"
@@ -306,14 +305,10 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
           title={!isOpen ? 'Settings' : undefined}
           aria-label="Settings"
         >
-          <Avatar name={adminName} size="xs" />
+          <Settings size={18} className="shrink-0" />
           {isOpen && (
-            <div className="flex-1 min-w-0">
-              <p className="text-[12px] font-medium text-surface-700 dark:text-surface-200 truncate">{adminName}</p>
-              <p className="text-[10px] text-surface-400 dark:text-surface-500">Settings</p>
-            </div>
+            <span className="text-[13px] font-medium truncate">Settings</span>
           )}
-          {isOpen && <Settings size={14} className="text-surface-500" />}
         </NavLink>
       </div>
     </aside>

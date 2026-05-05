@@ -22,7 +22,7 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
         const handleScroll = () => {
             setIsScrolling(true);
             clearTimeout(scrollTimer.current);
-            scrollTimer.current = setTimeout(() => setIsScrolling(false), 600);
+            scrollTimer.current = setTimeout(() => setIsScrolling(false), 250);
         };
 
         window.addEventListener('scroll', handleScroll, { passive: true });
@@ -115,12 +115,21 @@ const Launcher = ({ isOpen, toggleChat, settings, onBubbleSend }) => {
     const greetingMessage = settings?.greeting_message || 'Hi! Let us know if you have any questions.';
     const hasBubbleText = bubbleInput.trim().length > 0;
 
+    // Hide ONLY the greeting bubble while the visitor is scrolling — the
+    // launcher button itself must stay pinned and clickable at all times so
+    // the visitor can open the chat from anywhere on the page. ``isScrolling``
+    // already debounces (250ms after last scroll event in the useEffect above),
+    // so the bubble pops back in shortly after the visitor stops.
+    const greetingHidden = isScrolling && !isOpen;
+
     return (
         <div className="relative flex flex-col items-end">
             {/* Pre-chat greeting bubble — desktop only, replaces tooltip */}
             {showGreeting && !isOpen && (
                 <div
-                    className="hidden md:block absolute bottom-full mb-4 right-0 w-[280px] bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden"
+                    className={`hidden md:block absolute bottom-full mb-4 right-0 w-[280px] bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden transition-all duration-200 ${
+                        greetingHidden ? 'opacity-0 translate-y-2 pointer-events-none' : 'opacity-100 translate-y-0'
+                    }`}
                     style={{ animation: 'fadeUp 0.3s ease-out' }}
                 >
                     {/* Bubble header */}

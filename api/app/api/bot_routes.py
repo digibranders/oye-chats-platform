@@ -22,6 +22,33 @@ public_router = APIRouter(tags=["bots"])
 DEMO_EVENT_TYPES = {"demo_share_clicked", "demo_link_opened"}
 
 
+def _normalize_services(raw) -> list[dict]:
+    """Coerce a stored or incoming services value to ``[{name, url}]`` objects.
+
+    Accepts the v1 ``list[str]`` shape (just service names) and the v1.1
+    ``list[{name, url}]`` shape, plus a tolerant catch for partial dicts.
+    Returns a fresh list every call so callers can mutate without aliasing
+    the SQLAlchemy-attached JSONB.
+    """
+    if not raw:
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, str):
+            name = item.strip()
+            if name:
+                out.append({"name": name, "url": None})
+            continue
+        if isinstance(item, dict):
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            url = item.get("url")
+            url = url.strip() if isinstance(url, str) and url.strip() else None
+            out.append({"name": name, "url": url})
+    return out
+
+
 def _get_workspace_bot(session, bot_id: int, client_id: int) -> Bot:
     bot = session.execute(select(Bot).where(Bot.id == bot_id, Bot.client_id == client_id)).scalars().first()
     if not bot:
@@ -114,6 +141,11 @@ class UpdateBotRequest(BaseModel):
     meeting_booking_enabled: bool | None = None
     meeting_provider: str | None = Field(None, pattern="^(calendly|zcal)$")
     zcal_url: str | None = None
+    # Each service is ``{name: str, url: str | None}``. Strings are accepted
+    # for backward compat with the v1 list[str] shape and normalized to
+    # ``{"name": str, "url": None}`` in the route handler.
+    services: list[dict | str] | None = None
+    services_url: str | None = None  # Legacy global URL — kept for compat, no longer used by prompt.
 
     @model_validator(mode="after")
     def _validate_meeting_urls(self):
@@ -182,6 +214,9 @@ class BotResponse(BaseModel):
     meeting_booking_enabled: bool = False
     meeting_provider: str | None = None
     zcal_url: str | None = None
+    # Always returned as ``[{name, url}]`` objects regardless of stored shape.
+    services: list[dict] | None = None
+    services_url: str | None = None  # Legacy field kept for compat.
     is_active: bool
     created_at: str
 
@@ -974,6 +1009,8 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             meeting_booking_enabled=bot.meeting_booking_enabled,
             meeting_provider=bot.meeting_provider,
             zcal_url=bot.zcal_url,
+            services=_normalize_services(bot.services),
+            services_url=bot.services_url,
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )
@@ -1027,6 +1064,12 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
                 merged_bant.update(incoming_bant)
                 bot.bant_config = merged_bant
                 update_data.pop("bant_config")
+
+            # Normalize services to ``[{name, url}]`` regardless of whether the
+            # admin app sends old strings or new objects. Filters out blank
+            # rows so the prompt never sees empty service names.
+            if "services" in update_data:
+                update_data["services"] = _normalize_services(update_data["services"])
 
             for key, value in update_data.items():
                 setattr(bot, key, value)

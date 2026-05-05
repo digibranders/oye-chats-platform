@@ -38,6 +38,49 @@ from app.services.llm_service import extract_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
 
+# Path keywords used to auto-detect a "services" page from a freshly crawled site,
+# in priority order. Matched against the URL path only (not querystring), so a
+# blog post titled "our services" doesn't accidentally win.
+_SERVICES_URL_HINTS = (
+    "/services",
+    "/service",
+    "/solutions",
+    "/what-we-do",
+    "/whatwedo",
+    "/offerings",
+    "/products",
+    "/capabilities",
+)
+
+
+def _pick_services_url(valid_pages: list[dict]) -> str | None:
+    """Return the best services-page URL from a crawled page list, or None.
+
+    Picks the URL whose path matches the highest-priority keyword in
+    :data:`_SERVICES_URL_HINTS`. Prefers shorter paths (the canonical
+    "/services" beats "/services/seo/checklist") so the admin lands on the
+    section root, not a deep page. Returns ``None`` when nothing matches —
+    callers leave the existing ``services_url`` untouched in that case.
+    """
+    from urllib.parse import urlparse
+
+    best: tuple[int, int, str] | None = None
+    for page in valid_pages:
+        url = page.get("url")
+        if not url:
+            continue
+        try:
+            path = (urlparse(url).path or "/").lower().rstrip("/")
+        except Exception:
+            continue
+        for priority, hint in enumerate(_SERVICES_URL_HINTS):
+            if path.endswith(hint) or path == hint:
+                candidate = (priority, len(path), url)
+                if best is None or candidate < best:
+                    best = candidate
+                break
+    return best[2] if best else None
+
 
 async def run_full_crawl(
     *,
@@ -136,7 +179,12 @@ async def run_full_crawl(
             except Exception:
                 logger.warning("brand/company extraction failed for bot %s", bot_id, exc_info=True)
 
-        if recommended_colors or brand_tone or company_context:
+        # Smart-default services URL: pick the best service-page candidate from
+        # the crawled URLs. Only fills the field when the admin hasn't set one
+        # yet, so re-crawls never overwrite an explicit choice.
+        services_url_suggestion = _pick_services_url(valid_pages)
+
+        if recommended_colors or brand_tone or company_context or services_url_suggestion:
             with get_session() as session:
                 if bot_id:
                     bot_db = session.get(Bot, bot_id)
@@ -150,6 +198,9 @@ async def run_full_crawl(
                                 bot_db.company_name = company_context["name"]
                             if company_context.get("description"):
                                 bot_db.company_description = company_context["description"]
+                        if services_url_suggestion and not bot_db.services_url:
+                            bot_db.services_url = services_url_suggestion
+                            logger.info("Auto-suggested services_url for bot %s: %s", bot_id, services_url_suggestion)
                         session.commit()
                         logger.info(
                             "Saved crawl metadata for bot %s: colors=%d, tone=%s, company_name=%s",

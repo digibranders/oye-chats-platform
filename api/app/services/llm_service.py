@@ -76,9 +76,16 @@ def generate_response(
         kwargs: dict = {
             "model": _primary_model(),
             "messages": [{"role": "user", "content": prompt}],
-            "metadata": metadata,
-            "fallbacks": _llm_fallbacks(),
         }
+        # Only include optional kwargs when they're set. LiteLLM's
+        # fallback path internally iterates over ``metadata`` and crashes
+        # with ``argument of type 'NoneType' is not iterable`` if we pass
+        # ``metadata=None`` while ``fallbacks`` is also configured.
+        if metadata is not None:
+            kwargs["metadata"] = metadata
+        fallbacks = _llm_fallbacks()
+        if fallbacks:
+            kwargs["fallbacks"] = fallbacks
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         if temperature is not None:
@@ -125,8 +132,10 @@ Return ONLY the tone description, nothing else."""
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 100,
             "metadata": metadata or {"generation_name": "brand-tone-extraction"},
-            "fallbacks": _llm_fallbacks(),
         }
+        _fallbacks = _llm_fallbacks()
+        if _fallbacks:
+            kwargs["fallbacks"] = _fallbacks
         _apply_model_family_kwargs(kwargs, _primary_model())
         response = litellm.completion(**kwargs)
         tone = (response.choices[0].message.content or "").strip()
@@ -169,8 +178,10 @@ Website content:
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 250,
             "metadata": metadata or {"generation_name": "company-context-extraction"},
-            "fallbacks": _llm_fallbacks(),
         }
+        _fallbacks = _llm_fallbacks()
+        if _fallbacks:
+            kwargs["fallbacks"] = _fallbacks
         _apply_model_family_kwargs(kwargs, _primary_model())
         response = litellm.completion(**kwargs)
         text = (response.choices[0].message.content or "").strip()

@@ -873,7 +873,12 @@ def _background_bant_extraction(
             dimension_scores = dict(chat_session.dimension_scores or {})
 
             for signal in signals:
-                dim = signal["dimension"]
+                # Normalize dimension to lowercase. The extraction LLM has
+                # been observed returning uppercase ("BUDGET", "NEED", …) which
+                # silently bypassed score_field_map and left chat_sessions
+                # bant_*_score / bant_tier stuck at zero even when signals
+                # were correctly recorded in bant_signals.
+                dim = (signal["dimension"] or "").lower()
                 new_score = int(signal.get("score", 0) or 0)
                 if new_score <= 0:
                     continue
@@ -1002,6 +1007,10 @@ def build_hybrid_prompt(
     company_description: str | None = None,
     bot_name: str | None = None,
     meeting_booking_enabled: bool = False,
+    # Accepts either the legacy ``list[str]`` shape or the current
+    # ``list[{name, url}]`` shape — normalized inside the function.
+    services: list[str | dict] | None = None,
+    services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
 ) -> str:
     """Construct the Hybrid RAG system prompt with BANT qualification support."""
 
@@ -1180,6 +1189,65 @@ MEETING BOOKING (inline card):
     if company_description:
         company_section = f"\n\nCOMPANY CONTEXT:\n{company_description[:500]}"
 
+    # SERVICES section — when admin has configured a service list, narrow the
+    # bot's allowed scope to those services. Each service may carry its own
+    # URL; when the bot mentions that service in a list, an inline ↗ icon-link
+    # is rendered next to its name. No bottom global CTA — the inline icons
+    # replace it entirely. Both ``services`` and per-service URLs are optional
+    # and additive (no behaviour change for bots that don't set them).
+    services_section = ""
+
+    # Accept both shapes: list[str] (legacy) and list[{name,url}] (current).
+    cleaned_services: list[dict] = []
+    for raw in (services or [])[:50]:
+        if isinstance(raw, str):
+            name = raw.strip()
+            if name:
+                cleaned_services.append({"name": name, "url": None})
+        elif isinstance(raw, dict):
+            name = (raw.get("name") or "").strip()
+            if not name:
+                continue
+            url = raw.get("url")
+            url = url.strip() if isinstance(url, str) and url.strip() else None
+            cleaned_services.append({"name": name, "url": url})
+
+    if cleaned_services:
+        bullet_list = "\n".join(
+            f"  - {s['name']}" + (f"  (link: {s['url']})" if s.get("url") else "")
+            for s in cleaned_services
+        )
+        any_url = any(s.get("url") for s in cleaned_services)
+        link_clause = ""
+        if any_url:
+            link_clause = (
+                "\n- INLINE LINK ICON — when you list services in your answer, "
+                "for EACH service that has a URL above append exactly the markdown "
+                "snippet ` [↗](url)` right after the service name (with a single "
+                "space before the bracket). Example list rendering:\n"
+                "      - **Hospitality** [↗](https://example.com/hospitality)\n"
+                "      - **Web Designing** [↗](https://example.com/web)\n"
+                "  RULES:\n"
+                "    * Use only the URLs from the SERVICES list above. Never invent URLs.\n"
+                "    * If a service has no URL above, render its name without any link.\n"
+                "    * The link text must be the literal arrow character ↗ — no other "
+                "text, no 'click here', no service name inside the brackets.\n"
+                "    * Place the link icon ONLY in service-listing contexts (bulleted "
+                "or numbered lists of services). Do not sprinkle it into prose sentences.\n"
+                "    * Do NOT append a bottom 'Learn more' / 'Explore services' CTA — "
+                "the inline ↗ icons are the entire CTA mechanism.\n"
+                "    * Show each service link AT MOST ONCE per response."
+            )
+        services_section = f"""
+
+SERVICES (HIGHEST PRIORITY — overrides scope rules above):
+- This company offers exactly the following services. Treat this list as the
+  authoritative scope for what the bot can answer about:
+{bullet_list}
+- If a visitor asks about a service NOT in the list above, treat it as
+  out-of-scope and use the standard scope-refusal response.{link_clause}
+"""
+
     hybrid_system_prompt = f"""You are the AI assistant for **{display_name}**. You represent {display_name} and speak on its behalf.
 
 SCOPE (HIGHEST PRIORITY — overrides everything else below):
@@ -1208,7 +1276,7 @@ RULES:
 6. For LIST and COUNT questions ("who are your clients", "what services do you offer", "how many people on your team"): give the COMPLETE list that appears in the reference material — never a partial subset. Use the company's exact branded names where the reference material gives them (e.g. "Performance Marketing & Tracking", not generic "ads"; "Brand Identity & Storytelling", not generic "branding"). Never hedge with "at least N", "30+", or "we have several" when the reference material lists the items by name — count or enumerate them precisely. If the list is genuinely long, summarise with an exact count plus the most prominent names: "we work with 19 brands including X, Y, Z".
 7. Only ask a follow-up question if the user's query is genuinely ambiguous.
 8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
-9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".{custom_prompt_section}{tone_section}{company_section}
+9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".{custom_prompt_section}{tone_section}{company_section}{services_section}
 {qualification_section}
 {handoff_section}
 {meeting_section}
@@ -1668,6 +1736,8 @@ def rag_pipeline(
                 company_description=_company_desc,
                 bot_name=_bot_name,
                 meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
+                services=getattr(bot, "services", None) if bot else None,
+                services_url=getattr(bot, "services_url", None) if bot else None,
             )
 
             # temperature=0.3: low enough that "what services do you offer"
@@ -2187,6 +2257,8 @@ async def rag_pipeline_stream(
             company_description=_company_desc,
             bot_name=_bot_name,
             meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
+            services=getattr(bot, "services", None) if bot else None,
+            services_url=getattr(bot, "services_url", None) if bot else None,
         )
         logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
