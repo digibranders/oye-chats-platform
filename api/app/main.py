@@ -271,6 +271,14 @@ def _gather_health() -> tuple[dict, bool, bool]:
     return payload, ready_to_serve, fully_ok
 
 
+@app.head("/health", tags=["system"], include_in_schema=False)
+def health_check_head():
+    from fastapi.responses import Response
+
+    _, ready_to_serve, _ = _gather_health()
+    return Response(status_code=200 if ready_to_serve else 503)
+
+
 @app.get("/health", tags=["system"])
 def health_check():
     """Readiness check for user-facing traffic.
@@ -293,6 +301,14 @@ def health_check():
     return JSONResponse(status_code=200 if ready_to_serve else 503, content=payload)
 
 
+@app.head("/health/full", tags=["system"], include_in_schema=False)
+def health_check_full_head():
+    from fastapi.responses import Response
+
+    _, _, fully_ok = _gather_health()
+    return Response(status_code=200 if fully_ok else 503)
+
+
 @app.get("/health/full", tags=["system"])
 def health_check_full():
     """Comprehensive health check including the worker.
@@ -307,6 +323,13 @@ def health_check_full():
 
     payload, _, fully_ok = _gather_health()
     return JSONResponse(status_code=200 if fully_ok else 503, content=payload)
+
+
+@app.head("/health/live", tags=["system"], include_in_schema=False)
+def liveness_probe_head():
+    from fastapi.responses import Response
+
+    return Response(status_code=200)
 
 
 @app.get("/health/live", tags=["system"])
