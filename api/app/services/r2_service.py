@@ -58,7 +58,7 @@ s3_client = boto3.client(
     endpoint_url=f"https://{R2_ENDPOINT}",
     aws_access_key_id=R2_KEY_ID,
     aws_secret_access_key=R2_APPLICATION_KEY,
-    region_name=R2_ENDPOINT.split(".")[1] if hasattr(R2_ENDPOINT, "split") and "." in R2_ENDPOINT else "auto",
+    region_name="auto",
     config=Config(signature_version="s3v4"),
 )
 
