@@ -126,9 +126,18 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                 <div className="px-4 py-4 border-b border-surface-100 dark:border-surface-800 flex items-start gap-3">
                   <Avatar name={profile?.name || adminName} size="md" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[14px] font-semibold text-surface-900 dark:text-surface-50 truncate">
-                      {profile?.name || adminName}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-surface-900 dark:text-surface-50 truncate">
+                        {profile?.name || adminName}
+                      </p>
+                      {/* Show the operator role as a small chip when applicable
+                          — clients have role=null so this is a no-op for admins. */}
+                      {profile?.kind === 'operator' && profile?.role && (
+                        <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 shrink-0">
+                          {profile.role}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[12px] text-surface-500 dark:text-surface-400 truncate">
                       {profileLoading && !profile ? 'Loading…' : (profile?.email || (profileError ? 'Profile unavailable' : '—'))}
                     </p>

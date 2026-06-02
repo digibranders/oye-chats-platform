@@ -255,6 +255,92 @@ class TestStripCtaMarker:
         assert "Response text" in text
 
 
+# ── CTA fallback inference (safety net) ─────────────────────────────────────
+
+
+class TestInferCtaFallback:
+    """When the LLM asks a qualifying question but forgets the marker, the
+    safety net must infer the right CTA from the answer text so the chips
+    still render."""
+
+    _BANT_TIMELINE = {
+        "timeline": {
+            "cta_enabled": True,
+            "cta_prompt": "When are you looking to get started?",
+            "options": [
+                {"label": "No timeline", "score": 5},
+                {"label": "6-12 months", "score": 10},
+                {"label": "3-6 months", "score": 15},
+                {"label": "1-3 months", "score": 20},
+                {"label": "This month", "score": 25},
+            ],
+        },
+        "conversation_order": ["timeline"],
+    }
+
+    def test_returns_none_when_no_question_mark(self):
+        from app.services.rag_service import _infer_cta_fallback
+
+        # Pure statement, no ?: never trip the fallback.
+        result = _infer_cta_fallback("Our timeline is flexible.", {}, self._BANT_TIMELINE)
+        assert result is None
+
+    def test_returns_none_for_empty_text(self):
+        from app.services.rag_service import _infer_cta_fallback
+
+        assert _infer_cta_fallback("", {}, self._BANT_TIMELINE) is None
+        assert _infer_cta_fallback(None, {}, self._BANT_TIMELINE) is None
+
+    def test_infers_timeline_from_preferred_time_window(self):
+        from app.services.rag_service import _infer_cta_fallback
+
+        # Matches the user-reported answer that omitted the marker.
+        result = _infer_cta_fallback(
+            "I can get that started — please pick a preferred time window?",
+            {},
+            self._BANT_TIMELINE,
+        )
+        assert result is not None
+        assert result["dimension"] == "timeline"
+        assert "No timeline" in result["options"]
+        assert result["prompt"] == "When are you looking to get started?"
+
+    def test_infers_timeline_from_when_phrasing(self):
+        from app.services.rag_service import _infer_cta_fallback
+
+        result = _infer_cta_fallback(
+            "Sounds good — when are you hoping to roll this out?",
+            {},
+            self._BANT_TIMELINE,
+        )
+        assert result is not None
+        assert result["dimension"] == "timeline"
+
+    def test_skips_dimension_already_above_threshold(self):
+        from app.services.rag_service import _infer_cta_fallback
+
+        # timeline_score=20 ≥ 60% of max(25) = 15 → considered assessed.
+        result = _infer_cta_fallback(
+            "When are you hoping to start?",
+            {"timeline_score": 20},
+            self._BANT_TIMELINE,
+        )
+        assert result is None
+
+    def test_returns_none_when_cta_disabled(self):
+        from app.services.rag_service import _infer_cta_fallback
+
+        cfg = {
+            "timeline": {
+                "cta_enabled": False,
+                "options": [{"label": "x", "score": 5}],
+            },
+            "conversation_order": ["timeline"],
+        }
+        result = _infer_cta_fallback("When are you looking to start?", {}, cfg)
+        assert result is None
+
+
 # ── Query rewriting ──────────────────────────────────────────────────────────
 
 

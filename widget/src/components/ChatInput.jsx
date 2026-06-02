@@ -180,8 +180,8 @@ const ChatInput = ({
 
             {/* Action bar — bot mode only */}
             {!isLive && !isWaiting && (
-                <div className="flex items-center justify-between mt-2.5 px-1">
-                    <div className="flex items-center gap-3">
+                <div className="flex items-center justify-between gap-3 mt-3.5 pt-1 px-1">
+                    <div className="flex items-center gap-3 min-w-0">
                         {onHandoff && (
                             <button
                                 type="button"

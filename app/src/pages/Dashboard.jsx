@@ -325,18 +325,50 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={[
-                      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0 },
-                      { name: 'MQL', value: leadStats.warm || leadStats.mql || 0 },
-                      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0 },
-                      { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0 },
+                      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: '#94a3b8' },
+                      { name: 'MQL', value: leadStats.warm || leadStats.mql || 0, color: '#38bdf8' },
+                      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: '#f97316' },
+                      { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0, color: '#22c55e' },
                     ].filter(d => d.value > 0)} cx="50%" cy="50%" innerRadius={28} outerRadius={50} paddingAngle={2} dataKey="value">
                       {['#94a3b8', '#38bdf8', '#f97316', '#22c55e'].map((color, i) => (
                         <Cell key={i} fill={color} />
                       ))}
                     </Pie>
                     <ReTooltip
-                      contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px' }}
-                      labelStyle={{ color: 'var(--text)' }}
+                      cursor={{ fill: 'rgba(148, 163, 184, 0.08)' }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const { name, value, payload: p } = payload[0];
+                        const total = (leadStats.total || 0) || 1;
+                        const pct = Math.round((value / total) * 100);
+                        const accent = p.color || '#6366f1';
+                        return (
+                          <div
+                            className="rounded-xl px-3 py-2 shadow-2xl backdrop-blur-md"
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.98)',
+                              border: `1px solid ${accent}`,
+                              boxShadow: `0 10px 30px -10px ${accent}66, 0 0 0 1px ${accent}33`,
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0"
+                                style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+                              />
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                                {name}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-baseline gap-1.5">
+                              <span className="text-base font-bold text-slate-900">{value}</span>
+                              <span className="text-[11px] font-medium text-slate-500">
+                                lead{value === 1 ? '' : 's'} · {pct}%
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }}
                     />
                   </PieChart>
                 </ResponsiveContainer>

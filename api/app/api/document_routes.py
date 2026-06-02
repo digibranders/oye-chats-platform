@@ -16,7 +16,9 @@ from app.schemas.client import CrawlRequest, DocumentPagesResponse
 from app.services.crawler_service import (
     acquire_crawl_lock,
     get_crawl_progress,
+    is_cancellation_requested,
     release_crawl_lock,
+    request_cancellation,
     set_crawl_progress,
 )
 
@@ -295,12 +297,72 @@ def crawl_progress_endpoint(auth: dict = Depends(get_current_client_or_operator)
     Polled by the frontend every few seconds. Reads from Redis so the same
     state is visible whether the crawl is running in this API process or in
     the ARQ worker. The response always contains ``status`` (one of
-    ``"idle" | "running" | "done" | "failed"``) and ``urls`` (list of URLs
-    discovered so far). When status is ``"done"`` the response also contains
-    ``result`` (the same payload the original ``POST /crawl`` would have
-    returned); when ``"failed"`` it contains ``error``.
+    ``"idle" | "running" | "cancelling" | "cancelled" | "done" | "failed"``)
+    and ``urls`` (list of URLs discovered so far). When ``status="running"``
+    the response also contains ``pages_crawled``, ``max_pages``,
+    ``current_url``, ``started_at`` (epoch seconds), and ``cancellable``
+    (bool) so the UI can render a real progress bar, an ETA, and a Cancel
+    button. When ``status="done"`` / ``"cancelled"`` the response contains
+    ``result`` with the ingestion payload; when ``"failed"`` it contains
+    ``error``.
     """
-    return get_crawl_progress(auth["client_id"])
+    client_id = auth["client_id"]
+    payload = get_crawl_progress(client_id)
+    # A cancel may have been requested between the orchestrator's last
+    # progress write and now — surface it immediately so the UI can flip
+    # the toast to "Cancelling…" without waiting a full poll cycle.
+    if payload.get("status") == "running" and is_cancellation_requested(client_id):
+        payload = dict(payload)
+        payload["status"] = "cancelling"
+    return payload
+
+
+@router.post("/crawl/cancel", status_code=202)
+@limiter.limit("30/minute", key_func=key_from_api_key)
+def crawl_cancel_endpoint(
+    request: Request,
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Request cancellation of the caller's in-flight crawl.
+
+    Returns 202 immediately. The orchestrator (running in the ARQ worker or
+    inline) sees the cancel flag within ~1s, asks the crawler subprocess to
+    stop cooperatively between URLs (fast, clean, no leaked Chromium), and
+    falls back to SIGTERM if the subprocess doesn't honour it within a few
+    seconds. Any pages that were crawled before the cancel landed are still
+    ingested so we don't throw away work the customer already paid for.
+
+    Idempotent: calling cancel twice is fine; the flag is a single Redis key
+    that auto-expires when the crawl finishes (or after ``CRAWL_SUBPROCESS
+    _TIMEOUT + 60s`` if everything goes sideways).
+    """
+    _require_knowledge_management_access(auth)
+    client_id = auth["client_id"]
+    _verify_bot_ownership(bot_id, client_id)
+
+    progress = get_crawl_progress(client_id)
+    if progress.get("status") not in {"running", "cancelling"}:
+        # Nothing to cancel — let the UI know so it doesn't get stuck in a
+        # "Cancelling…" state. Returns 200 with a clear message, not an error.
+        return {"status": progress.get("status", "idle"), "message": "No crawl in progress."}
+
+    request_cancellation(client_id)
+    # Flip the visible status immediately for snappier UI feedback. The
+    # orchestrator's final write (``cancelled`` + result payload) lands within
+    # a few seconds via the normal progress write path.
+    set_crawl_progress(
+        client_id,
+        status="cancelling",
+        urls=progress.get("urls", []),
+        started_at=progress.get("started_at"),
+        pages_crawled=progress.get("pages_crawled"),
+        max_pages=progress.get("max_pages"),
+        current_url=progress.get("current_url"),
+        cancellable=False,
+    )
+    logger.info("Crawl cancellation requested for client %s (bot_id=%s)", client_id, bot_id)
+    return {"status": "cancelling", "message": "Cancel requested. Crawl will stop within a few seconds."}
 
 
 @router.post("/crawl", status_code=202)

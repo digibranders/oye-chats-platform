@@ -13,6 +13,7 @@ exists, ``BILLING_PROVIDER`` (env, default ``"razorpay"``) is used.
 """
 
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -20,7 +21,8 @@ from sqlalchemy import select
 
 from app.api.auth import get_current_client_strict as get_current_client
 from app.config import BILLING_PROVIDER, RAZORPAY_ENABLED, STRIPE_ENABLED
-from app.db.models import Client, CreditLedger, Invoice
+from app.core.dates import add_months
+from app.db.models import Client, CreditLedger, Invoice, Subscription
 from app.db.session import get_session
 from app.services import credit_service
 from app.services.plan_service import get_active_plans, get_client_plan, get_client_subscription
@@ -29,6 +31,49 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
+
+
+def effective_resets_at(sub: Subscription | None) -> datetime | None:
+    """Return the next forward-looking reset date for this subscription.
+
+    The renewal cron rolls ``current_period_end`` forward when it fires, but
+    if the worker has been down (or hasn't caught up yet) the stored value
+    can be in the past — which makes the UI's "Resets …" label show
+    *yesterday*, which is obviously wrong.
+
+    This helper computes the next reset *on read*: if the stored end is in
+    the future we use it as-is; otherwise we advance by whole months (based
+    on the original cycle length, default 1 month) until we land in the
+    future. The DB row isn't mutated — the cron stays the source of truth
+    for the actual renewal — we just make sure the user-facing label never
+    lies.
+    """
+    if sub is None or sub.current_period_end is None:
+        return None
+    now = datetime.now(UTC)
+    end = sub.current_period_end
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    if end > now:
+        return end
+    start = sub.current_period_start
+    if start is not None and start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    # Infer the cycle length. Round to nearest whole month; clamp to ≥ 1 so
+    # a misconfigured row (start == end) doesn't hang in an infinite loop.
+    cycle_months = 1
+    if start is not None and end > start:
+        approx_months = round((end - start).days / 30)
+        cycle_months = max(1, approx_months)
+    candidate = end
+    # Cap the walk at a sane horizon (10 years) so a truly malformed row
+    # can't loop forever — at that point we just return the latest computed
+    # date and let the UI render whatever's there.
+    for _ in range(120):
+        if candidate > now:
+            return candidate
+        candidate = add_months(candidate, cycle_months)
+    return candidate
 
 
 def _resolve_provider(requested: str | None, *, current_sub_provider: str | None = None) -> str:
@@ -157,12 +202,13 @@ def get_subscription_usage(client: Client = Depends(get_current_client)):
         breakdown = credit_service.get_balance_breakdown(session, client.id)
         sub = get_client_subscription(session, client.id)
         plan = get_client_plan(session, client.id)
+        next_reset = effective_resets_at(sub)
         return {
             "deprecated": True,
             "message": "Use /credits/balance instead.",
             "credits": breakdown,
             "monthly_grant": int(plan.credits_per_month or 0) if plan else 0,
-            "resets_at": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+            "resets_at": next_reset.isoformat() if next_reset else None,
         }
 
 
@@ -511,13 +557,14 @@ def get_credit_balance(client: Client = Depends(get_current_client)):
             else ("$" if currency_code == "USD" else currency_code + " ")
         )
 
+        next_reset = effective_resets_at(sub)
         return {
             "plan": breakdown["plan"],
             "topup": breakdown["topup"],
             "total": breakdown["total"],
             "soonest_expiry": breakdown["soonest_expiry"].isoformat() if breakdown["soonest_expiry"] else None,
             "monthly_grant": int(plan.credits_per_month or 0) if plan else 0,
-            "resets_at": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+            "resets_at": next_reset.isoformat() if next_reset else None,
             "period_start": period_start.isoformat() if period_start else None,
             "costs": costs,
             "usage": {

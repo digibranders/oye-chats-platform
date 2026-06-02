@@ -30,7 +30,29 @@ export const STREAM_SENTINELS = Object.freeze([
     '[MEETING_CARD]',
 ]);
 
+// Dynamic sentinels with a fixed prefix and a variable inner value (e.g.
+// [CTA:timeline]). The backend emits one per qualifying question and only
+// strips it from the persisted answer after the stream closes, so the widget
+// must scrub it in-flight or the marker briefly appears in the bubble.
+const CTA_PREFIX = '[CTA:';
+const CTA_PATTERN = /\[CTA:[a-zA-Z0-9_]+\]/g;
+
 const MAX_SENTINEL_LEN = STREAM_SENTINELS.reduce((m, s) => Math.max(m, s.length), 0);
+
+/**
+ * Return true if `tail` could still grow into a complete [CTA:dimension] marker.
+ * Covers both the fixed-prefix build-up ("[", "[C", "[CT", "[CTA", "[CTA:")
+ * and the open dimension body ("[CTA:t", "[CTA:tim", ...) before the closing
+ * ']' arrives in a later chunk.
+ */
+const couldBeCtaPrefix = (tail) => {
+    if (!tail.startsWith('[')) return false;
+    if (CTA_PREFIX.startsWith(tail)) return true;
+    if (!tail.startsWith(CTA_PREFIX)) return false;
+    const body = tail.slice(CTA_PREFIX.length);
+    // Still building the dimension name (or just hit ':') and no ']' yet.
+    return /^[a-zA-Z0-9_]*$/.test(body);
+};
 
 /**
  * Remove every complete occurrence of any sentinel from `text`.
@@ -43,6 +65,7 @@ export const stripAllSentinels = (text) => {
     for (const s of STREAM_SENTINELS) {
         if (out.includes(s)) out = out.split(s).join('');
     }
+    if (out.includes(CTA_PREFIX)) out = out.replace(CTA_PATTERN, '');
     return out;
 };
 
@@ -77,15 +100,25 @@ export const createSentinelStripper = () => {
 
             // A '[' is present in the tail. Identify the longest trailing
             // substring that could still be the prefix of a known sentinel —
-            // hold only that much back until more chunks arrive.
-            const maxHold = Math.min(MAX_SENTINEL_LEN - 1, pending.length - lastBracket);
+            // hold only that much back until more chunks arrive. The hold
+            // window must also cover an in-progress [CTA:dimension] body,
+            // whose length is bounded only by the dimension name; clamp at
+            // 64 chars (well above any real dimension key) to avoid pinning
+            // unbounded text in `pending`.
+            const maxHold = Math.min(
+                Math.max(MAX_SENTINEL_LEN - 1, 64),
+                pending.length - lastBracket,
+            );
             let holdFrom = pending.length;
             for (let k = maxHold; k > 0; k--) {
                 const tail = pending.slice(pending.length - k);
                 // Only '[...' tails can be sentinel prefixes — anchor on the
                 // bracket to avoid holding back text like "...]" that happens
                 // to end near but after a '['.
-                if (tail.startsWith('[') && STREAM_SENTINELS.some((s) => s.startsWith(tail))) {
+                if (
+                    tail.startsWith('[') &&
+                    (STREAM_SENTINELS.some((s) => s.startsWith(tail)) || couldBeCtaPrefix(tail))
+                ) {
                     holdFrom = pending.length - k;
                     break;
                 }

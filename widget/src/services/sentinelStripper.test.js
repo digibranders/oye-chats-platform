@@ -164,3 +164,49 @@ test('sentinel list is frozen (API stability)', () => {
     assert.ok(STREAM_SENTINELS.includes('[LEAVE_MESSAGE_CARD]'));
     assert.ok(STREAM_SENTINELS.includes('[MEETING_CARD]'));
 });
+
+// ── CTA marker (dynamic [CTA:dimension] sentinel) ──────────────────────────
+
+test('stripAllSentinels removes [CTA:dimension]', () => {
+    assert.equal(
+        stripAllSentinels('What is your timeline? [CTA:timeline]'),
+        'What is your timeline? ',
+    );
+});
+
+test('stripAllSentinels removes multiple CTA markers and other sentinels', () => {
+    assert.equal(
+        stripAllSentinels('A [CTA:budget] B [LEAVE_MESSAGE_CARD] C [CTA:authority] D'),
+        'A  B  C  D',
+    );
+});
+
+test('stripper removes [CTA:timeline] arriving in one chunk', () => {
+    const s = createSentinelStripper();
+    assert.equal(s.push('Pick a timeframe [CTA:timeline]'), 'Pick a timeframe ');
+    assert.equal(s.flush(), '');
+});
+
+test('stripper removes [CTA:dimension] split across chunks', () => {
+    const s = createSentinelStripper();
+    const a = s.push('Tell me your range [CTA:bud');
+    const b = s.push('get]');
+    assert.equal(a + b + s.flush(), 'Tell me your range ');
+});
+
+test('stripper holds back CTA prefix until closing bracket arrives', () => {
+    const s = createSentinelStripper();
+    // After "[CTA:" the body is open — must hold until the next chunk.
+    const a = s.push('Pick a slot [CTA:');
+    assert.equal(a, 'Pick a slot ');
+    const b = s.push('timeline]');
+    assert.equal(b, '');
+    assert.equal(s.flush(), '');
+});
+
+test('stripper releases [CTA: literal when stream ends mid-marker', () => {
+    const s = createSentinelStripper();
+    s.push('aborted [CTA:tim');
+    // Mid-marker abort — better to surface the partial than swallow real text.
+    assert.equal(s.flush(), '[CTA:tim');
+});

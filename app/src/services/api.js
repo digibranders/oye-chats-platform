@@ -173,15 +173,37 @@ export const uploadDocuments = async (files, botId) => {
 
 /**
  * Poll the current crawl progress (URLs discovered so far).
- * Lightweight — just a temp-file read on the server, no DB.
- * @returns {Promise<{urls: string[]}>}
+ * Lightweight — Redis read on the server, no DB.
+ * Returns the full progress payload: status, urls, pages_crawled,
+ * max_pages, current_url, started_at, cancellable, result (when done) or
+ * error (when failed). Falls back to `{status: 'idle', urls: []}` on any
+ * network error so callers can render safely.
+ * @returns {Promise<Object>}
  */
 export const getCrawlProgress = async () => {
     try {
         const response = await api.get('/crawl/progress');
         return response.data;
     } catch {
-        return { urls: [] };
+        return { status: 'idle', urls: [] };
+    }
+};
+
+/**
+ * Request cancellation of the caller's in-flight crawl.
+ * Returns 202 immediately; the actual cancel lands within a few seconds.
+ * Idempotent. Safe to call when no crawl is running (returns a status hint).
+ * @param {number|undefined} botId - Optional bot ID for ownership check
+ * @returns {Promise<{status: string, message: string}>}
+ */
+export const cancelCrawl = async (botId) => {
+    try {
+        const endpoint = botId ? `/crawl/cancel?bot_id=${botId}` : '/crawl/cancel';
+        const response = await api.post(endpoint);
+        return response.data;
+    } catch (error) {
+        console.error('API Error cancelling crawl:', error);
+        throw buildApiError(error, 'Failed to cancel crawl');
     }
 };
 

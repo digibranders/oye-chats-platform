@@ -1586,11 +1586,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </div>
                         ) : (
                             <>
-                                <div className="flex items-center gap-2 mb-2">
-                                    <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                                    <p className="text-[13px] font-semibold text-[#16202C]">{settings.offline_message || 'Our team is currently unavailable'}</p>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Mail className="w-4 h-4 flex-shrink-0" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                                    <p className="text-[13px] font-semibold text-[#16202C]">Send us a message</p>
                                 </div>
-                                <p className="text-[12px] text-gray-500 mb-3">Leave us a message and we&apos;ll get back to you.</p>
+                                <p className="text-[12px] text-gray-500 mb-3">We&apos;ll get back to you as soon as we can.</p>
                                 <form onSubmit={handleOfflineSubmit} className="space-y-2">
                                     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
                                         <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
@@ -1622,6 +1622,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                         {offlineSubmitting
                                             ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                                             : 'Send Message'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleReturnToBot}
+                                        disabled={offlineSubmitting}
+                                        className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
+                                    >
+                                        Continue with AI instead
                                     </button>
                                 </form>
                             </>

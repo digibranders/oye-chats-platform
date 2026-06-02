@@ -195,12 +195,15 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     # Free plans don't have a trial — mark as active immediately
     status = "active" if default_plan.monthly_price_cents == 0 else "trialing"
 
+    # Anniversary billing: a customer signing up on May 30 17:18 IST gets
+    # their period_end on June 30 17:18 IST — exactly one month from signup,
+    # not "the 1st of next month". Matches Stripe/Razorpay default behaviour
+    # and avoids the "I signed up on the 30th and my month was over in 30
+    # hours" footgun the old calendar logic created.
+    from app.core.dates import add_months
+
     period_start = now
-    # Calendar month for free tier
-    if now.month == 12:
-        period_end = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        period_end = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    period_end = add_months(now, 1)
 
     sub = Subscription(
         client_id=client_id,
