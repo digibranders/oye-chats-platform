@@ -84,9 +84,7 @@ def audit_and_repair(repair: bool) -> int:
                 still_broken += 1
                 continue
 
-            plan_grants = [
-                g for g in credit_service._grants_for(session, client.id) if g.reason == "plan_grant"
-            ]
+            plan_grants = [g for g in credit_service._grants_for(session, client.id) if g.reason == "plan_grant"]
             attached = 0
             for orphan in orphans:
                 for grant in plan_grants:

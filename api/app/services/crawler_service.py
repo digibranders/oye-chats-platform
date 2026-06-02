@@ -304,7 +304,10 @@ async def _watch_for_cancellation(
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(process.wait(), timeout=_COOPERATIVE_CANCEL_GRACE)
                 if process.returncode is None:
-                    logger.info("Subprocess did not honour cooperative cancel within %ss — sending SIGTERM", _COOPERATIVE_CANCEL_GRACE)
+                    logger.info(
+                        "Subprocess did not honour cooperative cancel within %ss — sending SIGTERM",
+                        _COOPERATIVE_CANCEL_GRACE,
+                    )
                     await _terminate_process_tree(process)
             return True
     except asyncio.CancelledError:
@@ -574,9 +577,7 @@ async def crawl_website(
                 mirror_task = asyncio.create_task(
                     _mirror_progress_to_redis(client_id, progress_path, started_at, max_pages=_effective_max_pages)
                 )
-                cancel_watcher_task = asyncio.create_task(
-                    _watch_for_cancellation(client_id, cancel_path, None)
-                )
+                cancel_watcher_task = asyncio.create_task(_watch_for_cancellation(client_id, cancel_path, None))
             try:
                 completed = await asyncio.to_thread(
                     _subprocess.run,
@@ -628,9 +629,7 @@ async def crawl_website(
                 mirror_task = asyncio.create_task(
                     _mirror_progress_to_redis(client_id, progress_path, started_at, max_pages=_effective_max_pages)
                 )
-                cancel_watcher_task = asyncio.create_task(
-                    _watch_for_cancellation(client_id, cancel_path, process)
-                )
+                cancel_watcher_task = asyncio.create_task(_watch_for_cancellation(client_id, cancel_path, process))
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
