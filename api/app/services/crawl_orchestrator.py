@@ -29,6 +29,7 @@ from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
 from app.services.crawler_service import (
+    CrawlCancelled,
     CrawlerError,
     crawl_website,
     release_crawl_lock,
@@ -237,6 +238,38 @@ async def run_full_crawl(
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
         )
+        return result_payload
+    except CrawlCancelled as exc:
+        # User pressed Cancel — honour it FAST. Cancel must feel instant; we
+        # do not run any further work (especially not OpenAI embeddings,
+        # which take seconds per chunk and stall the UI for minutes when the
+        # subprocess collected dozens of pages before stopping). We simply
+        # write the terminal status and return.
+        #
+        # Trade-off: pages that were crawled but not yet ingested are
+        # discarded. That matches user intent — they clicked Cancel because
+        # they wanted the work to stop. Credits are deducted per page inside
+        # ``batch_web_ingestion``, so by skipping the ingest we also skip the
+        # charge for those pages. Nothing the user paid for is lost; we just
+        # didn't bill them for work they asked us to abandon.
+        partial = exc.partial_result or {}
+        partial_results = partial.get("results") or []
+        partial_urls = [p["url"] for p in partial_results if p.get("url")]
+        result_payload = {
+            "message": "Crawl cancelled by user",
+            "root_url": url,
+            "pages_processed": 0,
+            "chunks_processed": 0,
+            "credits_deducted": 0,
+            "pages_crawled": partial_urls,
+        }
+        set_crawl_progress(
+            client_id,
+            status="cancelled",
+            urls=partial_urls,
+            result=result_payload,
+        )
+        logger.info("Cancelled crawl for client %s: %d pages discovered, none ingested", client_id, len(partial_urls))
         return result_payload
     except CrawlerError as exc:
         logger.error("Crawling failed for client %s: %s", client_id, exc)

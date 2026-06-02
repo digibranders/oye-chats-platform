@@ -23,13 +23,15 @@
   pointer-events: auto;
 }
 
-/* iOS safe area support — prevents content from going behind notch/home indicator */
+/* iOS safe area support — prevents content from going behind notch/home indicator.
+   Uses max() so the rule never shrinks the Tailwind base padding on desktop
+   (where env(safe-area-inset-bottom) = 0). On iOS with notch the safe inset wins. */
 @supports (padding-top: env(safe-area-inset-top)) {
   .oyechats-safe-top {
-    padding-top: env(safe-area-inset-top);
+    padding-top: max(env(safe-area-inset-top), 0px);
   }
   .oyechats-safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: max(env(safe-area-inset-bottom), 1rem);
   }
 }
 

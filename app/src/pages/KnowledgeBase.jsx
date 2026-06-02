@@ -1,20 +1,55 @@
 import { useState, useRef, useEffect } from 'react';
-import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadDocuments, crawlWebsite, getCrawlProgress, getDocuments, deleteDocument } from '../services/api';
+import { uploadDocuments, getDocuments, deleteDocument } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
+import { useCrawl } from '../context/CrawlContext';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 import { cn } from '../lib/utils';
 
+// Whitelist of tab IDs that can be requested via the ?tab= query param.
+// Anything else falls back to the default. Prevents deep-link spoofing /
+// invalid query values from breaking the tab UI.
+const VALID_TABS = new Set(['list', 'urls', 'files']);
+
 export default function KnowledgeBase() {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState('list');
+  const { crawl, startCrawl, cancelCrawl, isActive: isCrawlActive } = useCrawl();
+  // Tab can be deep-linked via ?tab=urls (e.g. from the global crawl
+  // indicator's "View details" button). Local state stays the source of
+  // truth after mount so clicking tabs doesn't require a URL change.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState(
+    VALID_TABS.has(tabFromUrl) ? tabFromUrl : 'list',
+  );
+
+  // Sync local state when the URL's ?tab= changes (e.g. user clicks the
+  // indicator while already on /knowledge — same route, new query string).
+  useEffect(() => {
+    if (tabFromUrl && VALID_TABS.has(tabFromUrl) && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabFromUrl]);
+
+  // Wrap setActiveTab so user-driven tab changes also clear the query
+  // param — keeps the URL honest without forcing a navigation.
+  const handleTabChange = (next) => {
+    setActiveTab(next);
+    if (searchParams.has('tab')) {
+      const params = new URLSearchParams(searchParams);
+      params.delete('tab');
+      setSearchParams(params, { replace: true });
+    }
+  };
 
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -24,10 +59,37 @@ export default function KnowledgeBase() {
 
   const [url, setUrl] = useState(localStorage.getItem('company_website') || '');
   const [useJs, setUseJs] = useState(false);
-  const [isCrawling, setIsCrawling] = useState(false);
-  const [crawlStatus, setCrawlStatus] = useState(null);
-  const [scanningUrls, setScanningUrls] = useState([]);
-  const scanTimerRef = useRef(null);
+  // ── Crawl UI state ─────────────────────────────────────────────────────
+  // The actual crawl lifecycle is owned by CrawlContext (one poll loop for
+  // the whole admin app, so the floating indicator and this page agree on
+  // state). These locals are derived from context — they're kept around so
+  // the existing render JSX doesn't need to change shape.
+  const isCrawling = isCrawlActive;
+  const scanningUrls = (crawl.urls || []).map((u, i, arr) => ({
+    url: u,
+    // The most-recently-discovered URL is the one actively being crawled;
+    // everything before it has been pulled successfully.
+    status: isCrawlActive && i === arr.length - 1 ? 'scanning' : 'done',
+  }));
+  const crawlStatus = (() => {
+    if (crawl.status === 'done') {
+      return {
+        type: 'success',
+        message: `Crawled ${crawl.result?.pages_processed ?? crawl.urls.length} pages and ingested ${crawl.result?.chunks_processed ?? 0} chunks.`,
+      };
+    }
+    if (crawl.status === 'cancelled') {
+      return {
+        type: 'success',
+        message: `Crawl cancelled — ${crawl.result?.pages_processed ?? crawl.urls.length} pages kept.`,
+      };
+    }
+    if (crawl.status === 'failed') {
+      return { type: 'error', message: crawl.error || 'Failed to crawl website.' };
+    }
+    return null;
+  })();
+  const [cancelConfirm, setCancelConfirm] = useState(false);
 
   const [documents, setDocuments] = useState([]);
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
@@ -55,52 +117,26 @@ export default function KnowledgeBase() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedBot?.id]);
 
-  // Poll real-time crawl progress every 3s while a crawl is running.
-  // The crawl now executes in the ARQ worker; the API endpoint returns 202
-  // immediately and this poll is the only authoritative source of completion
-  // — when the response carries status "done" or "failed" we transition the
-  // UI without depending on the original POST response.
+  // The CrawlContext owns the poll loop now (single source of truth across
+  // the whole admin app). This effect just reacts to terminal transitions
+  // so the Knowledge page can clear its URL input and refresh the document
+  // list — UI side-effects that don't belong in the shared context.
   useEffect(() => {
-    if (!isCrawling) return;
-    let cancelled = false;
-    const interval = setInterval(async () => {
-      let data;
-      try {
-        data = await getCrawlProgress();
-      } catch {
-        return;
+    if (crawl.status === 'done') {
+      setUrl('');
+      setRecrawlingDoc(null);
+      if (activeTab === 'list') {
+        fetchDocuments();
+      } else {
+        setActiveTab('list');
       }
-      if (cancelled) return;
-      if (data?.urls?.length > 0) {
-        setScanningUrls(data.urls.map(u => ({ url: u, status: 'scanning' })));
-      }
-      if (data?.status === 'done') {
-        const result = data.result || {};
-        stopScanSimulation(result);
-        setCrawlStatus({
-          type: 'success',
-          message: `Crawled ${result.pages_processed || 0} pages and ingested ${result.chunks_processed || 0} chunks.`,
-        });
-        showToast('success', `Crawling done! ${result.pages_processed || 0} pages.`);
-        setUrl('');
-        setIsCrawling(false);
-        setRecrawlingDoc(null);
-        if (activeTab === 'list') fetchDocuments();
-        else setActiveTab('list');
-      } else if (data?.status === 'failed') {
-        stopScanSimulation(null);
-        setCrawlStatus({ type: 'error', message: data.error || 'Failed to crawl website.' });
-        showToast('error', `Crawl failed: ${data.error || 'unknown error'}`);
-        setIsCrawling(false);
-        setRecrawlingDoc(null);
-      }
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    } else if (crawl.status === 'cancelled' || crawl.status === 'failed') {
+      setRecrawlingDoc(null);
+      // Still refresh in case partial pages were ingested before cancel/fail.
+      if (activeTab === 'list') fetchDocuments();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCrawling]);
+  }, [crawl.status]);
 
   if (!botsLoading && bots.length === 0) {
     return <EmptyState title="Sources" description="Create a chatbot first, then upload documents and URLs to build its knowledge base." actionLabel="Create Chatbot" actionTo="/chatbot" />;
@@ -152,50 +188,32 @@ export default function KnowledgeBase() {
     try {
       // Switch to Website Scan tab so the live URL progress panel is visible
       setActiveTab('urls');
-      setIsCrawling(true);
-      startScanSimulation(crawlUrl);
-
-      // POST /crawl returns 202 immediately; the polling effect handles
-      // success / failure once the worker finishes.
-      await crawlWebsite(crawlUrl, selectedBot?.id, false, replaceSource);
+      // Delegate to CrawlContext — it owns the lifecycle, the global toast
+      // follows the user across routes, and the page just observes state.
+      await startCrawl({ url: crawlUrl, botId: selectedBot?.id, useJs: false, replaceSource });
     } catch (err) {
-      stopScanSimulation(null);
       showToast('error', `Recrawl failed: ${err?.detail || err?.message || err}`);
       setActiveTab('list');
-      setIsCrawling(false);
       setRecrawlingDoc(null);
     }
-  };
-
-  const startScanSimulation = (rootUrl) => {
-    setScanningUrls([{ url: rootUrl, status: 'scanning' }]);
-  };
-
-  const stopScanSimulation = (result) => {
-    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-    if (result && result.pages_crawled && result.pages_crawled.length > 0) {
-      setScanningUrls(result.pages_crawled.map(u => ({ url: u, status: 'done' })));
-    } else {
-      setScanningUrls(prev => prev.map(u => ({ ...u, status: 'done' })));
-    }
-    // Keep visible for 60 s so users can read all discovered URLs
-    setTimeout(() => setScanningUrls([]), 60000);
   };
 
   const handleCrawlSubmit = async (e) => {
     e.preventDefault();
     if (!url.trim()) return;
-    setIsCrawling(true);
-    setCrawlStatus(null);
-    startScanSimulation(url);
     try {
-      // POST /crawl is async (202) — the polling effect transitions the UI
-      // when the worker writes status="done" or "failed" to /crawl/progress.
-      await crawlWebsite(url, selectedBot?.id, useJs);
+      await startCrawl({ url, botId: selectedBot?.id, useJs });
     } catch (error) {
-      stopScanSimulation(null);
-      setCrawlStatus({ type: 'error', message: error.detail || error.message || 'Failed to start crawl.' });
-      setIsCrawling(false);
+      showToast('error', error.detail || error.message || 'Failed to start crawl.');
+    }
+  };
+
+  const handleCancelCrawl = async () => {
+    setCancelConfirm(false);
+    try {
+      await cancelCrawl();
+    } catch (err) {
+      showToast('error', err?.message || 'Failed to cancel crawl.');
     }
   };
 
@@ -235,7 +253,7 @@ export default function KnowledgeBase() {
   return (
     <div className="space-y-6">
       <PageHeader title="Sources" subtitle="Train your chatbot with documents and websites" />
-      <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
+      <Tabs tabs={tabs} activeTab={activeTab} onChange={handleTabChange} />
 
       <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm max-w-4xl min-h-[400px]">
 
@@ -371,17 +389,78 @@ export default function KnowledgeBase() {
                 </div>
               </button>
 
-              <button
-                type="submit"
-                disabled={isCrawling || !url}
-                className="flex items-center justify-center gap-2 w-full bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-70 shadow-sm"
-              >
-                {isCrawling ? <><Loader2 size={16} className="animate-spin" /> Crawling...</> : <><Globe size={16} /> Start Crawl</>}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isCrawling || !url}
+                  className="flex-1 flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-70 shadow-sm"
+                >
+                  {isCrawling ? <><Loader2 size={16} className="animate-spin" /> Crawling...</> : <><Globe size={16} /> Start Crawl</>}
+                </button>
+                {isCrawling && (
+                  <button
+                    type="button"
+                    onClick={() => setCancelConfirm(true)}
+                    disabled={crawl.status === 'cancelling' || crawl.cancelInFlight}
+                    className={cn(
+                      'flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm',
+                      'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200',
+                      'dark:bg-rose-500/10 dark:hover:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30',
+                      'disabled:opacity-60 disabled:cursor-not-allowed',
+                    )}
+                  >
+                    {crawl.status === 'cancelling' ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" /> Stopping…
+                      </>
+                    ) : (
+                      <>
+                        <StopCircle size={14} /> Cancel
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
             </form>
 
+            {/* Cancel confirmation — light inline confirm rather than a modal
+                so the user doesn't lose sight of the live progress panel. */}
             <AnimatePresence>
-              {scanningUrls.length > 0 && (
+              {cancelConfirm && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="p-4 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10"
+                >
+                  <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">
+                    Stop this crawl?
+                  </p>
+                  <p className="text-xs text-amber-700/80 dark:text-amber-300/80 mt-1">
+                    Any pages already discovered will be discarded. You won&apos;t be charged for crawls that didn&apos;t finish.
+                  </p>
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={handleCancelCrawl}
+                      className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white"
+                    >
+                      <StopCircle size={12} /> Stop crawl
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCancelConfirm(false)}
+                      className="text-xs font-medium px-3 py-1.5 rounded-lg bg-white/60 dark:bg-white/5 hover:bg-white text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-500/20"
+                    >
+                      Keep crawling
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {(isCrawling || scanningUrls.length > 0) && (
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -393,29 +472,44 @@ export default function KnowledgeBase() {
                     <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">
                       {isCrawling ? 'Crawling website…' : 'Pages discovered'}
                     </span>
-                    <span className={cn('text-[10px] ml-auto font-medium', isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500')}>
+                    <span className={cn('text-[10px] ml-auto font-medium tabular-nums', isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500')}>
                       {isCrawling
-                        ? 'in progress'
+                        ? (crawl.maxPages
+                            ? `${scanningUrls.length}/${crawl.maxPages} pages`
+                            : (scanningUrls.length > 0 ? `${scanningUrls.length} pages` : 'in progress'))
                         : `${scanningUrls.filter(u => u.status === 'done').length} pages`}
                     </span>
                   </div>
                   <div className="max-h-96 overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800">
-                    {scanningUrls.map((item, i) => (
-                      <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-                        {item.status === 'scanning' ? (
-                          <Loader2 size={13} className="text-primary-500 animate-spin shrink-0" />
-                        ) : (
-                          <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />
-                        )}
-                        <ExternalLink size={11} className="text-surface-400 shrink-0" />
-                        <span className={cn('text-xs font-mono truncate', item.status === 'scanning' ? 'text-primary-600 dark:text-primary-400' : 'text-surface-600 dark:text-surface-400')}>
-                          {item.url}
+                    {scanningUrls.length === 0 && isCrawling ? (
+                      // First-paint state: we're crawling but no URLs have
+                      // streamed yet (robots.txt + sitemap fetch is happening).
+                      // Show a skeleton row so the user knows the panel is
+                      // alive and waiting — not broken.
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <Loader2 size={13} className="text-primary-500 animate-spin shrink-0" />
+                        <span className="text-xs text-surface-500 dark:text-surface-400 italic">
+                          Discovering URLs…
                         </span>
-                        {item.status === 'scanning' && (
-                          <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-primary-500 animate-pulse shrink-0">Crawling…</span>
-                        )}
                       </div>
-                    ))}
+                    ) : (
+                      scanningUrls.map((item, i) => (
+                        <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                          {item.status === 'scanning' ? (
+                            <Loader2 size={13} className="text-primary-500 animate-spin shrink-0" />
+                          ) : (
+                            <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />
+                          )}
+                          <ExternalLink size={11} className="text-surface-400 shrink-0" />
+                          <span className={cn('text-xs font-mono truncate', item.status === 'scanning' ? 'text-primary-600 dark:text-primary-400' : 'text-surface-600 dark:text-surface-400')}>
+                            {item.url}
+                          </span>
+                          {item.status === 'scanning' && (
+                            <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-primary-500 animate-pulse shrink-0">Crawling…</span>
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
                 </motion.div>
               )}

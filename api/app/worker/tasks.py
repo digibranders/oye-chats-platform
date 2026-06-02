@@ -170,12 +170,28 @@ async def task_process_webhook_retries(ctx: dict) -> int:
 
 async def task_renew_due_subscriptions(ctx: dict) -> int:
     """Cron task: grant the new month's plan credits for subscriptions whose
-    current_period_end is today.
+    current_period_end has been reached, then roll the period forward.
 
     Stripe's ``invoice.paid`` webhook is the canonical trigger for renewals;
-    this cron is a safety net that catches missed webhooks. The webhook handler
-    is idempotent (skips when balance was already renewed in the same period),
-    so running both is safe.
+    this cron is a safety net that catches missed webhooks (and is the *only*
+    trigger for free-tier subs, since no payment ever fires there). The
+    webhook handler is idempotent (skips when balance was already renewed in
+    the same period), so running both is safe.
+
+    Two important behaviours:
+
+    1. **Catch-up**: the query matches every sub whose ``current_period_end``
+       is in the past, not just "today" — so a sub that fell behind because
+       the worker was down for days still gets exactly one renewal here
+       (we advance one period and stop; the next run will catch the rest).
+       The old "== today_utc" filter caused free subs to silently freeze
+       after one missed renewal.
+
+    2. **Roll forward**: after the grant we set
+       ``current_period_start = old_end`` and
+       ``current_period_end = add_months(old_end, 1)``. Without this the row
+       never advances and the cron either re-fires every day (if matched on
+       date) or stops firing forever (if matched on equality).
 
     Returns the number of subscriptions renewed.
     """
@@ -184,19 +200,21 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
 
     from sqlalchemy import func, select
 
+    from app.core.dates import add_months
     from app.db.models import CreditLedger, Subscription
     from app.db.session import get_session
     from app.services import credit_service
 
     def _renew() -> int:
-        today_utc = datetime.now(UTC).date()
+        now_utc = datetime.now(UTC)
+        today_utc = now_utc.date()
         renewed = 0
         with get_session() as session:
             subs = (
                 session.execute(
                     select(Subscription).where(
                         Subscription.status.in_(("active", "trialing")),
-                        func.date(Subscription.current_period_end) == today_utc,
+                        Subscription.current_period_end <= now_utc,
                     )
                 )
                 .scalars()
@@ -218,9 +236,15 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                     or 0
                 )
                 if already_granted:
+                    # Still need to roll the period forward — without this the
+                    # cron would keep matching the same row every day.
+                    sub.current_period_start = sub.current_period_end
+                    sub.current_period_end = add_months(sub.current_period_end, 1)
                     continue
                 credit_service.reset_monthly_plan_credits(session, sub.client_id)
                 credit_service.grant_for_subscription(session, sub)
+                sub.current_period_start = sub.current_period_end
+                sub.current_period_end = add_months(sub.current_period_end, 1)
                 renewed += 1
             session.commit()
         return renewed

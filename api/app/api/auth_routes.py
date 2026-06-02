@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
-from app.api.auth import get_current_client_strict, get_current_operator
+from app.api.auth import get_current_client_or_operator, get_current_operator
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
@@ -288,13 +288,21 @@ class RegisterResponse(BaseModel):
 
 
 class CurrentUserResponse(BaseModel):
-    """Profile payload for the authenticated client (TopBar profile dropdown).
+    """Profile payload for the authenticated principal (TopBar profile dropdown).
 
-    Exposes the small set of profile fields the admin app needs to render the
-    user menu — never sensitive data (no api_key, no password hash).
+    Works for both clients (admins) and operators. The ``kind`` discriminator
+    tells the UI which fields are meaningful — operators don't own bots
+    directly, so ``bot_count`` reflects the bots in their workspace (the
+    client they belong to). For clients ``role`` is None; for operators
+    ``role`` is one of ``owner | admin | operator``.
+
+    Exposes only the small set of profile fields the admin app needs to
+    render the user menu — never sensitive data (no api_key, no password
+    hash).
     """
 
     id: int
+    kind: str  # "client" | "operator"
     name: str
     email: str
     company_name: str | None = None
@@ -302,28 +310,55 @@ class CurrentUserResponse(BaseModel):
     created_at: str
     bot_count: int
     is_superadmin: bool = False
+    role: str | None = None  # operator role; None for clients
 
 
 @router.get("/me", response_model=CurrentUserResponse)
-def get_current_user_endpoint(client: Client = Depends(get_current_client_strict)):
-    """Return the authenticated client's profile + their bot count.
+def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operator)):
+    """Return the authenticated principal's profile + workspace bot count.
 
     Used by the admin TopBar to populate the user-menu dropdown (email,
-    joining date, bots). Operators are explicitly out of scope: they don't
-    own bots, and ``get_current_client_strict`` rejects non-client tokens.
+    joining date, bots). Accepts BOTH ``X-API-Key`` (clients) and
+    ``X-Operator-Key`` (operators) so the dropdown works regardless of how
+    the user logged in. For an operator, ``bot_count`` is the count of bots
+    in their workspace (the client they belong to) — that's what the user
+    expects to see for the "X bots" line, not zero.
     """
     with get_session() as session:
-        bot_count = session.execute(select(func.count(Bot.id)).where(Bot.client_id == client.id)).scalar_one()
-    return CurrentUserResponse(
-        id=client.id,
-        name=client.name,
-        email=client.email,
-        company_name=client.company_name,
-        website=client.website,
-        created_at=client.created_at.isoformat() if client.created_at else "",
-        bot_count=int(bot_count or 0),
-        is_superadmin=bool(client.is_superadmin),
-    )
+        client_id = auth["client_id"]
+        bot_count = session.execute(select(func.count(Bot.id)).where(Bot.client_id == client_id)).scalar_one()
+
+        if auth["type"] == "operator":
+            operator: Operator = auth["entity"]
+            # Pull the operator's workspace owner (the client they belong to)
+            # so we can surface company_name / website if the UI wants them.
+            owner_client = session.get(Client, client_id)
+            return CurrentUserResponse(
+                id=operator.id,
+                kind="operator",
+                name=operator.name,
+                email=operator.email,
+                company_name=owner_client.company_name if owner_client else None,
+                website=owner_client.website if owner_client else None,
+                created_at=operator.created_at.isoformat() if operator.created_at else "",
+                bot_count=int(bot_count or 0),
+                is_superadmin=False,
+                role=operator.role,
+            )
+
+        client: Client = auth["entity"]
+        return CurrentUserResponse(
+            id=client.id,
+            kind="client",
+            name=client.name,
+            email=client.email,
+            company_name=client.company_name,
+            website=client.website,
+            created_at=client.created_at.isoformat() if client.created_at else "",
+            bot_count=int(bot_count or 0),
+            is_superadmin=bool(client.is_superadmin),
+            role=None,
+        )
 
 
 # ── Endpoints ──

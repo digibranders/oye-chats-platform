@@ -379,21 +379,41 @@ def reset_monthly_plan_credits(session: Session, client_id: int) -> int:
     """Zero out unused plan credits at subscription renewal.
 
     Returns the number of credits expired (informational; >= 0).
+
+    Implementation: writes one negative ledger entry per *still-positive*
+    plan_grant row, each tied to that grant's ``grant_id``. This is the same
+    pattern ``check_and_deduct`` uses for normal consumption, and is the
+    ONLY shape that ``get_balance_breakdown`` correctly attributes — an
+    orphan negative entry (no ``grant_id``) would float in the raw sum but
+    never reduce the breakdown's per-grant remaining, causing last month's
+    unused credits to be silently rolled into the new month's bucket. That
+    bug was the source of the "614 / 500" overflow we saw.
     """
     _acquire_client_lock(session, client_id)
-    breakdown = get_balance_breakdown(session, client_id)
-    leftover = int(breakdown["plan"])
-    if leftover > 0:
+    leftover_total = 0
+    for grant in _grants_for(session, client_id):
+        if grant.reason != "plan_grant":
+            continue  # don't expire top-ups or manual adjusts here
+        consumed = _consumed_against(session, grant.id)
+        remaining = int(grant.delta) - consumed
+        if remaining <= 0:
+            continue
         session.add(
             CreditLedger(
                 client_id=client_id,
-                delta=-leftover,
+                delta=-remaining,
                 reason="plan_grant",
+                grant_id=grant.id,
                 note="Monthly reset (use-it-or-lose-it)",
             )
         )
+        # Flush per row — SQLAlchemy's batched insertmany path doesn't cast
+        # the ``reason`` enum column correctly on PostgreSQL, and that path
+        # only triggers when 2+ rows are queued at once. Flushing each row
+        # individually forces the single-row INSERT that does cast properly.
         session.flush()
-    return leftover
+        leftover_total += remaining
+    return leftover_total
 
 
 def expire_old_topups(session: Session) -> int:

@@ -1,10 +1,14 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastProvider } from './context/ToastContext';
+import { CrawlProvider } from './context/CrawlContext';
 import { getAuthState } from './utils/auth';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
+
+// Global UI
+import GlobalCrawlIndicator from './components/GlobalCrawlIndicator';
 
 // Pages
 import Login from './pages/Login';
@@ -67,11 +71,21 @@ function App() {
                     <Route path="/forgot-password" element={<ForgotPassword />} />
 
                     {/* App Routes (root) */}
+                    {/* CrawlProvider wraps the authenticated admin tree so the
+                        floating GlobalCrawlIndicator survives every page
+                        navigation — the user can start a crawl on /knowledge,
+                        wander over to /insights, and still see live progress.
+                        Mounted inside ProtectedRoute so unauthenticated pages
+                        (login / register / forgot-password) don't pay the
+                        cost of the background poll loop. */}
                     <Route
                         path="/"
                         element={
                             <ProtectedRoute>
-                                <AdminLayout />
+                                <CrawlProvider>
+                                    <AdminLayout />
+                                    <GlobalCrawlIndicator />
+                                </CrawlProvider>
                             </ProtectedRoute>
                         }
                     >

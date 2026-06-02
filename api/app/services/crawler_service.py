@@ -33,9 +33,18 @@ _PR_SET_PDEATHSIG = 1
 
 _PROGRESS_KEY_PREFIX = f"{PREFIX}crawl:progress:"
 _LOCK_KEY_PREFIX = f"{PREFIX}crawl:lock:"
+_CANCEL_KEY_PREFIX = f"{PREFIX}crawl:cancel:"
 _PROGRESS_TTL = 3600  # keep terminal state visible to the UI for an hour
+_CANCEL_TTL = _SUBPROCESS_TIMEOUT + 60  # cancel flag self-expires after the crawl can't possibly still be running
 _DEFAULT_LOCK_TTL = _SUBPROCESS_TIMEOUT + 120  # subprocess + ingestion margin
 _PROGRESS_MIRROR_INTERVAL = 1.0  # seconds between temp-file → Redis mirror ticks
+_CANCEL_POLL_INTERVAL = 1.0  # seconds between cancel-flag checks while crawl runs
+# Tight enough that the user perceives Cancel as snappy (Playwright pages can
+# be stuck mid-``goto`` for many seconds without ever reaching our cooperative
+# checkpoint — SIGTERM-via-process-group is the only reliable way out). Loose
+# enough that a normal page-load can finish writing its result and exit
+# cleanly without truncating the URL list.
+_COOPERATIVE_CANCEL_GRACE = 2.0
 
 # In-process fallback for single-worker dev (no Redis). Without these the
 # entire progress + lock subsystem is a no-op locally — the UI polls forever
@@ -46,6 +55,7 @@ _PROGRESS_MIRROR_INTERVAL = 1.0  # seconds between temp-file → Redis mirror ti
 # these.
 _local_progress: dict[int, dict[str, Any]] = {}
 _local_locks: set[int] = set()
+_local_cancels: set[int] = set()
 
 
 def _progress_key(client_id: int) -> str:
@@ -56,6 +66,10 @@ def _lock_key(client_id: int) -> str:
     return f"{_LOCK_KEY_PREFIX}{int(client_id)}"
 
 
+def _cancel_key(client_id: int) -> str:
+    return f"{_CANCEL_KEY_PREFIX}{int(client_id)}"
+
+
 def set_crawl_progress(
     client_id: int,
     *,
@@ -64,8 +78,19 @@ def set_crawl_progress(
     result: dict[str, Any] | None = None,
     error: str | None = None,
     started_at: float | None = None,
+    pages_crawled: int | None = None,
+    max_pages: int | None = None,
+    current_url: str | None = None,
+    phase: str | None = None,
+    cancellable: bool | None = None,
 ) -> None:
-    """Write the current crawl progress for a client (Redis + in-process fallback)."""
+    """Write the current crawl progress for a client (Redis + in-process fallback).
+
+    Optional fields (``pages_crawled``, ``max_pages``, ``current_url``,
+    ``phase``, ``cancellable``) are written when provided so the frontend can
+    render a real progress bar, an ETA, and a Cancel button. Older callers that
+    only pass ``status`` + ``urls`` continue to work unchanged.
+    """
     payload: dict[str, Any] = {"status": status, "urls": urls or []}
     if result is not None:
         payload["result"] = result
@@ -73,6 +98,16 @@ def set_crawl_progress(
         payload["error"] = error
     if started_at is not None:
         payload["started_at"] = started_at
+    if pages_crawled is not None:
+        payload["pages_crawled"] = int(pages_crawled)
+    if max_pages is not None:
+        payload["max_pages"] = int(max_pages)
+    if current_url is not None:
+        payload["current_url"] = current_url
+    if phase is not None:
+        payload["phase"] = phase
+    if cancellable is not None:
+        payload["cancellable"] = bool(cancellable)
 
     client = get_redis()
     if client is None:
@@ -83,6 +118,51 @@ def set_crawl_progress(
     except Exception:
         logger.debug("set_crawl_progress failed for client=%s", client_id, exc_info=True)
         _local_progress[int(client_id)] = payload
+
+
+# ── Cancellation flag (Redis + in-process fallback) ────────────────────────
+# Two-tier cancellation:
+#   1. Cooperative: the crawler subprocess polls a temp ``cancel-file`` between
+#      URLs and exits cleanly (fast, no leaked Playwright/Chromium).
+#   2. Forceful: ``crawl_website`` polls this Redis flag every second; when set
+#      it touches the cancel-file, waits a few seconds for graceful exit, then
+#      SIGTERMs the process tree as the hard fallback.
+# The flag self-expires (``_CANCEL_TTL``) so a crashed orchestrator can't leave
+# a stale flag that would instantly cancel the *next* crawl.
+
+
+def request_cancellation(client_id: int) -> None:
+    """Mark the client's in-flight crawl for cancellation. Best-effort."""
+    client = get_redis()
+    if client is None:
+        _local_cancels.add(int(client_id))
+        return
+    try:
+        client.set(_cancel_key(client_id), "1", ex=_CANCEL_TTL)
+    except Exception:
+        logger.debug("request_cancellation failed for client=%s", client_id, exc_info=True)
+        _local_cancels.add(int(client_id))
+
+
+def is_cancellation_requested(client_id: int) -> bool:
+    """Return True iff a cancel was requested for the client's current crawl."""
+    client = get_redis()
+    if client is None:
+        return int(client_id) in _local_cancels
+    try:
+        return client.get(_cancel_key(client_id)) is not None
+    except Exception:
+        return int(client_id) in _local_cancels
+
+
+def clear_cancellation(client_id: int) -> None:
+    """Drop the cancel flag (call at the start of a new crawl). Best-effort."""
+    client = get_redis()
+    if client is None:
+        _local_cancels.discard(int(client_id))
+        return
+    with contextlib.suppress(Exception):
+        client.delete(_cancel_key(client_id))
 
 
 def clear_crawl_progress(client_id: int) -> None:
@@ -140,12 +220,20 @@ def _read_urls_from_progress_file(path: str) -> list[str]:
         return []
 
 
-async def _mirror_progress_to_redis(client_id: int, progress_path: str, started_at: float) -> None:
+async def _mirror_progress_to_redis(
+    client_id: int,
+    progress_path: str,
+    started_at: float,
+    *,
+    max_pages: int | None = None,
+) -> None:
     """Poll the subprocess progress file and mirror discovered URLs to Redis.
 
     Runs as a background task for the duration of one crawl. Cancelled by
     ``crawl_website`` once the subprocess finishes (or is torn down). Writes
-    only when the URL list changes to keep Redis traffic minimal.
+    only when the URL list changes to keep Redis traffic minimal. Also writes
+    ``pages_crawled`` / ``max_pages`` / ``current_url`` so the UI can render a
+    real progress bar and ETA.
     """
     last_count = -1
     try:
@@ -158,6 +246,10 @@ async def _mirror_progress_to_redis(client_id: int, progress_path: str, started_
                     status="running",
                     urls=urls,
                     started_at=started_at,
+                    pages_crawled=len(urls),
+                    max_pages=max_pages,
+                    current_url=urls[-1] if urls else None,
+                    cancellable=True,
                 )
                 last_count = len(urls)
     except asyncio.CancelledError:
@@ -165,7 +257,60 @@ async def _mirror_progress_to_redis(client_id: int, progress_path: str, started_
         # subprocess exits, even if the last mirror tick was skipped.
         urls = _read_urls_from_progress_file(progress_path)
         if urls and len(urls) != last_count:
-            set_crawl_progress(client_id, status="running", urls=urls, started_at=started_at)
+            set_crawl_progress(
+                client_id,
+                status="running",
+                urls=urls,
+                started_at=started_at,
+                pages_crawled=len(urls),
+                max_pages=max_pages,
+                current_url=urls[-1] if urls else None,
+                cancellable=True,
+            )
+        raise
+
+
+async def _watch_for_cancellation(
+    client_id: int,
+    cancel_file_path: str,
+    process: "asyncio.subprocess.Process | None",
+) -> bool:
+    """Poll the Redis cancel flag and tear down the crawl when set.
+
+    Returns ``True`` once cancellation has been honoured (cooperative file
+    touched + subprocess given a grace period + SIGTERM as fallback). Returns
+    only when cancelled or cancelled itself by the parent. Runs as a background
+    task for the lifetime of one crawl.
+
+    Tier 1 — cooperative: touch the cancel-file so ``crawler_script.py`` sees
+    it between URLs and exits cleanly (no leaked Playwright/Chromium).
+    Tier 2 — forceful: if the subprocess hasn't exited within
+    ``_COOPERATIVE_CANCEL_GRACE`` seconds, send SIGTERM/SIGKILL via
+    ``_terminate_process_tree``.
+    """
+    try:
+        while True:
+            await asyncio.sleep(_CANCEL_POLL_INTERVAL)
+            if not is_cancellation_requested(client_id):
+                continue
+
+            logger.info("Cancellation requested for client %s — initiating graceful shutdown", client_id)
+            # Tier 1: signal the subprocess cooperatively.
+            with contextlib.suppress(OSError), open(cancel_file_path, "w", encoding="utf-8") as f:
+                f.write("1")
+
+            # Tier 2: wait briefly, then SIGTERM if still alive.
+            if process is not None:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=_COOPERATIVE_CANCEL_GRACE)
+                if process.returncode is None:
+                    logger.info(
+                        "Subprocess did not honour cooperative cancel within %ss — sending SIGTERM",
+                        _COOPERATIVE_CANCEL_GRACE,
+                    )
+                    await _terminate_process_tree(process)
+            return True
+    except asyncio.CancelledError:
         raise
 
 
@@ -222,6 +367,20 @@ async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
 
 class CrawlerError(RuntimeError):
     """Raised when the crawler subprocess fails or produces invalid output."""
+
+
+class CrawlCancelled(RuntimeError):
+    """Raised when the crawl was cancelled by the user.
+
+    Distinct from :class:`CrawlerError` so the orchestrator can write a
+    ``cancelled`` terminal status (vs ``failed``) and skip the error toast in
+    the UI. Carries the partial result so any pages already crawled before the
+    cancel landed are still ingested. (We never throw away crawled work.)
+    """
+
+    def __init__(self, partial_result: dict | None = None) -> None:
+        super().__init__("Crawl cancelled by user")
+        self.partial_result = partial_result or {"results": [], "recommended_colors": []}
 
 
 def get_crawl_progress(client_id: int) -> dict[str, Any]:
@@ -353,22 +512,52 @@ async def crawl_website(
     if use_js:
         env["CRAWLER_JS_ALL_PAGES"] = "true"
 
-    # Create a temp file for real-time progress updates from the subprocess.
-    # The subprocess writes discovered URLs here; we mirror them to Redis below
-    # so the API process can see live progress even when the crawl runs in the
-    # ARQ worker.
+    # Create temp files for the subprocess to write to / read from:
+    #   progress_path — subprocess writes discovered URLs (we mirror to Redis)
+    #   cancel_path   — we ``touch`` this file to ask the subprocess to stop
+    #                   cooperatively between URLs (Tier 1 cancel)
     progress_fd, progress_path = tempfile.mkstemp(suffix=".json", prefix="oyecrawl_")
     os.close(progress_fd)
+    cancel_fd, cancel_path = tempfile.mkstemp(suffix=".cancel", prefix="oyecrawl_")
+    os.close(cancel_fd)
+    # The mkstemp creates the cancel file, but the subprocess uses its mere
+    # existence + non-empty content as the cancel signal. Remove it now so an
+    # uncancelled run won't be falsely interpreted as cancelled.
+    with contextlib.suppress(OSError):
+        os.unlink(cancel_path)
     started_at = time.time()
+    # Resolve effective max_pages for the progress payload (mirrors what the
+    # subprocess will use). Keeps the UI's progress bar honest from the first
+    # tick instead of waiting for the subprocess to write its first URL.
+    _effective_max_pages: int | None = None
+    if max_pages is not None:
+        _effective_max_pages = min(max(int(max_pages), 1), 100)
+    else:
+        try:
+            _effective_max_pages = int(env.get("MAX_CRAWL_PAGES", os.getenv("MAX_CRAWL_PAGES", "50")))
+        except (TypeError, ValueError):
+            _effective_max_pages = 50
+
     if client_id is not None:
-        # Reset any stale terminal state from a previous crawl by this client
-        # before announcing the new run; the mirror task will then publish
-        # discovered URLs as the subprocess writes them.
+        # Reset any stale terminal state from a previous crawl by this client,
+        # and clear any leftover cancel flag before the new run — without this
+        # the very next crawl would be instantly cancelled.
         clear_crawl_progress(client_id)
-        set_crawl_progress(client_id, status="running", urls=[], started_at=started_at)
+        clear_cancellation(client_id)
+        set_crawl_progress(
+            client_id,
+            status="running",
+            urls=[],
+            started_at=started_at,
+            pages_crawled=0,
+            max_pages=_effective_max_pages,
+            phase="starting",
+            cancellable=True,
+        )
 
     process: asyncio.subprocess.Process | None = None
     mirror_task: asyncio.Task[None] | None = None
+    cancel_watcher_task: asyncio.Task[bool] | None = None
     try:
         # ── Platform branch ─────────────────────────────────────────────────
         # Linux/macOS: native asyncio subprocess + process-group teardown.
@@ -385,11 +574,22 @@ async def crawl_website(
             import subprocess as _subprocess
 
             if client_id is not None:
-                mirror_task = asyncio.create_task(_mirror_progress_to_redis(client_id, progress_path, started_at))
+                mirror_task = asyncio.create_task(
+                    _mirror_progress_to_redis(client_id, progress_path, started_at, max_pages=_effective_max_pages)
+                )
+                cancel_watcher_task = asyncio.create_task(_watch_for_cancellation(client_id, cancel_path, None))
             try:
                 completed = await asyncio.to_thread(
                     _subprocess.run,
-                    [sys.executable, script_path, url, "--progress-file", progress_path],
+                    [
+                        sys.executable,
+                        script_path,
+                        url,
+                        "--progress-file",
+                        progress_path,
+                        "--cancel-file",
+                        cancel_path,
+                    ],
                     capture_output=True,
                     env=env,
                     timeout=_SUBPROCESS_TIMEOUT,
@@ -414,6 +614,8 @@ async def crawl_website(
                 url,
                 "--progress-file",
                 progress_path,
+                "--cancel-file",
+                cancel_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -424,7 +626,10 @@ async def crawl_website(
             # Stream discovered URLs from the subprocess temp file to Redis so any
             # process (API, worker) can render live progress for this client.
             if client_id is not None:
-                mirror_task = asyncio.create_task(_mirror_progress_to_redis(client_id, progress_path, started_at))
+                mirror_task = asyncio.create_task(
+                    _mirror_progress_to_redis(client_id, progress_path, started_at, max_pages=_effective_max_pages)
+                )
+                cancel_watcher_task = asyncio.create_task(_watch_for_cancellation(client_id, cancel_path, process))
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -444,6 +649,37 @@ async def crawl_website(
         if stderr:
             logger.debug("Crawler stderr: %s", stderr)
 
+        # Detect cancellation: either Redis flag was set (cooperative or forced),
+        # or the subprocess itself wrote ``"cancelled": true`` in its JSON output.
+        was_cancelled = client_id is not None and is_cancellation_requested(client_id)
+
+        # Try to recover any partial results — cooperatively cancelled scripts
+        # still print their JSON envelope. Forcefully killed scripts won't, in
+        # which case we fall back to whatever URLs the mirror task captured.
+        def _parse_payload(raw: str) -> dict | None:
+            try:
+                if "---CRAWLER_JSON_OUTPUT---" in raw:
+                    return json.loads(raw.split("---CRAWLER_JSON_OUTPUT---")[1].strip())
+                return json.loads(raw)
+            except (json.JSONDecodeError, IndexError):
+                return None
+
+        parsed = _parse_payload(stdout)
+        if parsed and parsed.get("cancelled"):
+            was_cancelled = True
+
+        if was_cancelled:
+            partial = parsed if parsed and isinstance(parsed.get("results"), list) else None
+            if partial is None:
+                # Fall back to URLs we already mirrored — at minimum the UI gets
+                # an accurate "X pages crawled before cancel" count.
+                mirrored_urls = _read_urls_from_progress_file(progress_path)
+                partial = {
+                    "results": [{"url": u, "content": ""} for u in mirrored_urls],
+                    "recommended_colors": [],
+                }
+            raise CrawlCancelled(partial_result=partial)
+
         if returncode != 0:
             msg = f"Crawler process failed with code {returncode}. Stderr: {stderr}"
             logger.error(msg)
@@ -451,26 +687,21 @@ async def crawl_website(
 
         # Parse the JSON output (crawl4ai logs also go to stdout, so
         # our JSON is delimited by ---CRAWLER_JSON_OUTPUT---)
-        try:
-            if "---CRAWLER_JSON_OUTPUT---" in stdout:
-                json_str = stdout.split("---CRAWLER_JSON_OUTPUT---")[1].strip()
-            else:
-                json_str = stdout
-
-            data = json.loads(json_str)
-
-            if "error" in data:
-                msg = f"Crawler script reported error: {data['error']}"
-                logger.error(msg)
-                raise CrawlerError(msg)
-
-            return data
-        except (json.JSONDecodeError, IndexError) as e:
+        if parsed is None:
             msg = f"Failed to parse crawler output. Raw output length: {len(stdout)}"
             logger.error(msg)
-            raise CrawlerError(msg) from e
+            raise CrawlerError(msg)
+        if "error" in parsed:
+            msg = f"Crawler script reported error: {parsed['error']}"
+            logger.error(msg)
+            raise CrawlerError(msg)
+        return parsed
 
-    except CrawlerError:
+    except (CrawlCancelled, CrawlerError):
+        # CrawlCancelled MUST re-raise above the broad ``except Exception``
+        # below — otherwise our own user-cancel sentinel gets caught and
+        # re-wrapped as a generic CrawlerError, and the orchestrator marks
+        # the run "failed" instead of "cancelled".
         raise
     except (asyncio.CancelledError, KeyboardInterrupt):
         # Propagate the cancellation, but only after taking the subprocess
@@ -483,16 +714,28 @@ async def crawl_website(
         logger.error("Subprocess exception: %s", e)
         raise CrawlerError(str(e)) from e
     finally:
-        # Always clean up: stop mirroring, kill the subprocess tree if it's
-        # somehow still alive, and remove the progress file. The Redis status
-        # ("done" / "failed") is the caller's responsibility — we leave any
-        # in-progress "running" state for them to overwrite, since we don't
-        # know whether ingestion still has to run after the crawl returns.
+        # Always clean up: stop mirroring, stop the cancel watcher, kill the
+        # subprocess tree if it's somehow still alive, and remove the temp
+        # files. The Redis status (``done`` / ``failed`` / ``cancelled``) is
+        # the caller's responsibility — we leave any in-progress ``running``
+        # state for them to overwrite, since we don't know whether ingestion
+        # still has to run after the crawl returns.
         if mirror_task is not None and not mirror_task.done():
             mirror_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await mirror_task
+        if cancel_watcher_task is not None and not cancel_watcher_task.done():
+            cancel_watcher_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await cancel_watcher_task
         if process is not None:
             await _terminate_process_tree(process)
         with contextlib.suppress(OSError):
             os.unlink(progress_path)
+        with contextlib.suppress(OSError):
+            os.unlink(cancel_path)
+        # Clear the cancel flag so the *next* crawl by this client isn't
+        # instantly cancelled by leftover state. Done after the subprocess
+        # has fully exited so the watcher couldn't fire again.
+        if client_id is not None:
+            clear_cancellation(client_id)

@@ -8,7 +8,7 @@ import random
 import re
 
 import litellm
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import joinedload
 
 from app.config import LLM_FALLBACKS, LLM_MODEL
@@ -601,6 +601,13 @@ def contains_system_prompt_leak(text: str) -> bool:
 
 
 class QualificationSignalExtraction(BaseModel):
+    # OpenAI's structured-output ``strict: True`` mode requires every object
+    # in the JSON schema to carry ``additionalProperties: false``. Pydantic
+    # doesn't emit that by default; ``extra='forbid'`` flips it on. Without
+    # this, the BANT extraction call fails with a 400 BadRequestError and
+    # the entire qualification pipeline silently does nothing.
+    model_config = ConfigDict(extra="forbid")
+
     dimension: str
     signal_text: str = Field(description="Exact quote from the user message that indicates this signal")
     extracted_value: str = Field(description="Structured summary of the signal")
@@ -609,8 +616,15 @@ class QualificationSignalExtraction(BaseModel):
 
 
 class QualificationExtractionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # No default — OpenAI's strict structured-output mode requires every
+    # property to appear in the schema's ``required`` array, and Pydantic
+    # only marks fields without defaults as required. The LLM is instructed
+    # to always emit ``signals`` (possibly empty), so making it required is
+    # both correct for strict mode and matches the prompt contract.
     signals: list[QualificationSignalExtraction] = Field(
-        default_factory=list, description="Only NEW signals from this exchange, empty list if none found"
+        description="Only NEW signals from this exchange, empty list if none found"
     )
 
 
@@ -1049,11 +1063,37 @@ def build_hybrid_prompt(
         if cta_dims:
             cta_lines = "\n".join(cta_dims)
             cta_instruction = f"""
-CTA MARKER (INTERNAL — invisible to user):
-If you ask a qualifying question, append the marker [CTA:dimension_name] at the very end
-of your response (e.g., [CTA:timeline]). This marker will be stripped before showing to
-the visitor. Only include ONE [CTA:] marker per response, only for CTA-enabled dimensions
-that have not been fully assessed yet. These are the eligible dimensions:
+CTA MARKER (INTERNAL — invisible to visitor, becomes quick-reply chips):
+MANDATORY: Any time your response asks the visitor about one of the eligible
+dimensions below — even indirectly (e.g. "what's your timeline?", "any
+preferred timeframe?", "pick a window", "how soon are you looking to start?",
+"who else is involved in the decision?", "what's your budget range?") — you
+MUST append the corresponding [CTA:dimension_name] marker on its OWN LINE at
+the very end of your response. The marker is stripped before the visitor sees
+it; without it the quick-reply chips never render and the visitor has to
+type a free-form answer.
+
+Rules:
+- Emit EXACTLY ONE [CTA:] marker per response.
+- If your reply touches multiple eligible dimensions, choose the SINGLE most
+  central one and emit only that marker — never two.
+- The marker MUST be on its own line, last, with NOTHING after it.
+- Only use dimensions from the eligible list below. Do NOT invent new ones.
+- The [CTA:...] marker is NOT a markdown link — do not wrap it in (), do not
+  treat it as a URL. It is a literal token.
+
+Positive example:
+  visitor: "we're evaluating options"
+  you:
+  Got it — when are you hoping to roll this out?
+  [CTA:timeline]
+
+Negative example (DO NOT DO THIS — chips never appear):
+  visitor: "we're evaluating options"
+  you: "Got it — when are you hoping to roll this out?"
+  ← MISSING [CTA:timeline]. The visitor gets no chips and is forced to type.
+
+Eligible dimensions (use the exact dimension key, lowercase):
 {cta_lines}
 """
 
@@ -1275,7 +1315,8 @@ RULES:
 6. For LIST and COUNT questions ("who are your clients", "what services do you offer", "how many people on your team"): give the COMPLETE list that appears in the reference material — never a partial subset. Use the company's exact branded names where the reference material gives them (e.g. "Performance Marketing & Tracking", not generic "ads"; "Brand Identity & Storytelling", not generic "branding"). Never hedge with "at least N", "30+", or "we have several" when the reference material lists the items by name — count or enumerate them precisely. If the list is genuinely long, summarise with an exact count plus the most prominent names: "we work with 19 brands including X, Y, Z".
 7. Only ask a follow-up question if the user's query is genuinely ambiguous.
 8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
-9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".{custom_prompt_section}{tone_section}{company_section}{services_section}
+9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".
+10. LINKS: Whenever you mention any URL (website, pricing, contact, booking link, social media, docs, support page, etc.), format it as a markdown link with short, descriptive text — e.g. `[our pricing page](https://example.com/pricing)`, `[book a demo](https://example.com/book)`, `[contact us](https://example.com/contact)`. NEVER paste a bare URL or write the URL as plain text in parentheses — bare URLs do NOT render as clickable in the chat widget. Use the visible page/action name as the link label, not the URL itself. Only http:// and https:// links are allowed. This rule applies ONLY to actual URLs — internal sentinel tokens like `[CTA:timeline]`, `[LEAVE_MESSAGE_CARD]`, or `[MEETING_CARD]` are NOT URLs and MUST be emitted exactly as documented elsewhere in these instructions, not rewritten as markdown links.{custom_prompt_section}{tone_section}{company_section}{services_section}
 {qualification_section}
 {handoff_section}
 {meeting_section}
@@ -1380,6 +1421,128 @@ def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, 
     options = [o["label"] for o in dim_config.get("options", [])]
 
     return clean_text, {"dimension": dimension, "prompt": cta_prompt, "options": options}
+
+
+# Known trigger phrases per qualification dimension. Used as a safety net
+# when the LLM forgets to emit the [CTA:dim] marker — the quick-reply chips
+# still render if the answer is clearly asking about that dimension. Keep
+# phrases tight and unambiguous: false positives are worse than false
+# negatives (they pin chips to the wrong question).
+_CTA_FALLBACK_TRIGGERS: dict[str, tuple[str, ...]] = {
+    # BANT
+    "timeline": (
+        "timeline",
+        "timeframe",
+        "time frame",
+        "time window",
+        "preferred time",
+        "preferred window",
+        "when are you",
+        "when do you",
+        "how soon",
+        "how quick",
+        "by when",
+        "launch date",
+        "go live",
+        "get started",
+        "looking to start",
+        "looking to roll",
+        "rollout",
+        "roll out",
+    ),
+    "need": (
+        "what describes your",
+        "best describes",
+        "what do you need",
+        "main challenge",
+        "main pain",
+        "what's the problem",
+        "main goal",
+        "your situation",
+    ),
+    "authority": (
+        "decision maker",
+        "decision-maker",
+        "who decides",
+        "your role",
+        "who's involved",
+        "stakeholder",
+        "sign off",
+        "sign-off",
+        "approval",
+    ),
+    "budget": (
+        "budget range",
+        "budget in mind",
+        "investment range",
+        "price range",
+        "willing to spend",
+        "monthly spend",
+        "cost expectation",
+        "spending plan",
+    ),
+    # MEDDIC / GPCTBA / CHAMP overlap
+    "metrics": ("metrics", "kpis", "key results", "measure success"),
+    "money": ("money", "monthly budget", "investment range"),
+    "prioritization": ("priority", "prioritise", "prioritize", "how urgent"),
+    "challenges": ("biggest challenge", "main blocker", "current pain"),
+    "champion": ("internal champion", "advocate"),
+    "decision_criteria": ("evaluation criteria", "decision criteria"),
+    "decision_process": ("decision process", "steps to decide"),
+    "economic_buyer": ("budget owner", "approves the spend"),
+    "identified_pain": ("biggest pain", "main pain point"),
+}
+
+
+def _infer_cta_fallback(
+    text: str,
+    bant_state: dict | None,
+    bant_config: dict | None,
+) -> dict | None:
+    """Infer a CTA from the bot's answer when the LLM omitted [CTA:dim].
+
+    Only fires when:
+      - The answer contains a question mark (it's actually asking something).
+      - A CTA-eligible dimension's trigger phrase appears in the answer.
+      - That dimension is still below its assessment threshold.
+
+    Returns the same shape as ``_strip_cta_marker`` so the streaming /
+    non-streaming pipelines can substitute it transparently.
+    """
+    if not text or "?" not in text:
+        return None
+
+    config = bant_config or get_framework_config(None)
+    conversation_order = config.get("conversation_order") or _framework_dimensions(config)
+    bs = bant_state or {}
+    text_l = text.lower()
+
+    for dim in conversation_order:
+        dim_config = config.get(dim, {})
+        if not isinstance(dim_config, dict) or not dim_config.get("cta_enabled", False):
+            continue
+
+        options = dim_config.get("options") or []
+        if not options:
+            continue
+
+        max_score = max((int(opt.get("score", 0)) for opt in options), default=25)
+        assess_threshold = max(1, int(round(max_score * 0.6)))
+        if int(bs.get(f"{dim}_score", 0) or 0) >= assess_threshold:
+            continue
+
+        triggers = _CTA_FALLBACK_TRIGGERS.get(dim, ())
+        if not triggers:
+            continue
+
+        if any(t in text_l for t in triggers):
+            return {
+                "dimension": dim,
+                "prompt": dim_config.get("cta_prompt", ""),
+                "options": [o["label"] for o in options],
+            }
+
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2303,8 +2466,16 @@ async def rag_pipeline_stream(
             _stream_error = True
             suggest_handoff = False  # Don't suggest handoff on errored/partial responses
 
-        # Strip CTA marker from response before saving
+        # Strip CTA marker from response before saving.
         full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)
+
+        # Safety net: if the LLM asked a qualifying question but forgot the
+        # [CTA:dim] marker, infer the CTA from the answer text so the
+        # quick-reply chips still render. Only the *streaming* path needs
+        # this — every visitor turn goes through here today, and the
+        # non-streaming path does not surface CTA chips to the widget.
+        if cta_data is None and is_bant_enabled:
+            cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config)
 
         # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
         # Build it inside a try/finally so even a DB failure sends the frame.

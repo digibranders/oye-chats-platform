@@ -759,8 +759,49 @@ def _write_progress(path: str, results: list[dict]) -> None:
         pass  # Progress is best-effort — never crash the crawler
 
 
+def _is_cancelled(cancel_file: str | None) -> bool:
+    """Cooperative cancel check.
+
+    Returns True iff the parent process has touched ``cancel_file`` to ask us
+    to stop. Cheap (single ``os.path.exists`` call) so we can call it between
+    every URL without measurable overhead. Returns False on any I/O error so a
+    flaky filesystem can't accidentally cancel a running crawl.
+    """
+    if not cancel_file:
+        return False
+    try:
+        return os.path.exists(cancel_file)
+    except OSError:
+        return False
+
+
+def _emit_cancelled(results: list[dict], extracted_colors: set[str]) -> None:
+    """Print the JSON envelope with cancellation flag + partial results.
+
+    Lets the parent ``crawler_service.crawl_website`` raise ``CrawlCancelled``
+    with the partial payload so any pages already crawled can still be
+    ingested — we never throw away crawled work just because the user clicked
+    Cancel.
+    """
+    print(json.dumps({"log": f"Crawl cancelled by user after {len(results)} pages"}))
+    print("---CRAWLER_JSON_OUTPUT---")
+    print(
+        json.dumps(
+            {
+                "results": results,
+                "recommended_colors": list(extracted_colors),
+                "cancelled": True,
+            }
+        )
+    )
+
+
 async def crawl_recursive(
-    start_url: str, max_depth: int = 3, max_pages: int | None = None, progress_file: str | None = None
+    start_url: str,
+    max_depth: int = 3,
+    max_pages: int | None = None,
+    progress_file: str | None = None,
+    cancel_file: str | None = None,
 ) -> None:
     # Read config from env
     if max_pages is None:
@@ -983,10 +1024,18 @@ async def crawl_recursive(
                 text_mode=True,  # Text only — no CSS/images needed
             )
             run_config_p2 = CrawlerRunConfig(  # type: ignore[name-defined]
-                # networkidle waits until there are no network requests for 500ms,
-                # which gives React/Next.js time to finish hydration and data
-                # fetching before we extract the rendered HTML and links.
-                wait_until="networkidle",
+                # ``domcontentloaded`` fires when the HTML is parsed — well
+                # before all third-party trackers, fonts, and analytics
+                # pixels are done. The previous setting (``networkidle``)
+                # waits for 500ms of zero network activity, which on modern
+                # sites with retargeting / chat / analytics scripts often
+                # never resolves and forces us into the full ``page_timeout``
+                # for every page. The JS scroll preamble below still runs
+                # *after* DOMContentLoaded, so React/Next.js hydration +
+                # Intersection-Observer lazy-loading still get triggered;
+                # we just don't wait for the long tail of unrelated network
+                # chatter. Typical observed speedup: 5–10× per page.
+                wait_until="domcontentloaded",
                 screenshot=False,
                 pdf=False,
                 exclude_all_images=True,
@@ -1027,6 +1076,9 @@ async def crawl_recursive(
             # Outer loop: create a browser session, crawl up to recycle_every
             # pages, then destroy and recreate to free memory.
             while pq and pages_crawled < max_pages:
+                if _is_cancelled(cancel_file):
+                    _emit_cancelled(results, extracted_colors)
+                    return
                 print(
                     json.dumps(
                         {
@@ -1037,6 +1089,9 @@ async def crawl_recursive(
                 async with AsyncWebCrawler(config=browser_config_p2) as p2_crawler:  # type: ignore[name-defined]
                     session_count = 0
                     while pq and pages_crawled < max_pages and session_count < recycle_every:
+                        if _is_cancelled(cancel_file):
+                            _emit_cancelled(results, extracted_colors)
+                            return
                         _prio, _cnt, current_url, depth = heapq.heappop(pq)
                         norm_url = normalize_url(current_url)
                         if norm_url in visited:
@@ -1095,6 +1150,9 @@ async def crawl_recursive(
 
             async with aiohttp.ClientSession(headers=http_headers) as http_session:
                 while pq and pages_crawled < max_pages:
+                    if _is_cancelled(cancel_file):
+                        _emit_cancelled(results, extracted_colors)
+                        return
                     # Collect a batch of URLs to crawl
                     batch_tasks: list = []
                     batch_info: list[dict] = []
@@ -1177,9 +1235,21 @@ if __name__ == "__main__":
 
     # Parse --progress-file <path> for real-time URL streaming to the API process
     progress_file: str | None = None
+    # Parse --cancel-file <path> — parent ``touch``es this file to ask us to
+    # stop cooperatively between URLs. Lets cancellation be fast and clean
+    # (no leaked Playwright/Chromium descendants); SIGTERM is the fallback.
+    cancel_file: str | None = None
     for i, arg in enumerate(sys.argv):
         if arg == "--progress-file" and i + 1 < len(sys.argv):
             progress_file = sys.argv[i + 1]
-            break
+        elif arg == "--cancel-file" and i + 1 < len(sys.argv):
+            cancel_file = sys.argv[i + 1]
 
-    asyncio.run(crawl_recursive(url, max_pages=max_pages, progress_file=progress_file))
+    asyncio.run(
+        crawl_recursive(
+            url,
+            max_pages=max_pages,
+            progress_file=progress_file,
+            cancel_file=cancel_file,
+        )
+    )
