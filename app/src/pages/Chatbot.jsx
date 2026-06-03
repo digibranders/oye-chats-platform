@@ -11,6 +11,7 @@ import { createBot, deleteBot, crawlWebsite, getBotDemoUrl, getBotPreviewUrl, tr
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from '../components/PlatformSelector';
 import IntegrationGuide from '../components/IntegrationGuide';
+import DomainRestrictions from '../components/DomainRestrictions';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import Tabs from '../components/ui/Tabs';
@@ -334,6 +335,16 @@ export default function Chatbot() {
                                             </div>
                                         )}
 
+                                        {/* Domain restrictions (widget embed whitelist) */}
+                                        {isBotManager && (
+                                            <DomainRestrictions
+                                                botId={bot.id}
+                                                initialAllowedDomains={bot.allowed_domains || []}
+                                                initialDomainCheckEnabled={Boolean(bot.domain_check_enabled)}
+                                                botWebsite={bot.website}
+                                            />
+                                        )}
+
                                         {/* Platform Integration Guide */}
                                         <div>
                                             <label className="text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500 flex items-center gap-1.5 mb-3">
@@ -388,6 +399,9 @@ export default function Chatbot() {
                                 <div>
                                     <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Website</label>
                                     <input type="text" value={newBotWebsite} onChange={(e) => setNewBotWebsite(e.target.value)} className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-400/30 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500" placeholder="https://yourwebsite.com" />
+                                    <p className="mt-1.5 text-[11px] text-surface-500 dark:text-surface-400">
+                                        We&apos;ll automatically restrict your widget to this site. You can edit the allowed domains anytime.
+                                    </p>
                                 </div>
                                 <div className="flex gap-3 pt-2">
                                     <button type="button" onClick={() => { setIsCreateOpen(false); setError(''); setNewBotName(''); setNewBotWebsite(''); }} className="flex-1 py-2.5 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700">Cancel</button>

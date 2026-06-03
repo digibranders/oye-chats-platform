@@ -686,17 +686,22 @@ class ConnectionManager:
 
     # ── Message routing ──
 
-    async def route_visitor_message(self, session_id: str, content: str):
+    async def route_visitor_message(self, session_id: str, content: str, db_id: int | None = None) -> bool:
         """Route a message from visitor to their assigned operator.
 
         If the operator is in the grace period (WS dropped, waiting for reconnect),
         the message is queued and will be flushed when the operator reconnects.
         Messages are always persisted to DB by the caller (ws_routes), so nothing
         is lost — this only affects real-time delivery.
+
+        Returns ``True`` when the operator's socket received the payload live
+        (i.e. WhatsApp "delivered" semantics); ``False`` when no operator is
+        assigned or the operator is currently disconnected (queued for grace
+        period). The caller uses this to drive the visitor-side ack tick state.
         """
         operator_id = self.assignments.get(session_id)
         if not operator_id:
-            return
+            return False
 
         msg = {
             "type": "message",
@@ -705,10 +710,17 @@ class ConnectionManager:
             "content": content,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+        if db_id is not None:
+            # Keyed as "id" to match what the operator dashboard reads
+            # (LiveChat.jsx: `dbId: data.id || null`). The operator uses
+            # this id as `last_read_id` in the read_receipt it sends back,
+            # which is what drives the visitor's green double-check.
+            msg["id"] = db_id
 
         if operator_id in self.operator_connections:
             await self._send_to_operator(operator_id, msg)
-        elif operator_id in self._operator_disconnect_tasks:
+            return True
+        if operator_id in self._operator_disconnect_tasks:
             # Operator is in grace period — queue for delivery on reconnect
             queue = self._operator_message_queue.setdefault(operator_id, [])
             if len(queue) < 500:
@@ -718,6 +730,7 @@ class ConnectionManager:
                 queue.append(msg)
                 logger.warning(f"Message queue full for operator {operator_id} — dropped oldest")
             logger.debug(f"Queued message for operator {operator_id} (in grace period)")
+        return False
 
     async def route_operator_message(self, session_id: str, content: str, operator_name: str):
         """Route a message from operator to visitor."""
@@ -734,11 +747,23 @@ class ConnectionManager:
 
     # ── File routing ──
 
-    async def route_visitor_file(self, session_id: str, file_url: str, filename: str, content_type: str):
-        """Route a file message from visitor to their assigned operator."""
+    async def route_visitor_file(
+        self,
+        session_id: str,
+        file_url: str,
+        filename: str,
+        content_type: str,
+        db_id: int | None = None,
+    ) -> bool:
+        """Route a file message from visitor to their assigned operator.
+
+        Returns ``True`` when the operator's socket received the payload live
+        (delivered), ``False`` otherwise. Same semantics as
+        :meth:`route_visitor_message`.
+        """
         operator_id = self.assignments.get(session_id)
         if not operator_id:
-            return
+            return False
 
         msg = {
             "type": "file",
@@ -749,10 +774,17 @@ class ConnectionManager:
             "content_type": content_type,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+        if db_id is not None:
+            # Keyed as "id" to match what the operator dashboard reads
+            # (LiveChat.jsx: `dbId: data.id || null`). The operator uses
+            # this id as `last_read_id` in the read_receipt it sends back,
+            # which is what drives the visitor's green double-check.
+            msg["id"] = db_id
 
         if operator_id in self.operator_connections:
             await self._send_to_operator(operator_id, msg)
-        elif operator_id in self._operator_disconnect_tasks:
+            return True
+        if operator_id in self._operator_disconnect_tasks:
             queue = self._operator_message_queue.setdefault(operator_id, [])
             if len(queue) < 500:
                 queue.append(msg)
@@ -760,6 +792,7 @@ class ConnectionManager:
                 queue.pop(0)
                 queue.append(msg)
                 logger.warning(f"Message queue full for operator {operator_id} — dropped oldest")
+        return False
 
     async def route_operator_file(
         self, session_id: str, file_url: str, filename: str, content_type: str, operator_name: str

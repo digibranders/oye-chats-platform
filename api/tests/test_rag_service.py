@@ -242,17 +242,70 @@ class TestStripCtaMarker:
     def test_no_marker_returns_unchanged(self):
         from app.services.rag_service import _strip_cta_marker
 
-        text, meta = _strip_cta_marker("Just a normal response.", None)
+        text, meta, contextual_q = _strip_cta_marker("Just a normal response.", None)
         assert text == "Just a normal response."
         assert meta is None
+        assert contextual_q is None
 
     @patch("app.services.rag_service.get_framework_config", return_value={})
     def test_strips_marker(self, _mock_config):
         from app.services.rag_service import _strip_cta_marker
 
-        text, _ = _strip_cta_marker("Response text [CTA:need] here", None)
+        text, _meta, _q = _strip_cta_marker("Response text [CTA:need] here", None)
         assert "[CTA:" not in text
         assert "Response text" in text
+
+    def test_strips_contextual_question_marker(self):
+        """[CTA_Q:…] is invisible to the visitor even when [CTA:dim] is missing."""
+        from app.services.rag_service import _strip_cta_marker
+
+        raw = "Pricing varies. [CTA_Q:Does that fit your budget?]"
+        text, meta, contextual_q = _strip_cta_marker(raw, None)
+        assert "[CTA_Q" not in text
+        assert text == "Pricing varies."
+        # No [CTA:dim] → no chip payload; contextual question still surfaces
+        # so the streaming fallback can pick it up.
+        assert meta is None
+        assert contextual_q == "Does that fit your budget?"
+
+    @patch(
+        "app.services.rag_service.get_framework_config",
+        return_value={
+            "need": {
+                "cta_enabled": True,
+                "cta_prompt": "What best describes your situation?",
+                "options": [{"label": "Just browsing", "score": 5}],
+            }
+        },
+    )
+    def test_contextual_question_wins_over_static_prompt(self, _mock_config):
+        from app.services.rag_service import _strip_cta_marker
+
+        raw = "Our Pro plan is $49/mo.\n[CTA:need]\n[CTA_Q:Does that fit your budget?]"
+        text, meta, contextual_q = _strip_cta_marker(raw, None)
+        assert "[CTA" not in text
+        assert meta is not None
+        assert meta["prompt"] == "Does that fit your budget?"
+        assert contextual_q == "Does that fit your budget?"
+
+    @patch(
+        "app.services.rag_service.get_framework_config",
+        return_value={
+            "need": {
+                "cta_enabled": True,
+                "cta_prompt": "What best describes your situation?",
+                "options": [{"label": "Just browsing", "score": 5}],
+            }
+        },
+    )
+    def test_falls_back_to_static_prompt_when_cta_q_missing(self, _mock_config):
+        from app.services.rag_service import _strip_cta_marker
+
+        text, meta, contextual_q = _strip_cta_marker("Something.\n[CTA:need]", None)
+        assert meta is not None
+        assert meta["prompt"] == "What best describes your situation?"
+        assert contextual_q is None
+        assert "[CTA" not in text
 
 
 # ── CTA fallback inference (safety net) ─────────────────────────────────────

@@ -1,9 +1,10 @@
 """Tests for app.api.auth_routes — authentication endpoints."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -228,6 +229,25 @@ class TestRegister:
 
 
 class TestPasswordReset:
+    @pytest.fixture(autouse=True)
+    def _reset_rate_limiter(self):
+        """Clear SlowAPI counters before every test in this class.
+
+        ``/request-password-reset`` is capped at 3/min and ``/reset-password``
+        at 5/min (``auth_routes.py:508,536``). The limiter's in-memory storage
+        is process-global, so when other test files happen to hit these
+        endpoints earlier in the same pytest run the counters carry over and
+        these tests start failing with 429 instead of their expected 200/400.
+        Resetting per-test makes the class order-independent.
+        """
+        from app.core.rate_limit import limiter
+
+        # Older slowapi or non-memory backend — best-effort only; the tests
+        # still work most of the time without a reset.
+        with suppress(Exception):
+            limiter.reset()
+        yield
+
     def test_request_reset_always_200(self, monkeypatch):
         """Must not reveal whether email exists (timing attack prevention)."""
         from app.api import auth_routes

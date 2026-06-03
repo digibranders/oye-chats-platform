@@ -51,3 +51,6 @@ api/emails/.backup/
 
 # Email rendering preview (generated artifact, not source-of-truth)
 api/emails/preview/
+
+# Personal local-dev launcher (API + ARQ worker side-by-side, env overrides)
+api/dev.sh

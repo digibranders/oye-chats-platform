@@ -42,6 +42,17 @@ logger = logging.getLogger(__name__)
 _EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 
 _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
+# Sibling sentinel emitted alongside [CTA:dim]. Captures a short, contextual
+# follow-up question the LLM writes specifically about the answer it just
+# gave (e.g. after "Our enterprise plan starts at $5K/mo…" → "Does that fit
+# your monthly software budget?"). Falls back to the static cta_prompt
+# configured per-dimension when the LLM omits this marker. The capture is
+# non-greedy and rejects newlines / closing brackets so a malformed marker
+# can't swallow the rest of the response.
+_CTA_Q_PATTERN = re.compile(r"\[CTA_Q:\s*([^\]\n]{1,200}?)\s*\]")
+# Length cap for the contextual prompt — long enough for a natural one-liner,
+# short enough that the chip area stays compact on mobile.
+_CTA_Q_MAX_LEN = 140
 
 _meeting_card_re = re.compile(r"\[MEETING_CARD\]")
 _leave_message_card_re = re.compile(r"\[LEAVE_MESSAGE_CARD\]")
@@ -639,14 +650,36 @@ BANTExtractionResult = QualificationExtractionResult
 
 def _vector_search(cid: int | None, bid: int | None, query_embedding: list, k: int = 15) -> list:
     """Run vector similarity search in its own DB session (thread-safe)."""
+    import time as _t
+
+    _start = _t.perf_counter()
     with get_session() as s:
-        return search_similar_documents(s, client_id=cid, query_embedding=query_embedding, k=k, bot_id=bid)
+        results = search_similar_documents(s, client_id=cid, query_embedding=query_embedding, k=k, bot_id=bid)
+    logger.info(
+        "[retrieval] vector_search bot=%s k=%d hits=%d elapsed_ms=%.1f",
+        bid,
+        k,
+        len(results),
+        (_t.perf_counter() - _start) * 1000,
+    )
+    return results
 
 
 def _keyword_search(cid: int | None, bid: int | None, query: str, k: int = 15) -> list:
     """Run full-text keyword search in its own DB session (thread-safe)."""
+    import time as _t
+
+    _start = _t.perf_counter()
     with get_session() as s:
-        return search_keyword_documents(s, client_id=cid, query=query, k=k, bot_id=bid)
+        results = search_keyword_documents(s, client_id=cid, query=query, k=k, bot_id=bid)
+    logger.info(
+        "[retrieval] keyword_search bot=%s k=%d hits=%d elapsed_ms=%.1f",
+        bid,
+        k,
+        len(results),
+        (_t.perf_counter() - _start) * 1000,
+    )
+    return results
 
 
 def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
@@ -1082,13 +1115,76 @@ Rules:
 - The [CTA:...] marker is NOT a markdown link — do not wrap it in (), do not
   treat it as a URL. It is a literal token.
 
-Positive example:
-  visitor: "we're evaluating options"
-  you:
-  Got it — when are you hoping to roll this out?
-  [CTA:timeline]
+CONTEXTUAL CHIP PROMPT (PAIRED MARKER, OPTIONAL BUT STRONGLY RECOMMENDED):
+Immediately AFTER the [CTA:dim] line, emit a sibling marker
+  [CTA_Q:short follow-up question]
+where the question is a ONE-LINE, ≤140-character continuation of your answer,
+written specifically about what you just said. This becomes the small grey
+line that appears between your answer and the chips — it nudges the visitor
+to pick a chip without re-reading the whole reply. Both markers are stripped
+before the visitor sees them.
 
-Negative example (DO NOT DO THIS — chips never appear):
+[CTA_Q] rules:
+- Write it for THIS specific answer, not a generic template. Tie it to the
+  concept, product, plan, feature, or pain point you just mentioned.
+- One short sentence. No emojis. No multi-line. No quoted strings inside.
+- Do NOT repeat the chip labels — the chips speak for themselves.
+- Omit if the static prompt already fits perfectly; the system will fall back.
+
+CRITICAL — ONE QUESTION RULE (READ TWICE):
+When you emit [CTA_Q:…], the question lives ENTIRELY inside that marker.
+Your visible answer body MUST be a *declarative* setup — it states the
+options or context, it does NOT ask the visitor anything. Two prompts in
+one bubble (one in the body + one above the chips) feels redundant and
+confusing.
+
+Concretely, the body must NOT:
+  • End with "?"
+  • Contain imperative asks like "please pick", "let me know", "tell me",
+    "choose one", "which would you prefer", "share your", "what's your"
+  • Invite a free-text reply ("feel free to share…", "happy to hear…")
+
+Instead, end the body on a calm declarative note such as:
+  • "Both options are available."
+  • "Here are the lengths we offer."
+  • "Either works — your call."
+The CTA_Q carries the actual ask. The chips carry the answer.
+
+Positive example (declarative body, question in CTA_Q):
+  visitor: "I want a demo"
+  you:
+  Happy to set that up. We offer a quick 20–30 minute intro and a
+  deeper 45–60 minute walk-through.
+  [CTA:timeline]
+  [CTA_Q:Which length works better for you?]
+
+Positive example (pricing):
+  visitor: "what do you charge?"
+  you:
+  Our Pro plan is $49/month and includes 5 seats and unlimited bots.
+  [CTA:budget]
+  [CTA_Q:Does that fit the monthly budget you're working with?]
+
+Positive example (timeline):
+  visitor: "when can we go live?"
+  you:
+  Most teams are live within 2 weeks once their knowledge base is ready.
+  [CTA:timeline]
+  [CTA_Q:When are you hoping to have this in front of customers?]
+
+Negative example (DO NOT DO THIS — TWO questions in one bubble):
+  visitor: "I want a demo"
+  you:
+  Happy to schedule a demo. Please pick one: a short (20–30 min) or
+  standard (45–60 min) demo, and I'll route it.
+  [CTA:timeline]
+  [CTA_Q:Do you prefer a 20–30 minute intro or 45–60 minute deep demo?]
+  ← The body already asks ("Please pick one…"). The visitor reads two
+     questions back-to-back. Rewrite the body as a declarative statement
+     ("We offer 20–30 min intros and 45–60 min deep demos.") and let
+     [CTA_Q:] carry the only question.
+
+Negative example (DO NOT DO THIS — chips never appear at all):
   visitor: "we're evaluating options"
   you: "Got it — when are you hoping to roll this out?"
   ← MISSING [CTA:timeline]. The visitor gets no chips and is forced to type.
@@ -1403,24 +1499,220 @@ Respond with ONLY the rewritten standalone query, nothing else."""
         return question
 
 
-def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, dict | None]:
-    """Strip [CTA:dimension] marker from response text and return CTA metadata if found."""
+def _extract_contextual_q(text: str) -> str | None:
+    """Pull the LLM-written contextual chip prompt out of a raw response.
+
+    Sanitises: collapse internal whitespace, trim, cap length, return ``None``
+    when the marker is absent or yields an empty string. Called by both the
+    main extractor and the keyword-trigger fallback so the contextual prompt
+    survives even when the LLM forgets the paired ``[CTA:dim]`` marker.
+    """
+    q_match = _CTA_Q_PATTERN.search(text)
+    if not q_match:
+        return None
+    candidate = " ".join(q_match.group(1).split()).strip()
+    if not candidate:
+        return None
+    if len(candidate) > _CTA_Q_MAX_LEN:
+        # Cut on a word boundary when possible so we don't end mid-word.
+        truncated = candidate[:_CTA_Q_MAX_LEN].rsplit(" ", 1)[0]
+        candidate = (truncated or candidate[:_CTA_Q_MAX_LEN]).rstrip() + "…"
+    return candidate
+
+
+# Phrasing patterns that mean "the body is asking the visitor a question"
+# even when there's no literal "?" (imperative asks are the common case the
+# LLM falls into — "please pick", "let me know", etc.). Used only as a soft
+# observability signal when [CTA_Q:…] is also present, to detect drift from
+# the "one question per bubble" rule taught in the system prompt.
+_BODY_QUESTION_PATTERNS: tuple[str, ...] = (
+    "please pick",
+    "please let me know",
+    "please share",
+    "please tell",
+    "please choose",
+    "let me know",
+    "tell me",
+    "choose one",
+    "pick one",
+    "which would you",
+    "which do you",
+    "what would you",
+    "what's your",
+    "whats your",
+    "what is your",
+    "share your",
+    "feel free to share",
+    "happy to hear",
+)
+
+
+def _body_asks_a_question(visible_text: str) -> bool:
+    """Return True iff the visible answer reads as a question to the visitor.
+
+    Detects both literal interrogatives (``?``) and imperative asks ("please
+    pick"). Used to log a soft warning when paired with [CTA_Q:…] — we don't
+    auto-rewrite the answer; surgery on natural language is too risky.
+    """
+    if not visible_text:
+        return False
+    if "?" in visible_text:
+        return True
+    body_l = visible_text.lower()
+    return any(p in body_l for p in _BODY_QUESTION_PATTERNS)
+
+
+class _StreamCtaSanitizer:
+    """Streaming-safe scrubber for ``[CTA:dim]`` and ``[CTA_Q:…]`` sentinels.
+
+    The streaming pipeline yields every LLM chunk straight to the widget the
+    moment it arrives (``yield chunk`` in the stream loop). Without this
+    sanitiser the visitor literally sees ``[CTA_Q:Which window works?]``
+    typed into their chat bubble before the post-stream strip ever runs.
+
+    Strategy: a tiny state machine. As soon as we see ``[`` we hold output
+    back into a buffer and watch whether the prefix is still consistent with
+    one of the known sentinel headers (``[CTA:`` / ``[CTA_Q:``). Three exits:
+
+    1. Header completes → enter "in_sentinel" mode and swallow up to ``]``.
+    2. Buffer diverges from every header (e.g. markdown ``[link]``) → flush
+       the buffer as literal text. Nothing legitimate gets held more than a
+       handful of characters.
+    3. Stream ends mid-buffer → caller invokes :py:meth:`flush` to drain.
+
+    Splits across chunks are handled naturally because the buffer persists
+    across ``feed`` calls.
+    """
+
+    _HEADERS = ("[CTA:", "[CTA_Q:")
+    _MAX_SENTINEL_LEN = 250  # safety cap; longer than any realistic [CTA_Q:…]
+
+    __slots__ = ("_buf", "_in_sentinel")
+
+    def __init__(self) -> None:
+        self._buf: str = ""
+        self._in_sentinel: bool = False
+
+    def _is_header_prefix(self, s: str) -> bool:
+        """True iff ``s`` is still a viable prefix of any sentinel header."""
+        return any(h.startswith(s) for h in self._HEADERS)
+
+    def _is_header_complete(self, s: str) -> bool:
+        return any(s.startswith(h) for h in self._HEADERS)
+
+    def feed(self, chunk: str) -> str:
+        """Return the safe-to-yield slice of ``chunk``."""
+        if not chunk:
+            return ""
+        out: list[str] = []
+        for ch in chunk:
+            if self._in_sentinel:
+                # Swallow everything until the closing bracket.
+                self._buf += ch
+                if ch == "]":
+                    self._buf = ""
+                    self._in_sentinel = False
+                elif len(self._buf) > self._MAX_SENTINEL_LEN:
+                    # LLM forgot the close bracket — give up and flush so we
+                    # don't hold half the next paragraph hostage.
+                    out.append(self._buf)
+                    self._buf = ""
+                    self._in_sentinel = False
+                continue
+
+            if self._buf:
+                # Inside a candidate header — extend and re-check.
+                self._buf += ch
+                if self._is_header_complete(self._buf):
+                    self._in_sentinel = True
+                elif not self._is_header_prefix(self._buf):
+                    # Diverged → flush the buffer as literal, reset.
+                    out.append(self._buf)
+                    self._buf = ""
+                continue
+
+            if ch == "[":
+                # Potential sentinel start — start buffering.
+                self._buf = "["
+                continue
+
+            out.append(ch)
+        return "".join(out)
+
+    def flush(self) -> str:
+        """Drain leftover buffer when the stream closes.
+
+        An unterminated ``[CTA_Q:…`` (no closing bracket) is dropped — safer
+        to lose a malformed marker than to leak it. Anything held that wasn't
+        a sentinel candidate is returned verbatim.
+        """
+        if self._in_sentinel:
+            self._buf = ""
+            self._in_sentinel = False
+            return ""
+        out = self._buf
+        self._buf = ""
+        return out
+
+
+def _scrub_cta_sentinels(text: str) -> str:
+    """Strip every CTA sentinel (well-formed or malformed) from visible text.
+
+    Runs unconditionally — even when no [CTA:dim] is present — so a stray
+    [CTA_Q:…] from the LLM never leaks into the bot bubble. The 300-char
+    ceiling on the permissive sweep prevents a runaway match if a closing
+    bracket appears far downstream in the answer.
+    """
+    clean = _CTA_PATTERN.sub("", text)
+    clean = _CTA_Q_PATTERN.sub("", clean)
+    clean = re.sub(r"\[CTA_Q:[^\]]{0,300}\]", "", clean)
+    return re.sub(r"\n{3,}", "\n\n", clean).rstrip()
+
+
+def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, dict | None, str | None]:
+    """Strip [CTA:dimension] (+ optional [CTA_Q:question]) markers from the
+    visible response.
+
+    Returns ``(clean_text, cta_payload_or_None, contextual_q_or_None)``.
+
+    The visitor never sees either sentinel. The contextual question, when the
+    LLM emits one, is surfaced as the ``prompt`` field on the CTA payload and
+    rendered above the quick-reply chips in the widget; otherwise we fall back
+    to the static ``cta_prompt`` configured for that dimension.
+
+    The third return value lets the streaming pipeline forward the LLM's
+    contextual prompt into the keyword-trigger fallback when the [CTA:dim]
+    marker was forgotten — without it, the fallback would discard the
+    LLM-written prompt and fall back to the generic static one.
+
+    IMPORTANT: the scrub runs *before* the early-return on missing [CTA:dim].
+    Without that, an LLM that emitted only [CTA_Q:…] (forgetting the paired
+    [CTA:dim]) leaks the raw sentinel into the visitor's chat bubble.
+    """
+    # Always extract + scrub first. Whether or not we end up returning a CTA
+    # payload, the visible text must be free of both sentinels.
+    contextual_q = _extract_contextual_q(text)
+    clean_text = _scrub_cta_sentinels(text)
+
     match = _CTA_PATTERN.search(text)
     if not match:
-        return text, None
+        return clean_text, None, contextual_q
 
     dimension = match.group(1)
-    clean_text = _CTA_PATTERN.sub("", text).rstrip()
-
     config = bant_config or get_framework_config(None)
     dim_config = config.get(dimension, {})
     if not dim_config.get("cta_enabled", False):
-        return clean_text, None
+        return clean_text, None, contextual_q
 
-    cta_prompt = dim_config.get("cta_prompt", "")
+    # Prefer the LLM-written contextual question; static prompt is the safety net.
+    cta_prompt = contextual_q or dim_config.get("cta_prompt", "")
     options = [o["label"] for o in dim_config.get("options", [])]
 
-    return clean_text, {"dimension": dimension, "prompt": cta_prompt, "options": options}
+    return (
+        clean_text,
+        {"dimension": dimension, "prompt": cta_prompt, "options": options},
+        contextual_q,
+    )
 
 
 # Known trigger phrases per qualification dimension. Used as a safety net
@@ -1498,8 +1790,14 @@ def _infer_cta_fallback(
     text: str,
     bant_state: dict | None,
     bant_config: dict | None,
+    contextual_q: str | None = None,
 ) -> dict | None:
     """Infer a CTA from the bot's answer when the LLM omitted [CTA:dim].
+
+    ``contextual_q`` lets the caller carry the LLM-written chip prompt across
+    the strip → infer boundary so an answer that included [CTA_Q:…] but
+    forgot [CTA:dim] still gets the contextual one-liner rendered above the
+    chips, instead of falling back to the static template.
 
     Only fires when:
       - The answer contains a question mark (it's actually asking something).
@@ -1509,13 +1807,23 @@ def _infer_cta_fallback(
     Returns the same shape as ``_strip_cta_marker`` so the streaming /
     non-streaming pipelines can substitute it transparently.
     """
-    if not text or "?" not in text:
+    # The bot has to actually be asking something. Accept either a "?" in the
+    # visible answer OR a "?" in the contextual chip prompt the LLM wrote.
+    # Without the second clause, an answer that delegated the question to
+    # [CTA_Q:…?] (e.g. "Please pick a window. [CTA_Q:Which window works?]")
+    # would fail the guard once the sentinel is stripped from visible text.
+    if not text:
+        return None
+    if "?" not in text and not (contextual_q and "?" in contextual_q):
         return None
 
     config = bant_config or get_framework_config(None)
     conversation_order = config.get("conversation_order") or _framework_dimensions(config)
     bs = bant_state or {}
-    text_l = text.lower()
+    # Trigger matching widens to include the contextual question — the chip
+    # prompt is often where the actual qualifying word ("timeline", "budget")
+    # lives, even when the visible answer is phrased softer.
+    text_l = (text + " " + (contextual_q or "")).lower()
 
     for dim in conversation_order:
         dim_config = config.get(dim, {})
@@ -1538,7 +1846,7 @@ def _infer_cta_fallback(
         if any(t in text_l for t in triggers):
             return {
                 "dimension": dim,
-                "prompt": dim_config.get("cta_prompt", ""),
+                "prompt": contextual_q or dim_config.get("cta_prompt", ""),
                 "options": [o["label"] for o in options],
             }
 
@@ -1930,7 +2238,7 @@ def rag_pipeline(
                 answer = _off_topic_refusal(_company_name)
 
             # Strip CTA marker before saving
-            answer, _cta = _strip_cta_marker(answer, bant_config)
+            answer, _cta, _cta_q = _strip_cta_marker(answer, bant_config)
 
             # Strip [MEETING_CARD] token from LLM response (non-streaming path)
             _meeting_card_detected = bool(_meeting_card_re.search(answer))
@@ -2298,15 +2606,37 @@ async def rag_pipeline_stream(
             # questions get k=30 so the bot has the full entity roster in
             # context and never under-reports.
             _retrieval_k = 30 if _is_list_or_count_question(question) else 15
+            import time as _t
+
+            _ret_start = _t.perf_counter()
             vector_results, keyword_results = await asyncio.gather(
                 asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k),
                 asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
             )
+            _gather_ms = (_t.perf_counter() - _ret_start) * 1000
 
+            _fuse_start = _t.perf_counter()
             final_results = reciprocal_rank_fusion(vector_results, keyword_results)
             final_results = _trim_results(final_results, top_k=_retrieval_k)
+            _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
+
+            _rerank_ms = 0.0
             if RERANK_ENABLED:
+                _rerank_start = _t.perf_counter()
                 final_results = rerank(search_query, final_results)
+                _rerank_ms = (_t.perf_counter() - _rerank_start) * 1000
+
+            logger.info(
+                "[retrieval] hybrid_search bot=%s k=%d gather_ms=%.1f fuse_ms=%.1f "
+                "rerank_ms=%.1f total_ms=%.1f final_hits=%d",
+                bid,
+                _retrieval_k,
+                _gather_ms,
+                _fuse_ms,
+                _rerank_ms,
+                _gather_ms + _fuse_ms + _rerank_ms,
+                len(final_results),
+            )
 
         sources = [doc.document_name for doc in final_results]
 
@@ -2426,6 +2756,12 @@ async def rag_pipeline_stream(
 
         _stream_error = False
         _leak_aborted = False
+        # Strip [CTA:…] / [CTA_Q:…] sentinels from the stream as they arrive,
+        # so the visitor never sees the raw token typed into the bubble. The
+        # post-stream _strip_cta_marker call still runs against full_answer
+        # for DB persistence + CTA payload extraction; this is purely a
+        # display-side safeguard.
+        cta_sanitizer = _StreamCtaSanitizer()
         try:
             chunk_count = 0
             async for chunk in generate_response_stream(
@@ -2437,7 +2773,9 @@ async def rag_pipeline_stream(
                 if chunk:
                     chunk_count += 1
                     full_answer += chunk
-                    yield chunk
+                    safe_chunk = cta_sanitizer.feed(chunk)
+                    if safe_chunk:
+                        yield safe_chunk
                     # Output-side leakage guard: if the accumulated answer
                     # contains a system-prompt sentinel, stop streaming and
                     # replace the persisted message with the refusal. We
@@ -2456,6 +2794,14 @@ async def rag_pipeline_stream(
                         suggest_handoff = False
                         break
 
+            # Drain any text the sanitiser was still holding (e.g. trailing
+            # "[" that turned out not to be a sentinel). Skip on leak-abort —
+            # the buffer at that point may be partial sentinel and is unsafe.
+            if not _leak_aborted:
+                tail = cta_sanitizer.flush()
+                if tail:
+                    yield tail
+
             if chunk_count == 0:
                 logger.warning(f"LLM returned zero chunks for session {session_id}")
                 yield "I'm sorry, I couldn't generate a response. Please try again or ask something else."
@@ -2466,8 +2812,23 @@ async def rag_pipeline_stream(
             _stream_error = True
             suggest_handoff = False  # Don't suggest handoff on errored/partial responses
 
-        # Strip CTA marker from response before saving.
-        full_answer, cta_data = _strip_cta_marker(full_answer, bant_config)
+        # Strip CTA marker from response before saving. The third return
+        # carries any [CTA_Q:…] the LLM wrote, so the fallback can still
+        # surface that contextual one-liner if it has to infer the dim.
+        full_answer, cta_data, _cta_q = _strip_cta_marker(full_answer, bant_config)
+
+        # Drift detection: the system prompt forbids asking a question in the
+        # body when [CTA_Q:…] is emitted (avoids two prompts in one bubble).
+        # We don't auto-rewrite — natural-language surgery is too risky — but
+        # we log a warning so prompt drift is visible in journalctl over time.
+        if _cta_q and _body_asks_a_question(full_answer):
+            logger.warning(
+                "[cta] double-question drift | session=%s bot=%s cta_q=%r body_tail=%r",
+                session_id,
+                bid,
+                _cta_q[:80],
+                full_answer[-120:],
+            )
 
         # Safety net: if the LLM asked a qualifying question but forgot the
         # [CTA:dim] marker, infer the CTA from the answer text so the
@@ -2475,7 +2836,7 @@ async def rag_pipeline_stream(
         # this — every visitor turn goes through here today, and the
         # non-streaming path does not surface CTA chips to the widget.
         if cta_data is None and is_bant_enabled:
-            cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config)
+            cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config, contextual_q=_cta_q)
 
         # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
         # Build it inside a try/finally so even a DB failure sends the frame.
