@@ -5,6 +5,7 @@ import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
+import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
@@ -149,7 +150,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // ── Live chat lifted state ───────────────────────────────────────────────────
     const [liveMessages, setLiveMessages] = useState([]);
     const [isOperatorTyping, setIsOperatorTyping] = useState(false);
-    const [lastReadAt, setLastReadAt] = useState(null);
     const [isLiveReconnecting, setIsLiveReconnecting] = useState(false);
     const [showRating, setShowRating] = useState(false);
     const [ratingSubmitting, setRatingSubmitting] = useState(false);
@@ -585,7 +585,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setExistingLeadInfo(null);
         setLiveMessages([]);
         setIsOperatorTyping(false);
-        setLastReadAt(null);
         setIsLiveReconnecting(false);
         setShowRating(false);
         setShowEndConfirm(false);
@@ -904,13 +903,27 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setShowWelcomeBackBanner(false);
 
         const msgId = `live-${Date.now()}`;
+        const clientMsgId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const timestamp = new Date().toISOString();
-        const newMsg = { id: msgId, text, sender: 'user', timestamp, failed: false, status: 'sent' };
+        // Optimistic render: start in "sending" — the server's message_ack
+        // will flip this to "sent" (no operator online) or "delivered"
+        // (operator socket received it), and a later read_receipt flips it
+        // to "read" (green double-check).
+        const newMsg = {
+            id: msgId,
+            text,
+            sender: 'user',
+            timestamp,
+            clientMsgId,
+            failed: false,
+            status: 'sending',
+        };
 
         try {
-            wsSendRef.current(text);
+            wsSendRef.current(text, clientMsgId);
         } catch {
             newMsg.failed = true;
+            newMsg.status = 'failed';
         }
         setLiveMessages(prev => [...prev, newMsg]);
     }, []);
@@ -933,7 +946,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setHoveredStar(0);
         setLiveMessages([]);
         setIsOperatorTyping(false);
-        setLastReadAt(null);
         setIsLiveReconnecting(false);
         setOfflineSubmitted(false);
         setOfflineError(false);
@@ -945,7 +957,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         handoffFormInjectedRef.current = false;
         setMessages(prev => [...prev, {
             id: Date.now(),
-            text: "Thanks for your message! We'll get back to you soon. In the meantime, feel free to ask me anything.",
+            text: 'Thanks for reaching out to our support! Feel free to ask me anything.',
             sender: 'bot',
             timestamp: new Date().toISOString(),
             feedback: null,
@@ -1119,32 +1131,35 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         </div>
                     </div>
                     <div className="flex items-center gap-1 mt-0.5 mr-1">
-                        {msg.failed ? (
+                        {msg.failed || msg.status === 'failed' ? (
                             <button
                                 type="button"
                                 aria-label="Message not sent — tap to retry"
                                 onClick={() => {
-                                    if (wsSendRef.current && msg.text) {
-                                        try {
-                                            wsSendRef.current(msg.text);
+                                    if (!wsSendRef.current) return;
+                                    const retryId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                                    try {
+                                        if (msg.text) {
+                                            wsSendRef.current(msg.text, retryId);
                                             setLiveMessages(prev => prev.map(m =>
-                                                m.id === msg.id ? { ...m, failed: false, status: 'sent' } : m
+                                                m.id === msg.id
+                                                    ? { ...m, failed: false, status: 'sending', clientMsgId: retryId }
+                                                    : m
                                             ));
-                                        } catch { /* stay failed */ }
-                                    }
+                                        }
+                                    } catch { /* stay failed */ }
                                 }}
                                 className="text-[10px] text-red-500 flex items-center gap-0.5 hover:text-red-700 underline cursor-pointer"
                             >
                                 <AlertCircle className="w-3 h-3" /> Not sent · Retry
                             </button>
                         ) : (
-                            <span
-                                className="text-[10px] select-none"
-                                style={{ color: (lastReadAt && msg.timestamp <= lastReadAt) ? '#53bdeb' : '#9CA3AF' }}
-                                title={(lastReadAt && msg.timestamp <= lastReadAt) ? 'Read' : 'Sent'}
-                            >
-                                {(lastReadAt && msg.timestamp <= lastReadAt) ? '✓✓' : '✓'}
-                            </span>
+                            <MessageStatus
+                                status={msg.status || 'sending'}
+                                sentAt={msg.sentAt || msg.timestamp}
+                                deliveredAt={msg.deliveredAt}
+                                readAt={msg.readAt}
+                            />
                         )}
                     </div>
                 </div>
@@ -1862,7 +1877,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         }}
                         onLiveMessagesChange={handleLiveMessagesChange}
                         onOperatorTyping={setIsOperatorTyping}
-                        onLastReadAtChange={setLastReadAt}
                         onReconnectingChange={setIsLiveReconnecting}
                         onWsReady={handleWsReady}
                         onChatEnded={handleChatEnded}

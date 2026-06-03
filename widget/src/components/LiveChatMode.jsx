@@ -29,7 +29,7 @@ const LiveChatMode = ({
     // Lifted state callbacks
     onLiveMessagesChange,   // (updaterFn | array) => void  — controls liveMessages in parent
     onOperatorTyping,       // (bool) => void
-    onLastReadAtChange,     // (isoString) => void
+    onLastReadAtChange,     // (isoString) => void — kept for backwards compat (file-list/legacy callers)
     onReconnectingChange,   // (bool) => void
     onWsReady,              // ({ send, typing, triggerFilePick, endChat }) => void
     onChatEnded,            // () => void — called when chat ends (show rating or return to bot)
@@ -101,9 +101,13 @@ const LiveChatMode = ({
 
                 // Expose send/typing/filePick handles to ChatWindow
                 onWsReady?.({
-                    send: (text) => {
+                    send: (text, clientMsgId) => {
                         if (socket.readyState === WebSocket.OPEN) {
-                            socket.send(JSON.stringify({ type: 'message', content: text }));
+                            socket.send(JSON.stringify({
+                                type: 'message',
+                                content: text,
+                                client_msg_id: clientMsgId,
+                            }));
                         }
                     },
                     typing: () => {
@@ -173,11 +177,22 @@ const LiveChatMode = ({
                                         .filter(m => m.role === 'user' || m.role === 'operator')
                                         .map((m) => {
                                             const fileMatch = m.content?.match(fileRe);
+                                            const isUser = m.role !== 'operator';
                                             const base = {
                                                 id: m.id ? `srv-${m.id}` : `restored-${Date.now()}-${Math.random()}`,
-                                                sender: m.role === 'operator' ? 'operator' : 'user',
-                                                operatorName: m.role === 'operator' ? (data.operator_name || 'Support') : undefined,
+                                                sender: isUser ? 'user' : 'operator',
+                                                operatorName: !isUser ? (data.operator_name || 'Support') : undefined,
                                                 timestamp: m.timestamp || m.created_at,
+                                                ...(isUser ? {
+                                                    dbId: typeof m.id === 'number' ? m.id : undefined,
+                                                    // Restored visitor messages are by definition persisted
+                                                    // — start them at "delivered". A subsequent read_receipt
+                                                    // (sent by the operator when they open the chat) will
+                                                    // upgrade them to "read".
+                                                    status: 'delivered',
+                                                    sentAt: m.timestamp || m.created_at,
+                                                    deliveredAt: m.timestamp || m.created_at,
+                                                } : {}),
                                             };
                                             if (fileMatch) {
                                                 const filename = fileMatch[1];
@@ -230,6 +245,7 @@ const LiveChatMode = ({
                             text: data.content,
                             sender: data.role === 'operator' ? 'operator' : 'user',
                             operatorName: data.operator_name,
+                            dbId: typeof data.message_id === 'number' ? data.message_id : undefined,
                             timestamp: data.timestamp || new Date().toISOString(),
                         };
                         onLiveMessagesChange?.(prev => [...(prev || []), msg]);
@@ -245,9 +261,37 @@ const LiveChatMode = ({
                             filename: data.filename,
                             content_type: data.content_type,
                             operatorName: data.operator_name,
+                            dbId: typeof data.message_id === 'number' ? data.message_id : undefined,
                             timestamp: data.timestamp || new Date().toISOString(),
                         };
                         onLiveMessagesChange?.(prev => [...(prev || []), fileMsg]);
+                        break;
+                    }
+
+                    case 'message_ack': {
+                        // Server has persisted (and possibly delivered) the visitor's
+                        // outgoing message. Find it by client_msg_id and upgrade the
+                        // tick state from "sending" to "sent" or "delivered", and
+                        // attach the dbId so the next read_receipt can address it.
+                        const { client_msg_id: clientId, message_id: dbId, status: ackStatus, timestamp: ackTs } = data;
+                        if (!clientId) break;
+                        onLiveMessagesChange?.(prev =>
+                            (prev || []).map(m => {
+                                if (m.clientMsgId !== clientId) return m;
+                                // Don't downgrade from "read" if a later receipt already arrived.
+                                if (m.status === 'read') return { ...m, dbId: dbId ?? m.dbId };
+                                const nextStatus = ackStatus === 'delivered' ? 'delivered' : 'sent';
+                                return {
+                                    ...m,
+                                    status: nextStatus,
+                                    dbId: dbId ?? m.dbId,
+                                    sentAt: m.sentAt || ackTs || new Date().toISOString(),
+                                    deliveredAt: ackStatus === 'delivered'
+                                        ? (m.deliveredAt || ackTs || new Date().toISOString())
+                                        : m.deliveredAt,
+                                };
+                            })
+                        );
                         break;
                     }
 
@@ -265,11 +309,33 @@ const LiveChatMode = ({
                         clearTimeout(pongTimeoutRef.current);
                         break;
 
-                    case 'read_receipt':
-                        if (data.reader === 'operator') {
-                            onLastReadAtChange?.(new Date().toISOString());
-                        }
+                    case 'read_receipt': {
+                        if (data.reader !== 'operator') break;
+                        const readAt = new Date().toISOString();
+                        const lastReadId = typeof data.last_read_id === 'number' ? data.last_read_id : null;
+
+                        // Notify legacy listeners (kept for back-compat with
+                        // any consumer still reading lastReadAt).
+                        onLastReadAtChange?.(readAt);
+
+                        // Per-message "read" upgrade: only the visitor's own
+                        // outgoing messages whose dbId is ≤ last_read_id flip
+                        // to green. Messages without a dbId (pre-ack, queued)
+                        // are left alone — they'll flip on the next receipt
+                        // after the ack arrives.
+                        onLiveMessagesChange?.(prev =>
+                            (prev || []).map(m => {
+                                if (m.sender !== 'user') return m;
+                                if (m.status === 'failed' || m.status === 'sending') return m;
+                                if (lastReadId !== null) {
+                                    if (typeof m.dbId !== 'number' || m.dbId > lastReadId) return m;
+                                }
+                                if (m.status === 'read') return m;
+                                return { ...m, status: 'read', readAt };
+                            })
+                        );
                         break;
+                    }
 
                     default:
                         break;
@@ -383,9 +449,13 @@ const LiveChatMode = ({
 
         for (const msg of toRetry) {
             try {
-                ws.send(JSON.stringify({ type: 'message', content: msg.text }));
+                const clientId = msg.clientMsgId || `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                ws.send(JSON.stringify({ type: 'message', content: msg.text, client_msg_id: clientId }));
                 onLiveMessagesChange?.(prev =>
-                    (prev || []).map(m => m.id === msg.id ? { ...m, failed: false } : m)
+                    (prev || []).map(m => m.id === msg.id
+                        ? { ...m, failed: false, status: 'sending', clientMsgId: clientId }
+                        : m
+                    )
                 );
             } catch {
                 stillFailed.push(msg);
@@ -454,24 +524,38 @@ const LiveChatMode = ({
             setUploadProgress(100);
 
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'file', file_url, filename: file.name, content_type: file.type }));
+                const fileClientId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                ws.send(JSON.stringify({
+                    type: 'file',
+                    file_url,
+                    filename: file.name,
+                    content_type: file.type,
+                    client_msg_id: fileClientId,
+                }));
                 onLiveMessagesChange?.(prev => [...(prev || []), {
                     id: `live-file-${++msgIdCounter.current}`,
                     sender: 'user',
                     file_url,
                     filename: file.name,
                     content_type: file.type,
-                    status: 'sent',
+                    clientMsgId: fileClientId,
+                    status: 'sending',
                     timestamp: new Date().toISOString(),
                 }]);
 
                 if (caption.trim()) {
-                    ws.send(JSON.stringify({ type: 'message', content: caption.trim() }));
+                    const captionClientId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                    ws.send(JSON.stringify({
+                        type: 'message',
+                        content: caption.trim(),
+                        client_msg_id: captionClientId,
+                    }));
                     onLiveMessagesChange?.(prev => [...(prev || []), {
                         id: `live-msg-${++msgIdCounter.current}`,
                         sender: 'user',
                         text: caption.trim(),
-                        status: 'sent',
+                        clientMsgId: captionClientId,
+                        status: 'sending',
                         timestamp: new Date().toISOString(),
                     }]);
                 }

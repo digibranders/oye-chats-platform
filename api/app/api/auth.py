@@ -1,10 +1,11 @@
 import logging
 
-from fastapi import Depends, HTTPException, Query, Security, status
+from fastapi import Depends, HTTPException, Query, Request, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy import select
 
 from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
+from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Bot, Client, Operator
 from app.db.session import get_session
 
@@ -309,6 +310,8 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "branding_url": bot.branding_url,
         "is_active": bot.is_active,
         "recommended_colors": bot.recommended_colors,
+        "allowed_domains": list(bot.allowed_domains or []),
+        "domain_check_enabled": bool(bot.domain_check_enabled),
         "created_at": bot.created_at.isoformat() if bot.created_at else None,
     }
 
@@ -325,7 +328,44 @@ def _bot_from_cache_dict(data: dict) -> Bot:
     return bot
 
 
+def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
+    """Reject widget requests whose Origin/Referer is not in ``bot.allowed_domains``.
+
+    No-op when ``domain_check_enabled`` is false (default). When enabled, the
+    ``Origin`` header is the source of truth; ``Referer`` is used as a fallback
+    for older clients that omit ``Origin`` on same-origin POSTs. Missing both
+    headers is a hard reject so a non-browser client cannot bypass the check
+    by simply omitting the headers.
+    """
+    if not getattr(bot, "domain_check_enabled", False):
+        return
+    if request is None:
+        # Defensive: dependencies are always called with a Request, but if a
+        # caller invokes get_current_bot programmatically without one we still
+        # fail closed rather than silently allowing the request.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="origin_not_allowed",
+        )
+
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    hostname = extract_hostname(origin)
+    allowed: list[str] = list(bot.allowed_domains or [])
+    if not is_origin_allowed(hostname, allowed):
+        logger.info(
+            "Widget request rejected by origin check: bot_id=%s origin=%r hostname=%r",
+            getattr(bot, "id", None),
+            origin,
+            hostname,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="origin_not_allowed",
+        )
+
+
 def get_current_bot(
+    request: Request,
     bot_key: str = Security(bot_key_header),
     api_key: str = Security(api_key_header),
 ):
@@ -337,12 +377,19 @@ def get_current_bot(
 
     Bot configs are cached in Redis (if configured) to avoid a DB query on every
     widget request.  Cache is invalidated when bot settings are updated.
+
+    When the bot has ``domain_check_enabled`` set, the request's ``Origin`` /
+    ``Referer`` hostname is matched against ``bot.allowed_domains`` and a 403 is
+    returned on mismatch. The X-API-Key fallback path is intentionally exempt
+    (the admin dashboard manages its own bot from inside the dashboard).
     """
     # Fast path: check Redis cache for bot_key lookups
     if bot_key:
         cached = cache_get(bot_config_key(bot_key))
         if cached:
-            return _bot_from_cache_dict(cached)
+            bot = _bot_from_cache_dict(cached)
+            _enforce_bot_origin(bot, request)
+            return bot
 
     with get_session() as session:
         # Primary path: resolve via bot_key
@@ -354,9 +401,11 @@ def get_current_bot(
                 _ = bot.id, bot.name, bot.system_prompt, bot.client_id, bot.bot_key
                 _ = bot.primary_color, bot.header_color, bot.background_color
                 _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
+                _ = bot.allowed_domains, bot.domain_check_enabled
                 # Cache for future requests
                 cache_set(bot_config_key(bot_key), _bot_to_cache_dict(bot), BOT_CONFIG_TTL)
                 session.expunge(bot)
+                _enforce_bot_origin(bot, request)
                 return bot
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

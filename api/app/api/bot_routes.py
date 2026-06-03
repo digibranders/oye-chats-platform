@@ -7,13 +7,64 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.cache import bot_config_key, cache_delete
+from app.core.origin_check import normalize_domain_input
 from app.db.models import Bot, BotGrowthEvent
 from app.db.session import get_session
+
+# Upper bound on per-bot domain list size. 50 covers every realistic case
+# (apex + wildcard + a handful of staging/sandbox subdomains) while preventing
+# an accidental or malicious unbounded write.
+_MAX_ALLOWED_DOMAINS = 50
+
+
+def _normalize_allowed_domains(raw: list[str] | None) -> list[str]:
+    """Validate, normalize, and dedupe a list of customer-supplied domains.
+
+    Raises ``ValueError`` with a user-friendly message if any entry is invalid
+    or the list exceeds :data:`_MAX_ALLOWED_DOMAINS`. Preserves the user's
+    insertion order so the admin UI shows the chips back in the same sequence.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("allowed_domains must be a list of strings")
+    if len(raw) > _MAX_ALLOWED_DOMAINS:
+        raise ValueError(f"allowed_domains has too many entries (max {_MAX_ALLOWED_DOMAINS})")
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            raise ValueError("each allowed_domains entry must be a string")
+        normalized = normalize_domain_input(entry)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _derive_allowed_domains_from_website(website: str | None) -> list[str]:
+    """Best-effort: turn a free-form website URL into [apex, *.apex].
+
+    Returns an empty list when the input cannot be parsed into a valid
+    hostname; the caller decides whether that should toggle the check off.
+    """
+    if not website:
+        return []
+    try:
+        apex = normalize_domain_input(website)
+    except ValueError:
+        return []
+    if apex in {"localhost", "127.0.0.1"}:
+        return [apex]
+    return [apex, f"*.{apex}"]
+
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +130,17 @@ class CreateBotRequest(BaseModel):
     website: str | None = None
     system_prompt: str | None = None
     bant_enabled: bool = True
+    # Optional override of the auto-derived domain list. When omitted the route
+    # derives ``[apex, *.apex]`` from ``website`` and turns the check on.
+    allowed_domains: list[str] | None = None
+    domain_check_enabled: bool | None = None
+
+    @field_validator("allowed_domains")
+    @classmethod
+    def _validate_allowed_domains(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_allowed_domains(value)
 
 
 class UpdateBotRequest(BaseModel):
@@ -146,6 +208,16 @@ class UpdateBotRequest(BaseModel):
     # ``{"name": str, "url": None}`` in the route handler.
     services: list[dict | str] | None = None
     services_url: str | None = None  # Legacy global URL — kept for compat, no longer used by prompt.
+    # Widget embed origin restriction.
+    allowed_domains: list[str] | None = None
+    domain_check_enabled: bool | None = None
+
+    @field_validator("allowed_domains")
+    @classmethod
+    def _validate_allowed_domains(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_allowed_domains(value)
 
     @model_validator(mode="after")
     def _validate_meeting_urls(self):
@@ -217,6 +289,8 @@ class BotResponse(BaseModel):
     # Always returned as ``[{name, url}]`` objects regardless of stored shape.
     services: list[dict] | None = None
     services_url: str | None = None  # Legacy field kept for compat.
+    allowed_domains: list[str] = []
+    domain_check_enabled: bool = False
     is_active: bool
     created_at: str
 
@@ -874,6 +948,8 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     meeting_booking_enabled=b.meeting_booking_enabled,
                     meeting_provider=b.meeting_provider,
                     zcal_url=b.zcal_url,
+                    allowed_domains=list(b.allowed_domains or []),
+                    domain_check_enabled=bool(b.domain_check_enabled),
                     is_active=b.is_active,
                     created_at=b.created_at.isoformat() if b.created_at else "",
                 )
@@ -910,6 +986,21 @@ def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_ope
                     },
                 )
 
+        # Resolve the embed domain whitelist. If the customer supplied a list
+        # we trust it (already normalized by the schema validator). Otherwise we
+        # derive ``[apex, *.apex]`` from the website URL they entered during the
+        # create flow so the widget is locked down by default for users who
+        # never touch the advanced settings.
+        if request.allowed_domains is not None:
+            resolved_domains = request.allowed_domains
+        else:
+            resolved_domains = _derive_allowed_domains_from_website(request.website)
+
+        if request.domain_check_enabled is None:
+            resolved_check_enabled = bool(resolved_domains)
+        else:
+            resolved_check_enabled = bool(request.domain_check_enabled)
+
         new_bot = Bot(
             client_id=auth["client_id"],
             bot_key=f"bot-{uuid.uuid4().hex[:12]}",
@@ -917,6 +1008,8 @@ def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_ope
             website=request.website,
             system_prompt=request.system_prompt,
             bant_enabled=request.bant_enabled,
+            allowed_domains=resolved_domains,
+            domain_check_enabled=resolved_check_enabled,
         )
         session.add(new_bot)
         session.commit()
@@ -1011,6 +1104,8 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             zcal_url=bot.zcal_url,
             services=_normalize_services(bot.services),
             services_url=bot.services_url,
+            allowed_domains=list(bot.allowed_domains or []),
+            domain_check_enabled=bool(bot.domain_check_enabled),
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )

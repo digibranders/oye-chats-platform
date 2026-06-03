@@ -168,6 +168,19 @@ class Bot(Base):
     services = Column(JSONB, nullable=True)  # list[str] of admin-defined service names
     services_url = Column(String, nullable=True)
 
+    # Widget embed origin restriction. When ``domain_check_enabled`` is true the
+    # backend rejects ``X-Bot-Key`` requests whose Origin/Referer hostname does not
+    # match an entry in ``allowed_domains``. Entries support exact hostnames
+    # (``acme.com``) and wildcard subdomains (``*.acme.com``). Defaults are off +
+    # empty so existing bots are unaffected until the customer opts in.
+    allowed_domains = Column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=sqlalchemy.text("'[]'::jsonb"),
+    )
+    domain_check_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

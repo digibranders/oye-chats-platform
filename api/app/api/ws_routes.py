@@ -3,11 +3,13 @@
 import asyncio
 import ipaddress
 import logging
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 
+from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
@@ -174,6 +176,22 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
             return
         bot_id = bot.id
 
+        # Origin whitelist (parity with HTTP get_current_bot). Enforced only when
+        # the customer has opted in; otherwise we keep the previous behaviour so
+        # existing widgets continue to work.
+        if bot.domain_check_enabled:
+            origin_header = ws.headers.get("origin") or ws.headers.get("referer")
+            hostname = extract_hostname(origin_header)
+            if not is_origin_allowed(hostname, list(bot.allowed_domains or [])):
+                logger.info(
+                    "Widget WS rejected by origin check: bot_id=%s origin=%r hostname=%r",
+                    bot_id,
+                    origin_header,
+                    hostname,
+                )
+                await ws.close(code=4403, reason="origin_not_allowed")
+                return
+
         # Validate session belongs to this bot (prevent cross-session messaging)
         chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
         if chat_session and chat_session.bot_id != bot_id:
@@ -200,11 +218,28 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 if not content or len(content) > 10000:
                     continue
 
-                with get_session() as session:
-                    add_chat_message(session, session_id, role="user", content=content, bot_id=bot_id)
-                    session.commit()
+                # Echoed back to the visitor in ``message_ack`` so the widget
+                # can map its optimistic UI entry to the persisted ``db_id``
+                # and drive the per-message tick state (sending → sent →
+                # delivered → read).
+                client_msg_id = data.get("client_msg_id")
 
-                await manager.route_visitor_message(session_id, content)
+                with get_session() as session:
+                    persisted = add_chat_message(session, session_id, role="user", content=content, bot_id=bot_id)
+                    session.commit()
+                    db_id = persisted.id
+
+                delivered = await manager.route_visitor_message(session_id, content, db_id=db_id)
+
+                await ws.send_json(
+                    {
+                        "type": "message_ack",
+                        "client_msg_id": client_msg_id,
+                        "message_id": db_id,
+                        "status": "delivered" if delivered else "sent",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
 
             elif msg_type == "file":
                 file_url = data.get("file_url", "").strip()
@@ -213,13 +248,26 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 if not file_url or not _is_safe_file_url(file_url):
                     continue
 
+                client_msg_id = data.get("client_msg_id")
+
                 # Save as a message with file metadata
                 file_content = f"[File: {filename}]({file_url})"
                 with get_session() as session:
-                    add_chat_message(session, session_id, role="user", content=file_content, bot_id=bot_id)
+                    persisted = add_chat_message(session, session_id, role="user", content=file_content, bot_id=bot_id)
                     session.commit()
+                    db_id = persisted.id
 
-                await manager.route_visitor_file(session_id, file_url, filename, content_type)
+                delivered = await manager.route_visitor_file(session_id, file_url, filename, content_type, db_id=db_id)
+
+                await ws.send_json(
+                    {
+                        "type": "message_ack",
+                        "client_msg_id": client_msg_id,
+                        "message_id": db_id,
+                        "status": "delivered" if delivered else "sent",
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    }
+                )
 
             elif msg_type == "typing":
                 await manager.send_typing_to_operator(session_id)
