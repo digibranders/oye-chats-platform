@@ -430,10 +430,23 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         return () => window.removeEventListener('beforeunload', handleUnload);
     }, [sessionId]);
 
-    // Scroll when messages or live messages change
+    // Scroll when messages or live messages change, or when an inline card
+    // (post-chat survey, leave-message prompt) mounts/transitions at the
+    // bottom of the stream. Without these deps, ending a live chat surfaces
+    // the "Chat ended" card but the view stays anchored, leaving the card
+    // clipped below the fold.
     useEffect(() => {
         scrollToBottom();
-    }, [streamingId, isTyping, messages.length, liveMessages.length, scrollToBottom]);
+    }, [
+        streamingId,
+        isTyping,
+        messages.length,
+        liveMessages.length,
+        showRating,
+        surveyStep,
+        showLeaveMessageCard,
+        scrollToBottom,
+    ]);
 
     // Inject "operator joined" system message when operator first connects
     useEffect(() => {
@@ -939,6 +952,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     // ── Return to bot after live chat ends ───────────────────────────────────────
     const handleReturnToBot = useCallback(() => {
+        // Snapshot whether we're returning from a successful offline submission
+        // before we reset the flag below — used to surface a confirmation line
+        // in the bot stream so the visitor sees their request landed.
+        const wasOfflineSubmitted = offlineSubmitted;
         setShowRating(false);
         setShowEndConfirm(false);
         setSurveyStep(1);
@@ -955,16 +972,41 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setChatMode('bot');
         setOperatorName(null);
         handoffFormInjectedRef.current = false;
-        setMessages(prev => [...prev, {
-            id: Date.now(),
-            text: 'Thanks for reaching out to our support! Feel free to ask me anything.',
-            sender: 'bot',
-            timestamp: new Date().toISOString(),
-            feedback: null,
-        }]);
-    }, [setChatMode]);
+        setMessages(prev => {
+            const now = Date.now();
+            const next = [...prev];
+            if (wasOfflineSubmitted) {
+                next.push({
+                    id: `sys-offline-recorded-${now}`,
+                    type: 'system',
+                    text: "Your message has been recorded — we'll get back to you shortly.",
+                    timestamp: new Date().toISOString(),
+                });
+            }
+            next.push({
+                id: now,
+                text: 'Thanks for reaching out to our support! Feel free to ask me anything.',
+                sender: 'bot',
+                timestamp: new Date().toISOString(),
+                feedback: null,
+            });
+            return next;
+        });
+    }, [setChatMode, offlineSubmitted]);
 
     const handleChatEnded = useCallback(() => {
+        // Read the departing operator from the ref so this works regardless of
+        // who initiated the end (visitor or operator) and survives the stale
+        // closure in LiveChatMode's WS effect (deps: [sessionId]).
+        const departingOperator = prevOperatorNameRef.current;
+        if (departingOperator) {
+            setMessages(prev => [...prev, {
+                id: `sys-left-${Date.now()}`,
+                type: 'system',
+                text: `${departingOperator} left`,
+                timestamp: new Date().toISOString(),
+            }]);
+        }
         if (settings?.feature_flags?.post_chat_rating === false) {
             handleReturnToBot();
         } else {
