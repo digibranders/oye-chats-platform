@@ -552,6 +552,12 @@ async def crawl_single_http(
 
                     # Trafilatura: ML-based boilerplate removal (0.883 F1).
                     # Falls back to html2text if trafilatura returns nothing.
+                    #
+                    # ``include_formatting=True`` preserves <li>/<ul> structure
+                    # as proper markdown bullets — without it, list items are
+                    # flattened into prose joined by inline " - " separators,
+                    # which the LLM then echoes verbatim and produces unreadable
+                    # answers for list-shaped content (events, services, etc).
                     markdown = None
                     try:
                         import trafilatura
@@ -561,6 +567,8 @@ async def crawl_single_http(
                             url=url,
                             include_comments=False,
                             include_tables=True,
+                            include_formatting=True,
+                            include_links=True,
                             output_format="markdown",
                         )
                     except Exception:
