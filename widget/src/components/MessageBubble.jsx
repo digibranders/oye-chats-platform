@@ -14,6 +14,95 @@ import { sanitizeColor } from '../services/sanitize';
 
 const _CTA_PHRASES = /^(explore (all )?services|view (all )?services|see (all )?services|browse services)\b/i;
 
+// Follow-up offer openers the LLM tends to tack onto the end of an answer
+// ("If you want, I can share..."). Without a paragraph break the offer reads
+// as part of the previous sentence; with one it visually separates the answer
+// from the optional next step.
+const _FOLLOW_UP_OPENERS = [
+    "If you want",
+    "If you'd like",
+    "If you're interested",
+    "Would you like",
+    "Want me to",
+    "Want to",
+    "Should I",
+    "Do you want",
+    "Can I",
+    "Let me know if",
+    "Just let me know",
+    "Happy to",
+    "I can also",
+    "I can share",
+    "I can help",
+];
+
+const _FOLLOW_UP_REGEX = new RegExp(
+    `([.!?])[ \\t]+(?=(?:${_FOLLOW_UP_OPENERS
+        .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|')})\\b)`,
+    'g',
+);
+
+// Markdown bullet/numbered list line.
+const _LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])\s+\S/;
+const _LIST_PREFIX_RE = /^([ \t]*(?:[-*+]|\d+[.)])\s+)(.*)$/;
+
+// Split a single bullet line whose body contains inline "- " separators back
+// into multiple bullets. The LLM sometimes emits a list as one run-on line:
+//   "- provenance- Continuous visibility- Pre-configured GitHub Actions"
+// We split only when the dash follows a word/closing-bracket character and is
+// followed by " " + a capital letter — that pattern is reliably an inline
+// bullet boundary and won't fire on intra-word hyphens like "key-based" or
+// "Multi-region".
+const _splitInlineBullets = (line) => {
+    const match = line.match(_LIST_PREFIX_RE);
+    if (!match) return [line];
+    const [, prefix, body] = match;
+    const parts = body.split(/(?<=[a-z0-9)\]])-[ \t]+(?=[A-Z])/);
+    if (parts.length === 1) return [line];
+    return parts.map((p) => prefix + p.trim());
+};
+
+// Reformat bot markdown so the LLM's terse "list + follow-up paragraph"
+// output renders with clear separation:
+//   1. Always insert a blank line between a list and a subsequent paragraph
+//      (otherwise GFM treats the paragraph as lazy continuation of the last
+//      bullet, gluing them together visually).
+//   2. Break common follow-up offer phrases onto their own paragraph so
+//      suggestions sit a blank line below the answer.
+//
+// Safe to run on partial streaming text — the rules only add whitespace,
+// never remove content, so re-running over progressively longer strings
+// produces the same result as running once on the final string.
+const formatBotMarkdown = (text) => {
+    if (!text) return text;
+
+    const rawLines = text.split('\n');
+    const lines = [];
+    for (const raw of rawLines) {
+        if (_LIST_ITEM_RE.test(raw)) {
+            for (const split of _splitInlineBullets(raw)) lines.push(split);
+        } else {
+            lines.push(raw);
+        }
+    }
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        out.push(line);
+        if (!_LIST_ITEM_RE.test(line)) continue;
+        const next = lines[i + 1];
+        if (next === undefined) continue;
+        if (next.trim() === '') continue;
+        if (_LIST_ITEM_RE.test(next)) continue;
+        // Indented continuation of the bullet — leave alone.
+        if (/^[ \t]+\S/.test(next) && !/^[ \t]*(?:[-*+]|\d+[.)])\s/.test(next)) continue;
+        out.push('');
+    }
+
+    return out.join('\n').replace(_FOLLOW_UP_REGEX, '$1\n\n');
+};
+
 const _linkText = (children) =>
     React.Children.toArray(children)
         .map((c) => (typeof c === 'string' ? c : ''))
@@ -106,7 +195,7 @@ const MessageBubble = ({
                                     a: SafeLink,
                                 }}
                             >
-                                {msg.text}
+                                {formatBotMarkdown(msg.text)}
                             </ReactMarkdown>
                             {streamingId === msg.id && (
                                 <span className="inline-block animate-pulse text-gray-400">▌</span>
