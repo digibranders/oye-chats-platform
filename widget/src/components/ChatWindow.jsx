@@ -1172,6 +1172,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             )}
                         </div>
                     </div>
+                    {/*
+                       Live-mode user messages get a WhatsApp-style status
+                       indicator (sending → sent → delivered → read) so the
+                       visitor sees their message reached the operator.
+                       Bot-mode user messages stay clean (no status) since
+                       there is no "read" concept when talking to the bot.
+                       A failed send swaps in a retry affordance instead.
+                    */}
                     <div className="flex items-center gap-1 mt-0.5 mr-1">
                         {msg.failed || msg.status === 'failed' ? (
                             <button

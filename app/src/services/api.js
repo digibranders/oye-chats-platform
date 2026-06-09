@@ -427,30 +427,15 @@ export const getClientSettings = async (botId) => {
     try {
         if (botId) {
             const response = await api.get(`/bots/${botId}`);
-            // Map bot response fields to match the legacy settings format
             const bot = response.data;
+            // Pass the full bot payload through, then layer the legacy-name
+            // mapping (``name`` → ``bot_name``) and service normalization on
+            // top. Spreading first keeps fields like ``widget_messages`` and
+            // ``widget_config`` intact — listing them explicitly previously
+            // dropped customizations (e.g. welcome suggestions) on reload.
             return {
+                ...bot,
                 bot_name: bot.name,
-                bot_logo: bot.bot_logo,
-                launcher_name: bot.launcher_name,
-                launcher_logo: bot.launcher_logo,
-                primary_color: bot.primary_color,
-                background_color: bot.background_color,
-                header_color: bot.header_color,
-                recommended_colors: bot.recommended_colors || [],
-                bant_enabled: bot.bant_enabled,
-                avatar_type: bot.avatar_type,
-                orb_color: bot.orb_color,
-                lead_form_enabled: bot.lead_form_enabled,
-                lead_form_fields: bot.lead_form_fields,
-                notification_email: bot.notification_email,
-                email_on_qualified: bot.email_on_qualified,
-                email_on_handoff: bot.email_on_handoff,
-                operator_timeout_seconds: bot.operator_timeout_seconds,
-                // Service-scoped answers (admin-defined, optional). Each entry
-                // is ``{name, url}``. Backend always returns objects, but we
-                // defensively normalize legacy string entries here so the UI
-                // never crashes if older bot data shows up.
                 services: Array.isArray(bot.services)
                     ? bot.services
                           .map((s) => (typeof s === 'string' ? { name: s, url: '' } : { name: s?.name || '', url: s?.url || '' }))
