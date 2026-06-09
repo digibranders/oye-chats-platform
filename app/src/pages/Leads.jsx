@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Target, Download, X, Loader2, User, Mail, Phone, Building2, MapPin, Monitor, MessageCircle, Search, ChevronRight, Tag, FileText, CheckSquare, Square, Trash2, CheckCheck } from 'lucide-react';
+import { Target, Download, X, Loader2, User, Mail, Phone, Building2, MapPin, Monitor, MessageCircle, Search, ChevronRight, ChevronDown, Tag, FileText, CheckSquare, Square, Trash2, CheckCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RadialBarChart, RadialBar, ResponsiveContainer, Tooltip as ReTooltip } from 'recharts';
 import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv, markLeadViewed, markAllLeadsViewed } from '../services/api';
@@ -24,6 +24,17 @@ const STATUS_CONFIG = {
 
 const BANT_LABELS = { need: 'Need', budget: 'Budget', authority: 'Authority', timeline: 'Timeline' };
 
+// Contact-type filter options for the leads list. Default is ``named`` so the
+// page opens with identified contacts surfaced first — anonymous chats are a
+// secondary view operators opt into.
+const CONTACT_FILTERS = [
+    { value: 'named', label: 'Named contacts' },
+    { value: 'anonymous', label: 'Anonymous' },
+    { value: 'all', label: 'All contacts' },
+];
+
+const hasContactName = (lead) => Boolean(lead?.contact?.name && lead.contact.name.trim() !== '');
+
 export default function Leads() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
@@ -32,9 +43,18 @@ export default function Leads() {
     const [isLoading, setIsLoading] = useState(true);
     const [statusFilter, setStatusFilter] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
+    // Default to ``named`` so the page opens with identified leads only;
+    // operators can flip to ``anonymous`` or ``all`` from the search-bar
+    // dropdown.
+    const [contactFilter, setContactFilter] = useState('named');
     const [selectedLead, setSelectedLead] = useState(null);
     const [leadDetail, setLeadDetail] = useState(null);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
+    // Chat-only drawer (lighter-weight than the full lead drawer — surfaces
+    // just the conversation, with the same getLeadDetail payload reused).
+    const [chatLead, setChatLead] = useState(null);
+    const [chatDetail, setChatDetail] = useState(null);
+    const [isChatLoading, setIsChatLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [notesByLead, setNotesByLead] = useState(() => {
@@ -91,6 +111,29 @@ export default function Leads() {
             setIsDetailLoading(false);
         }
     };
+
+    const handleViewChat = async (sessionId) => {
+        setChatLead(sessionId);
+        setIsChatLoading(true);
+        // Clear unread on chat-open too — operators reading the conversation
+        // counts as "viewed" for badge purposes, same as opening the full lead.
+        const wasUnread = leads.find((l) => l.session_id === sessionId)?.unread === true;
+        if (wasUnread) {
+            setLeads((prev) => prev.map((l) => (l.session_id === sessionId ? { ...l, unread: false } : l)));
+            setStats((prev) => (prev ? { ...prev, unread: Math.max((prev.unread || 0) - 1, 0) } : prev));
+            markLeadViewed(sessionId).catch(() => { /* non-critical */ });
+        }
+        try {
+            setChatDetail(await getLeadDetail(sessionId));
+        } catch (error) {
+            console.error('Failed to load chat history:', error);
+            showToast('error', error.message || 'Failed to load chat history');
+        } finally {
+            setIsChatLoading(false);
+        }
+    };
+
+    const closeChatDrawer = () => { setChatLead(null); setChatDetail(null); };
 
     const hasUnreadLeads = leads.some((l) => l.unread === true);
 
@@ -178,6 +221,8 @@ export default function Leads() {
             const leadNormalized = LEGACY_TO_BANT[l.status] || l.status;
             if (leadNormalized !== normalized) return false;
         }
+        if (contactFilter === 'named' && !hasContactName(l)) return false;
+        if (contactFilter === 'anonymous' && hasContactName(l)) return false;
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
             const name = l.contact?.name?.toLowerCase() || '';
@@ -187,6 +232,19 @@ export default function Leads() {
         }
         return true;
     });
+
+    // Counts power the dropdown labels so operators see how many leads each
+    // option will reveal without flipping through them. Status + search are
+    // already applied; contact filter is the only thing we vary.
+    const contactCounts = leads.reduce(
+        (acc, l) => {
+            const named = hasContactName(l);
+            acc.all += 1;
+            if (named) acc.named += 1; else acc.anonymous += 1;
+            return acc;
+        },
+        { all: 0, named: 0, anonymous: 0 }
+    );
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -240,16 +298,38 @@ export default function Leads() {
                 </div>
             )}
 
-            {/* Search */}
-            <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
-                <input
-                    type="text"
-                    placeholder="Search by name, email, or location..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
-                />
+            {/* Search + contact-type filter. The filter is wired to the same
+                row so operators see "what am I searching across?" alongside
+                the input rather than as a separate control. */}
+            <div className="flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                    <input
+                        type="text"
+                        placeholder="Search by name, email, or location..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 placeholder:text-surface-400 dark:placeholder:text-surface-500"
+                    />
+                </div>
+                <div className="relative sm:w-56">
+                    <select
+                        value={contactFilter}
+                        onChange={(e) => setContactFilter(e.target.value)}
+                        aria-label="Filter by contact type"
+                        className="w-full appearance-none pl-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-900 text-surface-900 dark:text-white border border-surface-200 dark:border-surface-700 rounded-xl focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 cursor-pointer"
+                    >
+                        {CONTACT_FILTERS.map((opt) => {
+                            const count = contactCounts[opt.value] ?? 0;
+                            return (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label} ({count})
+                                </option>
+                            );
+                        })}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                </div>
             </div>
 
             {/* Bulk action toolbar */}
@@ -283,8 +363,23 @@ export default function Leads() {
                 {isLoading ? (
                     <SkeletonTable rows={8} cols={6} />
                 ) : filtered.length === 0 ? (
-                    <div className="p-12 text-center text-surface-500 dark:text-surface-400">
-                        {leads.length === 0 ? 'No leads yet. Leads are created when visitors chat with your bot.' : 'No leads match your filters.'}
+                    <div className="p-12 text-center text-surface-500 dark:text-surface-400 space-y-3">
+                        {leads.length === 0 ? (
+                            <p>No leads yet. Leads are created when visitors chat with your bot.</p>
+                        ) : contactFilter === 'named' && contactCounts.named === 0 && contactCounts.anonymous > 0 ? (
+                            <>
+                                <p>No named contacts yet — you have {contactCounts.anonymous} anonymous chat{contactCounts.anonymous === 1 ? '' : 's'}.</p>
+                                <button
+                                    type="button"
+                                    onClick={() => setContactFilter('anonymous')}
+                                    className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                                >
+                                    Show anonymous chats
+                                </button>
+                            </>
+                        ) : (
+                            <p>No leads match your filters.</p>
+                        )}
                     </div>
                 ) : (
                     <table className="w-full text-sm">
@@ -390,7 +485,19 @@ export default function Leads() {
                                             {formatDate(lead.last_active_at)}
                                         </td>
                                         <td className="px-4 py-3">
-                                            <ChevronRight className="w-4 h-4 text-surface-400 dark:text-surface-500" />
+                                            <div className="flex items-center justify-end gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); handleViewChat(lead.session_id); }}
+                                                    title="View chat history"
+                                                    aria-label="View chat history"
+                                                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-500/10 border border-primary-200/60 dark:border-primary-500/30 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors"
+                                                >
+                                                    <MessageCircle size={12} />
+                                                    View chat
+                                                </button>
+                                                <ChevronRight className="w-4 h-4 text-surface-400 dark:text-surface-500" />
+                                            </div>
                                         </td>
                                     </tr>
                                 );
@@ -664,6 +771,154 @@ export default function Leads() {
                                     )}
                                 </div>
                             ) : null}
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            {/* Chat-only drawer — opened by the per-row "View chat" button.
+                Renders only the conversation (no BANT/notes/tags editor) so
+                operators can scan messages without the qualification UI in
+                the way. Reuses ``getLeadDetail`` for messages + meta. */}
+            <AnimatePresence>
+                {chatLead && (
+                    <div className="fixed inset-0 z-50 flex justify-end" onClick={closeChatDrawer}>
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="absolute inset-0 bg-black/30 dark:bg-black/60"
+                        />
+                        <motion.div
+                            initial={{ x: '100%' }}
+                            animate={{ x: 0 }}
+                            exit={{ x: '100%' }}
+                            transition={{ type: 'spring', damping: 32, stiffness: 320 }}
+                            className="relative w-full max-w-md bg-white dark:bg-surface-900 shadow-2xl flex flex-col"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Header: contact + meta + close. Mirrors the
+                                live-chat header so the two views feel like
+                                one product. */}
+                            <div className="sticky top-0 z-10 bg-white dark:bg-surface-900 border-b border-surface-200 dark:border-surface-800 px-5 py-4">
+                                <div className="flex items-start gap-3">
+                                    <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center shrink-0">
+                                        <MessageCircle className="w-4 h-4 text-primary-600 dark:text-primary-400" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-semibold text-surface-900 dark:text-surface-100 truncate">
+                                            {chatDetail?.contact?.name || 'Anonymous'}
+                                        </p>
+                                        <p className="text-[12px] text-surface-500 dark:text-surface-400 truncate">
+                                            {(chatDetail?.location || '').replace(/\s*\|.*$/, '') || 'Unknown'}
+                                            {chatDetail?.device ? ` · ${chatDetail.device}` : ''}
+                                        </p>
+                                        {(tagsByLead[chatLead] || []).length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 mt-2">
+                                                {(tagsByLead[chatLead] || []).map((tag) => (
+                                                    <span
+                                                        key={tag}
+                                                        className="px-2 py-0.5 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 text-[10px] font-medium rounded-full border border-primary-200 dark:border-primary-500/30"
+                                                    >
+                                                        {tag}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button
+                                        onClick={closeChatDrawer}
+                                        aria-label="Close chat"
+                                        className="text-surface-400 hover:text-surface-600 dark:text-surface-500 dark:hover:text-surface-300"
+                                    >
+                                        <X className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Messages — grouped by date with a sticky-feel
+                                divider chip per day, matching the reference
+                                conversation view. */}
+                            <div className="flex-1 overflow-y-auto px-5 py-5 bg-surface-50/40 dark:bg-surface-950/30">
+                                {isChatLoading ? (
+                                    <div className="flex items-center justify-center py-16">
+                                        <Loader2 className="w-7 h-7 animate-spin text-primary-500" />
+                                    </div>
+                                ) : !chatDetail?.messages?.length ? (
+                                    <div className="text-center py-16 text-sm text-surface-500 dark:text-surface-400">
+                                        No messages in this conversation yet.
+                                    </div>
+                                ) : (
+                                    (() => {
+                                        // Group messages by calendar day on
+                                        // the client. Fall back to the lead's
+                                        // last_active_at when an individual
+                                        // message lacks a timestamp so the
+                                        // divider never renders as "Invalid".
+                                        const groups = [];
+                                        const fallbackTs = chatDetail.last_active_at || null;
+                                        chatDetail.messages.forEach((m) => {
+                                            const ts = m.timestamp || fallbackTs;
+                                            const key = ts ? new Date(ts).toDateString() : 'unknown';
+                                            const tail = groups[groups.length - 1];
+                                            if (!tail || tail.key !== key) {
+                                                groups.push({ key, ts, items: [m] });
+                                            } else {
+                                                tail.items.push(m);
+                                            }
+                                        });
+                                        return groups.map((group) => (
+                                            <div key={group.key} className="space-y-3">
+                                                <div className="flex items-center justify-center my-2">
+                                                    <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider bg-surface-200/60 dark:bg-surface-800 text-surface-600 dark:text-surface-400 rounded-full">
+                                                        {group.ts
+                                                            ? new Date(group.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                                            : 'Unknown date'}
+                                                    </span>
+                                                </div>
+                                                {group.items.map((msg, i) => {
+                                                    const isUser = msg.role === 'user';
+                                                    const time = msg.timestamp
+                                                        ? new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                                                        : null;
+                                                    return (
+                                                        <div key={i} className={cn('flex gap-2', isUser ? 'justify-end' : 'justify-start')}>
+                                                            {!isUser && (
+                                                                <div className="w-7 h-7 rounded-full bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                                                                    <MessageCircle className="w-3.5 h-3.5 text-primary-600 dark:text-primary-400" />
+                                                                </div>
+                                                            )}
+                                                            <div className={cn('max-w-[75%] flex flex-col', isUser ? 'items-end' : 'items-start')}>
+                                                                <div
+                                                                    className={cn(
+                                                                        'px-3.5 py-2 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap break-words',
+                                                                        isUser
+                                                                            ? 'bg-primary-500 text-white rounded-br-sm'
+                                                                            : 'bg-white dark:bg-surface-800 text-surface-800 dark:text-surface-200 border border-surface-200 dark:border-surface-700 rounded-bl-sm'
+                                                                    )}
+                                                                >
+                                                                    {msg.content}
+                                                                </div>
+                                                                {time && (
+                                                                    <span className="mt-1 text-[10px] text-surface-400 dark:text-surface-500 px-1">
+                                                                        {time}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {isUser && (
+                                                                <div className="w-7 h-7 rounded-full bg-surface-200 dark:bg-surface-700 flex items-center justify-center shrink-0 mt-0.5">
+                                                                    <User className="w-3.5 h-3.5 text-surface-500 dark:text-surface-400" />
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ));
+                                    })()
+                                )}
+                            </div>
                         </motion.div>
                     </div>
                 )}

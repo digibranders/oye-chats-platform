@@ -111,13 +111,13 @@ const COST_ROWS = [
     detail: 'Charged per page actually ingested into your knowledge base.',
     iconColor: 'text-sky-500',
   },
-  {
-    key: 'email_send',
-    icon: Mail,
-    label: 'Customer-facing email',
-    detail: 'Lead alerts, AI summaries, qualification notifications.',
-    iconColor: 'text-violet-500',
-  },
+  // {
+  //   key: 'email_send',
+  //   icon: Mail,
+  //   label: 'Customer-facing email',
+  //   detail: 'Lead alerts, AI summaries, qualification notifications.',
+  //   iconColor: 'text-violet-500',
+  // },
 ];
 
 const TABS = [
@@ -444,7 +444,7 @@ function OverviewTab({
             <div className="mt-3 space-y-1.5 text-xs">
               <UsageRow label="AI chats" credits={usage?.ai_chat?.credits_used || 0} count={usage?.ai_chat?.event_count || 0} />
               <UsageRow label="URL pages" credits={usage?.url_scan?.credits_used || 0} count={usage?.url_scan?.event_count || 0} />
-              <UsageRow label="Customer emails" credits={usage?.email_send?.credits_used || 0} count={usage?.email_send?.event_count || 0} />
+              {/* <UsageRow label="Customer emails" credits={usage?.email_send?.credits_used || 0} count={usage?.email_send?.event_count || 0} /> */}
             </div>
           </CardContent>
         </Card>
