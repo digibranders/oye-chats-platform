@@ -326,12 +326,12 @@ export default function PlanModal({
                         <div className="flex-1 overflow-y-auto">
                             <div className="grid md:grid-cols-[280px_1fr] gap-0">
                                 {/* Left rail — tier picker */}
-                                <div className="p-4 md:p-5 md:border-r border-surface-200 dark:border-surface-800 space-y-2.5 bg-surface-50/60 dark:bg-surface-950/40">
+                                <div className="p-4 md:p-5 md:border-r border-surface-200 dark:border-surface-800 space-y-3 bg-surface-50/60 dark:bg-surface-950/40">
                                     {loading && plans.length === 0 ? (
                                         Array.from({ length: 4 }).map((_, i) => (
                                             <div
                                                 key={i}
-                                                className="h-[72px] rounded-xl bg-surface-100 dark:bg-surface-800 animate-pulse"
+                                                className="h-[88px] rounded-xl bg-surface-100 dark:bg-surface-800 animate-pulse"
                                             />
                                         ))
                                     ) : loadError ? (
@@ -357,48 +357,54 @@ export default function PlanModal({
                                     )}
                                 </div>
 
-                                {/* Right pane — focused plan */}
-                                <div className="p-5 md:p-7">
-                                    <AnimatePresence mode="wait">
-                                        {selected ? (
-                                            <motion.div
-                                                key={selected.slug + billingCycle}
-                                                initial={{ opacity: 0, y: 6 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                exit={{ opacity: 0, y: -6 }}
-                                                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                                            >
-                                                <FocusedPlan
-                                                    plan={selected}
-                                                    billingCycle={billingCycle}
-                                                    isCurrent={selected.slug === currentPlanSlug}
-                                                    hasActiveSubscription={hasActiveSubscription}
-                                                    submitting={submitting}
-                                                    submitError={submitError}
-                                                    onCta={handleCta}
-                                                    // Referral block — only renders for paid tiers (Free
-                                                    // and Enterprise skip it inside FocusedPlan).
-                                                    referral={{
-                                                        input: referralInput,
-                                                        setInput: setReferralInput,
-                                                        status: referralStatus,
-                                                        setStatus: setReferralStatus,
-                                                        setMessage: setReferralMessage,
-                                                        message: referralMessage,
-                                                        appliedCode,
-                                                        discountPct,
-                                                        inputRef: referralInputRef,
-                                                        onApply: handleApplyReferral,
-                                                        onClear: handleClearReferral,
-                                                    }}
-                                                />
-                                            </motion.div>
-                                        ) : (
-                                            <div className="text-sm text-surface-500 dark:text-surface-400">
-                                                Select a plan on the left to see its details.
-                                            </div>
-                                        )}
-                                    </AnimatePresence>
+                                {/* Right pane — focused plan.
+                                    ``min-h`` reserves vertical space so the modal stops
+                                    pumping up/down as the user clicks between plans with
+                                    different feature counts. The number is sized to fit
+                                    Standard (the busiest tier) without making Free look
+                                    awkwardly tall — anything taller scrolls inside the
+                                    outer body's ``overflow-y-auto`` instead. */}
+                                <div className="p-5 md:p-7 md:min-h-[560px]">
+                                    {selected ? (
+                                        <motion.div
+                                            // Keying by slug means the crossfade only fires
+                                            // when the user actually picks a different tier;
+                                            // changing the billing-cycle toggle no longer
+                                            // teardown-and-remounts the whole right pane,
+                                            // which removed the second source of jumpiness.
+                                            key={selected.slug}
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            transition={{ duration: 0.16, ease: 'easeOut' }}
+                                        >
+                                            <FocusedPlan
+                                                plan={selected}
+                                                billingCycle={billingCycle}
+                                                isCurrent={selected.slug === currentPlanSlug}
+                                                hasActiveSubscription={hasActiveSubscription}
+                                                submitting={submitting}
+                                                submitError={submitError}
+                                                onCta={handleCta}
+                                                referral={{
+                                                    input: referralInput,
+                                                    setInput: setReferralInput,
+                                                    status: referralStatus,
+                                                    setStatus: setReferralStatus,
+                                                    setMessage: setReferralMessage,
+                                                    message: referralMessage,
+                                                    appliedCode,
+                                                    discountPct,
+                                                    inputRef: referralInputRef,
+                                                    onApply: handleApplyReferral,
+                                                    onClear: handleClearReferral,
+                                                }}
+                                            />
+                                        </motion.div>
+                                    ) : (
+                                        <div className="text-sm text-surface-500 dark:text-surface-400">
+                                            Select a plan on the left to see its details.
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -471,38 +477,50 @@ function TierRailCard({ plan, billingCycle, isSelected, isCurrent, isMostPopular
             onClick={onSelect}
             aria-pressed={isSelected}
             className={cn(
-                'relative w-full text-left rounded-xl border p-3 transition-all duration-200 group',
+                // Larger padding + min-height keeps every tier card the same
+                // size regardless of description length — no more "Free" being
+                // shorter than "Standard" in the rail.
+                'relative w-full text-left rounded-xl border px-4 py-3.5 min-h-[88px]',
+                'transition-colors duration-200 group',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
                 isSelected ? accent.railActive : accent.rail + ' bg-white dark:bg-surface-900',
             )}
         >
             {isMostPopular && (
-                <span className="absolute -top-2 left-3 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-primary-600 text-white shadow-sm">
+                <span className="absolute -top-2 left-4 inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-primary-600 text-white shadow-sm">
                     <Star size={9} fill="currentColor" />
                     Most popular
                 </span>
             )}
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                        <Icon size={13} className="text-surface-500 dark:text-surface-400" />
-                        <span className="text-[13px] font-bold text-surface-900 dark:text-surface-50">
-                            {plan.name}
+            {/* Title row — icon + name + (optional) current chip + price */}
+            <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                    <span className={cn(
+                        'w-6 h-6 rounded-md flex items-center justify-center shrink-0',
+                        accent.chip,
+                    )}>
+                        <Icon size={12} />
+                    </span>
+                    <span className="text-[13.5px] font-bold text-surface-900 dark:text-surface-50 truncate">
+                        {plan.name}
+                    </span>
+                    {isCurrent && (
+                        <span className={cn(
+                            'inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
+                            accent.chip,
+                        )}>
+                            <Check size={9} /> Current
                         </span>
-                        {isCurrent && (
-                            <span className={cn('inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded', accent.chip)}>
-                                <Check size={9} /> Current
-                            </span>
-                        )}
-                    </div>
-                    <p className="text-[11px] text-surface-500 dark:text-surface-400 mt-0.5 leading-snug line-clamp-2">
-                        {plan.description || meta.description}
-                    </p>
+                    )}
                 </div>
-                <span className="text-[12px] tabular-nums text-surface-700 dark:text-surface-300 font-medium shrink-0">
+                <span className="text-[12.5px] tabular-nums text-surface-700 dark:text-surface-300 font-semibold shrink-0">
                     {priceLabel}
                 </span>
             </div>
+            {/* Description on its own line for legibility */}
+            <p className="mt-2 text-[11.5px] text-surface-500 dark:text-surface-400 leading-snug line-clamp-2">
+                {plan.description || meta.description}
+            </p>
         </button>
     );
 }
