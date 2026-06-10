@@ -76,17 +76,29 @@ def effective_resets_at(sub: Subscription | None) -> datetime | None:
     return candidate
 
 
+_KNOWN_PROVIDERS = frozenset({"razorpay", "stripe"})
+
+
 def _resolve_provider(requested: str | None, *, current_sub_provider: str | None = None) -> str:
     """Pick a billing provider for this flow.
 
     Priority order:
-      1. Explicit ``requested`` (from the route request body) if it's enabled.
-      2. The active subscription's existing provider (preserves continuity).
+      1. Explicit ``requested`` (from the route request body) if it's a known gateway.
+      2. The active subscription's existing provider, but only when it's a known
+         payment gateway — subscriptions seeded/upgraded manually may carry
+         ``payment_provider = 'manual'`` which must not propagate to checkout.
       3. The configured default ``BILLING_PROVIDER``.
 
     Raises 503 if the chosen provider is not configured (env keys missing).
     """
-    candidate = (requested or current_sub_provider or BILLING_PROVIDER).lower()
+    requested_norm = (requested or "").lower()
+    sub_norm = (current_sub_provider or "").lower()
+
+    # Walk the priority chain, skipping any value that isn't a gateway we know.
+    candidate = next(
+        (p for p in [requested_norm, sub_norm, BILLING_PROVIDER.lower()] if p in _KNOWN_PROVIDERS),
+        None,
+    )
 
     if candidate == "razorpay":
         if not RAZORPAY_ENABLED:
