@@ -14,6 +14,8 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import inspect, select, text
 
+from app.api.affiliate_routes import router as affiliate_router
+from app.api.affiliate_routes import superadmin_router as affiliate_superadmin_router
 from app.api.analytics_routes import router as analytics_router
 
 # Route imports
@@ -134,6 +136,10 @@ app.include_router(credits_router)
 app.include_router(superadmin_plan_router)
 app.include_router(superadmin_v2_router)
 app.include_router(webhook_billing_router)
+# Affiliate program v1 — money-free referral codes + attribution.
+# Two routers: public/affiliate self-serve, and super-admin management.
+app.include_router(affiliate_router)
+app.include_router(affiliate_superadmin_router)
 
 # --- Exception Handlers ---
 app.add_exception_handler(RequestValidationError, validation_exception_handler)

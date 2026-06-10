@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Sparkles, Loader2, ExternalLink, Zap } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Sparkles, Loader2, ExternalLink, Zap, Gift, CheckCircle2, XCircle } from 'lucide-react';
 import Dialog, {
   DialogHeader,
   DialogTitle,
@@ -9,7 +9,7 @@ import Dialog, {
 } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
-import { getTopupPacks, initiateTopup, verifyTopupPayment } from '../../services/api';
+import { getTopupPacks, initiateTopup, verifyTopupPayment, applyReferralCode } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 
@@ -46,8 +46,18 @@ export default function TopupModal({ open, onClose, onSuccess }) {
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [submittingPack, setSubmittingPack] = useState(null);
 
+  const [referralInput, setReferralInput] = useState('');
+  const [referralStatus, setReferralStatus] = useState('idle'); // 'idle' | 'applying' | 'applied' | 'invalid'
+  const [referralMessage, setReferralMessage] = useState('');
+  const referralInputRef = useRef(null);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setReferralInput('');
+      setReferralStatus('idle');
+      setReferralMessage('');
+      return;
+    }
     let cancelled = false;
     setLoadingPacks(true);
     getTopupPacks()
@@ -64,6 +74,26 @@ export default function TopupModal({ open, onClose, onSuccess }) {
       cancelled = true;
     };
   }, [open, showToast]);
+
+  async function handleApplyReferral() {
+    const code = referralInput.trim().toUpperCase();
+    if (!code) return;
+    setReferralStatus('applying');
+    setReferralMessage('');
+    try {
+      const result = await applyReferralCode(code);
+      if (result.attributed) {
+        setReferralStatus('applied');
+        setReferralMessage(result.message);
+      } else {
+        setReferralStatus('invalid');
+        setReferralMessage(result.message);
+      }
+    } catch (err) {
+      setReferralStatus('invalid');
+      setReferralMessage(err?.message || 'Failed to apply referral code.');
+    }
+  }
 
   /**
    * Razorpay flow:
@@ -225,7 +255,83 @@ export default function TopupModal({ open, onClose, onSuccess }) {
             })}
           </div>
         )}
-        <p className="mt-4 text-[11px] text-surface-500 dark:text-surface-400 text-center">
+        {/* Referral code */}
+        <div className="mt-5 rounded-xl border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800/50 p-4">
+          <p className="text-xs font-medium text-surface-600 dark:text-surface-300 mb-2 flex items-center gap-1.5">
+            <Gift className="w-3.5 h-3.5 text-primary-500" />
+            Have a referral code?
+          </p>
+          <div className="flex gap-2">
+            <input
+              ref={referralInputRef}
+              type="text"
+              value={referralInput}
+              onChange={(e) => {
+                setReferralInput(e.target.value.toUpperCase());
+                if (referralStatus !== 'idle') {
+                  setReferralStatus('idle');
+                  setReferralMessage('');
+                }
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && referralStatus !== 'applied' && handleApplyReferral()}
+              placeholder="e.g. FRIEND20"
+              disabled={referralStatus === 'applied' || referralStatus === 'applying'}
+              maxLength={20}
+              className={cn(
+                'flex-1 rounded-lg border px-3 py-1.5 text-sm font-mono tracking-widest uppercase',
+                'bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-50',
+                'placeholder:text-surface-400 dark:placeholder:text-surface-500 placeholder:font-sans placeholder:tracking-normal',
+                'focus:outline-none focus:ring-2 focus:ring-primary-500/40',
+                'disabled:opacity-60 disabled:cursor-not-allowed',
+                referralStatus === 'applied'
+                  ? 'border-emerald-400 dark:border-emerald-500'
+                  : referralStatus === 'invalid'
+                    ? 'border-red-400 dark:border-red-500'
+                    : 'border-surface-300 dark:border-surface-600',
+              )}
+            />
+            <button
+              type="button"
+              onClick={handleApplyReferral}
+              disabled={!referralInput.trim() || referralStatus === 'applied' || referralStatus === 'applying'}
+              className={cn(
+                'shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
+                'disabled:opacity-50 disabled:cursor-not-allowed',
+                referralStatus === 'applied'
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                  : 'bg-primary-600 text-white hover:bg-primary-700',
+              )}
+            >
+              {referralStatus === 'applying' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : referralStatus === 'applied' ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : (
+                'Apply'
+              )}
+            </button>
+          </div>
+          {referralMessage && (
+            <p
+              className={cn(
+                'mt-1.5 text-xs flex items-center gap-1',
+                referralStatus === 'applied'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-red-500 dark:text-red-400',
+              )}
+            >
+              {referralStatus === 'applied' ? (
+                <CheckCircle2 className="w-3 h-3 shrink-0" />
+              ) : (
+                <XCircle className="w-3 h-3 shrink-0" />
+              )}
+              {referralMessage}
+            </p>
+          )}
+        </div>
+
+        <p className="mt-3 text-[11px] text-surface-500 dark:text-surface-400 text-center">
           Powered by Razorpay (UPI, cards, NetBanking, wallets) for India · Stripe for international.
         </p>
       </DialogBody>

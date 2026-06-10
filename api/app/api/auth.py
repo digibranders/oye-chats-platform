@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
 from app.core.origin_check import extract_hostname, is_origin_allowed
-from app.db.models import Bot, Client, Operator
+from app.db.models import Affiliate, Bot, Client, Operator
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -256,6 +256,53 @@ def get_superadmin(client: Client = Depends(get_current_client)):
             detail="You do not have superadmin privileges to perform this action.",
         )
     return client
+
+
+def get_current_affiliate(
+    client: Client = Depends(get_current_client_strict),
+) -> Affiliate:
+    """Dependency: Authenticate a Client and verify they are an active affiliate.
+
+    Uses ``get_current_client_strict`` (X-API-Key only) — bot keys and
+    operator keys cannot impersonate an affiliate for code management.
+    Resolves the affiliate row in a fresh session and detaches it so the
+    caller can use the fields after the session closes.
+
+    Raises 403 when the client has no affiliates row, or that row is
+    deactivated.
+    """
+    with get_session() as session:
+        affiliate = (
+            session.execute(
+                select(Affiliate).where(
+                    Affiliate.client_id == client.id,
+                    Affiliate.deactivated_at.is_(None),
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if affiliate is None:
+            logger.warning(
+                "non_affiliate_accessed_affiliate_route",
+                extra={"client_id": client.id},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not enrolled in the OyeChats affiliate program.",
+            )
+        # Eagerly read all fields before the session closes so route handlers
+        # can use the object freely after detaching.
+        _ = (
+            affiliate.id,
+            affiliate.client_id,
+            affiliate.invited_by,
+            affiliate.max_active_codes,
+            affiliate.created_at,
+            affiliate.deactivated_at,
+        )
+        session.expunge(affiliate)
+        return affiliate
 
 
 def _bot_to_cache_dict(bot: Bot) -> dict:

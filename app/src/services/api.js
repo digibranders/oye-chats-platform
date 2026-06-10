@@ -101,15 +101,39 @@ export const loginAdmin = async (email, password) => {
  * @param {string} email - Email address
  * @param {string} password - Password (min 8 chars, letter + number)
  * @param {string|null} companyName - Optional company name
+ * @param {string|null} website - Optional website URL
  * @returns {Promise<Object>} The API response with access_token, client_id, name
  */
-export const registerClient = async (name, email, password, companyName = null, website = null) => {
+export const registerClient = async (
+    name,
+    email,
+    password,
+    companyName = null,
+    website = null,
+) => {
     try {
-        const response = await api.post('/auth/register', { name, email, password, company_name: companyName, website });
+        const payload = { name, email, password, company_name: companyName, website };
+        const response = await api.post('/auth/register', payload);
         return response.data;
     } catch (error) {
         console.error('API Error during registration:', error);
         throw buildApiError(error, 'Registration failed');
+    }
+};
+
+/**
+ * Apply a referral code for the currently-authenticated customer.
+ * Called from the checkout modal before the user pays. Returns
+ * { attributed: bool, message: string } — always resolves (never throws
+ * for invalid codes; only throws on network error).
+ * @param {string} code
+ */
+export const applyReferralCode = async (code) => {
+    try {
+        const response = await api.post('/affiliate/apply-referral', { code });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to apply referral code');
     }
 };
 
@@ -1288,5 +1312,239 @@ export const changeOperatorSeats = async (delta) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to update operator seats');
+    }
+};
+
+
+// ─── Affiliate Program v1 ────────────────────────────────────────────────
+// Money-free referral codes + attribution. Endpoints mirror
+// app/api/affiliate_routes.py:
+//   GET    /affiliate/me           — affiliate's own meta
+//   GET    /affiliate/codes        — codes + per-row stats
+//   POST   /affiliate/codes        — create a code
+//   PATCH  /affiliate/codes/{id}   — update label / toggle active
+//   GET    /affiliate/stats        — aggregate metrics for the header card
+// All require X-API-Key + an active affiliates row (backend enforces 403).
+
+/** Return the logged-in affiliate's profile + cap. */
+export const getAffiliateMe = async () => {
+    try {
+        const response = await api.get('/affiliate/me');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliate profile');
+    }
+};
+
+/** List the current affiliate's codes with per-code click + signup counts. */
+export const getAffiliateCodes = async () => {
+    try {
+        const response = await api.get('/affiliate/codes');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load referral codes');
+    }
+};
+
+/**
+ * Create a new referral code for the current affiliate.
+ * @param {string} code
+ * @param {string|null} label
+ * @param {{ affiliateCommissionPct?: number, customerDiscountPct?: number }} split
+ *   — per-code commission split. Each is 0–100 (whole percent). Their sum
+ *     must not exceed the affiliate's pool (set by super-admin).
+ */
+export const createAffiliateCode = async (
+    code,
+    label = null,
+    { affiliateCommissionPct, customerDiscountPct } = {},
+) => {
+    try {
+        const payload = { code, label };
+        if (affiliateCommissionPct != null) payload.affiliate_commission_pct = affiliateCommissionPct;
+        if (customerDiscountPct != null) payload.customer_discount_pct = customerDiscountPct;
+        const response = await api.post('/affiliate/codes', payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to create referral code');
+    }
+};
+
+/**
+ * Update an existing code. Every field is an optional patch:
+ *   - ``code``                       — rename (breaks old ?ref= URL)
+ *   - ``label``                      — internal label (empty string clears)
+ *   - ``active``                     — toggle deactivation/reactivation
+ *   - ``affiliateCommissionPct``     — what the affiliate keeps (0–100)
+ *   - ``customerDiscountPct``        — what the referred customer gets
+ *
+ * The split pair is validated together: their sum must not exceed the
+ * affiliate's commission pool.
+ */
+export const updateAffiliateCode = async (
+    codeId,
+    { code, label, active, affiliateCommissionPct, customerDiscountPct } = {},
+) => {
+    try {
+        const payload = {};
+        if (code !== undefined) payload.code = code;
+        if (label !== undefined) payload.label = label;
+        if (active !== undefined) payload.active = active;
+        if (affiliateCommissionPct !== undefined) payload.affiliate_commission_pct = affiliateCommissionPct;
+        if (customerDiscountPct !== undefined) payload.customer_discount_pct = customerDiscountPct;
+        const response = await api.patch(`/affiliate/codes/${codeId}`, payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update referral code');
+    }
+};
+
+/** Aggregate stats for the affiliate dashboard header card. */
+export const getAffiliateStats = async () => {
+    try {
+        const response = await api.get('/affiliate/stats');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliate stats');
+    }
+};
+
+// ─── Super-admin: affiliate management ──────────────────────────────────
+// Endpoints in app/api/affiliate_routes.py under /superadmin/affiliates.
+// All require X-API-Key from a client with is_superadmin = true.
+
+/** List every affiliate (active + deactivated) with aggregate stats. */
+export const listSuperadminAffiliates = async () => {
+    try {
+        const response = await api.get('/superadmin/affiliates');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliates');
+    }
+};
+
+/**
+ * Invite an existing customer OR send a magic-link to a stranger.
+ * @param {string} email
+ * @param {number|null} maxActiveCodes — optional override of the 10-code default
+ * @param {number|null} commissionPct — optional commission % (0–100). Defaults to 0.
+ */
+export const inviteSuperadminAffiliate = async (
+    email,
+    maxActiveCodes = null,
+    commissionPct = null,
+) => {
+    try {
+        const payload = { email };
+        if (maxActiveCodes != null) payload.max_active_codes = maxActiveCodes;
+        if (commissionPct != null) payload.commission_pct = commissionPct;
+        const response = await api.post('/superadmin/affiliates', payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to invite affiliate');
+    }
+};
+
+/** Detail bundle for one affiliate: meta + codes + stats. */
+export const getSuperadminAffiliateDetail = async (affiliateId) => {
+    try {
+        const response = await api.get(`/superadmin/affiliates/${affiliateId}`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliate details');
+    }
+};
+
+/**
+ * Override an affiliate: change cap, commission %, or toggle active status.
+ * Deactivating an affiliate also cascades to deactivate every still-active
+ * code they own.
+ *
+ * @param {number} affiliateId
+ * @param {{ maxActiveCodes?: number, commissionPct?: number, active?: boolean }} updates
+ */
+export const updateSuperadminAffiliate = async (
+    affiliateId,
+    { maxActiveCodes, commissionPct, active } = {},
+) => {
+    try {
+        const payload = {};
+        if (maxActiveCodes !== undefined) payload.max_active_codes = maxActiveCodes;
+        if (commissionPct !== undefined) payload.commission_pct = commissionPct;
+        if (active !== undefined) payload.active = active;
+        const response = await api.patch(`/superadmin/affiliates/${affiliateId}`, payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update affiliate');
+    }
+};
+
+// ─── Affiliate invites (magic-link onboarding) ──────────────────────────
+
+/**
+ * Look up a magic-link invite by raw token. Returns the email + expiry so
+ * the AffiliateAccept page can pre-fill the form.
+ *
+ * Throws on invalid (404) / expired or revoked (410). The caller inspects
+ * `error.status` to render the right empty state.
+ */
+export const lookupAffiliateInvite = async (token) => {
+    try {
+        const response = await api.get('/affiliate-invites/lookup', { params: { token } });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Invite link is invalid or expired');
+    }
+};
+
+/**
+ * Accept a magic-link invite: atomically creates Client + Affiliate, returns
+ * an access_token with the same shape as /auth/register so the admin app
+ * can log the user in immediately.
+ */
+export const acceptAffiliateInvite = async ({ token, name, password, companyName = null, website = null }) => {
+    try {
+        const payload = { token, name, password };
+        if (companyName) payload.company_name = companyName;
+        if (website) payload.website = website;
+        const response = await api.post('/affiliate-invites/accept', payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to accept invite');
+    }
+};
+
+/** List pending magic-link invites (super-admin). */
+export const listSuperadminAffiliateInvites = async () => {
+    try {
+        const response = await api.get('/superadmin/affiliates/invites');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load pending invites');
+    }
+};
+
+/** Revoke a pending magic-link invite. Idempotent. */
+export const revokeSuperadminAffiliateInvite = async (inviteId) => {
+    try {
+        await api.delete(`/superadmin/affiliates/invites/${inviteId}`);
+        return true;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to revoke invite');
+    }
+};
+
+/**
+ * HARD-DELETE an affiliate. Removes the affiliate row, all their codes,
+ * and the entire click history. Referred clients keep existing but lose
+ * their referral_code_id (set to NULL). Irreversible — UI must require
+ * explicit confirmation.
+ */
+export const deleteSuperadminAffiliate = async (affiliateId) => {
+    try {
+        await api.delete(`/superadmin/affiliates/${affiliateId}`);
+        return true;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to remove affiliate');
     }
 };

@@ -53,7 +53,13 @@ export default function Register() {
 
     try {
       setIsLoading(true);
-      const data = await registerClient(name.trim(), email.trim(), password, companyName.trim() || null, website.trim() || null);
+      const data = await registerClient(
+        name.trim(),
+        email.trim(),
+        password,
+        companyName.trim() || null,
+        website.trim() || null,
+      );
 
       localStorage.setItem('admin_token', data.access_token);
       localStorage.setItem('admin_name', data.name);
