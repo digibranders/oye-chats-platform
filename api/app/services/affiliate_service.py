@@ -523,6 +523,125 @@ def list_codes_with_stats(session: Session, affiliate_id: int) -> list[dict]:
     return out
 
 
+def get_code_with_owner(session: Session, code_id: int) -> tuple[ReferralCode, Affiliate] | None:
+    """Return ``(code, owning_affiliate)`` or ``None`` if the code doesn't exist.
+
+    Used by the referrals-list endpoints to (a) authorise the caller against
+    the code's owner and (b) compute the platform commission slice (which
+    depends on the affiliate's overall pool, not the per-code split).
+    """
+    code = session.get(ReferralCode, code_id)
+    if code is None:
+        return None
+    aff = session.get(Affiliate, code.affiliate_id)
+    if aff is None:
+        return None
+    return code, aff
+
+
+def list_code_referrals(
+    session: Session,
+    code_id: int,
+    *,
+    include_platform: bool,
+) -> dict:
+    """Return the per-customer referral list for a single code.
+
+    Output shape — surfaced verbatim to both the affiliate and the super
+    admin so the UI can render the same modal in both contexts::
+
+        {
+          "code": "STEVE20",
+          "breakdown": {
+            "pool_pct": 25.0,                 # affiliate.commission_bps
+            "affiliate_pct": 15.0,            # code.affiliate_commission_bps
+            "customer_discount_pct": 10.0,    # code.customer_discount_bps
+            "platform_pct": 75.0,             # ONLY when include_platform=True
+                                              #   (100 - pool − code_unused)
+            "code_unused_pool_pct": 0.0       # pool − affiliate − customer
+          },
+          "referrals": [
+            { "client_id": 10, "email": "g***@***.com", "name": "Gaurav",
+              "attributed_at": "2026-06-10T07:21:04+00:00" },
+            ...
+          ]
+        }
+
+    ``include_platform`` is True only for the super-admin route — the
+    affiliate must never see the platform's revenue cut. Email is masked
+    when ``include_platform=False`` to protect customer privacy on the
+    affiliate side.
+
+    Referrals are ordered by ``attributed_at`` DESC so the most recent
+    signup shows first. There's no pagination yet because the v1 invite
+    cap caps each affiliate at 10 active codes × low signup volume;
+    add a ``limit`` kwarg here if that assumption breaks.
+    """
+    pair = get_code_with_owner(session, code_id)
+    if pair is None:
+        raise CodeNotFound(f"Code {code_id} not found")
+    code, aff = pair
+
+    pool_bps = int(aff.commission_bps or 0)
+    aff_bps = int(code.affiliate_commission_bps or 0)
+    cust_bps = int(code.customer_discount_bps or 0)
+    code_unused = max(0, pool_bps - aff_bps - cust_bps)
+
+    breakdown: dict[str, float | None] = {
+        "pool_pct": bps_to_pct(pool_bps),
+        "affiliate_pct": bps_to_pct(aff_bps),
+        "customer_discount_pct": bps_to_pct(cust_bps),
+        "code_unused_pool_pct": bps_to_pct(code_unused),
+    }
+    if include_platform:
+        # The platform's slice of a single referred-customer dollar:
+        # the affiliate's per-code commission + the customer's discount
+        # are paid out of the affiliate's pool; everything else stays
+        # with OyeChats. The "code unused pool" is leeway the affiliate
+        # didn't allocate (e.g. pool=25, code=15+5 → 5pp unused) — it's
+        # still in the pool budget, so it doesn't accrue to the platform.
+        platform_bps = max(0, MAX_COMMISSION_BPS - pool_bps)
+        breakdown["platform_pct"] = bps_to_pct(platform_bps)
+
+    referrals_stmt = (
+        select(
+            Client.id,
+            Client.name,
+            Client.email,
+            Client.referral_attributed_at,
+        )
+        .where(Client.referral_code_id == code_id)
+        .order_by(Client.referral_attributed_at.desc().nulls_last())
+    )
+    rows = session.execute(referrals_stmt).all()
+
+    def _mask_email(email: str | None) -> str:
+        if not email or "@" not in email:
+            return "—"
+        local, _, domain = email.partition("@")
+        # Keep one char of local + the TLD; hide the rest. ``a@b.co`` →
+        # ``a***@***.co``; ``stevejson@gmail.com`` → ``s***@***.com``.
+        local_head = local[0] if local else ""
+        tld = domain.rsplit(".", 1)[-1] if "." in domain else domain
+        return f"{local_head}***@***.{tld}"
+
+    referrals = [
+        {
+            "client_id": int(r.id),
+            "name": r.name or None,
+            "email": r.email if include_platform else _mask_email(r.email),
+            "attributed_at": r.referral_attributed_at.isoformat() if r.referral_attributed_at else None,
+        }
+        for r in rows
+    ]
+
+    return {
+        "code": str(code.code),
+        "breakdown": breakdown,
+        "referrals": referrals,
+    }
+
+
 def get_affiliate_stats(session: Session, affiliate_id: int) -> dict:
     """Aggregate metrics for the affiliate dashboard header card."""
     total_clicks = (

@@ -1363,6 +1363,36 @@ export const getAffiliateCodes = async () => {
 };
 
 /**
+ * List the customers who signed up via one of the affiliate's codes.
+ * Emails are masked server-side on this route (affiliate scope) so the
+ * raw PII never reaches the browser.
+ */
+export const getAffiliateCodeReferrals = async (codeId) => {
+    try {
+        const response = await api.get(`/affiliate/codes/${codeId}/referrals`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load referrals for this code');
+    }
+};
+
+/**
+ * Same endpoint, super-admin scope: emails unmasked, platform_pct populated.
+ * Returns 404 when ``codeId`` isn't owned by ``affiliateId`` — the backend
+ * scopes to prevent global-namespace probing.
+ */
+export const getSuperadminCodeReferrals = async (affiliateId, codeId) => {
+    try {
+        const response = await api.get(
+            `/superadmin/affiliates/${affiliateId}/codes/${codeId}/referrals`,
+        );
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load referrals for this code');
+    }
+};
+
+/**
  * Create a new referral code for the current affiliate.
  * @param {string} code
  * @param {string|null} label

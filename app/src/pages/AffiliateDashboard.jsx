@@ -2,15 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
     Sparkles, Plus, Loader2, Copy, Check, MousePointerClick, Users,
-    TrendingUp, Tag, Power, RotateCcw, AlertCircle, Pencil,
+    TrendingUp, Tag, Power, RotateCcw, AlertCircle, Pencil, Eye,
 } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 import CreateCodeModal from '../components/affiliate/CreateCodeModal';
 import EditCodeModal from '../components/affiliate/EditCodeModal';
+import ReferralsModal from '../components/affiliate/ReferralsModal';
 import {
     getAffiliateMe, getAffiliateCodes, getAffiliateStats, updateAffiliateCode,
+    getAffiliateCodeReferrals,
 } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
@@ -101,6 +103,10 @@ export default function AffiliateDashboard() {
     // We keep the full row, not just an id, so the modal can seed its form
     // synchronously without a re-fetch flash.
     const [editingCode, setEditingCode] = useState(null);
+    // Code whose referrals are currently being inspected — null when the modal
+    // is closed. Holds the full row (not just the id) so the modal can show
+    // the code string in its header even while the request is still in flight.
+    const [viewingCode, setViewingCode] = useState(null);
 
     const fetchAll = useCallback(async () => {
         setError(null);
@@ -127,6 +133,17 @@ export default function AffiliateDashboard() {
     useEffect(() => {
         fetchAll();
     }, [fetchAll]);
+
+    // Stable per-code fetcher. ReferralsModal's load effect depends on the
+    // identity of this thunk, so re-creating it on every parent render would
+    // cause the modal to refetch in a loop. Pinning it to ``viewingCode?.id``
+    // gives one stable reference per open-code, swapped only when the user
+    // closes the modal and opens a different row.
+    const viewingFetcher = useCallback(
+        () => (viewingCode ? getAffiliateCodeReferrals(viewingCode.id) : Promise.resolve(null)),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [viewingCode?.id],
+    );
 
     const handleCreated = (created) => {
         // Prepend the new code so it surfaces above older ones. The codes
@@ -376,6 +393,16 @@ export default function AffiliateDashboard() {
                                         <div className="flex items-center justify-end gap-1">
                                             <button
                                                 type="button"
+                                                onClick={() => setViewingCode(c)}
+                                                title="View signups + commission breakdown"
+                                                aria-label={`View referrals for ${c.code}`}
+                                                className="inline-flex items-center gap-1.5 px-2.5 h-8 text-[12px] font-medium rounded-lg text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+                                            >
+                                                <Eye size={12} />
+                                                View
+                                            </button>
+                                            <button
+                                                type="button"
                                                 onClick={() => setEditingCode(c)}
                                                 title="Edit code or label"
                                                 aria-label={`Edit ${c.code}`}
@@ -426,6 +453,14 @@ export default function AffiliateDashboard() {
                 onClose={() => setShowCreate(false)}
                 onCreated={handleCreated}
                 poolPct={poolPct}
+            />
+
+            <ReferralsModal
+                open={viewingCode != null}
+                onClose={() => setViewingCode(null)}
+                code={viewingCode?.code}
+                fetcher={viewingFetcher}
+                isSuperAdmin={false}
             />
 
             <EditCodeModal

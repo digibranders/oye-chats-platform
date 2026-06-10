@@ -453,6 +453,47 @@ def list_my_codes(affiliate: Affiliate = Depends(get_current_affiliate)):
         return affiliate_service.list_codes_with_stats(session, affiliate.id)
 
 
+class ReferralRow(BaseModel):
+    client_id: int
+    name: str | None
+    email: str  # masked for affiliate, full for super admin
+    attributed_at: str | None
+
+
+class CommissionBreakdown(BaseModel):
+    pool_pct: float | None
+    affiliate_pct: float | None
+    customer_discount_pct: float | None
+    code_unused_pool_pct: float | None
+    # Only populated for the super-admin route — the affiliate must never see
+    # the platform's revenue cut.
+    platform_pct: float | None = None
+
+
+class CodeReferralsResponse(BaseModel):
+    code: str
+    breakdown: CommissionBreakdown
+    referrals: list[ReferralRow]
+
+
+@router.get("/affiliate/codes/{code_id}/referrals", response_model=CodeReferralsResponse)
+def list_my_code_referrals(
+    code_id: int,
+    affiliate: Affiliate = Depends(get_current_affiliate),
+):
+    """List the customers who signed up via one of this affiliate's codes.
+
+    Authorisation: the code must belong to the calling affiliate. We return
+    404 (not 403) when the code exists but is owned by someone else so an
+    affiliate can't probe the global code namespace.
+    """
+    with get_session() as session:
+        pair = affiliate_service.get_code_with_owner(session, code_id)
+        if pair is None or pair[0].affiliate_id != affiliate.id:
+            raise HTTPException(status_code=404, detail="Code not found.")
+        return affiliate_service.list_code_referrals(session, code_id, include_platform=False)
+
+
 @router.post(
     "/affiliate/codes",
     response_model=CodeRow,
@@ -731,6 +772,26 @@ def get_affiliate_detail(affiliate_id: int):
             return affiliate_service.get_affiliate_detail(session, affiliate_id)
         except AffiliateProgramError as e:
             raise _to_http(e) from e
+
+
+@superadmin_router.get(
+    "/{affiliate_id}/codes/{code_id}/referrals",
+    response_model=CodeReferralsResponse,
+)
+def list_code_referrals_super(affiliate_id: int, code_id: int):
+    """Same shape as the affiliate-scoped route, but with PII unmasked and
+    the platform commission slice populated. Auth gate is the router-level
+    ``get_superadmin`` dependency.
+
+    Returns 404 when ``code_id`` doesn't exist OR isn't owned by
+    ``affiliate_id`` — the latter is a 404 (not 403) so the global code
+    namespace isn't probeable by URL-walking.
+    """
+    with get_session() as session:
+        pair = affiliate_service.get_code_with_owner(session, code_id)
+        if pair is None or pair[0].affiliate_id != affiliate_id:
+            raise HTTPException(status_code=404, detail="Code not found.")
+        return affiliate_service.list_code_referrals(session, code_id, include_platform=True)
 
 
 @superadmin_router.patch("/{affiliate_id}", response_model=AffiliateRow)

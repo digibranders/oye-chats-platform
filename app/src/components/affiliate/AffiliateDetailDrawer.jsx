@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     X, Loader2, MousePointerClick, Users as UsersIcon, TrendingUp, Sparkles,
-    Mail, Calendar, Save, Power, RotateCcw, AlertCircle,
+    Mail, Calendar, Save, Power, RotateCcw, AlertCircle, Eye,
 } from 'lucide-react';
-import { getSuperadminAffiliateDetail, updateSuperadminAffiliate } from '../../services/api';
+import {
+    getSuperadminAffiliateDetail, updateSuperadminAffiliate,
+    getSuperadminCodeReferrals,
+} from '../../services/api';
 import { cn } from '../../lib/utils';
+import ReferralsModal from './ReferralsModal';
 
 /**
  * Side drawer that drills into a single affiliate from the super-admin
@@ -25,6 +29,21 @@ export default function AffiliateDetailDrawer({ affiliateId, open, onClose, onUp
     const [isSavingCommission, setIsSavingCommission] = useState(false);
     const [isTogglingActive, setIsTogglingActive] = useState(false);
     const [actionError, setActionError] = useState(null);
+    // Code currently being inspected for referrals — null when closed. Stored
+    // as the full row so the modal can render the code string while loading.
+    const [viewingCode, setViewingCode] = useState(null);
+
+    // Stable fetcher per open-code. See AffiliateDashboard's comment for why
+    // this needs useCallback (ReferralsModal lists it in its effect deps).
+    const viewingFetcher = useCallback(
+        () => (
+            viewingCode && affiliateId
+                ? getSuperadminCodeReferrals(affiliateId, viewingCode.id)
+                : Promise.resolve(null)
+        ),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [affiliateId, viewingCode?.id],
+    );
 
     useEffect(() => {
         if (!open || !affiliateId) return undefined;
@@ -361,6 +380,7 @@ export default function AffiliateDetailDrawer({ affiliateId, open, onClose, onUp
                                                             <th className="text-right px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Clicks</th>
                                                             <th className="text-right px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Signups</th>
                                                             <th className="text-right px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Conv%</th>
+                                                            <th className="px-3 py-2" aria-label="Actions" />
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -392,6 +412,18 @@ export default function AffiliateDetailDrawer({ affiliateId, open, onClose, onUp
                                                                 <td className="px-3 py-2 text-right tabular-nums text-surface-700 dark:text-surface-300">
                                                                     {c.conversion_pct != null ? `${c.conversion_pct}%` : '—'}
                                                                 </td>
+                                                                <td className="px-3 py-2 text-right">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setViewingCode(c)}
+                                                                        title="View signups, PII, and platform commission"
+                                                                        aria-label={`View referrals for ${c.code}`}
+                                                                        className="inline-flex items-center gap-1 px-2 h-7 text-[11px] font-medium rounded-md text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
+                                                                    >
+                                                                        <Eye size={11} />
+                                                                        View
+                                                                    </button>
+                                                                </td>
                                                             </tr>
                                                         ))}
                                                     </tbody>
@@ -407,6 +439,17 @@ export default function AffiliateDetailDrawer({ affiliateId, open, onClose, onUp
                             ) : null}
                         </div>
                     </motion.div>
+
+                    {/* Referrals modal — nested inside the drawer's portal so
+                        it stacks above the drawer overlay and closing it
+                        doesn't dismiss the drawer itself. */}
+                    <ReferralsModal
+                        open={viewingCode != null}
+                        onClose={() => setViewingCode(null)}
+                        code={viewingCode?.code}
+                        fetcher={viewingFetcher}
+                        isSuperAdmin
+                    />
                 </div>
             )}
         </AnimatePresence>
