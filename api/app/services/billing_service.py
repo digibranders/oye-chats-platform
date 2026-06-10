@@ -571,7 +571,13 @@ def create_topup_checkout_session(
     stripe = _get_stripe()
     customer_id = get_or_create_stripe_customer(session, client)
 
-    pack_usd = int(pack["usd"])
+    # Pack schema: new packs use ``amount`` + ``currency``; older Stripe-era
+    # packs used a bare ``usd`` key. Accept either so cached configs and
+    # in-flight checkouts keep working through the cutover.
+    pack_amount = int(pack.get("amount") or pack.get("usd") or 0)
+    pack_currency = str(pack.get("currency", "USD")).lower()
+    if pack_amount <= 0:
+        raise ValueError("Top-up pack is missing 'amount'")
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
 
@@ -579,7 +585,11 @@ def create_topup_checkout_session(
         "purpose": "topup",
         "client_id": str(client.id),
         "credits": str(credits),
-        "pack_usd": str(pack_usd),
+        "pack_amount": str(pack_amount),
+        "pack_currency": pack_currency.upper(),
+        # Legacy key kept for the webhook handler that still reads pack_usd.
+        # Safe because USD is the dominant currency for Stripe flows.
+        "pack_usd": str(pack_amount) if pack_currency == "usd" else "0",
         "bonus_pct": str(bonus_pct),
     }
 
@@ -589,14 +599,14 @@ def create_topup_checkout_session(
     else:
         line_item = {
             "price_data": {
-                "currency": "usd",
+                "currency": pack_currency,
                 "product_data": {
                     "name": f"{credits:,} OyeChats credits",
                     "description": (
                         f"Top-up pack — {credits:,} credits" + (f" (includes {bonus_pct}% bonus)" if bonus_pct else "")
                     ),
                 },
-                "unit_amount": pack_usd * 100,
+                "unit_amount": pack_amount * 100,
             },
             "quantity": 1,
         }
@@ -611,8 +621,9 @@ def create_topup_checkout_session(
         payment_intent_data={"metadata": metadata},
     )
 
+    sym = "$" if pack_currency == "usd" else pack_currency.upper() + " "
     logger.info(
-        f"Created Stripe top-up checkout {checkout_session.id} for client {client.id}: ${pack_usd} → {credits} credits"
+        f"Created Stripe top-up checkout {checkout_session.id} for client {client.id}: {sym}{pack_amount} → {credits} credits"
     )
 
     return {

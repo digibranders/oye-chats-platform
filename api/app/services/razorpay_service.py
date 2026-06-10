@@ -110,18 +110,27 @@ def create_topup_order(
     metadata it should display in the modal.
 
     The pack must come from ``pricing_config.topup_packs`` and have an
-    ``amount`` (in INR rupees, NOT paise — we convert here so the config table
-    stays human-readable).
+    ``amount`` (in the pack's currency major unit — rupees for INR — NOT
+    paise; we convert here so the config table stays human-readable).
+
+    Standard Razorpay test/live merchant accounts can only charge INR. A
+    USD-priced pack on this provider would silently mis-bill the customer,
+    so we fail-fast with ValueError instead of letting the order create.
     """
     if not pack.get("amount"):
-        raise ValueError("Top-up pack is missing 'amount' (INR)")
+        raise ValueError("Top-up pack is missing 'amount'")
+
+    currency = str(pack.get("currency", "INR")).upper()
+    if currency != "INR":
+        raise ValueError(
+            f"Razorpay only supports INR top-ups; got '{currency}'. Use the Stripe provider for non-INR packs."
+        )
 
     rzp = _get_razorpay()
     amount_inr = int(pack["amount"])
     amount_paise = amount_inr * 100
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
-    currency = str(pack.get("currency", "INR")).upper()
 
     # Razorpay caps notes at 15 keys × 256 chars. We keep it tight.
     notes = {

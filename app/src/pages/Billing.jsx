@@ -49,11 +49,12 @@ function isTrustedRedirectUrl(url) {
 
 const fmtNumber = (n) => Number(n || 0).toLocaleString();
 
-function fmtCurrency(amountMinor, currency = 'INR') {
-  const symbol = currency === 'INR' ? '₹' : currency === 'USD' ? '$' : `${currency} `;
+function fmtCurrency(amountMinor, currency = 'USD') {
+  const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
   const major = Number(amountMinor || 0) / 100;
-  // For INR show no decimals on round amounts (₹1,499 not ₹1,499.00); USD uses 2.
-  const useDecimals = currency !== 'INR' || !Number.isInteger(major);
+  // Hide decimals on round amounts (e.g. $19 not $19.00) for either currency
+  // so plan cards stay clean. Sub-dollar/sub-rupee fractions still show 2dp.
+  const useDecimals = !Number.isInteger(major);
   return `${symbol}${major.toLocaleString(undefined, {
     minimumFractionDigits: useDecimals ? 2 : 0,
     maximumFractionDigits: useDecimals ? 2 : 0,
@@ -196,8 +197,8 @@ export default function Billing() {
   const planRemaining = balance?.plan || 0;
   const topupRemaining = balance?.topup || 0;
   const totalRemaining = balance?.total || 0;
-  const currency = balance?.currency || plan?.currency || 'INR';
-  const currencySymbol = balance?.currency_symbol || (currency === 'INR' ? '₹' : currency === 'USD' ? '$' : currency);
+  const currency = balance?.currency || plan?.currency || 'USD';
+  const currencySymbol = balance?.currency_symbol || (currency === 'USD' ? '$' : currency === 'INR' ? '₹' : currency);
 
   const planUsedPct = useMemo(() => {
     if (!monthlyGrant) return 0;

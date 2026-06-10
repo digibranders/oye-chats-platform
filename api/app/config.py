@@ -161,13 +161,15 @@ RAZORPAY_ENABLED = bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
 # Default billing provider for new subscriptions and top-ups. Customers on a
 # subscription continue to use whichever provider their record is tagged with;
 # this only affects new sign-ups and the admin checkout button.
-# Values: "razorpay" (default — Indian customers, UPI) or "stripe" (international).
-BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()
+# Values: "stripe" (default — USD international) or "razorpay" (INR-only, UPI).
+# Razorpay can still be selected per-request via {"provider": "razorpay"} so
+# we keep the codepath alive for explicit Indian-customer flows.
+BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "stripe").lower()
 
 # Display currency for the admin and landing pricing page. The provider sees
 # the actual currency on each charge; this is purely a presentation default
 # for new subscriptions when the plan row doesn't pin a currency.
-BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "INR").upper()
+BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "USD").upper()
 
 # Frontend URL for checkout redirects (Stripe success/cancel, Razorpay return).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")

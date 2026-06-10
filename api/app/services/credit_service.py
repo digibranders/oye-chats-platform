@@ -78,10 +78,10 @@ _DEFAULT_PRICING: dict[str, Any] = {
     "low_balance_warn_pct": 20,
     "kill_switch": False,
     "topup_packs": [
-        {"usd": 20, "credits": 2000, "bonus_pct": 0},
-        {"usd": 50, "credits": 5500, "bonus_pct": 10},
-        {"usd": 100, "credits": 12000, "bonus_pct": 20, "badge": "Best value"},
-        {"usd": 250, "credits": 32500, "bonus_pct": 30},
+        {"amount": 19, "credits": 2000, "currency": "USD", "bonus_pct": 0},
+        {"amount": 49, "credits": 5500, "currency": "USD", "bonus_pct": 10},
+        {"amount": 99, "credits": 12000, "currency": "USD", "bonus_pct": 20, "badge": "Best value"},
+        {"amount": 249, "credits": 32500, "currency": "USD", "bonus_pct": 30},
     ],
 }
 

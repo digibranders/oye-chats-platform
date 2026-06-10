@@ -29,10 +29,17 @@ function isTrustedRedirectUrl(url) {
   }
 }
 
-/** Display amount with currency symbol — falls back to "₹" for INR-coded packs. */
+/** Display amount with currency symbol. Defaults to "$" (USD). */
 function formatAmount(amount, currency) {
-  const sym = currency === 'INR' ? '₹' : currency === 'USD' ? '$' : currency + ' ';
-  return `${sym}${Number(amount).toLocaleString()}`;
+  const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : currency + ' ';
+  const numeric = Number(amount);
+  // USD prices in the pack config are stored as whole dollars (e.g. 19, 49,
+  // 99). Showing decimals on whole numbers looks heavy on the card; only
+  // surface decimals for non-round values (e.g. the per-1k credits label).
+  const formatted = Number.isInteger(numeric)
+    ? numeric.toLocaleString()
+    : numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${sym}${formatted}`;
 }
 
 /** Per-1k credit unit price for the comparison label. */
@@ -158,7 +165,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
           key: result.key_id,
           order_id: result.order_id,
           amount: result.amount,
-          currency: result.currency || 'INR',
+          currency: result.currency || 'USD',
           name: result.name || 'OyeChats credits',
           description: result.description,
           prefill: result.prefill || {},
@@ -225,7 +232,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {packs.map((pack) => {
               const amount = Number(pack.amount ?? pack.usd ?? 0);
-              const currency = pack.currency || 'INR';
+              const currency = pack.currency || 'USD';
               const featured = (pack.bonus_pct || 0) >= 20;
               const submitting = submittingPack === amount;
               const perK = pricePerKCredits(amount, pack.credits);
