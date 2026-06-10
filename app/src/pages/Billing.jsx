@@ -15,6 +15,7 @@ import {
   ExternalLink,
   Activity,
   ListOrdered,
+  ArrowUpRight,
 } from 'lucide-react';
 import {
   getCreditBalance,
@@ -31,6 +32,7 @@ import { Button } from '../components/ui/Button';
 import Progress from '../components/ui/Progress';
 import { useToast } from '../context/ToastContext';
 import TopupModal from '../components/credits/TopupModal';
+import PlanModal from '../components/billing/PlanModal';
 import { cn } from '../lib/utils';
 
 const TRUSTED_REDIRECT_DOMAINS = ['checkout.stripe.com', 'billing.stripe.com'];
@@ -143,6 +145,7 @@ export default function Billing() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [topupOpen, setTopupOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [seatBusy, setSeatBusy] = useState(false);
   const [portalBusy, setPortalBusy] = useState(false);
 
@@ -244,7 +247,11 @@ export default function Billing() {
 
   const seatLimit = subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1;
   const includedSeats = plan?.included_operator_seats ?? 1;
-  const seatPriceLabel = fmtCurrency(plan?.extra_seat_price_cents ?? 119900, currency);
+  // Seat-fee fallback used to be ₹1199 cents-worth (119900) when the system
+  // was INR. Now defaults to $15 (1500) so a freshly-seeded admin DB with
+  // missing extra_seat_price_cents still renders a sensible "+$15/mo"
+  // label instead of either ₹1199 or nothing.
+  const seatPriceLabel = fmtCurrency(plan?.extra_seat_price_cents ?? 1500, currency);
 
   const usage = balance?.usage || {};
   const costs = balance?.costs || { ai_chat: 1, url_scan: 3, email_send: 1 };
@@ -363,6 +370,7 @@ export default function Billing() {
               portalBusy={portalBusy}
               onSeatChange={handleSeatChange}
               onBillingPortal={handleBillingPortal}
+              onChangePlan={() => setPlanOpen(true)}
             />
           )}
 
@@ -378,6 +386,33 @@ export default function Billing() {
         onSuccess={() => {
           setTimeout(() => loadAll({ silent: true }), 1500);
           setTimeout(() => loadAll({ silent: true }), 4500);
+        }}
+      />
+
+      <PlanModal
+        open={planOpen}
+        onClose={() => setPlanOpen(false)}
+        currentPlanSlug={plan?.slug || 'free'}
+        currentBillingCycle={subscription?.billing_cycle || 'monthly'}
+        // ``hasActiveSubscription`` distinguishes the new-subscriber checkout
+        // path from the existing-subscriber switch path. Free + manual seeded
+        // rows count as "no active sub" so the modal picks the right CTA.
+        hasActiveSubscription={
+          subscription?.status === 'active' || subscription?.status === 'trialing'
+        }
+        onSuccess={(evt) => {
+          showToast(
+            evt.kind === 'switched'
+              ? `Switched to ${evt.plan.name} — Stripe is prorating the difference.`
+              : evt.kind === 'downgraded'
+                ? `Downgrade to ${evt.plan.name} scheduled at period end.`
+                : 'Plan updated.',
+            'success',
+          );
+          // Refetch a few times because the Stripe webhook might lag the
+          // change-plan response by a couple seconds.
+          setTimeout(() => loadAll({ silent: true }), 500);
+          setTimeout(() => loadAll({ silent: true }), 3500);
         }}
       />
     </div>
@@ -667,6 +702,7 @@ function SeatsTab({
   portalBusy,
   onSeatChange,
   onBillingPortal,
+  onChangePlan,
 }) {
   return (
     <div className="space-y-6">
@@ -691,16 +727,22 @@ function SeatsTab({
                 {subscription?.payment_provider ? ` · billed via ${subscription.payment_provider}` : ''}
               </div>
             </div>
-            {subscription?.payment_provider === 'stripe' && (
-              <Button variant="outline" size="sm" onClick={onBillingPortal} disabled={portalBusy}>
-                {portalBusy ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <ExternalLink className="w-3.5 h-3.5" />
-                )}
-                Stripe billing portal
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button onClick={onChangePlan} size="sm">
+                <ArrowUpRight className="w-3.5 h-3.5" />
+                {plan?.monthly_price_cents > 0 ? 'Change plan' : 'Choose a plan'}
               </Button>
-            )}
+              {subscription?.payment_provider === 'stripe' && (
+                <Button variant="outline" size="sm" onClick={onBillingPortal} disabled={portalBusy}>
+                  {portalBusy ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  )}
+                  Stripe billing portal
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
