@@ -846,7 +846,10 @@ def verify_stripe_topup(
         # Don't leak whether the session exists for someone else — 404.
         raise HTTPException(status_code=404, detail="Checkout session not found.")
 
-    pi_id = sess["payment_intent"] if "payment_intent" in sess else None
+    # Stripe's StripeObject does not implement ``.get()`` — every read must
+    # go through ``[]`` + ``in``. ruff's SIM401 would rewrite this to ``.get``
+    # which would crash at runtime.
+    pi_id = sess["payment_intent"] if "payment_intent" in sess else None  # noqa: SIM401
     if not pi_id:
         return {"granted": False, "reason": "No PaymentIntent on session"}
 

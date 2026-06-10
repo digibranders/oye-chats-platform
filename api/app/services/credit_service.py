@@ -28,12 +28,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.dates import add_months
 from app.db.models import CreditLedger, PricingConfig, Subscription
 
 logger = logging.getLogger(__name__)
@@ -330,12 +331,17 @@ def grant_plan_credits(session: Session, client_id: int, amount: int, note: str 
 
 
 def grant_topup(session: Session, client_id: int, amount: int, note: str | None = None) -> CreditLedger:
-    """Grant top-up credits with a 12-month expiry from now."""
+    """Grant top-up credits with an N-calendar-month expiry from now.
+
+    Uses calendar-month arithmetic (``add_months``) not 30-day approximations,
+    so a top-up bought on Jun 10 expires on Jun 10 the next year — not Jun 5
+    (which the old ``months * 30`` day count would produce, losing 5 days).
+    """
     if amount <= 0:
         raise ValueError("grant_topup requires positive amount")
     pricing = get_pricing(session)
     months = int(pricing.get("topup_expiry_months", 12))
-    expires_at = datetime.now(UTC) + timedelta(days=months * 30)
+    expires_at = add_months(datetime.now(UTC), months)
     _acquire_client_lock(session, client_id)
     entry = CreditLedger(
         client_id=client_id,
