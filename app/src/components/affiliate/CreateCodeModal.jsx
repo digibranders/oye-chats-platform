@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Loader2, Link as LinkIcon, Sparkles } from 'lucide-react';
+import { X, Loader2, Tag, Sparkles } from 'lucide-react';
 import { createAffiliateCode } from '../../services/api';
 import { cn } from '../../lib/utils';
 
@@ -8,11 +8,6 @@ import { cn } from '../../lib/utils';
 // app/services/affiliate_service.py. Fail fast in the browser to save a
 // round-trip on obviously-malformed input.
 const CODE_REGEX = /^[A-Za-z0-9_-]{3,20}$/;
-
-// Landing-site origin used to render the live referral-link preview.
-// Falls back to https://oyechats.com so the preview is meaningful even on
-// localhost.
-const LANDING_ORIGIN = import.meta.env.VITE_LANDING_URL || 'https://oyechats.com';
 
 /**
  * Modal for creating a new referral code.
@@ -57,9 +52,6 @@ export default function CreateCodeModal({ open, onClose, onCreated, poolPct = 0 
     }, [open, isSaving, onClose]);
 
     const formatValid = CODE_REGEX.test(code);
-    const previewUrl = formatValid
-        ? `${LANDING_ORIGIN.replace(/\/$/, '')}/?ref=${encodeURIComponent(code)}`
-        : null;
 
     // Split validation against the pool the super-admin set.
     const myNum = myCommission === '' ? 0 : Number(myCommission);
@@ -143,7 +135,7 @@ export default function CreateCodeModal({ open, onClose, onCreated, poolPct = 0 
                                         Create referral code
                                     </h2>
                                     <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">
-                                        Pick a memorable code — visitors will use it as <code className="font-mono">?ref=YOURCODE</code>.
+                                        Pick a memorable code — customers enter it at checkout.
                                     </p>
                                 </div>
                             </div>
@@ -263,16 +255,20 @@ export default function CreateCodeModal({ open, onClose, onCreated, poolPct = 0 
                                 </p>
                             </div>
 
-                            {previewUrl && (
+                            {formatValid && (
                                 <motion.div
                                     initial={{ opacity: 0, y: 4 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-surface-50 dark:bg-surface-800/60 border border-surface-200 dark:border-surface-700"
                                 >
-                                    <LinkIcon size={13} className="text-surface-400 shrink-0" />
-                                    <code className="text-[12px] font-mono text-surface-700 dark:text-surface-300 truncate">
-                                        {previewUrl}
-                                    </code>
+                                    <Tag size={13} className="text-surface-400 shrink-0" />
+                                    <span className="text-[12px] text-surface-600 dark:text-surface-400">
+                                        Customers enter{' '}
+                                        <code className="font-mono font-semibold uppercase tracking-wider text-surface-900 dark:text-surface-100">
+                                            {code.toUpperCase()}
+                                        </code>{' '}
+                                        at checkout to get the discount.
+                                    </span>
                                 </motion.div>
                             )}
 

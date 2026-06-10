@@ -363,6 +363,14 @@ class ApplyReferralResponse(BaseModel):
     attributed: bool
     # Human-readable message surfaced directly in the UI toast.
     message: str
+    # Normalized code (uppercased) — surfaced back so the UI can render an
+    # "Applied: CODE" badge from a single source of truth.
+    code: str | None = None
+    # Customer-facing discount percentage (0–100). Present for both freshly-
+    # attributed and previously-attributed valid codes so the modal can
+    # render the strikethrough/new-price UX regardless of when attribution
+    # happened.
+    discount_pct: float = 0.0
 
 
 @router.post("/affiliate/apply-referral", response_model=ApplyReferralResponse)
@@ -376,34 +384,52 @@ def apply_referral(
     buying a plan or top-up. Delegates to ``attribute_signup`` which enforces
     first-touch wins and self-referral prevention — idempotent, never blocks.
 
-    Returns ``{ attributed: true }`` when the code was freshly applied, or
-    ``{ attributed: false }`` when the code is valid but the account was
-    already attributed (e.g. the user previously entered a different code).
-    Either way the response is 200 — the caller should surface the message
-    as a toast and never block checkout on the result.
+    Returns ``{ attributed, code, discount_pct }``:
+      * ``attributed=true`` — freshly attributed on this call.
+      * ``attributed=false`` with non-null ``code`` and ``discount_pct`` — the
+        account was already attributed to this same code; UX should still
+        show the discount applied (idempotent re-entry by the same user).
+      * ``attributed=false`` with ``code=None`` — invalid code OR account
+        is already attributed to a *different* code (collision).
+    Always returns 200 so checkout is never blocked.
     """
     with get_session() as session:
         attributed = affiliate_service.attribute_signup(session, client.id, body.code)
-        session.commit()
+        if attributed:
+            session.commit()
 
-    if attributed:
+    with get_session() as session:
+        code_row = affiliate_service.validate_code(session, body.code)
+
+    if attributed and code_row is not None:
         return ApplyReferralResponse(
             attributed=True,
             message=f"Referral code {body.code} applied — thank you!",
+            code=code_row.code,
+            discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
         )
-    # Not attributed: either invalid code or already has one. Return 200 so
-    # checkout is never blocked. The client shows the message as an info toast.
-    code_row = None
-    with get_session() as session:
-        code_row = affiliate_service.validate_code(session, body.code)
+
     if code_row is None:
         return ApplyReferralResponse(
             attributed=False,
             message=f"'{body.code}' is not a valid referral code.",
         )
+
+    # Valid code but not attributed this call — either previously attributed
+    # to the same code (idempotent — surface the discount), or attributed to
+    # a different code (collision — withhold the discount).
+    with get_session() as session:
+        existing = session.query(Client.referral_code_id).filter(Client.id == client.id).first()
+    if existing and existing[0] == code_row.id:
+        return ApplyReferralResponse(
+            attributed=False,
+            message=f"Referral code {code_row.code} already applied — discount stays on.",
+            code=code_row.code,
+            discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
+        )
     return ApplyReferralResponse(
         attributed=False,
-        message="Your account already has a referral applied.",
+        message="Your account already has a different referral code applied.",
     )
 
 

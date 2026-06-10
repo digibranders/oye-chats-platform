@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
     Sparkles, Plus, Loader2, Copy, Check, MousePointerClick, Users,
-    TrendingUp, Link as LinkIcon, Power, RotateCcw, AlertCircle, Pencil,
+    TrendingUp, Tag, Power, RotateCcw, AlertCircle, Pencil,
 } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
@@ -14,9 +14,6 @@ import {
 } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
-
-const LANDING_ORIGIN = import.meta.env.VITE_LANDING_URL || 'https://oyechats.com';
-const refLink = (code) => `${LANDING_ORIGIN.replace(/\/$/, '')}/?ref=${encodeURIComponent(code)}`;
 
 /**
  * Per-stat card on the dashboard header. Compact, scannable, no icons-as-
@@ -50,20 +47,19 @@ function StatCard({ icon, label, value, hint, tint = 'primary' }) {
     );
 }
 
-/** Tiny copy-to-clipboard button used in the code rows. */
-function CopyLinkButton({ code }) {
+/** Tiny copy-to-clipboard button used in the code rows. Copies the raw code. */
+function CopyCodeButton({ code }) {
     const [copied, setCopied] = useState(false);
     const handleCopy = async () => {
-        const url = refLink(code);
         try {
-            await navigator.clipboard.writeText(url);
+            await navigator.clipboard.writeText(code);
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
         } catch {
             // Clipboard API may be blocked over non-https; fall back to a
             // tiny synthetic textarea + execCommand path.
             const ta = document.createElement('textarea');
-            ta.value = url;
+            ta.value = code;
             ta.style.position = 'fixed';
             ta.style.opacity = '0';
             document.body.appendChild(ta);
@@ -82,12 +78,12 @@ function CopyLinkButton({ code }) {
         <button
             type="button"
             onClick={handleCopy}
-            title="Copy referral link"
-            aria-label="Copy referral link"
+            title="Copy referral code"
+            aria-label="Copy referral code"
             className="inline-flex items-center gap-1 px-2 h-7 text-[11px] font-medium text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-md transition-colors"
         >
             {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
-            {copied ? 'Copied' : 'Copy link'}
+            {copied ? 'Copied' : 'Copy code'}
         </button>
     );
 }
@@ -275,7 +271,7 @@ export default function AffiliateDashboard() {
                 ) : codes.length === 0 ? (
                     <div className="p-12 text-center text-surface-500 dark:text-surface-400">
                         <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
-                            <LinkIcon size={20} className="text-primary-500" />
+                            <Tag size={20} className="text-primary-500" />
                         </div>
                         <p className="text-sm font-medium text-surface-700 dark:text-surface-300">
                             You haven&apos;t created any codes yet.
@@ -327,7 +323,7 @@ export default function AffiliateDashboard() {
                                             )}
                                         </div>
                                         <div className="flex justify-center">
-                                            <CopyLinkButton code={c.code} />
+                                            <CopyCodeButton code={c.code} />
                                         </div>
                                     </td>
                                     <td className="px-4 py-3 text-center tabular-nums">

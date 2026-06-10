@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Loader2, Link as LinkIcon, Pencil, AlertTriangle, Copy, Check } from 'lucide-react';
+import { X, Loader2, Tag, Pencil, AlertTriangle, Copy, Check } from 'lucide-react';
 import { updateAffiliateCode } from '../../services/api';
 import { cn } from '../../lib/utils';
 
 // Same regex as the backend CHECK constraint + create flow.
 const CODE_REGEX = /^[A-Za-z0-9_-]{3,20}$/;
-
-const LANDING_ORIGIN = import.meta.env.VITE_LANDING_URL || 'https://oyechats.com';
 
 /**
  * Modal for editing an existing referral code.
@@ -16,12 +14,11 @@ const LANDING_ORIGIN = import.meta.env.VITE_LANDING_URL || 'https://oyechats.com
  * PATCH instead of POST. The headline behavior we surface here:
  *
  *   - Renaming the code string is allowed (backend accepts it), but
- *     destructive in effect — the OLD ?ref=URL stops validating instantly.
- *     We render a prominent amber warning whenever the code field is
- *     edited away from its original value, so the user can't accidentally
- *     break links they've shared.
+ *     destructive in effect — anyone who saved the OLD code stops being
+ *     attributed. We render a prominent amber warning whenever the code
+ *     field is edited away from its original value.
  *
- *   - Label edits are non-destructive; no warning.
+ *   - Reward/commission edits are non-destructive; no warning.
  *
  * Returns the updated code (with fresh stats) to the parent via ``onUpdated``
  * so the codes table can replace the row in place without a full refetch.
@@ -83,24 +80,22 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
     const rewardChanged = rewardNum !== originalReward;
 
     const formatValid = CODE_REGEX.test(codeName.trim());
-    const previewUrl = formatValid
-        ? `${LANDING_ORIGIN.replace(/\/$/, '')}/?ref=${encodeURIComponent(codeName.trim())}`
-        : null;
+    const previewCode = formatValid ? codeName.trim().toUpperCase() : null;
     const hasChanges = codeChanged || myChanged || rewardChanged;
 
     /**
-     * Copy the live preview URL to the clipboard with a graceful fallback
-     * for non-https origins (Safari & some embedded webviews block the
-     * Clipboard API there). The fallback uses an off-screen textarea +
-     * document.execCommand('copy') — deprecated but universally supported.
+     * Copy the code to the clipboard with a graceful fallback for non-https
+     * origins (Safari & some embedded webviews block the Clipboard API
+     * there). The fallback uses an off-screen textarea + execCommand —
+     * deprecated but universally supported.
      */
     const handleCopy = async () => {
-        if (!previewUrl) return;
+        if (!previewCode) return;
         try {
-            await navigator.clipboard.writeText(previewUrl);
+            await navigator.clipboard.writeText(previewCode);
         } catch {
             const ta = document.createElement('textarea');
-            ta.value = previewUrl;
+            ta.value = previewCode;
             ta.style.position = 'fixed';
             ta.style.opacity = '0';
             document.body.appendChild(ta);
@@ -245,11 +240,11 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                 >
                                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                                     <div className="text-[12px] leading-relaxed">
-                                        <strong className="font-semibold">Renaming breaks the old link.</strong>{' '}
-                                        Anyone who already has{' '}
-                                        <code className="font-mono">?ref={originalCode}</code> will see a "code
-                                        not found" and won&apos;t be attributed to you. Existing referrals you&apos;ve
-                                        already brought in stay attributed.
+                                        <strong className="font-semibold">Renaming retires the old code.</strong>{' '}
+                                        Anyone who tries{' '}
+                                        <code className="font-mono uppercase">{originalCode}</code> at checkout
+                                        will see &quot;code not found&quot; and won&apos;t be attributed to you.
+                                        Existing referrals you&apos;ve already brought in stay attributed.
                                     </div>
                                 </motion.div>
                             )}
@@ -326,26 +321,22 @@ export default function EditCodeModal({ open, code, onClose, onUpdated, poolPct 
                                 </p>
                             </div>
 
-                            {previewUrl && (
+                            {previewCode && (
                                 <motion.div
                                     initial={{ opacity: 0, y: 4 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-50 dark:bg-surface-800/60 border border-surface-200 dark:border-surface-700"
                                 >
-                                    <LinkIcon size={13} className="text-surface-400 shrink-0" />
-                                    <code className="flex-1 text-[12px] font-mono text-surface-700 dark:text-surface-300 truncate">
-                                        {previewUrl}
+                                    <Tag size={13} className="text-surface-400 shrink-0" />
+                                    <code className="flex-1 text-[12px] font-mono font-semibold uppercase tracking-wider text-surface-900 dark:text-surface-100 truncate">
+                                        {previewCode}
                                     </code>
                                     <button
                                         type="button"
                                         onClick={handleCopy}
-                                        aria-label={copied ? 'Copied' : 'Copy referral link'}
-                                        title={copied ? 'Copied' : 'Copy referral link'}
+                                        aria-label={copied ? 'Copied' : 'Copy referral code'}
+                                        title={copied ? 'Copied' : 'Copy referral code'}
                                         className={cn(
-                                            // Icon-only button — square footprint, no
-                                            // gap or padding for text. Title + aria-label
-                                            // carry the meaning for screen readers and
-                                            // hover-tooltip users.
                                             'shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors',
                                             copied
                                                 ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15'
