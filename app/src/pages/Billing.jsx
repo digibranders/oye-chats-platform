@@ -235,7 +235,12 @@ export default function Billing() {
     return Math.min(Math.round((used / monthlyGrant) * 100), 100);
   }, [monthlyGrant, planRemaining]);
 
-  const lowBalance = monthlyGrant > 0 && planRemaining <= monthlyGrant * 0.2;
+  // The bot stops working when TOTAL credits hit zero, not when the plan
+  // bucket hits zero — deductions automatically fall through to top-up
+  // credits. So the "below 20%" warning must consider both buckets; a
+  // customer who's burned through their plan but has 2,000 top-ups left
+  // is in great shape, not in trouble.
+  const lowBalance = monthlyGrant > 0 && totalRemaining <= monthlyGrant * 0.2;
 
   const seatLimit = subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1;
   const includedSeats = plan?.included_operator_seats ?? 1;
@@ -420,12 +425,22 @@ function OverviewTab({
               <span>{planUsedPct}% used this period</span>
               <span>Resets {fmtDate(balance?.resets_at)}</span>
             </div>
-            {lowBalance && (
+            {/* Two-state footer: amber low-balance warning when *total* runway
+                is thin, emerald reassurance when plan is low but top-ups are
+                covering the gap. Both states are mutually exclusive. */}
+            {lowBalance ? (
               <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span>Below 20% of your monthly allowance. Top up to keep your bot running.</span>
               </div>
-            )}
+            ) : planUsedPct >= 80 && topupRemaining > 0 ? (
+              <div className="mt-3 flex items-start gap-2 rounded-md bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+                <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>
+                  Plan low — your {fmtNumber(topupRemaining)} top-up credit{topupRemaining === 1 ? '' : 's'} will be used next, so your bot stays online.
+                </span>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
