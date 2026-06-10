@@ -651,6 +651,35 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
     return None
 
 
+def _resolve_referral_discount(session, client: Client) -> tuple[int, dict[str, str]]:
+    """Return ``(discount_bps, audit_meta)`` for this client's active referral.
+
+    Returns ``(0, {})`` when:
+      * the client isn't attributed to any code
+      * the attributed code carries no customer discount (commission-only)
+
+    The discount is applied later, inside each provider service, against
+    the minor unit (cents/paise) so we retain sub-currency precision —
+    e.g. 10% off $19 yields $17.10, not $18 (which whole-unit flooring
+    would produce).
+    """
+    from app.db.models import ReferralCode
+
+    if not getattr(client, "referral_code_id", None):
+        return 0, {}
+
+    code_row = session.get(ReferralCode, client.referral_code_id)
+    if code_row is None or not code_row.customer_discount_bps:
+        return 0, {}
+
+    bps = int(code_row.customer_discount_bps)
+    return bps, {
+        "referral_code_id": str(code_row.id),
+        "referral_code": code_row.code,
+        "discount_bps": str(bps),
+    }
+
+
 @credits_router.post("/topup")
 def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_client)):
     """Initiate a top-up purchase.
@@ -659,6 +688,11 @@ def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_c
       * Razorpay (default): ``{provider, order_id, amount, currency, key_id, name, description, prefill, theme}``
         — frontend opens ``new Razorpay({order_id, ...}).open()``.
       * Stripe: ``{checkout_url, session_id}`` — frontend redirect.
+
+    If the customer has a referral code applied (``client.referral_code_id``)
+    with a non-zero ``customer_discount_bps``, the discount is applied to the
+    pack amount before checkout — so the Stripe page shows the discounted
+    price and the customer is actually charged less for the same credits.
 
     Credits are granted asynchronously via the provider's webhook on payment
     capture; the frontend should also call ``/credits/topup/verify`` for
@@ -682,11 +716,22 @@ def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_c
         if not pack:
             raise HTTPException(status_code=400, detail="Invalid top-up pack.")
 
+        # Resolve the customer-facing referral discount (if any). The bps is
+        # passed straight through to the provider service which applies it
+        # in the minor unit, preserving sub-currency precision.
+        discount_bps, discount_meta = _resolve_referral_discount(session, client)
+
         if provider == "razorpay":
             from app.services import razorpay_service
 
             try:
-                result = razorpay_service.create_topup_order(session, client, pack)
+                result = razorpay_service.create_topup_order(
+                    session,
+                    client,
+                    pack,
+                    discount_bps=discount_bps,
+                    extra_notes=discount_meta or None,
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except razorpay_service.RazorpayBillingError as exc:
@@ -696,7 +741,13 @@ def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_c
 
         from app.services.billing_service import create_topup_checkout_session
 
-        result = create_topup_checkout_session(session, client, pack)
+        result = create_topup_checkout_session(
+            session,
+            client,
+            pack,
+            discount_bps=discount_bps,
+            extra_metadata=discount_meta or None,
+        )
         result.setdefault("provider", "stripe")
         session.commit()
         return result

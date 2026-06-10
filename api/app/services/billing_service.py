@@ -561,12 +561,24 @@ def create_topup_checkout_session(
     pack: dict[str, Any],
     success_url: str | None = None,
     cancel_url: str | None = None,
+    discount_bps: int = 0,
+    extra_metadata: dict[str, str] | None = None,
 ) -> dict:
     """Create a Stripe Checkout session for a one-off top-up purchase.
 
     ``pack`` must be one of the entries from ``pricing_config.topup_packs``
     (validated by the caller). Metadata is set so the webhook handler can
     grant the right number of credits when the payment succeeds.
+
+    ``discount_bps`` is the customer-facing referral discount in basis
+    points (10000 = 100%). The discount is applied to ``unit_amount`` in
+    cents — so 1000 bps off a $19 pack yields ``1710`` cents ($17.10),
+    not ``$18`` (which whole-dollar flooring would produce).
+
+    ``extra_metadata`` is merged in alongside the standard topup keys —
+    used by the referral flow to record discount provenance
+    (``referral_code_id``, ``original_amount``, ``discount_bps``). Stripe
+    caps each metadata value at 500 chars; callers must stringify ahead.
     """
     stripe = _get_stripe()
     customer_id = get_or_create_stripe_customer(session, client)
@@ -581,6 +593,12 @@ def create_topup_checkout_session(
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
 
+    # Apply the customer referral discount in cents — preserves sub-currency
+    # precision (10% off $19 = $17.10, not $18 that whole-unit flooring gives).
+    original_cents = pack_amount * 100
+    discount_bps_int = max(0, min(10_000, int(discount_bps or 0)))
+    unit_amount_cents = original_cents - (original_cents * discount_bps_int) // 10_000
+
     metadata = {
         "purpose": "topup",
         "client_id": str(client.id),
@@ -592,21 +610,32 @@ def create_topup_checkout_session(
         "pack_usd": str(pack_amount) if pack_currency == "usd" else "0",
         "bonus_pct": str(bonus_pct),
     }
+    if discount_bps_int:
+        metadata["original_amount_cents"] = str(original_cents)
+        metadata["charged_amount_cents"] = str(unit_amount_cents)
+    if extra_metadata:
+        # Stripe caps total metadata at 50 keys × 500 chars per value. Our
+        # own keys + the referral discount keys stay well under that ceiling.
+        metadata.update({str(k): str(v) for k, v in extra_metadata.items()})
 
     line_item: dict[str, Any]
-    if pack.get("stripe_price_id"):
+    if pack.get("stripe_price_id") and not discount_bps_int:
+        # Stripe Price-id paths charge whatever the Price object says; we
+        # can't apply an ad-hoc discount on top without a Coupon. For the
+        # referral flow we always fall back to inline price_data so the
+        # discounted unit_amount can ride along on this single session.
         line_item = {"price": pack["stripe_price_id"], "quantity": 1}
     else:
+        bonus_suffix = f" (includes {bonus_pct}% bonus)" if bonus_pct else ""
+        discount_suffix = f" — {discount_bps_int / 100:g}% referral discount" if discount_bps_int else ""
         line_item = {
             "price_data": {
                 "currency": pack_currency,
                 "product_data": {
                     "name": f"{credits:,} OyeChats credits",
-                    "description": (
-                        f"Top-up pack — {credits:,} credits" + (f" (includes {bonus_pct}% bonus)" if bonus_pct else "")
-                    ),
+                    "description": f"Top-up pack — {credits:,} credits{bonus_suffix}{discount_suffix}",
                 },
-                "unit_amount": pack_amount * 100,
+                "unit_amount": unit_amount_cents,
             },
             "quantity": 1,
         }
@@ -622,8 +651,10 @@ def create_topup_checkout_session(
     )
 
     sym = "$" if pack_currency == "usd" else pack_currency.upper() + " "
+    discount_log = f" (was {sym}{pack_amount}, -{discount_bps_int / 100:g}%)" if discount_bps_int else ""
     logger.info(
-        f"Created Stripe top-up checkout {checkout_session.id} for client {client.id}: {sym}{pack_amount} → {credits} credits"
+        f"Created Stripe top-up checkout {checkout_session.id} for client {client.id}: "
+        f"{sym}{unit_amount_cents / 100:.2f}{discount_log} → {credits} credits"
     )
 
     return {
