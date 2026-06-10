@@ -22,6 +22,7 @@ import {
   getCurrentSubscription,
   changeOperatorSeats,
   getBillingPortalUrl,
+  verifyStripeTopup,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
@@ -179,10 +180,38 @@ export default function Billing() {
     loadAll();
     const params = new URLSearchParams(window.location.search);
     if (params.get('topup') === 'success') {
-      showToast('Top-up successful — credits will appear shortly.', 'success');
-      const timers = [800, 2500, 5000].map((ms) => setTimeout(() => loadAll({ silent: true }), ms));
+      const sessionId = params.get('session_id');
       const cleanUrl = window.location.pathname;
       window.history.replaceState({}, '', cleanUrl);
+
+      // Stripe webhooks can't reach localhost during development and may also
+      // lag in production. Self-redeem the session synchronously so credits
+      // appear the moment the user returns from checkout — the backend is
+      // the source of truth on whether the payment actually captured.
+      if (sessionId) {
+        showToast('Confirming your top-up…', 'info');
+        verifyStripeTopup(sessionId)
+          .then((res) => {
+            if (res?.granted) {
+              showToast('Top-up successful — credits added.', 'success');
+            } else if (res?.reason === 'Already granted') {
+              showToast('Top-up already credited.', 'info');
+            } else {
+              showToast(res?.reason || 'Top-up pending — credits will appear shortly.', 'info');
+            }
+            loadAll({ silent: true });
+          })
+          .catch((err) => {
+            showToast(err?.message || 'Could not confirm top-up — credits will appear shortly.', 'warning');
+            // Fall back to the original poll loop so a webhook-delivered grant
+            // still surfaces if our self-redeem failed for some other reason.
+            [1500, 4000, 8000].forEach((ms) => setTimeout(() => loadAll({ silent: true }), ms));
+          });
+        return undefined;
+      }
+
+      showToast('Top-up successful — credits will appear shortly.', 'success');
+      const timers = [800, 2500, 5000].map((ms) => setTimeout(() => loadAll({ silent: true }), ms));
       return () => timers.forEach((t) => clearTimeout(t));
     }
     if (params.get('topup') === 'cancel') {

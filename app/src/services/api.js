@@ -1306,6 +1306,22 @@ export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_i
     }
 };
 
+/**
+ * Self-redeem a Stripe Checkout top-up. Called from the success redirect
+ * (Billing page picks up ``?session_id=…``) so credits land instantly even
+ * when the Stripe webhook can't reach the API (local dev, in-flight delivery).
+ * Backend confirms ``payment_status == paid`` + ``client_id`` match before
+ * granting; safe to call on every success landing — idempotent server-side.
+ */
+export const verifyStripeTopup = async (sessionId) => {
+    try {
+        const response = await api.post('/credits/topup/verify-stripe', { session_id: sessionId });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not verify Stripe payment');
+    }
+};
+
 export const changeOperatorSeats = async (delta) => {
     try {
         const response = await api.post('/subscriptions/seats', { delta });

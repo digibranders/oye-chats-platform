@@ -788,6 +788,96 @@ def verify_topup_payment(
     return {"status": "verified"}
 
 
+class StripeVerifyRequest(BaseModel):
+    """Stripe Checkout success self-redemption."""
+
+    session_id: str
+
+
+@credits_router.post("/topup/verify-stripe")
+def verify_stripe_topup(
+    body: StripeVerifyRequest,
+    client: Client = Depends(get_current_client),
+):
+    """Fallback grant path for Stripe top-ups when the webhook hasn't fired.
+
+    Stripe webhooks can't reach localhost during development, and even in
+    production a customer might land on the success page before the webhook
+    arrives. This endpoint takes the ``session_id`` from the success URL,
+    pulls the session via the Stripe API (which is authoritative), confirms
+    ``payment_status == "paid"`` and ``metadata.purpose == "topup"``, then
+    grants the credits idempotently via the same dispatcher the webhook uses.
+
+    Always returns 200. Returns ``{ granted: bool, balance: int }`` so the
+    frontend can show the new balance the moment the grant succeeds — no
+    poll-and-pray loop after the redirect.
+
+    Security: the session.metadata.client_id MUST match the caller. Without
+    that check, anyone could replay another customer's session_id to grant
+    themselves credits they didn't buy.
+    """
+    if not STRIPE_ENABLED:
+        raise HTTPException(status_code=503, detail="Stripe is not configured.")
+
+    import stripe
+
+    from app.config import STRIPE_SECRET_KEY
+    from app.services.billing_service import _handle_payment_intent_succeeded
+
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    try:
+        sess = stripe.checkout.Session.retrieve(body.session_id)
+    except Exception as exc:
+        logger.warning("Stripe session retrieve failed for %s: %s", body.session_id, exc)
+        raise HTTPException(status_code=404, detail="Checkout session not found.") from exc
+
+    # Stripe's response object behaves like a dict for ``[]`` access but does
+    # NOT implement ``.get()`` — every read goes through ``[]`` + ``in``.
+    if sess["payment_status"] != "paid":
+        return {"granted": False, "reason": f"Payment not captured (status={sess['payment_status']})"}
+
+    metadata = dict(sess["metadata"]._data) if "metadata" in sess and sess["metadata"] else {}
+    if metadata.get("purpose") != "topup":
+        return {"granted": False, "reason": "Session is not a top-up"}
+
+    sess_client_id = metadata.get("client_id")
+    if str(sess_client_id) != str(client.id):
+        # Don't leak whether the session exists for someone else — 404.
+        raise HTTPException(status_code=404, detail="Checkout session not found.")
+
+    pi_id = sess["payment_intent"] if "payment_intent" in sess else None
+    if not pi_id:
+        return {"granted": False, "reason": "No PaymentIntent on session"}
+
+    pi = stripe.PaymentIntent.retrieve(pi_id)
+    pi_metadata = dict(pi["metadata"]._data) if "metadata" in pi and pi["metadata"] else metadata
+    pi_data = {
+        "id": pi["id"],
+        "metadata": pi_metadata,
+        "amount": pi["amount"],
+    }
+
+    # Idempotency is enforced inside _record_or_skip_webhook keyed by event
+    # id — but this self-redemption path doesn't go through that. Use a
+    # synthetic event id derived from the PaymentIntent so repeat calls
+    # short-circuit instead of double-granting.
+    from app.services.billing_service import _record_or_skip_webhook
+
+    with get_session() as session:
+        synthetic_event_id = f"pi_self_verify_{pi_id}"
+        if not _record_or_skip_webhook(session, synthetic_event_id, "stripe"):
+            session.commit()
+            balance = credit_service.get_balance(session, client.id)
+            return {"granted": False, "reason": "Already granted", "balance": balance}
+
+        _handle_payment_intent_succeeded(session, pi_data)
+        session.commit()
+        balance = credit_service.get_balance(session, client.id)
+
+    return {"granted": True, "balance": balance}
+
+
 @credits_router.get("/packs")
 def list_topup_packs():
     """Public list of currently-offered top-up packs (no auth)."""
