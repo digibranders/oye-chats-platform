@@ -261,73 +261,75 @@ export default function TopupModal({ open, onClose, onSuccess }) {
                         : 'border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 hover:border-surface-300 dark:hover:border-surface-600',
                   )}
                 >
-                  {pack.badge && !hasDiscount && (
-                    <span className="absolute -top-2 right-4 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-primary-600 text-white">
-                      {pack.badge}
-                    </span>
-                  )}
-                  {/* "Applied" badge — overrides pack.badge when a code is live. */}
-                  <AnimatePresence>
-                    {hasDiscount && (
+                  {/* Top-right badge — only ONE shows at a time. Discount wins
+                      over pack.badge ("Best value") which wins over bonus_pct.
+                      Keeps the corner uncluttered and avoids the prior overflow
+                      where strikethrough + bonus pill collided with the badge. */}
+                  <AnimatePresence mode="wait">
+                    {hasDiscount ? (
                       <motion.span
                         key="applied-badge"
                         initial={{ opacity: 0, y: -6, scale: 0.85 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -6, scale: 0.85 }}
                         transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                        className="absolute -top-2 right-4 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500 text-white shadow-sm shadow-emerald-500/30"
+                        className="absolute -top-2 right-4 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500 text-white shadow-sm shadow-emerald-500/30 whitespace-nowrap"
                       >
                         <CheckCircle2 className="w-2.5 h-2.5" />
                         {discountPct.toFixed(0)}% Off
                       </motion.span>
-                    )}
+                    ) : pack.badge ? (
+                      <span className="absolute -top-2 right-4 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-primary-600 text-white whitespace-nowrap">
+                        {pack.badge}
+                      </span>
+                    ) : null}
                   </AnimatePresence>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <div className="flex items-baseline gap-2">
-                      <AnimatePresence mode="wait" initial={false}>
-                        <motion.span
-                          key={hasDiscount ? `disc-${finalAmount}` : `full-${amount}`}
-                          initial={{ opacity: 0, y: 6 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -6 }}
-                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                          className={cn(
-                            'text-2xl font-bold tabular-nums',
-                            hasDiscount
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : 'text-surface-900 dark:text-surface-50',
-                          )}
-                        >
-                          {formatAmount(finalAmount, currency)}
-                        </motion.span>
-                      </AnimatePresence>
-                      <AnimatePresence>
-                        {hasDiscount && (
-                          <motion.span
-                            key="strike"
-                            initial={{ opacity: 0, x: -4 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: -4 }}
-                            transition={{ duration: 0.22, delay: 0.05 }}
-                            className="text-base font-medium line-through text-surface-400 dark:text-surface-500 tabular-nums"
-                          >
-                            {formatAmount(amount, currency)}
-                          </motion.span>
+
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={hasDiscount ? `disc-${finalAmount}` : `full-${amount}`}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                        className={cn(
+                          'text-2xl font-bold tabular-nums',
+                          hasDiscount
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-surface-900 dark:text-surface-50',
                         )}
-                      </AnimatePresence>
-                    </div>
+                      >
+                        {formatAmount(finalAmount, currency)}
+                      </motion.span>
+                    </AnimatePresence>
+                    <AnimatePresence>
+                      {hasDiscount && (
+                        <motion.span
+                          key="strike"
+                          initial={{ opacity: 0, x: -4 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -4 }}
+                          transition={{ duration: 0.22, delay: 0.05 }}
+                          className="text-base font-medium line-through text-surface-400 dark:text-surface-500 tabular-nums"
+                        >
+                          {formatAmount(amount, currency)}
+                        </motion.span>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  <div className="mt-1 flex items-center gap-1.5 text-sm text-surface-600 dark:text-surface-300 flex-wrap">
+                    <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <strong className="font-semibold text-surface-900 dark:text-surface-50">
+                      {Number(pack.credits).toLocaleString()}
+                    </strong>
+                    <span>credits</span>
                     {pack.bonus_pct > 0 && (
-                      <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                      <span className="inline-flex items-center text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 rounded">
                         +{pack.bonus_pct}% bonus
                       </span>
                     )}
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-sm text-surface-600 dark:text-surface-300">
-                    <Zap className="w-3.5 h-3.5 text-amber-500" />
-                    <strong className="font-semibold text-surface-900 dark:text-surface-50">
-                      {Number(pack.credits).toLocaleString()}
-                    </strong>{' '}
-                    credits
                   </div>
                   {perK && (
                     <div className="mt-3 text-xs text-surface-500 dark:text-surface-400">
