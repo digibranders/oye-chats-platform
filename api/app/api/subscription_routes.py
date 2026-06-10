@@ -302,7 +302,20 @@ def create_checkout(request: CheckoutRequest, client: Client = Depends(get_curre
         # Stripe (international fallback)
         from app.services.billing_service import create_checkout_session
 
-        result = create_checkout_session(session, client, plan, request.billing_cycle)
+        # Honour the customer-facing referral discount on subscription
+        # checkout. Top-ups skip this on purpose — the discount is recurring
+        # so it fires every billing cycle, aligning the affiliate's reward
+        # with the customer's lifetime value.
+        discount_bps, discount_meta = _resolve_referral_discount(session, client)
+
+        result = create_checkout_session(
+            session,
+            client,
+            plan,
+            request.billing_cycle,
+            discount_bps=discount_bps,
+            extra_metadata=discount_meta or None,
+        )
         result.setdefault("provider", "stripe")
         session.commit()
         return result
@@ -716,22 +729,20 @@ def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_c
         if not pack:
             raise HTTPException(status_code=400, detail="Invalid top-up pack.")
 
-        # Resolve the customer-facing referral discount (if any). The bps is
-        # passed straight through to the provider service which applies it
-        # in the minor unit, preserving sub-currency precision.
-        discount_bps, discount_meta = _resolve_referral_discount(session, client)
+        # NOTE: referral discounts intentionally do NOT apply to top-ups.
+        # The customer-facing discount fires only on plan checkout
+        # (subscription_routes.create_checkout). This keeps the affiliate
+        # incentive tied to recurring revenue rather than a one-off pack —
+        # affiliates earn from the customer's subscription, so the discount
+        # also lives there. Referral *attribution* still happens via
+        # /affiliate/apply-referral (unchanged); we just don't honour the
+        # discount on the top-up checkout amount.
 
         if provider == "razorpay":
             from app.services import razorpay_service
 
             try:
-                result = razorpay_service.create_topup_order(
-                    session,
-                    client,
-                    pack,
-                    discount_bps=discount_bps,
-                    extra_notes=discount_meta or None,
-                )
+                result = razorpay_service.create_topup_order(session, client, pack)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except razorpay_service.RazorpayBillingError as exc:
@@ -741,13 +752,7 @@ def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_c
 
         from app.services.billing_service import create_topup_checkout_session
 
-        result = create_topup_checkout_session(
-            session,
-            client,
-            pack,
-            discount_bps=discount_bps,
-            extra_metadata=discount_meta or None,
-        )
+        result = create_topup_checkout_session(session, client, pack)
         result.setdefault("provider", "stripe")
         session.commit()
         return result

@@ -84,6 +84,37 @@ def get_or_create_stripe_customer(session: Session, client: Client) -> str:
 # ── Checkout Session ──
 
 
+def _ensure_referral_coupon(stripe_module, *, code: str, bps: int) -> str:
+    """Return a Stripe Coupon id for the ``(code, bps)`` pair, creating it idempotently.
+
+    The id format ``oye_ref_<code>_<bps>`` is a pure function of the inputs so
+    repeat calls with the same referral code + same discount percentage
+    converge on the same coupon — no duplicate-coupon storms even under
+    concurrent first-time-checkout pressure.
+
+    Duration is ``forever``: the customer keeps the discount on every renewal,
+    matching how the discount is advertised in the modal ("10% off Standard
+    plan"). If the percentage on the affiliate's code is later edited the
+    coupon id changes, so existing subscriptions stay pinned to whatever
+    percentage they signed up for — historical fairness baked in.
+    """
+    bps_int = max(1, min(10_000, int(bps)))
+    safe_code = "".join(ch for ch in (code or "").lower() if ch.isalnum() or ch in {"-", "_"})[:18]
+    coupon_id = f"oye_ref_{safe_code}_{bps_int}"
+    try:
+        return stripe_module.Coupon.retrieve(coupon_id)["id"]
+    except stripe_module.error.InvalidRequestError:
+        pass
+    coupon = stripe_module.Coupon.create(
+        id=coupon_id,
+        percent_off=bps_int / 100,
+        duration="forever",
+        name=f"Referral discount {code}",
+        metadata={"referral_code": code, "discount_bps": str(bps_int), "source": "oyechats_affiliate"},
+    )
+    return coupon["id"]
+
+
 def create_checkout_session(
     session: Session,
     client: Client,
@@ -91,8 +122,16 @@ def create_checkout_session(
     billing_cycle: str = "monthly",
     success_url: str | None = None,
     cancel_url: str | None = None,
+    discount_bps: int = 0,
+    extra_metadata: dict[str, str] | None = None,
 ) -> dict:
     """Create a Stripe Checkout session for subscribing to a plan.
+
+    ``discount_bps`` is the customer-facing referral discount in basis
+    points (1000 = 10%). We materialise it as an idempotent Stripe Coupon
+    + attach via ``discounts=[{coupon}]`` so the price actually charged
+    matches the strikethrough the modal advertises — and the customer
+    keeps the discount on every renewal (``duration='forever'``).
 
     Returns a dict with 'checkout_url' and 'session_id' for the frontend to redirect to.
     """
@@ -108,33 +147,55 @@ def create_checkout_session(
             "Configure it in the super admin panel first."
         )
 
-    checkout_session = stripe.checkout.Session.create(
-        customer=customer_id,
-        mode="subscription",
-        line_items=[
-            {
-                "price": price_id,
-                "quantity": 1,  # Will be updated for per-operator model
-            }
-        ],
-        success_url=success_url or f"{FRONTEND_URL}/subscription?status=success&session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=cancel_url or f"{FRONTEND_URL}/subscription?status=canceled",
-        metadata={
-            "oyechats_client_id": str(client.id),
-            "oyechats_plan_id": str(plan.id),
-            "billing_cycle": billing_cycle,
-        },
-        subscription_data={
+    metadata: dict[str, str] = {
+        "oyechats_client_id": str(client.id),
+        "oyechats_plan_id": str(plan.id),
+        "billing_cycle": billing_cycle,
+    }
+    if extra_metadata:
+        metadata.update({str(k): str(v) for k, v in extra_metadata.items()})
+
+    discount_bps_int = max(0, min(10_000, int(discount_bps or 0)))
+    discounts_arg: list[dict] = []
+    if discount_bps_int and extra_metadata and extra_metadata.get("referral_code"):
+        coupon_id = _ensure_referral_coupon(stripe, code=str(extra_metadata["referral_code"]), bps=discount_bps_int)
+        discounts_arg = [{"coupon": coupon_id}]
+        metadata["referral_coupon_id"] = coupon_id
+
+    create_kwargs: dict = {
+        "customer": customer_id,
+        "mode": "subscription",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "success_url": success_url or f"{FRONTEND_URL}/subscription?status=success&session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": cancel_url or f"{FRONTEND_URL}/subscription?status=canceled",
+        "metadata": metadata,
+        "subscription_data": {
             "metadata": {
                 "oyechats_client_id": str(client.id),
                 "oyechats_plan_id": str(plan.id),
             },
             "trial_period_days": plan.trial_days if plan.trial_days > 0 else None,
         },
-        allow_promotion_codes=True,
-    )
+    }
+    # Stripe rejects sessions that mix ``allow_promotion_codes`` with a
+    # pre-applied ``discounts``: pick exactly one. Referral discount wins
+    # when present so the customer can't double-stack a coupon on top.
+    if discounts_arg:
+        create_kwargs["discounts"] = discounts_arg
+    else:
+        create_kwargs["allow_promotion_codes"] = True
 
-    logger.info(f"Created Stripe checkout session {checkout_session.id} for client {client.id}, plan {plan.slug}")
+    checkout_session = stripe.checkout.Session.create(**create_kwargs)
+
+    logger.info(
+        "Created Stripe checkout session %s for client %s, plan %s%s",
+        checkout_session.id,
+        client.id,
+        plan.slug,
+        f" (referral discount {discount_bps_int / 100:g}% via {metadata.get('referral_coupon_id')})"
+        if discount_bps_int
+        else "",
+    )
 
     return {
         "checkout_url": checkout_session.url,
@@ -561,8 +622,6 @@ def create_topup_checkout_session(
     pack: dict[str, Any],
     success_url: str | None = None,
     cancel_url: str | None = None,
-    discount_bps: int = 0,
-    extra_metadata: dict[str, str] | None = None,
 ) -> dict:
     """Create a Stripe Checkout session for a one-off top-up purchase.
 
@@ -570,15 +629,8 @@ def create_topup_checkout_session(
     (validated by the caller). Metadata is set so the webhook handler can
     grant the right number of credits when the payment succeeds.
 
-    ``discount_bps`` is the customer-facing referral discount in basis
-    points (10000 = 100%). The discount is applied to ``unit_amount`` in
-    cents — so 1000 bps off a $19 pack yields ``1710`` cents ($17.10),
-    not ``$18`` (which whole-dollar flooring would produce).
-
-    ``extra_metadata`` is merged in alongside the standard topup keys —
-    used by the referral flow to record discount provenance
-    (``referral_code_id``, ``original_amount``, ``discount_bps``). Stripe
-    caps each metadata value at 500 chars; callers must stringify ahead.
+    Top-ups intentionally do NOT honour referral discounts — that incentive
+    lives on the subscription side only. See subscription_routes.create_checkout.
     """
     stripe = _get_stripe()
     customer_id = get_or_create_stripe_customer(session, client)
@@ -593,11 +645,7 @@ def create_topup_checkout_session(
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
 
-    # Apply the customer referral discount in cents — preserves sub-currency
-    # precision (10% off $19 = $17.10, not $18 that whole-unit flooring gives).
-    original_cents = pack_amount * 100
-    discount_bps_int = max(0, min(10_000, int(discount_bps or 0)))
-    unit_amount_cents = original_cents - (original_cents * discount_bps_int) // 10_000
+    unit_amount_cents = pack_amount * 100
 
     metadata = {
         "purpose": "topup",
@@ -610,30 +658,18 @@ def create_topup_checkout_session(
         "pack_usd": str(pack_amount) if pack_currency == "usd" else "0",
         "bonus_pct": str(bonus_pct),
     }
-    if discount_bps_int:
-        metadata["original_amount_cents"] = str(original_cents)
-        metadata["charged_amount_cents"] = str(unit_amount_cents)
-    if extra_metadata:
-        # Stripe caps total metadata at 50 keys × 500 chars per value. Our
-        # own keys + the referral discount keys stay well under that ceiling.
-        metadata.update({str(k): str(v) for k, v in extra_metadata.items()})
 
     line_item: dict[str, Any]
-    if pack.get("stripe_price_id") and not discount_bps_int:
-        # Stripe Price-id paths charge whatever the Price object says; we
-        # can't apply an ad-hoc discount on top without a Coupon. For the
-        # referral flow we always fall back to inline price_data so the
-        # discounted unit_amount can ride along on this single session.
+    if pack.get("stripe_price_id"):
         line_item = {"price": pack["stripe_price_id"], "quantity": 1}
     else:
         bonus_suffix = f" (includes {bonus_pct}% bonus)" if bonus_pct else ""
-        discount_suffix = f" — {discount_bps_int / 100:g}% referral discount" if discount_bps_int else ""
         line_item = {
             "price_data": {
                 "currency": pack_currency,
                 "product_data": {
                     "name": f"{credits:,} OyeChats credits",
-                    "description": f"Top-up pack — {credits:,} credits{bonus_suffix}{discount_suffix}",
+                    "description": f"Top-up pack — {credits:,} credits{bonus_suffix}",
                 },
                 "unit_amount": unit_amount_cents,
             },
@@ -651,10 +687,9 @@ def create_topup_checkout_session(
     )
 
     sym = "$" if pack_currency == "usd" else pack_currency.upper() + " "
-    discount_log = f" (was {sym}{pack_amount}, -{discount_bps_int / 100:g}%)" if discount_bps_int else ""
     logger.info(
         f"Created Stripe top-up checkout {checkout_session.id} for client {client.id}: "
-        f"{sym}{unit_amount_cents / 100:.2f}{discount_log} → {credits} credits"
+        f"{sym}{unit_amount_cents / 100:.2f} → {credits} credits"
     )
 
     return {

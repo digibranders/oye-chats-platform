@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     X, Check, Sparkles, Loader2, Crown, Zap,
     ShieldCheck, ExternalLink, Star, AlertCircle, Mail,
+    Gift, CheckCircle2, XCircle, X as XSmall,
 } from 'lucide-react';
 import {
     getSubscriptionPlans, createCheckoutSession, changePlan,
+    applyReferralCode,
 } from '../../services/api';
 import { cn } from '../../lib/utils';
 
@@ -99,6 +101,19 @@ export default function PlanModal({
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
 
+    // ── Referral discount state ──
+    // ``referralStatus`` is a 4-state machine: idle (input empty / typing),
+    // applying (round-trip in flight), applied (server confirmed it's a real
+    // code), invalid (server rejected it). ``appliedCode`` / ``discountPct``
+    // mirror the server response so the strikethrough always matches what
+    // Stripe will actually charge after the user clicks the CTA.
+    const [referralInput, setReferralInput] = useState('');
+    const [referralStatus, setReferralStatus] = useState('idle');
+    const [referralMessage, setReferralMessage] = useState('');
+    const [appliedCode, setAppliedCode] = useState(null);
+    const [discountPct, setDiscountPct] = useState(0);
+    const referralInputRef = useRef(null);
+
     // ESC closes.
     useEffect(() => {
         if (!open) return undefined;
@@ -121,6 +136,15 @@ export default function PlanModal({
         setSubmitError('');
         setBillingCycle(currentBillingCycle || 'monthly');
         setSelectedSlug(currentPlanSlug || MOST_POPULAR_SLUG);
+        // Reset referral state on every open so we don't flash a previous
+        // session's chip while the new fetch resolves. Persisting it across
+        // close/reopen would also be wrong semantically — the user might
+        // intend a different code on a second pass.
+        setReferralInput('');
+        setReferralStatus('idle');
+        setReferralMessage('');
+        setAppliedCode(null);
+        setDiscountPct(0);
         getSubscriptionPlans()
             .then((rows) => {
                 if (cancelled) return;
@@ -146,6 +170,44 @@ export default function PlanModal({
         () => plans.find((p) => p.slug === selectedSlug) || null,
         [plans, selectedSlug],
     );
+
+    async function handleApplyReferral() {
+        const code = referralInput.trim().toUpperCase();
+        if (!code) return;
+        setReferralStatus('applying');
+        setReferralMessage('');
+        try {
+            const result = await applyReferralCode(code);
+            // Backend returns ``code`` + ``discount_pct`` on every valid code,
+            // even when the account had already been attributed previously
+            // (idempotent re-entry). Null ``code`` means "invalid input".
+            if (result.code) {
+                setReferralStatus('applied');
+                setReferralMessage(result.message);
+                setAppliedCode(result.code);
+                setDiscountPct(Number(result.discount_pct) || 0);
+            } else {
+                setReferralStatus('invalid');
+                setReferralMessage(result.message);
+                setAppliedCode(null);
+                setDiscountPct(0);
+            }
+        } catch (err) {
+            setReferralStatus('invalid');
+            setReferralMessage(err?.message || 'Failed to apply referral code.');
+            setAppliedCode(null);
+            setDiscountPct(0);
+        }
+    }
+
+    function handleClearReferral() {
+        setReferralInput('');
+        setReferralStatus('idle');
+        setReferralMessage('');
+        setAppliedCode(null);
+        setDiscountPct(0);
+        setTimeout(() => referralInputRef.current?.focus(), 40);
+    }
 
     async function handleCta() {
         if (!selected) return;
@@ -314,6 +376,21 @@ export default function PlanModal({
                                                     submitting={submitting}
                                                     submitError={submitError}
                                                     onCta={handleCta}
+                                                    // Referral block — only renders for paid tiers (Free
+                                                    // and Enterprise skip it inside FocusedPlan).
+                                                    referral={{
+                                                        input: referralInput,
+                                                        setInput: setReferralInput,
+                                                        status: referralStatus,
+                                                        setStatus: setReferralStatus,
+                                                        setMessage: setReferralMessage,
+                                                        message: referralMessage,
+                                                        appliedCode,
+                                                        discountPct,
+                                                        inputRef: referralInputRef,
+                                                        onApply: handleApplyReferral,
+                                                        onClear: handleClearReferral,
+                                                    }}
                                                 />
                                             </motion.div>
                                         ) : (
@@ -432,7 +509,7 @@ function TierRailCard({ plan, billingCycle, isSelected, isCurrent, isMostPopular
 
 /** The right-hand "focused plan" detail pane. */
 function FocusedPlan({
-    plan, billingCycle, isCurrent, hasActiveSubscription, submitting, submitError, onCta,
+    plan, billingCycle, isCurrent, hasActiveSubscription, submitting, submitError, onCta, referral,
 }) {
     const meta = TIER_META[plan.slug] || { icon: Sparkles, accent: 'slate', description: '' };
     const accent = ACCENTS[meta.accent] || ACCENTS.slate;
@@ -440,6 +517,11 @@ function FocusedPlan({
     const isFree = plan.slug === 'free';
     const isEnterprise = plan.slug === 'enterprise';
     const cta = ctaFor({ plan, isCurrent, hasActiveSubscription });
+
+    // Referral discount only applies to paid recurring plans. Free has no
+    // price to discount; Enterprise is a custom-quote conversation.
+    const referralEligible = !isFree && !isEnterprise;
+    const activeDiscount = referralEligible && referral?.appliedCode ? referral.discountPct || 0 : 0;
 
     return (
         <div className="space-y-5">
@@ -453,7 +535,10 @@ function FocusedPlan({
             </div>
 
             {/* Price */}
-            <PriceBlock plan={plan} billingCycle={billingCycle} />
+            <PriceBlock plan={plan} billingCycle={billingCycle} discountPct={activeDiscount} appliedCode={referralEligible ? referral?.appliedCode : null} />
+
+            {/* Referral chip — paid plans only. */}
+            {referralEligible && <ReferralBlock referral={referral} />}
 
             {/* Features */}
             <div className="space-y-2">
@@ -511,7 +596,140 @@ function FocusedPlan({
     );
 }
 
-function PriceBlock({ plan, billingCycle }) {
+/**
+ * Inline referral-code input + applied-chip — only rendered for paid
+ * recurring plans. Same UX language as the strikethrough/AnimatePresence
+ * pattern from the old TopupModal, ported across to the subscription
+ * surface where the discount actually fires.
+ */
+function ReferralBlock({ referral }) {
+    if (!referral) return null;
+    const {
+        input, setInput, status, setStatus, setMessage, message,
+        appliedCode, discountPct, inputRef, onApply, onClear,
+    } = referral;
+    const isApplied = status === 'applied' && appliedCode;
+
+    return (
+        <motion.div
+            animate={
+                isApplied
+                    ? { borderColor: 'rgba(16, 185, 129, 0.6)', backgroundColor: 'rgba(16, 185, 129, 0.06)' }
+                    : {}
+            }
+            transition={{ duration: 0.25 }}
+            className="rounded-xl border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800/50 p-3"
+        >
+            <p className="text-[11px] font-medium text-surface-600 dark:text-surface-300 mb-2 flex items-center gap-1.5">
+                <Gift className={cn('w-3.5 h-3.5 transition-colors', isApplied ? 'text-emerald-500' : 'text-primary-500')} />
+                {isApplied ? 'Referral code active' : 'Have a referral code?'}
+            </p>
+
+            <AnimatePresence mode="wait">
+                {isApplied ? (
+                    <motion.div
+                        key="chip"
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2"
+                    >
+                        <div className="flex items-center gap-2 min-w-0">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                            <p className="text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300 truncate">
+                                <code className="font-mono tracking-wider">{appliedCode}</code> applied
+                                {discountPct > 0 && (
+                                    <span className="ml-1 font-bold">— {discountPct.toFixed(0)}% off every renewal</span>
+                                )}
+                                {discountPct === 0 && (
+                                    <span className="ml-1 text-emerald-600/80 dark:text-emerald-400/80 font-normal">
+                                        — thanks, your referrer is credited
+                                    </span>
+                                )}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={onClear}
+                            className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-colors"
+                            aria-label="Remove referral code"
+                            title="Remove referral code"
+                        >
+                            <XSmall className="w-3.5 h-3.5" />
+                        </button>
+                    </motion.div>
+                ) : (
+                    <motion.div
+                        key="input"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="flex gap-2"
+                    >
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={input}
+                            onChange={(e) => {
+                                setInput(e.target.value.toUpperCase());
+                                if (status !== 'idle') {
+                                    setStatus('idle');
+                                    setMessage('');
+                                }
+                            }}
+                            onKeyDown={(e) => e.key === 'Enter' && onApply()}
+                            placeholder="e.g. FRIEND20"
+                            disabled={status === 'applying'}
+                            maxLength={20}
+                            className={cn(
+                                'flex-1 rounded-lg border px-3 py-1.5 text-sm font-mono tracking-widest uppercase',
+                                'bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-50',
+                                'placeholder:text-surface-400 dark:placeholder:text-surface-500 placeholder:font-sans placeholder:tracking-normal',
+                                'focus:outline-none focus:ring-2 focus:ring-primary-500/40',
+                                'disabled:opacity-60 disabled:cursor-not-allowed',
+                                status === 'invalid'
+                                    ? 'border-red-400 dark:border-red-500'
+                                    : 'border-surface-300 dark:border-surface-600',
+                            )}
+                        />
+                        <button
+                            type="button"
+                            onClick={onApply}
+                            disabled={!input.trim() || status === 'applying'}
+                            className={cn(
+                                'shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
+                                'disabled:opacity-50 disabled:cursor-not-allowed',
+                                'bg-primary-600 text-white hover:bg-primary-700',
+                            )}
+                        >
+                            {status === 'applying' ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Apply'}
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {status === 'invalid' && message && (
+                    <motion.p
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.18 }}
+                        className="mt-1.5 text-xs flex items-center gap-1 text-red-500 dark:text-red-400"
+                    >
+                        <XCircle className="w-3 h-3 shrink-0" />
+                        {message}
+                    </motion.p>
+                )}
+            </AnimatePresence>
+        </motion.div>
+    );
+}
+
+function PriceBlock({ plan, billingCycle, discountPct = 0, appliedCode = null }) {
     const cents = billingCycle === 'annual' ? plan.annual_price_cents : plan.monthly_price_cents;
     const currency = plan.currency || 'USD';
     const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
@@ -535,19 +753,70 @@ function PriceBlock({ plan, billingCycle }) {
             </div>
         );
     }
+    // Apply the discount in cents so the strikethrough matches what
+    // Stripe actually charges (10% off $19 = $17.10, not $18 — done in
+    // minor units to preserve sub-currency precision).
+    const hasDiscount = discountPct > 0 && appliedCode;
+    const bps = Math.max(0, Math.min(10_000, Math.round((discountPct || 0) * 100)));
+    const chargedCents = hasDiscount ? cents - Math.floor((cents * bps) / 10_000) : cents;
     const major = cents / 100;
+    const chargedMajor = chargedCents / 100;
     const monthlyEquiv = billingCycle === 'annual' && plan.monthly_price_cents > 0
-        ? (cents / 12) / 100
+        ? (chargedCents / 12) / 100
         : null;
+    const fmt = (val) => `${sym}${Number.isInteger(val) ? val.toLocaleString() : val.toFixed(2)}`;
     return (
         <div className="space-y-1">
             <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-4xl font-bold tracking-tight text-surface-900 dark:text-surface-50">
-                    {sym}{Number.isInteger(major) ? major.toLocaleString() : major.toFixed(2)}
-                </span>
+                <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                        key={hasDiscount ? `d-${chargedCents}` : `f-${cents}`}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                        className={cn(
+                            'text-4xl font-bold tracking-tight tabular-nums',
+                            hasDiscount
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-surface-900 dark:text-surface-50',
+                        )}
+                    >
+                        {fmt(chargedMajor)}
+                    </motion.span>
+                </AnimatePresence>
+                <AnimatePresence>
+                    {hasDiscount && (
+                        <motion.span
+                            key="strike"
+                            initial={{ opacity: 0, x: -4 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -4 }}
+                            transition={{ duration: 0.22, delay: 0.05 }}
+                            className="text-lg font-medium line-through text-surface-400 dark:text-surface-500 tabular-nums"
+                        >
+                            {fmt(major)}
+                        </motion.span>
+                    )}
+                </AnimatePresence>
                 <span className="text-[13px] text-surface-500 dark:text-surface-400">
                     / {billingCycle === 'annual' ? 'year' : 'month'}
                 </span>
+                <AnimatePresence>
+                    {hasDiscount && (
+                        <motion.span
+                            key="off-pill"
+                            initial={{ opacity: 0, scale: 0.85 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.85 }}
+                            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                            className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500 text-white shadow-sm shadow-emerald-500/30"
+                        >
+                            <Sparkles className="w-2.5 h-2.5" />
+                            {discountPct.toFixed(0)}% off
+                        </motion.span>
+                    )}
+                </AnimatePresence>
             </div>
             {monthlyEquiv != null && (
                 <p className="text-[12px] text-surface-500 dark:text-surface-400">
@@ -558,7 +827,7 @@ function PriceBlock({ plan, billingCycle }) {
                     / month — save vs paying month-to-month.
                 </p>
             )}
-            {billingCycle === 'monthly' && plan.annual_price_cents > 0 && plan.monthly_price_cents > 0 && (() => {
+            {!hasDiscount && billingCycle === 'monthly' && plan.annual_price_cents > 0 && plan.monthly_price_cents > 0 && (() => {
                 const saved = (plan.monthly_price_cents * 12 - plan.annual_price_cents) / 100;
                 return saved > 0 ? (
                     <p className="text-[12px] text-emerald-600 dark:text-emerald-400">
@@ -566,6 +835,13 @@ function PriceBlock({ plan, billingCycle }) {
                     </p>
                 ) : null;
             })()}
+            {hasDiscount && (
+                <p className="text-[12px] text-emerald-600 dark:text-emerald-400">
+                    Saving{' '}
+                    <strong>{sym}{((cents - chargedCents) / 100).toFixed(2)}/{billingCycle === 'annual' ? 'yr' : 'mo'}</strong>{' '}
+                    with code <code className="font-mono font-bold uppercase">{appliedCode}</code>.
+                </p>
+            )}
         </div>
     );
 }

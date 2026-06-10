@@ -102,9 +102,6 @@ def create_topup_order(
     session: Session,
     client: Client,
     pack: dict[str, Any],
-    *,
-    discount_bps: int = 0,
-    extra_notes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Create a Razorpay Order for a one-time top-up purchase.
 
@@ -116,14 +113,8 @@ def create_topup_order(
     ``amount`` (in the pack's currency major unit — rupees for INR — NOT
     paise; we convert here so the config table stays human-readable).
 
-    ``discount_bps`` is the customer-facing referral discount in basis
-    points. Applied in paise so 10% off ₹1,599 yields ₹1,439.10 worth of
-    paise (143910), not ₹1,439 (whole-rupee flooring).
-
-    ``extra_notes`` is merged into the Razorpay order notes — used by the
-    referral flow to record discount provenance. Razorpay caps notes at
-    15 keys × 256 chars per value; we keep our own keys tight to leave
-    headroom for callers.
+    Top-ups intentionally do NOT honour referral discounts — that incentive
+    fires only on subscription checkout. See subscription_routes.create_checkout.
 
     Standard Razorpay test/live merchant accounts can only charge INR. A
     USD-priced pack on this provider would silently mis-bill the customer,
@@ -140,9 +131,7 @@ def create_topup_order(
 
     rzp = _get_razorpay()
     amount_inr = int(pack["amount"])
-    original_paise = amount_inr * 100
-    discount_bps_int = max(0, min(10_000, int(discount_bps or 0)))
-    amount_paise = original_paise - (original_paise * discount_bps_int) // 10_000
+    amount_paise = amount_inr * 100
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
 
@@ -154,11 +143,6 @@ def create_topup_order(
         "amount_inr": str(amount_inr),
         "bonus_pct": str(bonus_pct),
     }
-    if discount_bps_int:
-        notes["original_amount_paise"] = str(original_paise)
-        notes["charged_amount_paise"] = str(amount_paise)
-    if extra_notes:
-        notes.update({str(k): str(v)[:256] for k, v in extra_notes.items()})
 
     receipt = f"topup_c{client.id}_{int(datetime.now(UTC).timestamp())}"
 
