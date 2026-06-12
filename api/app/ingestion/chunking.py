@@ -72,6 +72,13 @@ def chunk_text(pages_data: list[dict], document_name: str = "") -> list[LCDocume
     # Split documents (metadata is automatically preserved/propagated)
     chunks = text_splitter.split_documents(documents)
 
+    # Drop empty/whitespace-only chunks before any further processing. The
+    # splitter occasionally yields blank chunks at section boundaries; if we
+    # let them through, the prefix-injection step below would still embed a
+    # paid "[Document: foo.pdf] [Page: 1]" header that contributes no real
+    # signal and pollutes retrieval with near-duplicate prefix blobs.
+    chunks = [c for c in chunks if c.page_content and c.page_content.strip()]
+
     # Propagate section headers so mid-section chunks know which section they belong to
     chunks = _propagate_section_headers(chunks)
 

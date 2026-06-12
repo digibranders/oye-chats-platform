@@ -4,10 +4,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
   Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, Sparkles, CreditCard,
+  Gift,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { getAuthState } from '../utils/auth';
-import { getOfflineMessages, getLeadStats } from '../services/api';
+import { getOfflineMessages, getLeadStats, getCurrentUser } from '../services/api';
 import { cn } from '../lib/utils';
 
 export default function Sidebar({ isOpen, isMobile, onClose }) {
@@ -19,6 +20,11 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const { isOperator: isOperatorRole, isBotManager } = getAuthState();
   const [unreadMsgs, setUnreadMsgs] = useState(0);
   const [newLeads, setNewLeads] = useState(0);
+  // Affiliate membership is derived from /auth/me (single source of truth =
+  // the affiliates DB row). Cached for the session so the sidebar doesn't
+  // refetch on every navigation. Default false → menu item hidden until we
+  // confirm the user is enrolled.
+  const [isAffiliate, setIsAffiliate] = useState(false);
 
   useEffect(() => {
     const fetchBadges = async () => {
@@ -50,6 +56,19 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Resolve affiliate membership exactly once per mount. Operators are
+  // never affiliates (the backend always returns is_affiliate=false for
+  // X-Operator-Key principals), so we can short-circuit and skip the
+  // fetch entirely for them.
+  useEffect(() => {
+    if (isOperatorRole) return;
+    let cancelled = false;
+    getCurrentUser()
+      .then((me) => { if (!cancelled) setIsAffiliate(Boolean(me?.is_affiliate)); })
+      .catch(() => { /* non-critical — menu item just stays hidden */ });
+    return () => { cancelled = true; };
+  }, [isOperatorRole]);
+
   const handleNavClick = () => { if (isMobile && onClose) onClose(); };
   const handleCreateBot = () => { setDropdownOpen(false); navigate('/chatbot?create=true'); };
 
@@ -65,11 +84,15 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         { path: '/integrations', name: 'Integrations', icon: Plug },
       ];
 
+  // Affiliate entry slots between Team and Billing so it sits alongside
+  // the other "your-account" tools rather than under "Main" (which is
+  // workspace-data oriented).
   const configItems = isOperatorRole
     ? [{ path: '/team', name: 'Team', icon: UsersRound }]
     : [
         { path: '/chatbot', name: 'My Bots', icon: Bot },
         { path: '/team', name: 'Team', icon: UsersRound },
+        ...(isAffiliate ? [{ path: '/affiliate', name: 'Affiliate', icon: Gift }] : []),
         { path: '/billing', name: 'Billing', icon: CreditCard },
       ];
 

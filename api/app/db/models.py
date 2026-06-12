@@ -1,7 +1,7 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB, TSVECTOR
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
@@ -27,6 +27,21 @@ class Client(Base):
     reset_otp = Column(String, nullable=True)
     reset_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
 
+    # ── Affiliate program v1 (referral attribution) ──
+    # First-touch attribution: set once at signup if a valid ?ref=code cookie
+    # is present, then immutable. ``referral_code_id`` is FK to referral_codes.
+    referral_code_id = Column(
+        Integer,
+        ForeignKey("referral_codes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    referral_attributed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Set when the trial hard-delete cron purges the workspace after the
+    # 15-day retention window. Stamped Client rows still exist for
+    # support / audit but no longer count as "active customers".
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
+
     # ── LEGACY columns kept for backward compatibility during migration ──
     # These will be removed once all data is migrated to Bot model.
     system_prompt = Column(Text, nullable=True)
@@ -49,6 +64,33 @@ class Client(Base):
     chat_sessions = relationship(
         "ChatSession", back_populates="client", cascade="all, delete-orphan", foreign_keys="ChatSession.client_id"
     )
+    # Affiliate membership (0..1). Derived ``is_affiliate`` reads this — the
+    # ``affiliates`` row is the single source of truth.
+    affiliate = relationship(
+        "Affiliate",
+        foreign_keys="Affiliate.client_id",
+        back_populates="client",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    # Captured referral code (first-touch attribution at signup).
+    referral_code = relationship(
+        "ReferralCode",
+        foreign_keys=[referral_code_id],
+        lazy="joined",
+    )
+
+    @property
+    def is_affiliate(self) -> bool:
+        """True iff this client has an active (non-deactivated) affiliate row.
+
+        Derived from the ``affiliate`` relationship — there is no separate
+        boolean column, so the relationship is the single source of truth.
+        Callers that touch this property must have the ``affiliate`` row
+        loaded (eager or via the same session); otherwise it returns False.
+        """
+        aff = self.affiliate
+        return aff is not None and aff.deactivated_at is None
 
 
 class Bot(Base):
@@ -616,6 +658,22 @@ class Subscription(Base):
     # Trial tracking
     trial_start = Column(DateTime(timezone=True), nullable=True)
     trial_end = Column(DateTime(timezone=True), nullable=True)
+    # Set by the trial-expiry cron when status flips to ``trial_expired``.
+    # The hard-delete cron uses this to know when the 15-day grace window
+    # ends. ``NULL`` for any subscription that never went through trial
+    # expiry (paid customers, free-tier users).
+    data_retention_until = Column(DateTime(timezone=True), nullable=True)
+    # Set when a payment-failed webhook flips ``status`` to ``past_due``.
+    # The auto-expire cron uses this anchor (not ``updated_at``, which
+    # mutates on every unrelated row touch) to know when the dunning
+    # grace window has elapsed. Reset to ``NULL`` when the customer's
+    # card is rescued and status flips back to ``active``.
+    past_due_since = Column(DateTime(timezone=True), nullable=True)
+    # Idempotency log for trial lifecycle emails. Keys are lifecycle
+    # stages (``day_7``, ``day_11``, ``day_13``, ``trial_ended``,
+    # ``data_deleted``); values are ISO-8601 timestamps of when each was
+    # sent. Missing key == not yet sent. Lets every cron re-run safely.
+    trial_emails_sent = Column(JSONB, nullable=False, server_default="{}", default=dict)
 
     # Cancellation
     canceled_at = Column(DateTime(timezone=True), nullable=True)
@@ -923,3 +981,179 @@ class ImpersonationToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# ─── Affiliate Program v1 (money-free) ──────────────────────────────────
+#
+# v1 ships the referral-code mechanic, attribution, and analytics dashboards
+# only. The money layer (commission %, customer discount %, payouts) is
+# deferred to v2 — see ``platform/docs/affiliate-program.md`` for details
+# and the additive migration path. None of the columns here carry money;
+# v2 will ADD columns to these same tables without rewriting existing data.
+
+
+class Affiliate(Base):
+    """Invite-only affiliate membership tied to a Client (0..1 per client).
+
+    The presence of an active (``deactivated_at IS NULL``) row is the
+    single source of truth for ``Client.is_affiliate``. Total active
+    affiliates are capped at 5 by the service layer — there is no DB-level
+    enforcement of this because raising the cap should not require a
+    migration.
+    """
+
+    __tablename__ = "affiliates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    invited_by = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    max_active_codes = Column(Integer, nullable=False, default=10, server_default="10")
+    # Commission % stored in basis points (1 bps = 0.01%). 2500 = 25.00%.
+    # Default 0 = no commission; super-admin sets explicitly when ready to
+    # pay out. Range enforced at the DB layer (0–10000 = 0–100%).
+    commission_bps = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "max_active_codes > 0",
+            name="chk_affiliate_max_codes_positive",
+        ),
+        CheckConstraint(
+            "commission_bps >= 0 AND commission_bps <= 10000",
+            name="chk_affiliate_commission_bps_range",
+        ),
+    )
+
+    client = relationship("Client", foreign_keys=[client_id], back_populates="affiliate")
+    invited_by_client = relationship("Client", foreign_keys=[invited_by])
+    codes = relationship(
+        "ReferralCode",
+        back_populates="affiliate",
+        cascade="all, delete-orphan",
+    )
+
+
+class ReferralCode(Base):
+    """Per-affiliate referral code with optional internal label.
+
+    Code names are globally unique and case-insensitive (``CITEXT``). The
+    DB-level CHECK constraint enforces the 3-20 char ``[A-Za-z0-9_-]``
+    format, mirroring the regex enforced at the service layer. Deactivated
+    codes (``active = false``) keep their referrals intact but block new
+    signups.
+    """
+
+    __tablename__ = "referral_codes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    affiliate_id = Column(
+        Integer,
+        ForeignKey("affiliates.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    code = Column(CITEXT, nullable=False, unique=True)
+    label = Column(Text, nullable=True)
+    active = Column(Boolean, nullable=False, default=True, server_default="true")
+    # Per-code commission split (basis points). The pair must sum to ≤ the
+    # affiliate's overall commission_bps (the pool set by the super-admin).
+    # The service layer enforces that cross-table constraint; the DB CHECK
+    # below only enforces the individual ranges + the absolute 100% ceiling.
+    affiliate_commission_bps = Column(Integer, nullable=False, default=0, server_default="0")
+    customer_discount_bps = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            r"code ~ '^[A-Za-z0-9_-]{3,20}$'",
+            name="chk_referral_code_format",
+        ),
+        CheckConstraint(
+            "affiliate_commission_bps >= 0 AND affiliate_commission_bps <= 10000 "
+            "AND customer_discount_bps >= 0 AND customer_discount_bps <= 10000 "
+            "AND (affiliate_commission_bps + customer_discount_bps) <= 10000",
+            name="chk_code_split_range",
+        ),
+    )
+
+    affiliate = relationship("Affiliate", back_populates="codes")
+    clicks = relationship(
+        "ReferralClick",
+        back_populates="code",
+        cascade="all, delete-orphan",
+    )
+
+
+class ReferralClick(Base):
+    """Append-only click log for ``/?ref=CODE`` visits.
+
+    Stores hashed IP and UA only — never raw values. The hash salt rotates
+    daily inside the service layer so cross-day correlation requires
+    out-of-band knowledge.
+    """
+
+    __tablename__ = "referral_clicks"
+
+    id = Column(sqlalchemy.BigInteger, primary_key=True, autoincrement=True)
+    code_id = Column(
+        Integer,
+        ForeignKey("referral_codes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ip_hash = Column(Text, nullable=True)
+    ua_hash = Column(Text, nullable=True)
+    referrer = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    code = relationship("ReferralCode", back_populates="clicks")
+
+
+class AffiliateInvite(Base):
+    """Pending magic-link invite for someone who is not yet a Client.
+
+    Super admin invites by email; if the email doesn't match any existing
+    Client, an invite row is created with a one-time token. The recipient
+    receives a link to ``/affiliate-invite?token=<raw>`` which atomically
+    creates their ``clients`` row and ``affiliates`` row in a single
+    transaction. The raw token is emailed once and never persisted; only
+    its sha256 hash is stored here. Same pattern as ``ImpersonationToken``.
+
+    Lifecycle:
+      created → (sent via email) → accepted XOR revoked XOR expired
+    """
+
+    __tablename__ = "affiliate_invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False)
+    token_hash = Column(Text, nullable=False, unique=True, index=True)
+    max_active_codes = Column(Integer, nullable=False, default=10, server_default="10")
+    invited_by = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "max_active_codes > 0",
+            name="chk_invite_max_codes_positive",
+        ),
+    )
+
+    invited_by_client = relationship("Client", foreign_keys=[invited_by])

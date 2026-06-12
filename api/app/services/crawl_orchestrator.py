@@ -92,6 +92,8 @@ async def run_full_crawl(
     use_js: bool,
     replace_source: str | None,
     cost_per_page: int,
+    max_depth: int | None = None,
+    concurrency: int | None = None,
 ) -> dict:
     """Execute the full crawl pipeline end-to-end. Returns the result payload.
 
@@ -99,6 +101,13 @@ async def run_full_crawl(
     releases the per-client crawl lock — so callers don't need a try/finally
     of their own. Re-raises any underlying exception (the worker uses this to
     mark the job failed; the API surfaces it as a 5xx).
+
+    Crawl knobs (``max_depth``, ``concurrency``) are plan-aware: the route
+    layer resolves them from the client's plan and passes them through.
+    ``max_pages`` is also clamped at the route layer — for JS crawls the
+    route layer applies ``min(plan_max_pages, plan_js_max_pages)`` before
+    forwarding, so a single capped ``max_pages`` is all the subprocess needs.
+    ``None`` means "let the crawler subprocess fall back to its env defaults".
     """
     result_payload: dict | None = None
     try:
@@ -108,6 +117,8 @@ async def run_full_crawl(
             max_pages=max_pages,
             use_js=use_js,
             client_id=client_id,
+            max_depth=max_depth,
+            concurrency=concurrency,
         )
 
         results = crawl_data.get("results")

@@ -4,7 +4,7 @@ from pathlib import Path
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 
-from app.api.auth import get_current_client_or_operator
+from app.api.auth import get_current_client_or_operator, require_active_subscription_for_workspace
 from app.config import DOCUMENTS_DIR
 from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
 from app.core.rate_limit import key_from_api_key, limiter
@@ -181,8 +181,15 @@ def ingest_documents(
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
     background_tasks: BackgroundTasks = BackgroundTasks(),
+    _sub=Depends(require_active_subscription_for_workspace),
 ):
-    """Ingest multiple files (PDF, DOCX, TXT, MD) for a client."""
+    """Ingest multiple files (PDF, DOCX, TXT, MD) for a client.
+
+    Subscription-gated — uploading new content into the knowledge base is
+    a paid-feature action. Customers with an expired trial can still see
+    and delete what they already uploaded, just not add more until they
+    reactivate.
+    """
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
     _verify_bot_ownership(bot_id, client_id)
@@ -373,6 +380,7 @@ async def crawl_endpoint(
     background_tasks: BackgroundTasks,
     bot_id: int | None = Query(None),
     auth: dict = Depends(get_current_client_or_operator),
+    _sub=Depends(require_active_subscription_for_workspace),
 ):
     """Start a crawl + ingestion job for a client.
 
@@ -386,15 +394,59 @@ async def crawl_endpoint(
     _verify_bot_ownership(bot_id, client_id)
     _check_memory()
 
-    # ── Credit pre-flight: reserve enough for the worst-case crawl ──
-    # We charge per page actually ingested (not per request), so the pre-flight
-    # uses ``max_pages * cost_per_page`` as an upper bound. The real deduction
-    # happens per-page atomically inside batch_web_ingestion.
-    from app.services import credit_service
+    # ── Plan-aware crawl limits ──
+    # Resolve the client's plan-tier crawl knobs *before* the credit
+    # pre-flight so an over-the-limit request is rejected with a clear
+    # upgrade signal instead of a generic "out of credits" error. The
+    # ceiling is also used to fill in ``max_pages`` when the request
+    # didn't specify one — that's how Free-tier callers get 75-page
+    # behavior without sending a body field.
+    from app.services import credit_service, plan_service
 
     with get_session() as db:
+        plan = plan_service.get_client_plan(db, client_id)
+        crawl_limits = plan_service.get_crawl_limits(plan)
+        plan_max_pages = crawl_limits["max_crawl_pages"]
+        plan_max_depth = crawl_limits["max_crawl_depth"]
+        plan_js_max_pages = crawl_limits["max_crawl_js_pages"]
+        plan_concurrency = crawl_limits["max_crawl_concurrency"]
+
+        requested_pages = crawl_request.max_pages
+        if requested_pages is not None and int(requested_pages) > plan_max_pages:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "plan_limit_exceeded",
+                    "limit_type": "max_crawl_pages",
+                    "plan_slug": plan.slug,
+                    "plan_name": plan.name,
+                    "plan_max": plan_max_pages,
+                    "requested": int(requested_pages),
+                    "upgrade_url": "/billing",
+                    "message": (
+                        f"Your {plan.name} plan allows up to {plan_max_pages} pages per crawl. "
+                        f"You requested {int(requested_pages)}. Upgrade to crawl more."
+                    ),
+                },
+            )
+
+        # Clamp to plan ceiling (covers the None case: callers that didn't
+        # specify ``max_pages`` get the full tier allowance) and to the
+        # JS-mode memory cap when applicable.
+        effective_max_pages = min(int(requested_pages or plan_max_pages), plan_max_pages)
+        if crawl_request.use_js:
+            effective_max_pages = min(effective_max_pages, plan_js_max_pages)
+
+        # ── Credit pre-flight: reserve enough for the worst-case crawl ──
+        # We charge per page actually ingested (not per request), so the
+        # pre-flight uses ``effective_max_pages * cost_per_page`` as an upper
+        # bound. The real deduction happens per-page atomically inside
+        # batch_web_ingestion. Using the post-clamp value keeps the
+        # pre-flight honest — without this, an Enterprise customer who
+        # passed ``max_pages=5000`` could be blocked here because we
+        # mis-multiplied by the unclamped request.
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
-        required = cost_per_page * max(int(crawl_request.max_pages or 1), 1)
+        required = cost_per_page * max(effective_max_pages, 1)
         available = credit_service.get_balance(db, client_id)
         if available < required:
             raise HTTPException(
@@ -405,7 +457,7 @@ async def crawl_endpoint(
                     "available": available,
                     "message": (
                         f"This crawl needs up to {required} credits "
-                        f"({cost_per_page} per page × {crawl_request.max_pages} pages). "
+                        f"({cost_per_page} per page × {effective_max_pages} pages). "
                         f"You have {available}. Upgrade your plan or buy a top-up to proceed."
                     ),
                 },
@@ -432,13 +484,23 @@ async def crawl_endpoint(
                 client_id,
                 bot_id,
                 crawl_request.url,
-                crawl_request.max_pages,
+                effective_max_pages,
                 crawl_request.use_js,
                 crawl_request.replace_source,
                 cost_per_page,
+                plan_max_depth,
+                plan_concurrency,
             )
             job_id = job.job_id if job is not None else None
-            logger.info("Crawl enqueued for client %s: %s (job_id=%s)", client_id, crawl_request.url, job_id)
+            logger.info(
+                "Crawl enqueued for client %s: %s (job_id=%s, plan=%s, pages=%d, depth=%d)",
+                client_id,
+                crawl_request.url,
+                job_id,
+                plan.slug,
+                effective_max_pages,
+                plan_max_depth,
+            )
         else:
             # Local-dev fallback: run inline as a FastAPI BackgroundTask so
             # the response still fires immediately and the existing polling
@@ -450,12 +512,20 @@ async def crawl_endpoint(
                 client_id=client_id,
                 bot_id=bot_id,
                 url=crawl_request.url,
-                max_pages=crawl_request.max_pages,
+                max_pages=effective_max_pages,
                 use_js=crawl_request.use_js,
                 replace_source=crawl_request.replace_source,
                 cost_per_page=cost_per_page,
+                max_depth=plan_max_depth,
+                concurrency=plan_concurrency,
             )
-            logger.info("Crawl scheduled inline (WORKER_ENABLED=false) for client %s", client_id)
+            logger.info(
+                "Crawl scheduled inline (WORKER_ENABLED=false) for client %s (plan=%s, pages=%d, depth=%d)",
+                client_id,
+                plan.slug,
+                effective_max_pages,
+                plan_max_depth,
+            )
     except Exception as exc:
         # Enqueue failed before the orchestrator could take ownership of the
         # lock — release it here so the user isn't locked out indefinitely.

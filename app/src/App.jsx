@@ -1,11 +1,17 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import { ToastProvider } from './context/ToastContext';
 import { CrawlProvider } from './context/CrawlContext';
 import { getAuthState } from './utils/auth';
+import { getCurrentUser } from './services/api';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
+// AffiliateLayout removed — the affiliate dashboard now lives inside the
+// main AdminLayout, gated by the conditional Sidebar menu item rather than
+// a dedicated shell. The standalone layout is retained on disk for one
+// release for git-blame archaeology and will be deleted.
 
 // Global UI
 import GlobalCrawlIndicator from './components/GlobalCrawlIndicator';
@@ -14,6 +20,7 @@ import GlobalCrawlIndicator from './components/GlobalCrawlIndicator';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
+import AffiliateInvite from './pages/AffiliateInvite';
 import Dashboard from './pages/Dashboard';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Settings from './pages/Settings';
@@ -25,12 +32,14 @@ import Support from './pages/Support';
 import TeamManagement from './pages/TeamManagement';
 import Integrations from './pages/Integrations';
 import Billing from './pages/Billing';
+import AffiliateDashboard from './pages/AffiliateDashboard';
 
 // Superadmin
 import SuperadminLayout from './layouts/SuperadminLayout';
 import SuperadminOverview from './pages/superadmin/Overview';
 import SuperadminClients from './pages/superadmin/Clients';
 import SuperadminFeedback from './pages/superadmin/Feedback';
+import SuperadminAffiliates from './pages/superadmin/Affiliates';
 
 // Components
 import AccessDenied from './components/AccessDenied';
@@ -47,6 +56,79 @@ const SuperadminRoute = ({ children }) => {
     if (!isAuthenticated) return <Navigate to="/login" replace />;
     if (!isSuperadmin) return <Navigate to="/" replace />;
     return children;
+};
+
+// AffiliateRoute removed — the dedicated layout guard is gone, the
+// AffiliateDashboard now lives inside the main AdminLayout tree which
+// is already wrapped in ProtectedRoute. AffiliateDashboard's own 403
+// EmptyState handles unenrolled-but-curious visitors.
+
+/**
+ * One-release backwards-compat redirect: invites delivered before the
+ * cut-over land at /affiliate-accept?token=… and need to be forwarded
+ * to /affiliate-invite preserving the query string. Once the longest
+ * unaccepted invite ages out (14 days post-cutover) this route can be
+ * deleted.
+ */
+const LegacyAffiliateAcceptRedirect = () => {
+    const search = typeof window !== 'undefined' ? window.location.search : '';
+    return <Navigate to={`/affiliate-invite${search}`} replace />;
+};
+
+/**
+ * Smart root redirect. The instant the user lands at "/", we fetch
+ * /auth/me and route them based on who they are:
+ *
+ *   - superadmin           → /superadmin/overview
+ *   - affiliate-only user  → /affiliate  (inside the main admin layout
+ *                                          — the dedicated affiliate
+ *                                          shell was removed; the page
+ *                                          now lives alongside Billing,
+ *                                          Settings, etc., with the
+ *                                          Sidebar conditionally
+ *                                          rendering the menu item)
+ *   - everyone else        → render the customer Dashboard inline
+ *
+ * Failure to fetch /auth/me falls through to the customer Dashboard so
+ * stale localStorage tokens don't trap users in an infinite loading
+ * state. The 401 interceptor in services/api will redirect them to
+ * /login if the token is actually invalid.
+ */
+const RootRedirect = ({ fallback }) => {
+    const [destination, setDestination] = useState(null);
+    const [resolved, setResolved] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        getCurrentUser()
+            .then((me) => {
+                if (cancelled) return;
+                if (me?.is_superadmin) {
+                    setDestination('/superadmin/overview');
+                } else if (me?.is_affiliate_only) {
+                    setDestination('/affiliate');
+                }
+            })
+            .catch(() => {
+                /* fallback handles it */
+            })
+            .finally(() => {
+                if (!cancelled) setResolved(true);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    if (!resolved) {
+        return (
+            <div className="min-h-[60vh] flex items-center justify-center">
+                <Loader2 size={28} className="animate-spin text-primary-500" />
+            </div>
+        );
+    }
+    if (destination) return <Navigate to={destination} replace />;
+    return fallback;
 };
 
 /**
@@ -69,6 +151,16 @@ function App() {
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
+                    {/* Partners invite landing — public; reads ?token= and
+                        either auto-accepts (logged-in) or shows two CTAs
+                        (sign in / sign up) for the recipient to choose. */}
+                    <Route path="/affiliate-invite" element={<AffiliateInvite />} />
+                    {/* Legacy URL — invites sent before the cut-over still
+                        point at /affiliate-accept. Preserve the token. */}
+                    <Route
+                        path="/affiliate-accept"
+                        element={<LegacyAffiliateAcceptRedirect />}
+                    />
 
                     {/* App Routes (root) */}
                     {/* CrawlProvider wraps the authenticated admin tree so the
@@ -89,8 +181,20 @@ function App() {
                             </ProtectedRoute>
                         }
                     >
-                        {/* Owner-only pages — regular agents see AccessDenied in-place */}
-                        <Route index element={<ClientOnlyPage pageName="Overview"><Dashboard /></ClientOnlyPage>} />
+                        {/* Owner-only pages — regular agents see AccessDenied in-place.
+                            The index route gets a RootRedirect wrapper so superadmins
+                            and affiliate-only users get bounced to their dedicated
+                            shells before the customer Dashboard renders. */}
+                        <Route
+                            index
+                            element={
+                                <RootRedirect
+                                    fallback={
+                                        <ClientOnlyPage pageName="Overview"><Dashboard /></ClientOnlyPage>
+                                    }
+                                />
+                            }
+                        />
                         <Route path="knowledge" element={<ClientOnlyPage pageName="Sources"><KnowledgeBase /></ClientOnlyPage>} />
                         <Route path="insights" element={<ClientOnlyPage pageName="Insights"><Insights /></ClientOnlyPage>} />
                         <Route path="leads" element={<ClientOnlyPage pageName="Leads"><Leads /></ClientOnlyPage>} />
@@ -100,7 +204,7 @@ function App() {
                         <Route path="webhooks" element={<Navigate to="/integrations?tab=webhooks" replace />} />
                         <Route path="integrations/email" element={<Navigate to="/integrations?tab=email" replace />} />
 
-                        {/* Accessible to all authenticated users */}
+                        {/* Accessible to all authenticated users. */}
                         <Route path="billing" element={<Billing />} />
                         <Route path="credits" element={<Navigate to="/billing" replace />} />
                         <Route path="subscription" element={<Navigate to="/billing" replace />} />
@@ -108,6 +212,12 @@ function App() {
                         <Route path="support" element={<Support />} />
                         <Route path="team" element={<TeamManagement />} />
                         <Route path="settings" element={<Settings />} />
+                        {/* Affiliate dashboard — visible in the sidebar only
+                            when the current Client has an active affiliates
+                            row (Sidebar.jsx checks /auth/me.is_affiliate).
+                            The page itself surfaces a typed 403 EmptyState
+                            for curious URL-walkers who aren't enrolled. */}
+                        <Route path="affiliate" element={<AffiliateDashboard />} />
 
                         {/* Redirects for old URLs */}
                         <Route path="analytics" element={<Navigate to="/insights?tab=analytics" replace />} />
@@ -134,6 +244,7 @@ function App() {
                     >
                         <Route path="overview" element={<SuperadminOverview />} />
                         <Route path="clients" element={<SuperadminClients />} />
+                        <Route path="affiliates" element={<SuperadminAffiliates />} />
                         <Route path="feedback" element={<SuperadminFeedback />} />
                     </Route>
 

@@ -47,6 +47,9 @@ async def task_crawl_and_ingest(
     use_js: bool,
     replace_source: str | None,
     cost_per_page: int,
+    max_depth: int | None = None,
+    concurrency: int | None = None,
+    **_unused_kwargs,
 ) -> dict:
     """Run a full website crawl + ingestion pipeline in the background.
 
@@ -56,6 +59,14 @@ async def task_crawl_and_ingest(
     duration of the crawl and publishes terminal status to Redis so the
     frontend can pick it up via ``GET /crawl/progress``.
 
+    The trailing ``max_depth`` / ``concurrency`` params are plan-aware crawl
+    knobs added with the per-tier limits work. They're defaulted so jobs
+    enqueued by an older API node (mid-rolling-deploy) still execute — they'll
+    just use the subprocess env defaults instead of the caller's plan-tier
+    values. ``**_unused_kwargs`` swallows legacy ``js_max_pages`` payloads
+    enqueued by API nodes deployed before the route layer began clamping
+    ``max_pages`` to the JS tier directly — keeps a rolling deploy safe.
+
     Returns the same payload that the legacy synchronous ``POST /crawl``
     used to return (so it's also visible via ``GET /ingest/status/{job_id}``
     once the job completes).
@@ -63,12 +74,14 @@ async def task_crawl_and_ingest(
     from app.services.crawl_orchestrator import run_full_crawl
 
     logger.info(
-        "task_crawl_and_ingest: client_id=%d, bot_id=%s, url=%s, max_pages=%s, use_js=%s",
+        "task_crawl_and_ingest: client_id=%d, bot_id=%s, url=%s, max_pages=%s, use_js=%s, max_depth=%s, concurrency=%s",
         client_id,
         bot_id,
         url,
         max_pages,
         use_js,
+        max_depth,
+        concurrency,
     )
 
     return await run_full_crawl(
@@ -79,6 +92,8 @@ async def task_crawl_and_ingest(
         use_js=use_js,
         replace_source=replace_source,
         cost_per_page=cost_per_page,
+        max_depth=max_depth,
+        concurrency=concurrency,
     )
 
 
@@ -221,6 +236,14 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                 .all()
             )
             for sub in subs:
+                # Period length matches the subscription's billing cycle.
+                # The old code hard-coded ``1`` here, which silently renewed
+                # annual subscriptions every month — twelve credit grants
+                # per paid year and a customer-facing billing surprise.
+                # ``billing_cycle`` is normalised to ``"monthly"`` / ``"annual"``
+                # at sub creation; anything else falls through to monthly so
+                # legacy / manual rows don't get stuck.
+                period_months = 12 if (sub.billing_cycle or "").lower() == "annual" else 1
                 # Skip if a plan_grant already exists for today (webhook beat us to it).
                 already_granted = (
                     session.execute(
@@ -239,12 +262,12 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                     # Still need to roll the period forward — without this the
                     # cron would keep matching the same row every day.
                     sub.current_period_start = sub.current_period_end
-                    sub.current_period_end = add_months(sub.current_period_end, 1)
+                    sub.current_period_end = add_months(sub.current_period_end, period_months)
                     continue
                 credit_service.reset_monthly_plan_credits(session, sub.client_id)
                 credit_service.grant_for_subscription(session, sub)
                 sub.current_period_start = sub.current_period_end
-                sub.current_period_end = add_months(sub.current_period_end, 1)
+                sub.current_period_end = add_months(sub.current_period_end, period_months)
                 renewed += 1
             session.commit()
         return renewed
@@ -361,3 +384,364 @@ async def task_send_template_email(
         raise RuntimeError(f"Template email delivery failed: to={to_email}, template={template_id}")
 
     return True
+
+
+# ── Trial lifecycle (PR4) ───────────────────────────────────────────────────
+#
+# Three crons keep the free-trial flow honest:
+#
+# * ``task_expire_trials``           — hourly. Flips trialing → trial_expired
+#                                      the moment ``trial_end`` lapses, sets
+#                                      the 15-day data retention timestamp,
+#                                      fires the "trial ended" email.
+# * ``task_trial_reminder_emails``   — daily. Sends day-7 / day-11 / day-13
+#                                      reminders to every trialing customer,
+#                                      idempotent via ``trial_emails_sent``.
+# * ``task_delete_expired_trial_data`` — daily. Hard-deletes bots / docs /
+#                                      sessions for trial_expired subs once
+#                                      ``data_retention_until`` is reached.
+#
+# All three use a sync inner function dispatched to a thread executor (the
+# pattern matches ``task_renew_due_subscriptions``) so they can use the
+# blocking SQLAlchemy session shape the rest of the codebase ships.
+
+
+def _mark_email_sent(sub, key: str, when) -> None:
+    """Idempotency marker — set ``trial_emails_sent[key] = ts``.
+
+    JSONB columns on SQLAlchemy don't auto-detect in-place mutation; we
+    rebuild the dict so the change actually flushes. Cheap, correct,
+    survives every cron-vs-cron race we can throw at it.
+    """
+    existing = dict(sub.trial_emails_sent or {})
+    existing[key] = when.isoformat()
+    sub.trial_emails_sent = existing
+
+
+async def task_expire_trials(ctx: dict) -> int:
+    """Cron: flip trialing subscriptions whose ``trial_end`` has lapsed.
+
+    Idempotent — the ``status`` filter naturally excludes already-expired
+    rows on the next tick. The "trial ended" email fires once per
+    subscription (gated by ``trial_emails_sent.trial_ended``); if the
+    Brevo call fails the cron retries on the next tick.
+
+    Returns the number of subscriptions that flipped this run.
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.config import TRIAL_DATA_RETENTION_DAYS
+    from app.db.models import Client, Subscription
+    from app.db.session import get_session
+    from app.services.email_service import send_trial_ended_email
+
+    def _run() -> int:
+        now = datetime.now(UTC)
+        retention_window = timedelta(days=TRIAL_DATA_RETENTION_DAYS)
+        flipped = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.status == "trialing",
+                        Subscription.trial_end.is_not(None),
+                        Subscription.trial_end < now,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                trial_end = sub.trial_end
+                if trial_end.tzinfo is None:
+                    trial_end = trial_end.replace(tzinfo=UTC)
+
+                sub.status = "trial_expired"
+                sub.data_retention_until = trial_end + retention_window
+
+                # Email the workspace owner outside the transaction. We
+                # snapshot the values we need first (owner row may live in
+                # a separate query) and fire after commit.
+                owner = session.get(Client, sub.client_id)
+                plan_name = sub.plan.name if sub.plan else "your trial plan"
+
+                if not (sub.trial_emails_sent or {}).get("trial_ended") and owner:
+                    try:
+                        send_trial_ended_email(
+                            owner.email,
+                            name=owner.name,
+                            plan_name=plan_name,
+                            data_retention_until=sub.data_retention_until,
+                        )
+                        _mark_email_sent(sub, "trial_ended", now)
+                    except Exception as exc:
+                        logger.warning(
+                            "task_expire_trials: ended email failed for client %s: %s",
+                            sub.client_id,
+                            exc,
+                        )
+                flipped += 1
+            session.commit()
+        return flipped
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _run)
+    if count:
+        logger.info("task_expire_trials: flipped %d subscription(s) to trial_expired", count)
+    return count
+
+
+async def task_trial_reminder_emails(ctx: dict) -> int:
+    """Cron: day-7 / day-11 / day-13 reminder cadence.
+
+    Runs once a day; for every still-trialing subscription it computes
+    ``days_remaining = ceil((trial_end - now) / 1 day)`` and fires the
+    matching email if its marker isn't set. We use the day-bucket as the
+    idempotency key so a customer who started a trial mid-day still gets
+    every reminder on the right calendar day rather than 24h later.
+
+    Returns the number of emails sent across all subscriptions.
+    """
+    import asyncio
+    import math
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.db.models import Client, Subscription
+    from app.db.session import get_session
+    from app.services.email_service import send_trial_day_7_email, send_trial_days_left_email
+
+    # ``key`` doubles as the slot in ``trial_emails_sent`` and as the
+    # discriminator for which template fires. Order matters only for the
+    # log line — the lookup is keyed by ``days_remaining``.
+    cadence: dict[int, tuple[str, str]] = {
+        # days_remaining → (marker_key, template)
+        # day-7 of a 14-day trial → 7 days remaining
+        7: ("day_7", "day_7"),
+        # day-11 of a 14-day trial → 3 days remaining
+        3: ("day_11", "days_left"),
+        # day-13 of a 14-day trial → 1 day remaining
+        1: ("day_13", "days_left"),
+    }
+
+    def _run() -> int:
+        now = datetime.now(UTC)
+        sent = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.status == "trialing",
+                        Subscription.trial_end.is_not(None),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                trial_end = sub.trial_end
+                if trial_end.tzinfo is None:
+                    trial_end = trial_end.replace(tzinfo=UTC)
+                # ceil so a trial that ends in 0.5 days still counts as
+                # "1 day left" rather than 0 — keeps the day-13 warning
+                # accurate when fired in the customer's morning.
+                seconds_left = (trial_end - now).total_seconds()
+                if seconds_left <= 0:
+                    continue
+                days_remaining = max(1, math.ceil(seconds_left / 86400))
+
+                slot = cadence.get(days_remaining)
+                if slot is None:
+                    continue
+                marker_key, template = slot
+                if (sub.trial_emails_sent or {}).get(marker_key):
+                    continue
+
+                owner = session.get(Client, sub.client_id)
+                if owner is None:
+                    continue
+                plan_name = sub.plan.name if sub.plan else "your trial plan"
+
+                try:
+                    if template == "day_7":
+                        send_trial_day_7_email(
+                            owner.email,
+                            name=owner.name,
+                            days_remaining=days_remaining,
+                            plan_name=plan_name,
+                        )
+                    else:
+                        send_trial_days_left_email(
+                            owner.email,
+                            name=owner.name,
+                            days_remaining=days_remaining,
+                            plan_name=plan_name,
+                        )
+                    _mark_email_sent(sub, marker_key, now)
+                    sent += 1
+                except Exception as exc:
+                    logger.warning(
+                        "task_trial_reminder_emails: %s send failed for client %s: %s",
+                        marker_key,
+                        sub.client_id,
+                        exc,
+                    )
+            session.commit()
+        return sent
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _run)
+    if count:
+        logger.info("task_trial_reminder_emails: dispatched %d reminder(s)", count)
+    return count
+
+
+async def task_delete_expired_trial_data(ctx: dict) -> int:
+    """Cron: hard-delete bots/documents/sessions after the retention window.
+
+    The expiry cron sets ``data_retention_until`` when status flips to
+    ``trial_expired``; once that timestamp lapses we drop every Bot owned
+    by the workspace (FK cascades take down Document, ChatSession,
+    ChatMessage, LeadInfo, BANTSignal, etc.) and mark the Client as
+    deactivated so it never appears in any "active customers" report.
+
+    The Client row itself stays — we keep the email and the deletion
+    marker for support / audit. A future GDPR-erasure endpoint can
+    fully purge it on explicit request.
+
+    Returns the number of subscriptions processed this run.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.db.models import Bot, Client, Subscription
+    from app.db.session import get_session
+    from app.services.email_service import send_trial_data_deleted_email
+
+    def _run() -> int:
+        now = datetime.now(UTC)
+        deleted = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.status == "trial_expired",
+                        Subscription.data_retention_until.is_not(None),
+                        Subscription.data_retention_until < now,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                owner = session.get(Client, sub.client_id)
+                if owner is None:
+                    continue
+
+                # Owner already deactivated → already processed. Skip and
+                # let the marker rest; we don't want to re-fire the email.
+                if owner.deactivated_at is not None and (sub.trial_emails_sent or {}).get("data_deleted"):
+                    continue
+
+                # Wipe bot-rooted data. ondelete='CASCADE' on Document,
+                # ChatSession, etc. takes care of the children.
+                bot_rows = session.execute(select(Bot).where(Bot.client_id == owner.id)).scalars().all()
+                for bot in bot_rows:
+                    session.delete(bot)
+                owner.deactivated_at = now
+
+                try:
+                    send_trial_data_deleted_email(owner.email, name=owner.name)
+                    _mark_email_sent(sub, "data_deleted", now)
+                except Exception as exc:
+                    logger.warning(
+                        "task_delete_expired_trial_data: deleted email failed for client %s: %s",
+                        owner.id,
+                        exc,
+                    )
+                deleted += 1
+            session.commit()
+        return deleted
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _run)
+    if count:
+        logger.info("task_delete_expired_trial_data: purged %d workspace(s)", count)
+    return count
+
+
+# ── Dunning auto-expire ─────────────────────────────────────────────────────
+
+
+async def task_expire_past_due_subscriptions(ctx: dict) -> int:
+    """Cron: flip ``past_due`` subscriptions to ``expired`` once the dunning
+    grace window has elapsed.
+
+    Stripe and Razorpay both retry failed payments for ~7 days. Up to that
+    point ``status = 'past_due'`` keeps the customer's full access so a
+    rescued card resumes service without interruption. After
+    ``PAYMENT_FAILED_GRACE_DAYS`` we stop bleeding LLM / credit cost on a
+    customer who isn't paying — the same ``expired`` status the gates and
+    the widget already understand kicks them out of write paths and into
+    polite-offline mode on visitor traffic.
+
+    Idempotent: the query filters on ``status='past_due'``, so a row that
+    flipped on the previous tick is excluded from the next.
+
+    Returns the number of subscriptions that expired this run.
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.config import PAYMENT_FAILED_GRACE_DAYS
+    from app.db.models import Subscription
+    from app.db.session import get_session
+
+    def _run() -> int:
+        now = datetime.now(UTC)
+        grace = timedelta(days=PAYMENT_FAILED_GRACE_DAYS)
+        cutoff = now - grace
+        flipped = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.status == "past_due",
+                        # Rows without a stamped anchor — webhook-only legacy
+                        # data — are NOT touched here. They'll get the
+                        # anchor on the next payment-failed event and the
+                        # cron picks them up from there.
+                        Subscription.past_due_since.is_not(None),
+                        Subscription.past_due_since < cutoff,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                sub.status = "expired"
+                # Surface the dunning end-of-life in canceled_at so the
+                # billing UI's "Canceled on" badge has a date to render.
+                # cancel_reason distinguishes this from a customer-initiated
+                # cancel for support / analytics.
+                if sub.canceled_at is None:
+                    sub.canceled_at = now
+                if not sub.cancel_reason:
+                    sub.cancel_reason = "dunning_grace_elapsed"
+                flipped += 1
+            session.commit()
+        return flipped
+
+    loop = asyncio.get_running_loop()
+    count = await loop.run_in_executor(None, _run)
+    if count:
+        logger.info("task_expire_past_due_subscriptions: expired %d subscription(s)", count)
+    return count

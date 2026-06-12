@@ -71,6 +71,11 @@ api.interceptors.response.use(
 
         if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint) {
             AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+            // Banner dismissals are scoped to the session, not to a user —
+            // wipe them on auto-logout so the next account sees a fresh
+            // trial banner. Inline import keeps the bundle graph clean
+            // (the helper lives in utils, not in a component module).
+            import('../utils/trialBanner').then((m) => m.clearTrialBannerDismissals?.());
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
             }
@@ -101,15 +106,39 @@ export const loginAdmin = async (email, password) => {
  * @param {string} email - Email address
  * @param {string} password - Password (min 8 chars, letter + number)
  * @param {string|null} companyName - Optional company name
+ * @param {string|null} website - Optional website URL
  * @returns {Promise<Object>} The API response with access_token, client_id, name
  */
-export const registerClient = async (name, email, password, companyName = null, website = null) => {
+export const registerClient = async (
+    name,
+    email,
+    password,
+    companyName = null,
+    website = null,
+) => {
     try {
-        const response = await api.post('/auth/register', { name, email, password, company_name: companyName, website });
+        const payload = { name, email, password, company_name: companyName, website };
+        const response = await api.post('/auth/register', payload);
         return response.data;
     } catch (error) {
         console.error('API Error during registration:', error);
         throw buildApiError(error, 'Registration failed');
+    }
+};
+
+/**
+ * Apply a referral code for the currently-authenticated customer.
+ * Called from the checkout modal before the user pays. Returns
+ * { attributed: bool, message: string } — always resolves (never throws
+ * for invalid codes; only throws on network error).
+ * @param {string} code
+ */
+export const applyReferralCode = async (code) => {
+    try {
+        const response = await api.post('/affiliate/apply-referral', { code });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to apply referral code');
     }
 };
 
@@ -427,30 +456,15 @@ export const getClientSettings = async (botId) => {
     try {
         if (botId) {
             const response = await api.get(`/bots/${botId}`);
-            // Map bot response fields to match the legacy settings format
             const bot = response.data;
+            // Pass the full bot payload through, then layer the legacy-name
+            // mapping (``name`` → ``bot_name``) and service normalization on
+            // top. Spreading first keeps fields like ``widget_messages`` and
+            // ``widget_config`` intact — listing them explicitly previously
+            // dropped customizations (e.g. welcome suggestions) on reload.
             return {
+                ...bot,
                 bot_name: bot.name,
-                bot_logo: bot.bot_logo,
-                launcher_name: bot.launcher_name,
-                launcher_logo: bot.launcher_logo,
-                primary_color: bot.primary_color,
-                background_color: bot.background_color,
-                header_color: bot.header_color,
-                recommended_colors: bot.recommended_colors || [],
-                bant_enabled: bot.bant_enabled,
-                avatar_type: bot.avatar_type,
-                orb_color: bot.orb_color,
-                lead_form_enabled: bot.lead_form_enabled,
-                lead_form_fields: bot.lead_form_fields,
-                notification_email: bot.notification_email,
-                email_on_qualified: bot.email_on_qualified,
-                email_on_handoff: bot.email_on_handoff,
-                operator_timeout_seconds: bot.operator_timeout_seconds,
-                // Service-scoped answers (admin-defined, optional). Each entry
-                // is ``{name, url}``. Backend always returns objects, but we
-                // defensively normalize legacy string entries here so the UI
-                // never crashes if older bot data shows up.
                 services: Array.isArray(bot.services)
                     ? bot.services
                           .map((s) => (typeof s === 'string' ? { name: s, url: '' } : { name: s?.name || '', url: s?.url || '' }))
@@ -1192,6 +1206,24 @@ export const createCheckoutSession = async (planId, billingCycle = 'monthly') =>
     }
 };
 
+/**
+ * Start a 14-day free trial of the named paid plan.
+ *
+ * The customer must be on the free tier (or have no subscription) and must
+ * not have used a trial on this plan before. The backend cancels their
+ * existing free subscription, creates a trialing one on the new plan, and
+ * grants the plan's full monthly credit allowance. No card is collected
+ * — the conversion path runs through createCheckoutSession on day 14.
+ */
+export const startTrial = async (planSlug) => {
+    try {
+        const response = await api.post('/subscriptions/start-trial', { plan_slug: planSlug });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start free trial');
+    }
+};
+
 export const changePlan = async (planId, billingCycle = null) => {
     try {
         const response = await api.post('/subscriptions/change-plan', {
@@ -1297,11 +1329,382 @@ export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_i
     }
 };
 
+/**
+ * Self-redeem a Stripe Checkout top-up. Called from the success redirect
+ * (Billing page picks up ``?session_id=…``) so credits land instantly even
+ * when the Stripe webhook can't reach the API (local dev, in-flight delivery).
+ * Backend confirms ``payment_status == paid`` + ``client_id`` match before
+ * granting; safe to call on every success landing — idempotent server-side.
+ */
+export const verifyStripeTopup = async (sessionId) => {
+    try {
+        const response = await api.post('/credits/topup/verify-stripe', { session_id: sessionId });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not verify Stripe payment');
+    }
+};
+
+/**
+ * Subscription billing geo / currency profile. Returns the country (from
+ * edge headers, with a `?country=XX` override the caller can pass to flip
+ * the display currency for travellers), the display currency the UI should
+ * render against (INR for IN, USD elsewhere), the static USD→INR display
+ * rate, and whether checkout is actually wired (Razorpay enabled AND either
+ * the customer is Indian or International Payments has been unlocked).
+ *
+ * Cached at call sites — geo doesn't change mid-session.
+ */
+export const getBillingGeo = async (overrideCountry) => {
+    try {
+        const params = overrideCountry ? { country: overrideCountry.toUpperCase() } : undefined;
+        const response = await api.get('/subscriptions/geo', { params });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not load billing region');
+    }
+};
+
+/**
+ * Server-verify the Razorpay subscription Checkout success callback.
+ * Mirrors verifyTopupPayment's responsibility but for the subscription
+ * signature (``payment_id|subscription_id`` HMAC variant). The webhook is
+ * still the authoritative reconciler — this endpoint exists so the modal
+ * can flip to a success state instantly instead of polling.
+ */
+export const verifyRazorpaySubscription = async ({
+    razorpay_payment_id,
+    razorpay_subscription_id,
+    razorpay_signature,
+}) => {
+    try {
+        const response = await api.post('/subscriptions/verify-razorpay-subscription', {
+            razorpay_payment_id,
+            razorpay_subscription_id,
+            razorpay_signature,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not verify Razorpay subscription');
+    }
+};
+
+/**
+ * Subscription-side companion to ``verifyStripeTopup``. Reconciles a
+ * successful Stripe subscription checkout when the webhook can't reach
+ * the API (local dev) — links the local sub row to the Stripe sub id,
+ * resets prior plan credits, grants the new plan's monthly allowance.
+ * Idempotent; safe to call multiple times.
+ */
+export const verifyStripeSubscription = async (sessionId) => {
+    try {
+        const response = await api.post('/subscriptions/verify-stripe', { session_id: sessionId });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not verify Stripe subscription');
+    }
+};
+
+/**
+ * Reconcile escape hatch — asks Stripe directly for the customer's most
+ * recent paid subscription checkout and folds it into the local sub row.
+ * Used by the "Sync billing" button when the customer paid but the
+ * webhook never reached us (and they don't have a ``session_id`` in the
+ * URL because they came back later). Idempotent.
+ */
+export const reconcileStripeSubscription = async () => {
+    try {
+        const response = await api.post('/subscriptions/reconcile');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not sync billing');
+    }
+};
+
 export const changeOperatorSeats = async (delta) => {
     try {
         const response = await api.post('/subscriptions/seats', { delta });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to update operator seats');
+    }
+};
+
+
+// ─── Affiliate Program v1 ────────────────────────────────────────────────
+// Money-free referral codes + attribution. Endpoints mirror
+// app/api/affiliate_routes.py:
+//   GET    /affiliate/me           — affiliate's own meta
+//   GET    /affiliate/codes        — codes + per-row stats
+//   POST   /affiliate/codes        — create a code
+//   PATCH  /affiliate/codes/{id}   — update label / toggle active
+//   GET    /affiliate/stats        — aggregate metrics for the header card
+// All require X-API-Key + an active affiliates row (backend enforces 403).
+
+/** Return the logged-in affiliate's profile + cap. */
+export const getAffiliateMe = async () => {
+    try {
+        const response = await api.get('/affiliate/me');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliate profile');
+    }
+};
+
+/** List the current affiliate's codes with per-code click + signup counts. */
+export const getAffiliateCodes = async () => {
+    try {
+        const response = await api.get('/affiliate/codes');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load referral codes');
+    }
+};
+
+/**
+ * List the customers who signed up via one of the affiliate's codes.
+ * Emails are masked server-side on this route (affiliate scope) so the
+ * raw PII never reaches the browser.
+ */
+export const getAffiliateCodeReferrals = async (codeId) => {
+    try {
+        const response = await api.get(`/affiliate/codes/${codeId}/referrals`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load referrals for this code');
+    }
+};
+
+/**
+ * Same endpoint, super-admin scope: emails unmasked, platform_pct populated.
+ * Returns 404 when ``codeId`` isn't owned by ``affiliateId`` — the backend
+ * scopes to prevent global-namespace probing.
+ */
+export const getSuperadminCodeReferrals = async (affiliateId, codeId) => {
+    try {
+        const response = await api.get(
+            `/superadmin/affiliates/${affiliateId}/codes/${codeId}/referrals`,
+        );
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load referrals for this code');
+    }
+};
+
+/**
+ * Create a new referral code for the current affiliate.
+ * @param {string} code
+ * @param {string|null} label
+ * @param {{ affiliateCommissionPct?: number, customerDiscountPct?: number }} split
+ *   — per-code commission split. Each is 0–100 (whole percent). Their sum
+ *     must not exceed the affiliate's pool (set by super-admin).
+ */
+export const createAffiliateCode = async (
+    code,
+    label = null,
+    { affiliateCommissionPct, customerDiscountPct } = {},
+) => {
+    try {
+        const payload = { code, label };
+        if (affiliateCommissionPct != null) payload.affiliate_commission_pct = affiliateCommissionPct;
+        if (customerDiscountPct != null) payload.customer_discount_pct = customerDiscountPct;
+        const response = await api.post('/affiliate/codes', payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to create referral code');
+    }
+};
+
+/**
+ * Update an existing code. Every field is an optional patch:
+ *   - ``code``                       — rename (breaks old ?ref= URL)
+ *   - ``label``                      — internal label (empty string clears)
+ *   - ``active``                     — toggle deactivation/reactivation
+ *   - ``affiliateCommissionPct``     — what the affiliate keeps (0–100)
+ *   - ``customerDiscountPct``        — what the referred customer gets
+ *
+ * The split pair is validated together: their sum must not exceed the
+ * affiliate's commission pool.
+ */
+export const updateAffiliateCode = async (
+    codeId,
+    { code, label, active, affiliateCommissionPct, customerDiscountPct } = {},
+) => {
+    try {
+        const payload = {};
+        if (code !== undefined) payload.code = code;
+        if (label !== undefined) payload.label = label;
+        if (active !== undefined) payload.active = active;
+        if (affiliateCommissionPct !== undefined) payload.affiliate_commission_pct = affiliateCommissionPct;
+        if (customerDiscountPct !== undefined) payload.customer_discount_pct = customerDiscountPct;
+        const response = await api.patch(`/affiliate/codes/${codeId}`, payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update referral code');
+    }
+};
+
+/** Aggregate stats for the affiliate dashboard header card. */
+export const getAffiliateStats = async () => {
+    try {
+        const response = await api.get('/affiliate/stats');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliate stats');
+    }
+};
+
+// ─── Super-admin: affiliate management ──────────────────────────────────
+// Endpoints in app/api/affiliate_routes.py under /superadmin/affiliates.
+// All require X-API-Key from a client with is_superadmin = true.
+
+/** List every affiliate (active + deactivated) with aggregate stats. */
+export const listSuperadminAffiliates = async () => {
+    try {
+        const response = await api.get('/superadmin/affiliates');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliates');
+    }
+};
+
+/**
+ * Invite an existing customer OR send a magic-link to a stranger.
+ * @param {string} email
+ * @param {number|null} maxActiveCodes — optional override of the 10-code default
+ * @param {number|null} commissionPct — optional commission % (0–100). Defaults to 0.
+ */
+export const inviteSuperadminAffiliate = async (
+    email,
+    maxActiveCodes = null,
+    commissionPct = null,
+) => {
+    try {
+        const payload = { email };
+        if (maxActiveCodes != null) payload.max_active_codes = maxActiveCodes;
+        if (commissionPct != null) payload.commission_pct = commissionPct;
+        const response = await api.post('/superadmin/affiliates', payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to invite affiliate');
+    }
+};
+
+/** Detail bundle for one affiliate: meta + codes + stats. */
+export const getSuperadminAffiliateDetail = async (affiliateId) => {
+    try {
+        const response = await api.get(`/superadmin/affiliates/${affiliateId}`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load affiliate details');
+    }
+};
+
+/**
+ * Override an affiliate: change cap, commission %, or toggle active status.
+ * Deactivating an affiliate also cascades to deactivate every still-active
+ * code they own.
+ *
+ * @param {number} affiliateId
+ * @param {{ maxActiveCodes?: number, commissionPct?: number, active?: boolean }} updates
+ */
+export const updateSuperadminAffiliate = async (
+    affiliateId,
+    { maxActiveCodes, commissionPct, active } = {},
+) => {
+    try {
+        const payload = {};
+        if (maxActiveCodes !== undefined) payload.max_active_codes = maxActiveCodes;
+        if (commissionPct !== undefined) payload.commission_pct = commissionPct;
+        if (active !== undefined) payload.active = active;
+        const response = await api.patch(`/superadmin/affiliates/${affiliateId}`, payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update affiliate');
+    }
+};
+
+// ─── Affiliate invites (magic-link onboarding) ──────────────────────────
+
+/**
+ * Look up a magic-link invite by raw token. Returns the email + expiry so
+ * the AffiliateInvite landing page can show the recipient who the invite
+ * is for + the expiry deadline before they pick sign-in or sign-up.
+ *
+ * Throws on invalid (404) / expired or revoked (410). The caller inspects
+ * `error.status` to render the right empty state.
+ */
+export const lookupAffiliateInvite = async (token) => {
+    try {
+        const response = await api.get('/affiliate-invites/lookup', { params: { token } });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Invite link is invalid or expired');
+    }
+};
+
+/**
+ * Accept a magic-link invite: atomically creates Client + Affiliate, returns
+ * an access_token with the same shape as /auth/register so the admin app
+ * can log the user in immediately.
+ */
+export const acceptAffiliateInvite = async ({ token, name, password, companyName = null, website = null }) => {
+    try {
+        const payload = { token, name, password };
+        if (companyName) payload.company_name = companyName;
+        if (website) payload.website = website;
+        const response = await api.post('/affiliate-invites/accept', payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to accept invite');
+    }
+};
+
+/**
+ * Accept an invite while ALREADY signed in. Backend wires the Affiliate
+ * row to the currently-authenticated client (no Client row created).
+ * Returns 403 if the token's email doesn't match the logged-in client.
+ */
+export const acceptAffiliateInviteExisting = async (token) => {
+    try {
+        const response = await api.post('/affiliate-invites/accept-existing', { token });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to accept invite');
+    }
+};
+
+/** List pending magic-link invites (super-admin). */
+export const listSuperadminAffiliateInvites = async () => {
+    try {
+        const response = await api.get('/superadmin/affiliates/invites');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load pending invites');
+    }
+};
+
+/** Revoke a pending magic-link invite. Idempotent. */
+export const revokeSuperadminAffiliateInvite = async (inviteId) => {
+    try {
+        await api.delete(`/superadmin/affiliates/invites/${inviteId}`);
+        return true;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to revoke invite');
+    }
+};
+
+/**
+ * HARD-DELETE an affiliate. Removes the affiliate row, all their codes,
+ * and the entire click history. Referred clients keep existing but lose
+ * their referral_code_id (set to NULL). Irreversible — UI must require
+ * explicit confirmation.
+ */
+export const deleteSuperadminAffiliate = async (affiliateId) => {
+    try {
+        await api.delete(`/superadmin/affiliates/${affiliateId}`);
+        return true;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to remove affiliate');
     }
 };

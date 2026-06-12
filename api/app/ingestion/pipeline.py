@@ -7,32 +7,44 @@ from datetime import datetime
 from typing import Any
 
 from app.config import ARCHIVE_DIR
-from app.core.cache import cache_delete_prefix, qa_prefix_for_bot
+from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_for_bot
 from app.db.repository import delete_chunks_for_url, insert_documents, is_document_processed
 from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
 from app.ingestion.cleaner import clean_text
 from app.ingestion.embedder import embed_chunks
 from app.ingestion.enrichment import CHUNK_ENRICHMENT_ENABLED, enrich_chunks_batch
-from app.ingestion.extraction import load_docx, load_pdf, load_txt
+from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
 
 logger = logging.getLogger(__name__)
 
 _TITLE_PATTERN = re.compile(r"^#\s+(.+)", re.MULTILINE)
+# Many real-world pages put the H1 in their layout header (logo / site name)
+# and use ``## `` for the actual page title. Fall back to H2 when no H1 is
+# present so those pages still carry a meaningful title metadata.
+_TITLE_FALLBACK_PATTERN = re.compile(r"^##\s+(.+)", re.MULTILINE)
 
 
 def _extract_title_from_markdown(content: str) -> str | None:
     """Extract the first top-level heading from markdown content as a page title."""
-    match = _TITLE_PATTERN.search(content[:500])
-    if match:
-        title = match.group(1).strip()
-        # Ignore overly long or noisy "titles" (likely not a real heading)
-        if 3 <= len(title) <= 120:
-            return title
+    snippet = content[:500]
+    for pattern in (_TITLE_PATTERN, _TITLE_FALLBACK_PATTERN):
+        match = pattern.search(snippet)
+        if match:
+            title = match.group(1).strip()
+            # Ignore overly long or noisy "titles" (likely not a real heading)
+            if 3 <= len(title) <= 120:
+                return title
     return None
 
 
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
+
+# Failed uploads land here so they leave the input folder and don't get
+# reprocessed on every run (the "poison pill" pattern). Subfolder of
+# ARCHIVE_DIR keeps the configuration surface unchanged.
+QUARANTINE_DIR = os.path.join(ARCHIVE_DIR, "_quarantine")
+os.makedirs(QUARANTINE_DIR, exist_ok=True)
 
 
 def calculate_hash(text: str) -> str:
@@ -48,9 +60,15 @@ def _ingest_document(
     Returns the number of chunks processed (0 if skipped).
     Supports both client_id (legacy) and bot_id (new multi-bot).
     """
-    # 1. Calculate hash of the cleaned full text
-    cleaned_text = clean_text(full_text)
-    file_hash = calculate_hash(cleaned_text)
+    # 1. Clean every page so the hash AND the chunks derive from the same
+    #    text. Previously the hash was computed on ``clean_text(full_text)``
+    #    while chunks were produced from the raw ``pages_data`` — meaning two
+    #    templated landing pages that only differed in their nav/footer
+    #    boilerplate could collide on hash and be silently skipped, even
+    #    though their actual unique-content chunks differed.
+    cleaned_pages_data = [{"text": clean_text(p["text"]), "metadata": p.get("metadata", {})} for p in pages_data]
+    cleaned_full_text = " ".join(p["text"] for p in cleaned_pages_data)
+    file_hash = calculate_hash(cleaned_full_text)
 
     with get_session() as session:
         already_processed = is_document_processed(session, client_id, file_hash, bot_id=bot_id)
@@ -59,8 +77,8 @@ def _ingest_document(
             logger.info(f"Skipping {source_name} (Already processed for client {client_id}, bot {bot_id})")
             return 0
 
-        # 2. Chunk text (Preserves metadata)
-        chunks = chunk_text(pages_data, document_name=source_name)
+        # 2. Chunk the SAME cleaned text we hashed (Preserves metadata)
+        chunks = chunk_text(cleaned_pages_data, document_name=source_name)
 
         # Extract content and metadata for external processing
         chunk_contents = [c.page_content for c in chunks]
@@ -95,9 +113,12 @@ def _ingest_document(
                 session, client_id, source_name, file_hash, chunk_contents, embeddings, chunk_metadatas, bot_id=bot_id
             )
             session.commit()
-            # Invalidate cached QA responses — knowledge base has changed
+            # Invalidate cached QA responses AND stale relevance-gate judgments
+            # — the knowledge base just changed, so any prior "off-topic" cache
+            # entry would otherwise haunt this bot for up to an hour.
             if bot_id:
                 cache_delete_prefix(qa_prefix_for_bot(bot_id))
+                cache_delete_prefix(gate_prefix_for_bot(bot_id))
         except Exception as e:
             session.rollback()
             raise e
@@ -109,6 +130,14 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
     """
     Scan folder and ingest all supported files.
     Supports bot_id for multi-bot architecture.
+
+    Every processed file leaves ``folder_path`` regardless of outcome:
+    - successful ingest (or dedup-skip) → ``ARCHIVE_DIR``
+    - any failure (extraction, embedding, DB) → ``QUARANTINE_DIR``
+
+    Without the quarantine step, a single broken file (corrupted PDF,
+    scanned-only PDF, etc.) would be reprocessed on every run and block all
+    subsequent files behind it indefinitely.
     """
     supported_extensions = [".pdf", ".docx", ".txt", ".md"]
     files = [f for f in os.listdir(folder_path) if any(f.lower().endswith(ext) for ext in supported_extensions)]
@@ -120,6 +149,7 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
 
         logger.info(f"Processing {file_name} (type: {ext})")
 
+        failed = False
         try:
             # Step 1: Extract text and metadata based on extension
             if ext == ".pdf":
@@ -129,11 +159,13 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
             elif ext in [".txt", ".md"]:
                 pages_data = load_txt(file_path)
             else:
-                logger.warning(f"File type {ext} unexpectedly reached folder ingestion. Skipping.")
+                logger.warning(f"File type {ext} unexpectedly reached folder ingestion. Quarantining.")
+                failed = True
                 continue
 
             if not pages_data:
-                logger.warning(f"No text extracted from {file_name}. Skipping.")
+                logger.warning(f"No text extracted from {file_name}. Quarantining.")
+                failed = True
                 continue
 
             # combine text for hashing and cleaning
@@ -145,11 +177,23 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
             if chunks_count > 0:
                 processed_count += 1
 
-            # Move to archive regardless of skip/process
-            move_to_archive(file_path, file_name)
-
+        except ExtractionError as e:
+            # Surfaces scanned-PDF and empty-file cases with a clear message.
+            logger.warning(f"Cannot extract text from {file_name}: {e}. Quarantining.")
+            failed = True
         except Exception as e:
-            logger.error(f"Error processing {file_name}: {e}")
+            logger.error(f"Error processing {file_name}: {e}", exc_info=True)
+            failed = True
+        finally:
+            # ALWAYS move the file out of the upload folder. On failure go to
+            # quarantine so the next run isn't blocked by the same poison pill.
+            try:
+                if failed:
+                    move_to_quarantine(file_path, file_name)
+                else:
+                    move_to_archive(file_path, file_name)
+            except Exception as mv_err:
+                logger.error(f"Could not move {file_name} out of upload folder: {mv_err}")
 
     logger.info(f"Folder ingestion complete! Processed {processed_count} files.")
     return processed_count
@@ -231,7 +275,10 @@ def batch_web_ingestion(
             url = page["url"]
             content = page["content"]
 
-            # Clean and hash for dedup
+            # Clean and hash for dedup — and chunk on the SAME cleaned text so
+            # the dedup fingerprint matches what's actually stored. Mismatched
+            # sources let templated landing pages collide on hash and silently
+            # skip the second page.
             cleaned = clean_text(content)
             file_hash = calculate_hash(cleaned)
 
@@ -239,12 +286,13 @@ def batch_web_ingestion(
                 logger.info(f"Skipping {url} (already processed)")
                 continue
 
-            # Extract page title and chunk this page
+            # Title extraction runs on raw content — markdown ``# Title`` survives
+            # cleaning and the title metadata is useful for retrieval prefix.
             title = _extract_title_from_markdown(content)
             page_meta = {"page": 1, "url": url}
             if title:
                 page_meta["title"] = title
-            pages_data = [{"text": content, "metadata": page_meta}]
+            pages_data = [{"text": cleaned, "metadata": page_meta}]
             chunks = chunk_text(pages_data, document_name=url)
 
             if not chunks:
@@ -359,9 +407,12 @@ def batch_web_ingestion(
                 session.rollback()
                 continue
 
-    # Invalidate cached QA responses — knowledge base has changed
+    # Invalidate cached QA responses AND stale relevance-gate judgments —
+    # the bot's knowledge base just expanded, so prior off-topic verdicts
+    # should not survive the upload.
     if total > 0 and bot_id:
         cache_delete_prefix(qa_prefix_for_bot(bot_id))
+        cache_delete_prefix(gate_prefix_for_bot(bot_id))
 
     logger.info(
         "Batch ingestion complete: %d chunks from %d pages (charged: %d page(s), %d credit(s))",
@@ -394,3 +445,24 @@ def move_to_archive(file_path: str, filename: str):
         logger.info(f"Archived file to: {dest_path}")
     except Exception as e:
         logger.error(f"Failed to archive {filename}: {e}")
+
+
+def move_to_quarantine(file_path: str, filename: str):
+    """Move a file that failed ingestion to the quarantine folder.
+
+    Same collision-avoidance pattern as ``move_to_archive``. Quarantining
+    (rather than deleting) preserves the original for forensic review while
+    ensuring the next ingestion run isn't blocked by the same poison pill.
+    """
+    dest_path = os.path.join(QUARANTINE_DIR, filename)
+
+    if os.path.exists(dest_path):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        name, ext = os.path.splitext(filename)
+        dest_path = os.path.join(QUARANTINE_DIR, f"{name}_{timestamp}{ext}")
+
+    try:
+        shutil.move(file_path, dest_path)
+        logger.warning(f"Quarantined failed file: {dest_path}")
+    except Exception as e:
+        logger.error(f"Failed to quarantine {filename}: {e}")

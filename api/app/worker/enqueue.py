@@ -99,8 +99,29 @@ def enqueue_sync(task_name: str, *args: Any, **kwargs: Any) -> str | None:
         # The job_id won't be available synchronously in this path.
         return None
     else:
-        # No running loop — safe to run synchronously.
-        job = asyncio.run(enqueue(task_name, *args, **kwargs))
+        # No running loop — safe to run synchronously. We deliberately do
+        # NOT reuse the module-level ``_pool`` here: ``asyncio.run`` creates
+        # and closes a fresh event loop on every call, so a pool cached on
+        # the first call's loop becomes a use-after-close hazard on every
+        # subsequent call ("RuntimeError: Event loop is closed"). FastAPI
+        # runs sync routes in a threadpool, which is exactly the path that
+        # triggers this — the affiliate-invite email, the trial-welcome
+        # email, anything fired via ``send_email_async`` from a sync
+        # endpoint. Building + closing a per-call pool costs one extra
+        # round-trip but keeps the contract intact.
+        async def _run() -> Any:
+            pool = await create_pool(_get_redis_settings(), default_queue_name="oyechats")
+            try:
+                job = await pool.enqueue_job(task_name, *args, **kwargs)
+                if job is None:
+                    logger.warning("Task %s was deduplicated (already queued)", task_name)
+                    return None
+                logger.info("Enqueued task %s → job_id=%s", task_name, job.job_id)
+                return job
+            finally:
+                await pool.aclose()
+
+        job = asyncio.run(_run())
         return job.job_id if job else None
 
 

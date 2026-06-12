@@ -118,7 +118,21 @@ def get_cors_origins() -> list[str]:
     # http.server (8080, 8000, 3000), Next.js (3000), CRA (3000), and the
     # 127.0.0.1 aliases (browsers treat 127.0.0.1 and localhost as DIFFERENT
     # origins for CORS — both must be allowlisted).
-    _dev_ports = ["3000", "3001", "4173", "5173", "5174", "5175", "5500", "5501", "8000", "8080", "8081", "8888"]
+    _dev_ports = [
+        "3000",
+        "3001",
+        "4173",
+        "5173",
+        "5174",
+        "5175",
+        "5184",
+        "5500",
+        "5501",
+        "8000",
+        "8080",
+        "8081",
+        "8888",
+    ]
     origins: list[str] = ["http://localhost", "http://127.0.0.1"]
     for port in _dev_ports:
         origins.append(f"http://localhost:{port}")

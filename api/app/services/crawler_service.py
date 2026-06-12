@@ -70,6 +70,16 @@ def _cancel_key(client_id: int) -> str:
     return f"{_CANCEL_KEY_PREFIX}{int(client_id)}"
 
 
+# A "running" progress row is considered dead if its heartbeat falls more
+# than this many seconds behind wall-clock. The orchestrator pulses the
+# heartbeat on every progress write — URL discovery, batch ingestion,
+# brand-tone extraction. 120s is comfortably above the slowest healthy
+# pulse interval and well under the 10-min subprocess timeout, so a worker
+# that gets SIGKILL'd mid-crawl is reported as failed within ~2 minutes of
+# the next ``GET /crawl/progress`` instead of waiting out the 1-hour TTL.
+_HEARTBEAT_STALE_SECONDS = 120
+
+
 def set_crawl_progress(
     client_id: int,
     *,
@@ -90,8 +100,19 @@ def set_crawl_progress(
     ``phase``, ``cancellable``) are written when provided so the frontend can
     render a real progress bar, an ETA, and a Cancel button. Older callers that
     only pass ``status`` + ``urls`` continue to work unchanged.
+
+    Every write also stamps a wall-clock ``heartbeat_at`` so the reader can
+    distinguish a quietly-running job (recent heartbeat) from a dead one
+    (worker process SIGKILL'd, leaving Redis stuck on ``status=running``).
+    See :func:`get_crawl_progress` for the read-side staleness rule.
     """
-    payload: dict[str, Any] = {"status": status, "urls": urls or []}
+    import time as _time
+
+    payload: dict[str, Any] = {
+        "status": status,
+        "urls": urls or [],
+        "heartbeat_at": _time.time(),
+    }
     if result is not None:
         payload["result"] = result
     if error is not None:
@@ -383,6 +404,60 @@ class CrawlCancelled(RuntimeError):
         self.partial_result = partial_result or {"results": [], "recommended_colors": []}
 
 
+def _reap_if_stale(client_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    """Synthesise a terminal ``failed`` payload when a ``running`` row is stale.
+
+    A worker that gets SIGKILL'd mid-crawl never runs the orchestrator's
+    ``except`` blocks, so the Redis row stays at ``status='running'`` until
+    its 1-hour TTL fires. We detect this on the read path: any ``running``
+    row whose ``heartbeat_at`` is older than :data:`_HEARTBEAT_STALE_SECONDS`
+    is treated as dead. The terminal state is also written BACK to Redis so
+    every subsequent read is consistent and so the per-client crawl lock,
+    which keys off "is anything running?" upstream of this, gets released.
+    """
+    import time as _time
+
+    if data.get("status") != "running":
+        return data
+    heartbeat = data.get("heartbeat_at")
+    if heartbeat is None:
+        # Legacy row written before heartbeats were added — fall back to
+        # ``started_at`` if present so existing in-flight crawls still benefit
+        # from the reaper without a redeploy gap.
+        heartbeat = data.get("started_at")
+    # Anchorless ``running`` row — only possible from pre-heartbeat code
+    # or from a writer that crashed before stamping anything. Both mean
+    # it isn't live; reap immediately rather than wait for the 1-hour TTL.
+    age = float(_HEARTBEAT_STALE_SECONDS + 1) if heartbeat is None else _time.time() - float(heartbeat)
+    if age < _HEARTBEAT_STALE_SECONDS:
+        return data
+
+    logger.warning(
+        "crawl progress for client %s is stale (heartbeat %ss ago); reporting as failed",
+        client_id,
+        int(age),
+    )
+    set_crawl_progress(
+        client_id,
+        status="failed",
+        urls=data.get("urls") or [],
+        error=("Crawl did not complete — the worker process appears to have died. Please try again."),
+    )
+    # Drop the per-client lock too — the worker that held it is gone.
+    # Without this, the next ``POST /crawl`` would 429 against the live
+    # lock for another hour while the customer wonders what's broken.
+    with contextlib.suppress(Exception):
+        release_crawl_lock(client_id)
+    # Mirror what we just wrote so the caller sees the same shape without
+    # a second Redis round-trip.
+    return {
+        "status": "failed",
+        "urls": data.get("urls") or [],
+        "error": "Crawl did not complete — the worker process appears to have died. Please try again.",
+        "reaped": True,
+    }
+
+
 def get_crawl_progress(client_id: int) -> dict[str, Any]:
     """Return the current crawl progress + terminal status for a client.
 
@@ -391,6 +466,12 @@ def get_crawl_progress(client_id: int) -> dict[str, Any]:
     returns a dict; callers can rely on ``status`` and ``urls`` keys at minimum.
     Returns ``{"status": "idle", "urls": []}`` when no crawl has been recorded
     yet (or Redis is unavailable).
+
+    Detects ghost ``running`` rows whose heartbeat is older than
+    :data:`_HEARTBEAT_STALE_SECONDS` and rewrites them as ``failed`` —
+    necessary because a SIGKILL of the worker process skips the orchestrator's
+    own failure handlers, leaving Redis stuck at ``running`` until its
+    1-hour TTL. See :func:`_reap_if_stale`.
     """
     client = get_redis()
     if client is None:
@@ -409,11 +490,17 @@ def get_crawl_progress(client_id: int) -> dict[str, Any]:
         return {"status": "idle", "urls": []}
     data.setdefault("status", "idle")
     data.setdefault("urls", [])
-    return data
+    return _reap_if_stale(client_id, data)
 
 
 async def crawl_website(
-    url: str, max_pages: int | None = None, use_js: bool = False, client_id: int | None = None
+    url: str,
+    max_pages: int | None = None,
+    use_js: bool = False,
+    client_id: int | None = None,
+    *,
+    max_depth: int | None = None,
+    concurrency: int | None = None,
 ) -> dict:
     """Run the crawler subprocess and return parsed results.
 
@@ -424,8 +511,12 @@ async def crawl_website(
 
     Args:
         url: The seed URL to crawl.
-        max_pages: Optional page limit (capped at 100). When *None*, the
-            subprocess falls back to the ``MAX_CRAWL_PAGES`` env default.
+        max_pages: Plan-aware page ceiling (already clamped by the route
+            layer to the client's tier — for JS crawls the route layer takes
+            ``min(max_crawl_pages, max_crawl_js_pages)`` before forwarding).
+            When *None*, the subprocess falls back to the ``MAX_CRAWL_PAGES``
+            env default. The historical hardcoded clamp to 100 was removed
+            when plan-tiered limits landed — the route layer now owns clamping.
         use_js: When True, forces JavaScript (browser/Playwright) mode for
             all pages. Required for Next.js, React, and other SPAs where
             content or links are rendered client-side. The crawler also
@@ -434,6 +525,10 @@ async def crawl_website(
         client_id: When provided, real-time progress is written to a temp
             file so the ``/crawl/progress`` endpoint can stream discovered
             URLs to the frontend while the crawl is running.
+        max_depth: Plan-aware BFS depth ceiling. ``None`` = let the
+            subprocess fall back to its ``MAX_CRAWL_DEPTH`` env default.
+        concurrency: Plan-aware count of parallel HTTP fetches the
+            subprocess will run. ``None`` = subprocess env default.
 
     Returns:
         A dict with ``results`` (list of page dicts) and
@@ -501,16 +596,26 @@ async def crawl_website(
     }
     env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
     if max_pages is not None:
-        env["MAX_CRAWL_PAGES"] = str(min(max(max_pages, 1), 100))
+        # No hardcoded ceiling — the route layer clamps ``max_pages`` to the
+        # caller's plan tier (including the JS-specific cap when use_js is
+        # true) before we ever get here. Anything that reaches this branch
+        # is already tier-bounded; clamping again would silently truncate
+        # Enterprise crawls.
+        env["MAX_CRAWL_PAGES"] = str(max(int(max_pages), 1))
     elif use_js:
-        # JS (Playwright/Chromium) crawls cost ~10x the memory of HTTP crawls
-        # (~150–300 MB per Chromium process tree on top of the ~1 GB API
-        # baseline). Cap the default tighter than the generic MAX_CRAWL_PAGES
-        # to protect a memory-tight host. An explicit ``max_pages`` argument
-        # always wins; this only fills in the default.
+        # Direct caller didn't supply max_pages and asked for JS — fall back
+        # to the legacy env default. Production callers always go through
+        # document_routes which sets max_pages explicitly.
         env["MAX_CRAWL_PAGES"] = os.getenv("MAX_CRAWL_PAGES_JS", "25")
     if use_js:
         env["CRAWLER_JS_ALL_PAGES"] = "true"
+
+    # Plan-aware depth & concurrency — only emit when the caller provided a
+    # value, otherwise the subprocess keeps using its env-driven defaults.
+    if max_depth is not None:
+        env["MAX_CRAWL_DEPTH"] = str(max(int(max_depth), 1))
+    if concurrency is not None:
+        env["CRAWL_CONCURRENCY"] = str(max(int(concurrency), 1))
 
     # Create temp files for the subprocess to write to / read from:
     #   progress_path — subprocess writes discovered URLs (we mirror to Redis)
@@ -529,9 +634,13 @@ async def crawl_website(
     # Resolve effective max_pages for the progress payload (mirrors what the
     # subprocess will use). Keeps the UI's progress bar honest from the first
     # tick instead of waiting for the subprocess to write its first URL.
+    # Mirrors the value the subprocess will actually use, so the UI's
+    # progress bar denominator matches the runtime cap. The hardcoded clamp
+    # to 100 was removed when plan-aware limits landed — see the env block
+    # above for the new clamping contract.
     _effective_max_pages: int | None = None
     if max_pages is not None:
-        _effective_max_pages = min(max(int(max_pages), 1), 100)
+        _effective_max_pages = max(int(max_pages), 1)
     else:
         try:
             _effective_max_pages = int(env.get("MAX_CRAWL_PAGES", os.getenv("MAX_CRAWL_PAGES", "50")))

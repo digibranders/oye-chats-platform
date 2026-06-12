@@ -110,18 +110,30 @@ def create_topup_order(
     metadata it should display in the modal.
 
     The pack must come from ``pricing_config.topup_packs`` and have an
-    ``amount`` (in INR rupees, NOT paise — we convert here so the config table
-    stays human-readable).
+    ``amount`` (in the pack's currency major unit — rupees for INR — NOT
+    paise; we convert here so the config table stays human-readable).
+
+    Top-ups intentionally do NOT honour referral discounts — that incentive
+    fires only on subscription checkout. See subscription_routes.create_checkout.
+
+    Standard Razorpay test/live merchant accounts can only charge INR. A
+    USD-priced pack on this provider would silently mis-bill the customer,
+    so we fail-fast with ValueError instead of letting the order create.
     """
     if not pack.get("amount"):
-        raise ValueError("Top-up pack is missing 'amount' (INR)")
+        raise ValueError("Top-up pack is missing 'amount'")
+
+    currency = str(pack.get("currency", "INR")).upper()
+    if currency != "INR":
+        raise ValueError(
+            f"Razorpay only supports INR top-ups; got '{currency}'. Use the Stripe provider for non-INR packs."
+        )
 
     rzp = _get_razorpay()
     amount_inr = int(pack["amount"])
     amount_paise = amount_inr * 100
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
-    currency = str(pack.get("currency", "INR")).upper()
 
     # Razorpay caps notes at 15 keys × 256 chars. We keep it tight.
     notes = {
@@ -443,16 +455,33 @@ def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
     ``x-razorpay-event-id`` is present on every modern Razorpay webhook
     delivery.  Reject events without an id to prevent duplicate processing
     that could grant credits twice or create duplicate subscriptions.
+
+    Concurrency note: the previous ``SELECT`` + ``INSERT`` pattern had a race
+    window — two workers handling the same Razorpay retry (very common on
+    5xx / connection-reset) could both pass the ``SELECT``, both flush, and
+    only ``COMMIT`` would catch the duplicate via the unique constraint —
+    by which point both had already granted credits / written ledger rows /
+    sent confirmation emails. We now use an atomic
+    ``INSERT … ON CONFLICT DO NOTHING`` and key off ``rowcount``: the worker
+    whose insert won proceeds, the loser sees ``rowcount == 0`` and bails.
+    Mirrors the Stripe path in ``billing_service._record_or_skip_webhook``.
+    Postgres-only — every deployment is Postgres + pgvector.
     """
     if not event_id:
         logger.warning("Razorpay webhook missing x-razorpay-event-id — rejecting to prevent duplicate processing")
         return False
-    existing = session.get(ProcessedWebhook, event_id)
-    if existing is not None:
-        return False
-    session.add(ProcessedWebhook(event_id=event_id, provider="razorpay"))
+    from sqlalchemy.dialects.postgresql import insert
+
+    stmt = (
+        insert(ProcessedWebhook)
+        .values(event_id=event_id, provider="razorpay")
+        .on_conflict_do_nothing(index_elements=["event_id"])
+    )
+    result = session.execute(stmt)
     session.flush()
-    return True
+    # ``rowcount`` is 1 when our INSERT actually wrote a row, 0 when the
+    # ON CONFLICT clause swallowed it because another worker got there first.
+    return (result.rowcount or 0) > 0
 
 
 def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str | None) -> str:
@@ -490,6 +519,12 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         "payment.captured": _handle_payment_captured,
         "payment.failed": _handle_payment_failed,
         "order.paid": _handle_payment_captured,  # alias path for top-ups
+        # Refunds — both event names land in the same handler. Razorpay
+        # fires ``refund.created`` on initiation and ``refund.processed``
+        # when settlement clears; we treat them identically and rely on
+        # the upstream event-id dedupe so the same id never lands twice.
+        "refund.created": _handle_refund_created,
+        "refund.processed": _handle_refund_created,
     }
     handler = handlers.get(event_name)
     if handler is None:
@@ -539,6 +574,58 @@ def _plan_id_from_notes(notes: dict[str, Any] | None) -> int | None:
         return int(raw) if raw is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def reconcile_subscription_from_razorpay(session: Session, razorpay_subscription_id: str) -> Subscription | None:
+    """Idempotently fetch a Razorpay subscription and upsert it locally.
+
+    Closes the window where a customer pays via Razorpay Checkout but the
+    ``subscription.activated`` webhook hasn't yet created the local row
+    (delayed delivery, worker outage, network blip). The verify endpoint
+    calls this so the React admin can flip to "Subscription active"
+    immediately on modal-close instead of leaving the customer in limbo.
+
+    Idempotency: gates the upsert behind a synthetic event id
+    ``reconcile:<razorpay_subscription_id>`` in ``processed_webhooks``. If
+    the webhook (or a concurrent verify call) gets there first, this is a
+    cheap no-op that just re-queries the local row.
+
+    Returns the local ``Subscription`` if reconcile succeeded (now or
+    previously), or ``None`` if Razorpay reports the subscription in a
+    non-billable state we shouldn't materialise yet (e.g. ``created``,
+    ``pending``, ``halted``) — let the webhook handle those.
+    """
+    synthetic_event_id = f"reconcile:{razorpay_subscription_id}"
+    if not _record_or_skip_event(session, synthetic_event_id):
+        # Webhook or another verify call already reconciled — just re-query.
+        return _resolve_local_subscription(session, razorpay_subscription_id)
+
+    rzp = _get_razorpay()
+    try:
+        sub_entity = rzp.subscription.fetch(razorpay_subscription_id)
+    except Exception as exc:
+        logger.exception(
+            "Razorpay subscription.fetch failed during reconcile for %s",
+            razorpay_subscription_id,
+        )
+        raise RazorpayBillingError("Could not fetch subscription from Razorpay.") from exc
+
+    status = (sub_entity.get("status") or "").lower()
+    if status not in ("active", "authenticated"):
+        logger.info(
+            "Razorpay subscription %s in non-billable state '%s' — deferring local upsert to webhook",
+            razorpay_subscription_id,
+            status,
+        )
+        return None
+
+    # Synthesize a webhook-shaped payload and reuse the canonical handler so
+    # the create-or-update logic stays in one place. ``_handle_subscription_activated``
+    # consults ``notes.oyechats_client_id`` / ``oyechats_plan_id`` set at
+    # ``create_subscription`` time.
+    synthetic_payload = {"subscription": {"entity": sub_entity}}
+    _handle_subscription_activated(session, synthetic_payload)
+    return _resolve_local_subscription(session, razorpay_subscription_id)
 
 
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
@@ -617,6 +704,10 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         return f"Subscription activated for client {client_id}"
 
     # Existing local row — update fields and ensure first-month credits exist.
+    # Card rescued out of dunning: drop the past_due anchor so a future
+    # failure starts a fresh grace window instead of inheriting this one.
+    if local.status == "past_due":
+        local.past_due_since = None
     local.status = "active"
     if current_period_start:
         local.current_period_start = current_period_start
@@ -727,6 +818,21 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     return f"Subscription {sub_entity.get('id')} completed"
 
 
+def _enter_past_due(local: Subscription) -> None:
+    """Stamp ``past_due_since`` only on the FIRST entry into past_due.
+
+    Razorpay can fire ``subscription.halted`` and ``subscription.pending``
+    independently as the dunning state shifts; both land here. Without
+    this idempotency guard the grace clock would reset on every retry.
+    """
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    if local.status != "past_due":
+        local.past_due_since = _dt.now(UTC)
+    local.status = "past_due"
+
+
 def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> str:
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -734,7 +840,7 @@ def _handle_subscription_halted(session: Session, payload: dict[str, Any]) -> st
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
-    local.status = "past_due"
+    _enter_past_due(local)
     session.flush()
     return f"Subscription {sub_entity.get('id')} halted"
 
@@ -746,7 +852,7 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
-    local.status = "past_due"
+    _enter_past_due(local)
     session.flush()
     return f"Subscription {sub_entity.get('id')} pending"
 
@@ -828,3 +934,65 @@ def _handle_payment_failed(session: Session, payload: dict[str, Any]) -> str:
         pay.get("error_description") or pay.get("error_reason"),
     )
     return "payment.failed logged"
+
+
+# ── Refund handling ─────────────────────────────────────────────────────────
+
+
+def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
+    """Reverse credits on a Razorpay refund.
+
+    The webhook payload follows Razorpay's standard ``payload.refund.entity``
+    shape; the ``payment_id`` lets us locate the local ``Invoice`` row we
+    wrote at capture time. Each event is uniquely identified by Razorpay's
+    own event id (deduped one layer up via ``_record_or_skip_event``), so
+    the cumulative-vs-delta bookkeeping that ``charge.refunded`` on Stripe
+    needs is not required here: each refund event represents exactly its
+    own amount.
+
+    Both ``refund.created`` and ``refund.processed`` route here. Created
+    fires the moment the refund is initiated; processed fires when the
+    bank settles it. We claw back on the FIRST event so the customer
+    can't keep using credits during the settlement window — the second
+    event's clawback is a no-op (already-clawed delta returns 0).
+    """
+    refund_entity = (payload.get("refund") or {}).get("entity") or {}
+    if not refund_entity:
+        return "refund entity missing"
+
+    payment_id = refund_entity.get("payment_id")
+    refund_minor = int(refund_entity.get("amount") or 0)
+    if not payment_id or refund_minor <= 0:
+        return "refund missing payment_id or amount"
+
+    inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+    if inv is None:
+        logger.warning("refund event for unknown razorpay payment %s", payment_id)
+        return f"Payment {payment_id} not found locally"
+
+    charge_minor = int(inv.amount_cents or 0)
+    if charge_minor <= 0:
+        return f"Invoice {inv.id} has no recorded charge amount"
+
+    clawed, entry_id = credit_service.clawback_refund(
+        session,
+        client_id=inv.client_id,
+        charge_minor=charge_minor,
+        refund_minor=refund_minor,
+        note=f"Refund clawback for Razorpay refund {refund_entity.get('id', '?')}",
+    )
+
+    # Razorpay refunds may be partial; mirror Stripe's distinction so the
+    # billing UI can render the right copy.
+    inv.status = "refunded" if refund_minor >= charge_minor else "partially_refunded"
+    session.flush()
+
+    logger.info(
+        "Razorpay refund: invoice=%s refund=%s amount_minor=%s clawed=%s entry=%s",
+        inv.id,
+        refund_entity.get("id"),
+        refund_minor,
+        clawed,
+        entry_id,
+    )
+    return f"Refund processed: {clawed} credit(s) clawed back from invoice {inv.id}"

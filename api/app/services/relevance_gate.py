@@ -38,6 +38,11 @@ RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.55"))
 _GATE_TTL = 3600  # 1 hour — safe: same question + same bot KB = same result
 _MAX_CHUNKS_TO_JUDGE = 3  # Only judge top-3 chunks (cost control)
 _MAX_CHUNK_PREVIEW = 300  # Characters per chunk shown to the judge
+# Hard cap on the gate LLM call. Without this, a stalled Gemini blocks the
+# entire SSE stream for ~30s before the first token reaches the visitor.
+# The existing `except Exception` below fails open on timeout, so a slow
+# gate degrades to "treat as relevant" rather than dead-air.
+_GATE_LLM_TIMEOUT_S = float(os.getenv("GATE_LLM_TIMEOUT_S", "2.0"))
 
 
 def _gate_cache_key(bot_id: int | None, client_id: int | None, question: str) -> str:
@@ -128,13 +133,16 @@ def check_relevance(
             messages=[{"role": "user", "content": prompt}],
             max_tokens=20,
             response_format={"type": "json_object"},
+            timeout=_GATE_LLM_TIMEOUT_S,
         )
         raw = (response.choices[0].message.content or "").strip()
         data = json.loads(raw)
         score = float(data.get("score", 1.0))
         score = max(0.0, min(1.0, score))  # clamp to [0, 1]
     except Exception as exc:
-        logger.warning("Relevance gate failed (non-blocking): %s", exc)
+        # Timeout, rate limit, JSON parse error, network — all fail open.
+        # Visitor gets a possibly-irrelevant answer instead of 30s of silence.
+        logger.warning("Relevance gate failed (non-blocking, fail-open): %s", exc)
         return True, 1.0
 
     is_relevant = score >= active_threshold

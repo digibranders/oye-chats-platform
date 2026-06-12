@@ -28,10 +28,14 @@ function isTrustedRedirectUrl(url) {
   }
 }
 
-/** Display amount with currency symbol — falls back to "₹" for INR-coded packs. */
+/** Display amount with currency symbol. Defaults to "$" (USD). */
 function formatAmount(amount, currency) {
-  const sym = currency === 'INR' ? '₹' : currency === 'USD' ? '$' : currency + ' ';
-  return `${sym}${Number(amount).toLocaleString()}`;
+  const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : currency + ' ';
+  const numeric = Number(amount);
+  const formatted = Number.isInteger(numeric)
+    ? numeric.toLocaleString()
+    : numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${sym}${formatted}`;
 }
 
 /** Per-1k credit unit price for the comparison label. */
@@ -40,6 +44,14 @@ function pricePerKCredits(amount, credits) {
   return ((amount / credits) * 1000).toFixed(2);
 }
 
+/**
+ * Top-up modal — flat-pack purchase only, no referral discount.
+ *
+ * Referral discounts deliberately live on the *subscription* flow (PlanModal)
+ * rather than here: an affiliate's reward should track recurring revenue, not
+ * one-off credit packs. Customers can still buy top-ups freely; the prices
+ * shown are exactly what Stripe charges.
+ */
 export default function TopupModal({ open, onClose, onSuccess }) {
   const { showToast } = useToast();
   const [packs, setPacks] = useState([]);
@@ -47,7 +59,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
   const [submittingPack, setSubmittingPack] = useState(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
     let cancelled = false;
     setLoadingPacks(true);
     getTopupPacks()
@@ -94,7 +106,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
           key: result.key_id,
           order_id: result.order_id,
           amount: result.amount,
-          currency: result.currency || 'INR',
+          currency: result.currency || 'USD',
           name: result.name || 'OyeChats credits',
           description: result.description,
           prefill: result.prefill || {},
@@ -161,7 +173,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {packs.map((pack) => {
               const amount = Number(pack.amount ?? pack.usd ?? 0);
-              const currency = pack.currency || 'INR';
+              const currency = pack.currency || 'USD';
               const featured = (pack.bonus_pct || 0) >= 20;
               const submitting = submittingPack === amount;
               const perK = pricePerKCredits(amount, pack.credits);
@@ -172,7 +184,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
                   onClick={() => handleBuy(pack)}
                   disabled={submitting || submittingPack !== null}
                   className={cn(
-                    'relative text-left rounded-2xl border p-5 transition-all duration-200',
+                    'relative text-left rounded-2xl border p-5 transition-colors duration-200',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
                     'disabled:opacity-60 disabled:cursor-not-allowed',
                     featured
@@ -181,26 +193,26 @@ export default function TopupModal({ open, onClose, onSuccess }) {
                   )}
                 >
                   {pack.badge && (
-                    <span className="absolute -top-2 right-4 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-primary-600 text-white">
+                    <span className="absolute -top-2 right-4 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-primary-600 text-white whitespace-nowrap">
                       {pack.badge}
                     </span>
                   )}
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-2xl font-bold text-surface-900 dark:text-surface-50">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-2xl font-bold tabular-nums text-surface-900 dark:text-surface-50">
                       {formatAmount(amount, currency)}
                     </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-sm text-surface-600 dark:text-surface-300 flex-wrap">
+                    <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <strong className="font-semibold text-surface-900 dark:text-surface-50">
+                      {Number(pack.credits).toLocaleString()}
+                    </strong>
+                    <span>credits</span>
                     {pack.bonus_pct > 0 && (
-                      <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                      <span className="inline-flex items-center text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 rounded">
                         +{pack.bonus_pct}% bonus
                       </span>
                     )}
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-sm text-surface-600 dark:text-surface-300">
-                    <Zap className="w-3.5 h-3.5 text-amber-500" />
-                    <strong className="font-semibold text-surface-900 dark:text-surface-50">
-                      {Number(pack.credits).toLocaleString()}
-                    </strong>{' '}
-                    credits
                   </div>
                   {perK && (
                     <div className="mt-3 text-xs text-surface-500 dark:text-surface-400">
@@ -225,8 +237,10 @@ export default function TopupModal({ open, onClose, onSuccess }) {
             })}
           </div>
         )}
+
         <p className="mt-4 text-[11px] text-surface-500 dark:text-surface-400 text-center">
           Powered by Razorpay (UPI, cards, NetBanking, wallets) for India · Stripe for international.
+          Got a referral code? Apply it on the Plan & seats tab for recurring savings.
         </p>
       </DialogBody>
 

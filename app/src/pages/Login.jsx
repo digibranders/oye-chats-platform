@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate, Link } from 'react-router-dom';
+import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Sparkles, Loader2, Mail, Lock, Eye, EyeOff, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { loginAdmin, loginOperator } from '../services/api';
@@ -20,6 +20,12 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const navigate = useNavigate();
+  // Affiliate invite round-trip: if the user arrived via the Partners
+  // invite landing page, we route them back there after login so the
+  // accept-existing flow can fire. The token stays in the URL — never
+  // touches localStorage, so a stale token can't haunt later logins.
+  const [searchParams] = useSearchParams();
+  const affiliateToken = searchParams.get('affiliate_token') || '';
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -36,6 +42,11 @@ export default function Login() {
 
       try {
         const data = await loginOperator(email, password);
+        // Fresh login → clear any banner dismissals carried over from a
+        // previous account in this tab. Done before the toast flag so a
+        // failed read can't accidentally suppress the new user's banner.
+        const { clearTrialBannerDismissals } = await import('../utils/trialBanner');
+        clearTrialBannerDismissals();
         localStorage.setItem('admin_token', data.access_token);
         localStorage.setItem('admin_name', data.name);
         localStorage.setItem('admin_client_id', data.client_id.toString());
@@ -51,6 +62,11 @@ export default function Login() {
         }
         sessionStorage.setItem('login_toast', '1');
         loggedIn = true;
+        // Operators are never affiliates by design — backend always
+        // returns is_affiliate=false for X-Operator-Key principals. So
+        // even when an affiliate_token is present we route to /support;
+        // any logged-in affiliate redeeming an invite must use a client
+        // login, not an operator login.
         navigate('/support');
       } catch {
         // Operator login failed — try admin login
@@ -58,6 +74,8 @@ export default function Login() {
 
       if (!loggedIn) {
         const data = await loginAdmin(email, password);
+        const { clearTrialBannerDismissals } = await import('../utils/trialBanner');
+        clearTrialBannerDismissals();
         localStorage.setItem('admin_token', data.access_token);
         localStorage.setItem('admin_name', data.name);
         localStorage.setItem('admin_client_id', data.client_id.toString());
@@ -67,7 +85,11 @@ export default function Login() {
         localStorage.setItem('company_website', data.website || '');
         sessionStorage.setItem('login_toast', '1');
 
-        if (data.is_superadmin) {
+        // Affiliate token always wins over the default landing target —
+        // the invite acceptance is what the user came here to do.
+        if (affiliateToken) {
+          navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
+        } else if (data.is_superadmin) {
           navigate('/superadmin/overview');
         } else {
           navigate('/');
@@ -83,6 +105,12 @@ export default function Login() {
   if (localStorage.getItem('admin_token')) {
     const isSuper = localStorage.getItem('is_superadmin') === 'true';
     const isOperator = localStorage.getItem('auth_type') === 'operator';
+    // If an affiliate token is in the URL, keep routing it through the
+    // invite landing — the recipient is already logged in and the page
+    // will auto-fire accept-existing.
+    if (affiliateToken && !isOperator) {
+      return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
+    }
     return <Navigate to={isSuper ? '/superadmin/overview' : isOperator ? '/support' : '/'} />;
   }
 

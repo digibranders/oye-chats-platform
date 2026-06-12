@@ -10,7 +10,12 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 
-from app.api.auth import get_current_bot, get_current_client_or_operator
+from app.api.auth import (
+    bot_subscription_status,
+    get_current_bot,
+    get_current_client_or_operator,
+    require_active_subscription_for_workspace,
+)
 from app.core.cache import bot_config_key, cache_delete
 from app.core.origin_check import normalize_domain_input
 from app.db.models import Bot, BotGrowthEvent
@@ -309,6 +314,12 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     """
     Public endpoint for the widget to fetch bot settings.
     Authenticated via X-Bot-Key or X-API-Key (backward compat).
+
+    Includes the bot owner's subscription health so the widget can choose
+    to suppress the launcher (or render an offline indicator) when the
+    workspace is not serving. ``is_offline=True`` means visitors who do
+    open the widget will only get the configured ``offline_message`` —
+    the chat endpoint will not run RAG.
     """
     # Construct backend file URL for relative logos
     logo_url = bot.bot_logo
@@ -318,6 +329,9 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     launcher_logo_url = bot.launcher_logo
     if launcher_logo_url and not launcher_logo_url.startswith("http"):
         launcher_logo_url = f"{str(request.base_url).rstrip('/')}/files/{launcher_logo_url}"
+
+    owner_status = bot_subscription_status(bot.client_id)
+    is_offline = owner_status not in ("trialing", "active", "past_due")
 
     return {
         "bot_name": bot.name,
@@ -351,6 +365,11 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "calendly_url": bot.calendly_url,
         "zcal_url": bot.zcal_url,
         "bant_cta_options": _build_public_cta_options(bot),
+        # ── Service status ──
+        # ``is_offline=True`` flips the widget into "leave a message" mode
+        # without exposing the underlying subscription status to visitors.
+        "is_offline": is_offline,
+        "offline_reason": f"subscription_{owner_status}" if is_offline else None,
     }
 
 
@@ -958,8 +977,19 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
 
 
 @router.post("", status_code=201)
-def create_bot(request: CreateBotRequest, auth=Depends(get_current_client_or_operator)):
-    """Create a new bot for the authenticated workspace."""
+def create_bot(
+    request: CreateBotRequest,
+    auth=Depends(get_current_client_or_operator),
+    _sub=Depends(require_active_subscription_for_workspace),
+):
+    """Create a new bot for the authenticated workspace.
+
+    Subscription-gated: workspaces whose owner's trial has expired (or
+    whose subscription is otherwise inactive) get a 403 with
+    ``error: subscription_required``. The dashboard's read-only mode
+    surfaces a "Reactivate to add a new bot" banner instead of letting
+    the customer queue work they can't complete.
+    """
     _require_bot_management_access(auth)
     with get_session() as session:
         # ── Plan enforcement: check bot count limit ──

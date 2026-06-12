@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle } from 'lucide-react';
+import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadDocuments, getDocuments, deleteDocument } from '../services/api';
+import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -59,6 +59,38 @@ export default function KnowledgeBase() {
 
   const [url, setUrl] = useState(localStorage.getItem('company_website') || '');
   const [useJs, setUseJs] = useState(false);
+
+  // Plan-aware crawl ceiling — shown inline so the user knows their cap
+  // before they kick off a crawl, and used to render an upgrade-CTA toast
+  // when the backend rejects with 403 plan_limit_exceeded.
+  const [crawlLimits, setCrawlLimits] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentSubscription()
+      .then((data) => {
+        if (cancelled) return;
+        const limits = data?.plan?.limits || {};
+        setCrawlLimits({
+          planName: data?.plan?.name || 'Free',
+          planSlug: data?.plan?.slug || 'free',
+          // Fallbacks track the Free-tier values from migration
+          // b8d2faf4c321 — the bare minimum a customer could ever have.
+          // The hint UI is conservative on purpose: if we can't read the
+          // plan, show the smallest plausible cap so a Standard customer
+          // doesn't see "75 pages" and panic.
+          maxPages: limits.max_crawl_pages ?? 100,
+          maxDepth: limits.max_crawl_depth ?? 3,
+          jsMaxPages: limits.max_crawl_js_pages ?? 25,
+        });
+      })
+      .catch(() => {
+        // Non-fatal: the backend re-enforces the cap. Hint UI just gets
+        // skipped when we can't fetch the plan (e.g. token glitch).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // ── Crawl UI state ─────────────────────────────────────────────────────
   // The actual crawl lifecycle is owned by CrawlContext (one poll loop for
   // the whole admin app, so the floating indicator and this page agree on
@@ -204,6 +236,16 @@ export default function KnowledgeBase() {
     try {
       await startCrawl({ url, botId: selectedBot?.id, useJs });
     } catch (error) {
+      // 403 plan_limit_exceeded gets a distinct, action-oriented toast that
+      // points the user at /billing instead of the generic crawl-error text.
+      const detail = error?.detail;
+      if (detail && typeof detail === 'object' && detail.error === 'plan_limit_exceeded') {
+        showToast(
+          'error',
+          `${detail.message || 'Plan limit reached.'} Open Billing to upgrade.`,
+        );
+        return;
+      }
       showToast('error', error.detail || error.message || 'Failed to start crawl.');
     }
   };
@@ -354,6 +396,33 @@ export default function KnowledgeBase() {
                     disabled={isCrawling}
                   />
                 </div>
+                {crawlLimits && (
+                  <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
+                    Your <span className="font-medium text-surface-700 dark:text-surface-200">{crawlLimits.planName}</span> plan: up to{' '}
+                    <span className="font-medium text-surface-700 dark:text-surface-200">
+                      {crawlLimits.maxPages.toLocaleString()} pages
+                    </span>{' '}
+                    per crawl
+                    {useJs && (
+                      <>
+                        {' '}({crawlLimits.jsMaxPages.toLocaleString()} in JS mode)
+                      </>
+                    )}
+                    , depth {crawlLimits.maxDepth}.
+                    {crawlLimits.planSlug !== 'enterprise' && (
+                      <>
+                        {' '}
+                        <a
+                          href="/billing"
+                          className="text-primary-600 dark:text-primary-400 hover:underline font-medium"
+                        >
+                          Upgrade for more
+                        </a>
+                        .
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
 
               {/* JavaScript mode toggle */}
@@ -630,6 +699,21 @@ export default function KnowledgeBase() {
                               </div>
                             ) : (
                               <div className="flex items-center justify-end gap-1">
+                                {isUrl && (
+                                  <div className="relative group">
+                                    <button
+                                      type="button"
+                                      onClick={() => setDrawerSource(doc.name)}
+                                      className="p-1.5 rounded-lg text-surface-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors"
+                                      aria-label={`View pages scanned for ${doc.name}`}
+                                    >
+                                      <Eye size={14} />
+                                    </button>
+                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-surface-900 dark:bg-surface-700 text-white whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+                                      View scanned pages
+                                    </span>
+                                  </div>
+                                )}
                                 {isUrl && (
                                   <div className="relative group">
                                     <button

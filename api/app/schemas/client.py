@@ -49,7 +49,12 @@ class DocumentPagesResponse(BaseModel):
 
 class CrawlRequest(BaseModel):
     url: str
-    max_pages: int | None = Field(default=None, ge=1, le=100)
+    # Upper bound is enforced by the route layer against the caller's plan
+    # tier (free 75 / starter 300 / standard 750 / enterprise 5000) — the
+    # schema only keeps the absolute floor so a malicious zero or negative
+    # value is rejected at parse time. ``le`` is intentionally absent so an
+    # Enterprise customer can request 5000 without a 422.
+    max_pages: int | None = Field(default=None, ge=1)
     use_js: bool = Field(
         default=False,
         description="Enable JavaScript (browser) mode for all pages. Required for Next.js, React, and other SPA sites.",

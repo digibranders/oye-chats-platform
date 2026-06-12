@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate, Link } from 'react-router-dom';
+import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Sparkles, Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient } from '../services/api';
@@ -23,6 +23,11 @@ export default function Register() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  // Affiliate invite round-trip — see Login.jsx for the rationale. New
+  // sign-ups arrived from the Partners invite landing get routed back
+  // there so the accept-existing endpoint can wire the affiliate row.
+  const [searchParams] = useSearchParams();
+  const affiliateToken = searchParams.get('affiliate_token') || '';
 
   const hasMinLength = password.length >= 8;
   const hasLetter = /[A-Za-z]/.test(password);
@@ -53,7 +58,13 @@ export default function Register() {
 
     try {
       setIsLoading(true);
-      const data = await registerClient(name.trim(), email.trim(), password, companyName.trim() || null, website.trim() || null);
+      const data = await registerClient(
+        name.trim(),
+        email.trim(),
+        password,
+        companyName.trim() || null,
+        website.trim() || null,
+      );
 
       localStorage.setItem('admin_token', data.access_token);
       localStorage.setItem('admin_name', data.name);
@@ -64,7 +75,19 @@ export default function Register() {
       localStorage.setItem('company_website', data.website || '');
       sessionStorage.setItem('login_toast', 'registered');
 
-      navigate('/chatbot');
+      // Mirror Login.jsx — clear any stale trial-banner dismissals from a
+      // prior session on this device so the freshly-registered client sees
+      // the trial banner immediately instead of inheriting a "dismissed"
+      // flag set by a previous account.
+      import('../utils/trialBanner')
+        .then((m) => m.clearTrialBannerDismissals())
+        .catch(() => {});
+
+      if (affiliateToken) {
+        navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
+      } else {
+        navigate('/chatbot');
+      }
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
@@ -74,6 +97,9 @@ export default function Register() {
 
   if (localStorage.getItem('admin_token')) {
     const isSuper = localStorage.getItem('is_superadmin') === 'true';
+    if (affiliateToken && !isSuper) {
+      return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
+    }
     return <Navigate to={isSuper ? '/superadmin/overview' : '/'} />;
   }
 
