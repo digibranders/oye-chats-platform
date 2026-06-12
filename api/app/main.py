@@ -147,6 +147,23 @@ app.add_exception_handler(SessionOwnershipError, session_ownership_exception_han
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # --- Database Initialization ---
+# Required PostgreSQL extensions must exist BEFORE create_all reaches a table
+# that uses them — ``referral_codes.code`` is CITEXT and ``documents.embedding``
+# is pgvector ``vector``. Production runs alembic which already installs these
+# (a1f9c3e6d4b2 for citext, the pgvector migration for vector). But CI + any
+# test environment that imports ``app.main`` bypasses alembic and goes
+# straight to ``create_all`` — that path previously crashed CI with
+# ``type "citext" does not exist``. Idempotent on prod (IF NOT EXISTS).
+try:
+    with engine.connect() as _conn:
+        _conn.execute(text("CREATE EXTENSION IF NOT EXISTS citext"))
+        _conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        _conn.commit()
+except Exception as _ext_err:
+    # Not Postgres / insufficient privileges. Skip silently; create_all will
+    # surface a clearer error if a required type is missing downstream.
+    logger.warning("Could not ensure pg extensions (%s) — continuing", _ext_err)
+
 Base.metadata.create_all(bind=engine)
 
 try:
