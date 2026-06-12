@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle } from 'lucide-react';
+import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown } from 'lucide-react';
 import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
@@ -97,6 +97,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [isInitializing, setIsInitializing] = useState(true);
+    // Track whether the messages list is anchored to the bottom so we can
+    // show a "scroll to latest" affordance only when the user has scrolled
+    // up. Default true matches the natural mount state (auto-scrolled).
+    const [isAtBottom, setIsAtBottom] = useState(true);
+    // Brief enlarge pulse the moment the user taps the scroll-to-latest pill.
+    // Gives the tap confirmation feedback even though the button itself
+    // disappears as soon as the smooth scroll catches up — without the pulse
+    // the tap reads as "nothing happened" on touch devices.
+    const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
     const [sessionId, setSessionId] = useState(() => {
         try { return localStorage.getItem('chat_session_id'); } catch { return null; }
     });
@@ -221,8 +230,27 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         let rafId = null;
         let settleTimer = null;
 
+        // Strip the JS-applied mobile inline styles so the Tailwind `md:`
+        // responsive classes can resume controlling layout. Without this,
+        // resizing the host viewport mobile → desktop (e.g. closing Chrome
+        // devtools' responsive mode) leaves the widget pinned at the last
+        // mobile dimensions because the inline styles outrank the cascade.
+        const clearMobileInlineStyles = () => {
+            const el = containerRef.current;
+            if (!el) return;
+            el.style.height = '';
+            el.style.width = '';
+            el.style.top = '';
+            el.style.left = '';
+            el.style.bottom = '';
+        };
+
         const syncViewport = () => {
-            if (!isMobile() || !containerRef.current) return;
+            if (!isMobile() || !containerRef.current) {
+                // Crossed the desktop breakpoint — hand layout back to CSS.
+                clearMobileInlineStyles();
+                return;
+            }
 
             // Coalesce rapid resize events (iOS keyboard animation fires many)
             // into a single rAF, then do a final authoritative read after the
@@ -253,11 +281,23 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
         vv.addEventListener('resize', syncViewport);
         vv.addEventListener('scroll', handleScroll);
+        // `visualViewport.resize` doesn't always fire when devtools' responsive
+        // mode toggles back to desktop — the visual viewport's INNER pixel
+        // dimensions can stay constant while window.innerWidth changes. A
+        // window-level resize listener catches that case.
+        window.addEventListener('resize', syncViewport);
+        // Belt-and-suspenders for browsers that suppress resize during devtools
+        // dock changes but still fire matchMedia changes when the breakpoint flips.
+        const mql = window.matchMedia('(min-width: 768px)');
+        const handleBreakpoint = () => { if (mql.matches) clearMobileInlineStyles(); };
+        mql.addEventListener('change', handleBreakpoint);
 
         const containerEl = containerRef.current;
         return () => {
             vv.removeEventListener('resize', syncViewport);
             vv.removeEventListener('scroll', handleScroll);
+            window.removeEventListener('resize', syncViewport);
+            mql.removeEventListener('change', handleBreakpoint);
             if (rafId) cancelAnimationFrame(rafId);
             if (settleTimer) clearTimeout(settleTimer);
             if (containerEl) {
@@ -326,6 +366,34 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             messagesArea.scrollTo({ top: messagesArea.scrollHeight, behavior: 'smooth' });
         }
     }, []);
+
+    // Tap-handler for the floating scroll-to-latest pill. Trips the enlarge
+    // pulse on the same frame as the scroll so the animation is visible even
+    // when the smooth scroll completes before the user's finger lifts.
+    const handleScrollToLatest = useCallback(() => {
+        setScrollBtnPulse(true);
+        scrollToBottom();
+        // 260ms ≈ the perceived "tap pulse" duration in iOS / Material; keeps
+        // the enlarge brief enough not to overlap the next user action.
+        setTimeout(() => setScrollBtnPulse(false), 260);
+    }, [scrollToBottom]);
+
+    // Track whether the user has scrolled away from the latest message.
+    // 48px tolerance covers anti-aliasing jitter and the gap-5 (20px) gap
+    // between the messagesEndRef sentinel and the last real message — without
+    // it, anchoring to the bottom flicks the affordance on briefly during
+    // streaming as new tokens push scrollHeight forward each frame.
+    useEffect(() => {
+        const messagesArea = containerRef.current?.querySelector('[data-messages-area]');
+        if (!messagesArea) return undefined;
+        const checkPosition = () => {
+            const { scrollTop, scrollHeight, clientHeight } = messagesArea;
+            setIsAtBottom(scrollTop + clientHeight >= scrollHeight - 48);
+        };
+        checkPosition();
+        messagesArea.addEventListener('scroll', checkPosition, { passive: true });
+        return () => messagesArea.removeEventListener('scroll', checkPosition);
+    }, [chatMode, isInitializing, showLeadForm]);
 
     // ── Initialization ───────────────────────────────────────────────────────────
     useEffect(() => {
@@ -1865,6 +1933,23 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 )}
 
                 <div ref={messagesEndRef} />
+
+                {/* Scroll-to-latest affordance. Always mounted so the
+                    show/hide transition can animate cleanly — toggling the
+                    JSX would skip the CSS transition and snap. Opacity + a
+                    downward translate make the affordance "rise up" into
+                    its resting position when the user scrolls away from
+                    the bottom, then fade + slide back down when they return. */}
+                <button
+                    type="button"
+                    onClick={handleScrollToLatest}
+                    aria-label="Scroll to latest message"
+                    aria-hidden={isAtBottom}
+                    tabIndex={isAtBottom ? -1 : 0}
+                    className={`sticky bottom-1 self-center mt-auto w-[34px] h-[34px] aspect-square rounded-full shrink-0 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-3 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
+                >
+                    <ChevronDown className="w-4 h-4" strokeWidth={2} />
+                </button>
             </div>
 
             {/* ── Unified ChatInput — hidden when any form is active ── */}

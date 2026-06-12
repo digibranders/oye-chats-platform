@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    X, Loader2, Users, AlertCircle, ShieldCheck,
-    TrendingUp, Gift, Sparkles, Crown,
+    X, Users, AlertCircle, ShieldCheck, DollarSign,
+    TrendingUp, Gift, Crown,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -80,6 +80,7 @@ export default function ReferralsModal({
 
     const referrals = data?.referrals || [];
     const breakdown = data?.breakdown || {};
+    const distribution = data?.distribution || null;
     const headline = data?.code || code || '';
 
     return (
@@ -160,36 +161,19 @@ export default function ReferralsModal({
                                         'grid gap-2',
                                         isSuperAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3',
                                     )}>
-                                        <BreakdownCard
-                                            icon={<TrendingUp size={12} />}
-                                            label="Affiliate"
-                                            value={breakdown.affiliate_pct}
-                                            tint="primary"
-                                        />
-                                        <BreakdownCard
-                                            icon={<Gift size={12} />}
-                                            label="Customer"
-                                            value={breakdown.customer_discount_pct}
-                                            tint="emerald"
-                                        />
+                                        <BreakdownCard label="Affiliate" value={breakdown.affiliate_pct} />
+                                        <BreakdownCard label="Customer" value={breakdown.customer_discount_pct} />
                                         {isSuperAdmin && (
-                                            <BreakdownCard
-                                                icon={<Crown size={12} />}
-                                                label="Platform"
-                                                value={breakdown.platform_pct}
-                                                tint="amber"
-                                            />
+                                            <BreakdownCard label="Platform" value={breakdown.platform_pct} />
                                         )}
                                         <BreakdownCard
-                                            icon={<Sparkles size={12} />}
                                             label="Pool"
                                             value={breakdown.pool_pct}
                                             hint={
                                                 breakdown.code_unused_pool_pct > 0
-                                                    ? `${breakdown.code_unused_pool_pct.toFixed(2)}% pool left in this code`
+                                                    ? `${breakdown.code_unused_pool_pct.toFixed(2)}% left`
                                                     : 'Fully allocated'
                                             }
-                                            tint="slate"
                                         />
                                     </div>
                                 )}
@@ -200,6 +184,83 @@ export default function ReferralsModal({
                                         <>Affiliate is your commission per qualifying payment. Customer is the discount applied at checkout. Pool is your overall ceiling set by the platform.</>
                                     )}
                                 </p>
+                            </section>
+
+                            {/* Monthly revenue distribution — aggregate $ across all paying referrals. */}
+                            <section className="space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                        <DollarSign size={13} className="text-surface-500 dark:text-surface-400" />
+                                        <h3 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">
+                                            Monthly revenue distribution
+                                        </h3>
+                                    </div>
+                                    {!loading && distribution && (
+                                        <span className="text-[11px] tabular-nums text-surface-500 dark:text-surface-400">
+                                            {distribution.paying_referrals} paying · {referrals.length - (distribution.paying_referrals || 0)} on free
+                                        </span>
+                                    )}
+                                </div>
+                                {loading && !data ? (
+                                    <div className={cn(
+                                        'grid gap-2',
+                                        isSuperAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3',
+                                    )}>
+                                        {Array.from({ length: isSuperAdmin ? 4 : 3 }).map((_, i) => (
+                                            <div
+                                                key={i}
+                                                className="h-[76px] rounded-xl bg-surface-100 dark:bg-surface-800 animate-pulse"
+                                            />
+                                        ))}
+                                    </div>
+                                ) : !distribution || distribution.paying_referrals === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-surface-200 dark:border-surface-700 px-4 py-5 text-center">
+                                        <p className="text-[12px] text-surface-500 dark:text-surface-400">
+                                            No paying referrals yet. The split kicks in once a referred customer subscribes to a paid plan.
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className={cn(
+                                            'grid gap-2',
+                                            isSuperAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3',
+                                        )}>
+                                            <MoneyCard
+                                                icon={<DollarSign size={11} />}
+                                                label="Total / month"
+                                                currency={distribution.currency}
+                                                cents={distribution.monthly_total_cents}
+                                                tint="slate"
+                                            />
+                                            <MoneyCard
+                                                icon={<TrendingUp size={11} />}
+                                                label={isSuperAdmin ? 'Affiliate earns' : 'You earn'}
+                                                currency={distribution.currency}
+                                                cents={distribution.monthly_affiliate_cents}
+                                                tint="primary"
+                                            />
+                                            <MoneyCard
+                                                icon={<Gift size={11} />}
+                                                label="Customers save"
+                                                currency={distribution.currency}
+                                                cents={distribution.monthly_customer_saved_cents}
+                                                tint="emerald"
+                                            />
+                                            {isSuperAdmin && (
+                                                <MoneyCard
+                                                    icon={<Crown size={11} />}
+                                                    label="Platform keeps"
+                                                    currency={distribution.currency}
+                                                    cents={distribution.monthly_platform_cents}
+                                                    tint="amber"
+                                                />
+                                            )}
+                                        </div>
+                                        <p className="text-[11px] text-surface-500 dark:text-surface-400 leading-relaxed">
+                                            Annual subscribers are normalised to a monthly equivalent so the totals are apples-to-apples. Free-tier referrals don&apos;t contribute until they convert.
+                                        </p>
+                                    </>
+                                )}
                             </section>
 
                             {/* Referrals list */}
@@ -250,22 +311,28 @@ export default function ReferralsModal({
                                         {referrals.map((r) => (
                                             <li
                                                 key={r.client_id}
-                                                className="flex items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-surface-900"
+                                                className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 bg-white dark:bg-surface-900"
                                             >
-                                                <div className="flex items-center gap-3 min-w-0">
+                                                <div className="flex items-center gap-3 min-w-0 flex-1">
                                                     <Avatar name={r.name || r.email} />
                                                     <div className="min-w-0">
-                                                        <p className="text-[13px] font-semibold text-surface-900 dark:text-surface-50 truncate">
-                                                            {r.name || 'Anonymous customer'}
-                                                        </p>
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <p className="text-[13px] font-semibold text-surface-900 dark:text-surface-50 truncate">
+                                                                {r.name || 'Anonymous customer'}
+                                                            </p>
+                                                            <PlanChip slug={r.pricing?.plan_slug} />
+                                                        </div>
                                                         <p className="text-[12px] text-surface-500 dark:text-surface-400 truncate font-mono">
                                                             {r.email}
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <span className="text-[11px] text-surface-500 dark:text-surface-400 tabular-nums shrink-0">
-                                                    {fmtDate(r.attributed_at)}
-                                                </span>
+                                                <div className="flex flex-col sm:items-end gap-1 shrink-0 sm:ml-3">
+                                                    <RowPricing pricing={r.pricing} isSuperAdmin={isSuperAdmin} />
+                                                    <span className="text-[11px] text-surface-500 dark:text-surface-400 tabular-nums">
+                                                        Joined {fmtDate(r.attributed_at)}
+                                                    </span>
+                                                </div>
                                             </li>
                                         ))}
                                     </ul>
@@ -290,26 +357,18 @@ export default function ReferralsModal({
     );
 }
 
-const TINTS = {
-    primary: 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 border-primary-200/60 dark:border-primary-500/30',
-    emerald: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-500/30',
-    amber:   'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-500/30',
-    slate:   'bg-surface-50 dark:bg-surface-800/60 text-surface-700 dark:text-surface-300 border-surface-200/60 dark:border-surface-700/60',
-};
-
-function BreakdownCard({ icon, label, value, hint, tint = 'slate' }) {
+function BreakdownCard({ label, value, hint }) {
     const pct = value == null ? null : Number(value);
     return (
-        <div className={cn('rounded-xl border px-3 py-2.5', TINTS[tint])}>
-            <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider opacity-80">
-                {icon}
-                <span>{label}</span>
-            </div>
-            <p className="mt-1 text-lg font-bold tabular-nums leading-none">
+        <div className="rounded-lg border border-surface-200 dark:border-surface-800 bg-surface-50/60 dark:bg-surface-800/40 px-3 py-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">
+                {label}
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums leading-none text-surface-900 dark:text-surface-50">
                 {pct == null ? '—' : `${pct.toFixed(2)}%`}
             </p>
             {hint && (
-                <p className="mt-0.5 text-[10px] opacity-70 truncate">{hint}</p>
+                <p className="mt-1 text-[10px] text-surface-500 dark:text-surface-400 truncate">{hint}</p>
             )}
         </div>
     );
@@ -341,4 +400,115 @@ function fmtDate(iso) {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '—';
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/** Format an amount in minor units (cents/paise) with the right symbol. */
+function fmtMoney(cents, currency) {
+    if (cents == null) return '—';
+    const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency || ''} `;
+    const major = Number(cents) / 100;
+    const formatted = Number.isInteger(major)
+        ? major.toLocaleString()
+        : major.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${sym}${formatted}`;
+}
+
+const MONEY_TINTS = {
+    slate:   'bg-surface-50 dark:bg-surface-800/60 text-surface-900 dark:text-surface-50 border-surface-200 dark:border-surface-700',
+    primary: 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 border-primary-200/60 dark:border-primary-500/30',
+    emerald: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-500/30',
+    amber:   'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-500/30',
+};
+
+/** Aggregate-distribution card — one per slice (total / affiliate / customer / platform). */
+function MoneyCard({ icon, label, currency, cents, tint = 'slate' }) {
+    return (
+        <div className={cn('rounded-xl border px-3 py-2.5', MONEY_TINTS[tint])}>
+            <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider opacity-80">
+                {icon}
+                <span>{label}</span>
+            </div>
+            <p className="mt-1 text-lg font-bold tabular-nums leading-none">
+                {fmtMoney(cents, currency)}
+            </p>
+            <p className="mt-0.5 text-[10px] opacity-70">/ month</p>
+        </div>
+    );
+}
+
+/** Plan badge inline with the customer name in the referrals list. */
+const PLAN_CHIP_TINTS = {
+    free:       'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400',
+    starter:    'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300',
+    standard:   'bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300',
+    enterprise: 'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-300',
+};
+
+function PlanChip({ slug }) {
+    if (!slug) return null;
+    const label = slug.charAt(0).toUpperCase() + slug.slice(1);
+    const tint = PLAN_CHIP_TINTS[slug] || PLAN_CHIP_TINTS.free;
+    return (
+        <span className={cn(
+            'inline-flex items-center text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded',
+            tint,
+        )}>
+            {label}
+        </span>
+    );
+}
+
+/** Per-row pricing tail — what this single customer contributes per month. */
+function RowPricing({ pricing, isSuperAdmin }) {
+    if (!pricing || !pricing.full_price_cents) {
+        return (
+            <span className="text-[11px] text-surface-400 dark:text-surface-500 tabular-nums">
+                Not subscribed yet
+            </span>
+        );
+    }
+    const { currency, paid_cents, affiliate_earns_cents, customer_saved_cents, platform_cents } = pricing;
+    return (
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+            <span
+                className="inline-flex items-center gap-0.5 text-[11px] font-semibold tabular-nums text-surface-700 dark:text-surface-300"
+                title="Customer pays per month after discount"
+            >
+                <DollarSign size={10} className="text-surface-400" />
+                {fmtMoney(paid_cents, currency)}
+            </span>
+            <span className="text-[11px] text-surface-300 dark:text-surface-600">·</span>
+            <span
+                className="inline-flex items-center gap-0.5 text-[11px] font-semibold tabular-nums text-primary-700 dark:text-primary-300"
+                title={isSuperAdmin ? 'Affiliate earns per month' : 'You earn per month'}
+            >
+                <TrendingUp size={10} />
+                +{fmtMoney(affiliate_earns_cents, currency)}
+            </span>
+            {customer_saved_cents > 0 && (
+                <>
+                    <span className="text-[11px] text-surface-300 dark:text-surface-600">·</span>
+                    <span
+                        className="inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums text-emerald-600 dark:text-emerald-400"
+                        title="Customer saves per month"
+                    >
+                        <Gift size={10} />
+                        -{fmtMoney(customer_saved_cents, currency)}
+                    </span>
+                </>
+            )}
+            {isSuperAdmin && platform_cents != null && (
+                <>
+                    <span className="text-[11px] text-surface-300 dark:text-surface-600">·</span>
+                    <span
+                        className="inline-flex items-center gap-0.5 text-[11px] font-medium tabular-nums text-amber-600 dark:text-amber-400"
+                        title="Platform keeps per month"
+                    >
+                        <Crown size={10} />
+                        {fmtMoney(platform_cents, currency)}
+                    </span>
+                </>
+            )}
+        </div>
+    );
 }

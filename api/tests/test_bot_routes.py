@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.auth import get_current_bot, get_current_client_or_operator
+from app.api.auth import (
+    get_current_bot,
+    get_current_client_or_operator,
+    require_active_subscription_for_workspace,
+)
 from app.api.bot_routes import public_router, router
 
 
@@ -24,6 +28,12 @@ def _build_app(auth_override=None, bot_override=None):
         app.dependency_overrides[get_current_client_or_operator] = lambda: auth_override
     if bot_override:
         app.dependency_overrides[get_current_bot] = lambda: bot_override
+    # The subscription gate is a separate concern from bot-route logic —
+    # every test in this module exercises an authenticated, paying user, so
+    # we short-circuit the gate to "allow" rather than build a fake
+    # subscription row per test. PR3 has its own dedicated coverage for
+    # the gate semantics (see test_trial_enforcement.py).
+    app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
     return app
 
 
@@ -174,11 +184,16 @@ class TestBotSettingsPublic:
         request = MagicMock()
         request.base_url = "http://test/"
 
-        with patch.object(br, "_build_public_cta_options", return_value={}):
+        with (
+            patch.object(br, "_build_public_cta_options", return_value={}),
+            patch.object(br, "bot_subscription_status", return_value="active"),
+        ):
             result = br.get_bot_settings_public(request, bot)
 
         assert result["primary_color"] == "#4F46E5"
         assert result["welcome_title"] == "Hello"
+        assert result["is_offline"] is False
+        assert result["offline_reason"] is None
 
 
 # ── Bot update ───────────────────────────────────────────────────────────────

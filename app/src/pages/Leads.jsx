@@ -747,28 +747,11 @@ export default function Leads() {
                                         <span className="flex items-center gap-1"><MessageCircle className="w-3 h-3" />{leadDetail.chats} msgs</span>
                                     </div>
 
-                                    {/* Chat History */}
-                                    {leadDetail.messages && leadDetail.messages.length > 0 && (
-                                        <div className="space-y-3">
-                                            <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Chat History</h3>
-                                            <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                                                {leadDetail.messages.map((msg, i) => (
-                                                    <div
-                                                        key={i}
-                                                        className={cn(
-                                                            'px-3 py-2 rounded-lg text-sm',
-                                                            msg.role === 'user'
-                                                                ? 'bg-primary-50 dark:bg-primary-500/10 text-surface-800 dark:text-surface-200 ml-8'
-                                                                : 'bg-surface-50 dark:bg-surface-800 text-surface-700 dark:text-surface-300 mr-8'
-                                                        )}
-                                                    >
-                                                        <p className="text-[10px] font-bold text-surface-400 dark:text-surface-500 mb-0.5">{msg.role === 'user' ? 'Visitor' : 'Bot'}</p>
-                                                        <p className="whitespace-pre-wrap text-[13px] leading-relaxed">{msg.content.length > 300 ? msg.content.substring(0, 300) + '...' : msg.content}</p>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
+                                    {/* Chat history lives in its own drawer
+                                        (opened via the per-row "View chat"
+                                        button) so the Lead Detail panel can
+                                        stay focused on qualification — notes,
+                                        BANT scores, behavioral signals. */}
                                 </div>
                             ) : null}
                         </motion.div>

@@ -71,6 +71,11 @@ api.interceptors.response.use(
 
         if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint) {
             AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+            // Banner dismissals are scoped to the session, not to a user —
+            // wipe them on auto-logout so the next account sees a fresh
+            // trial banner. Inline import keeps the bundle graph clean
+            // (the helper lives in utils, not in a component module).
+            import('../utils/trialBanner').then((m) => m.clearTrialBannerDismissals?.());
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
             }
@@ -1201,6 +1206,24 @@ export const createCheckoutSession = async (planId, billingCycle = 'monthly') =>
     }
 };
 
+/**
+ * Start a 14-day free trial of the named paid plan.
+ *
+ * The customer must be on the free tier (or have no subscription) and must
+ * not have used a trial on this plan before. The backend cancels their
+ * existing free subscription, creates a trialing one on the new plan, and
+ * grants the plan's full monthly credit allowance. No card is collected
+ * — the conversion path runs through createCheckoutSession on day 14.
+ */
+export const startTrial = async (planSlug) => {
+    try {
+        const response = await api.post('/subscriptions/start-trial', { plan_slug: planSlug });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start free trial');
+    }
+};
+
 export const changePlan = async (planId, billingCycle = null) => {
     try {
         const response = await api.post('/subscriptions/change-plan', {
@@ -1319,6 +1342,82 @@ export const verifyStripeTopup = async (sessionId) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Could not verify Stripe payment');
+    }
+};
+
+/**
+ * Subscription billing geo / currency profile. Returns the country (from
+ * edge headers, with a `?country=XX` override the caller can pass to flip
+ * the display currency for travellers), the display currency the UI should
+ * render against (INR for IN, USD elsewhere), the static USD→INR display
+ * rate, and whether checkout is actually wired (Razorpay enabled AND either
+ * the customer is Indian or International Payments has been unlocked).
+ *
+ * Cached at call sites — geo doesn't change mid-session.
+ */
+export const getBillingGeo = async (overrideCountry) => {
+    try {
+        const params = overrideCountry ? { country: overrideCountry.toUpperCase() } : undefined;
+        const response = await api.get('/subscriptions/geo', { params });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not load billing region');
+    }
+};
+
+/**
+ * Server-verify the Razorpay subscription Checkout success callback.
+ * Mirrors verifyTopupPayment's responsibility but for the subscription
+ * signature (``payment_id|subscription_id`` HMAC variant). The webhook is
+ * still the authoritative reconciler — this endpoint exists so the modal
+ * can flip to a success state instantly instead of polling.
+ */
+export const verifyRazorpaySubscription = async ({
+    razorpay_payment_id,
+    razorpay_subscription_id,
+    razorpay_signature,
+}) => {
+    try {
+        const response = await api.post('/subscriptions/verify-razorpay-subscription', {
+            razorpay_payment_id,
+            razorpay_subscription_id,
+            razorpay_signature,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not verify Razorpay subscription');
+    }
+};
+
+/**
+ * Subscription-side companion to ``verifyStripeTopup``. Reconciles a
+ * successful Stripe subscription checkout when the webhook can't reach
+ * the API (local dev) — links the local sub row to the Stripe sub id,
+ * resets prior plan credits, grants the new plan's monthly allowance.
+ * Idempotent; safe to call multiple times.
+ */
+export const verifyStripeSubscription = async (sessionId) => {
+    try {
+        const response = await api.post('/subscriptions/verify-stripe', { session_id: sessionId });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not verify Stripe subscription');
+    }
+};
+
+/**
+ * Reconcile escape hatch — asks Stripe directly for the customer's most
+ * recent paid subscription checkout and folds it into the local sub row.
+ * Used by the "Sync billing" button when the customer paid but the
+ * webhook never reached us (and they don't have a ``session_id`` in the
+ * URL because they came back later). Idempotent.
+ */
+export const reconcileStripeSubscription = async () => {
+    try {
+        const response = await api.post('/subscriptions/reconcile');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Could not sync billing');
     }
 };
 
@@ -1529,7 +1628,8 @@ export const updateSuperadminAffiliate = async (
 
 /**
  * Look up a magic-link invite by raw token. Returns the email + expiry so
- * the AffiliateAccept page can pre-fill the form.
+ * the AffiliateInvite landing page can show the recipient who the invite
+ * is for + the expiry deadline before they pick sign-in or sign-up.
  *
  * Throws on invalid (404) / expired or revoked (410). The caller inspects
  * `error.status` to render the right empty state.
@@ -1554,6 +1654,20 @@ export const acceptAffiliateInvite = async ({ token, name, password, companyName
         if (companyName) payload.company_name = companyName;
         if (website) payload.website = website;
         const response = await api.post('/affiliate-invites/accept', payload);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to accept invite');
+    }
+};
+
+/**
+ * Accept an invite while ALREADY signed in. Backend wires the Affiliate
+ * row to the currently-authenticated client (no Client row created).
+ * Returns 403 if the token's email doesn't match the logged-in client.
+ */
+export const acceptAffiliateInviteExisting = async (token) => {
+    try {
+        const response = await api.post('/affiliate-invites/accept-existing', { token });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to accept invite');

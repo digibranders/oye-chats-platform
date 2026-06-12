@@ -27,8 +27,15 @@ class TestExtractTitle:
     def test_extracts_h1(self):
         assert _extract_title_from_markdown("# Getting Started\nSome content") == "Getting Started"
 
-    def test_ignores_h2(self):
-        assert _extract_title_from_markdown("## Not a title\nContent") is None
+    def test_falls_back_to_h2_when_no_h1(self):
+        """Many pages put the H1 in their site header and use ## for the page
+        title. Fall back to H2 so those pages still carry a title."""
+        assert _extract_title_from_markdown("## Pricing Plans\nContent here") == "Pricing Plans"
+
+    def test_prefers_h1_over_h2(self):
+        """When both exist, H1 wins — it's the canonical page title."""
+        text = "# Real Title\n## Section Heading\nContent"
+        assert _extract_title_from_markdown(text) == "Real Title"
 
     def test_rejects_too_short(self):
         assert _extract_title_from_markdown("# Hi") is None
@@ -137,6 +144,9 @@ class TestIngestDocument:
         assert result == 0
 
     def test_invalidates_cache_on_success(self):
+        """Successful ingestion invalidates BOTH the QA cache and the
+        relevance-gate cache for the bot — stale gate judgments from before
+        the upload must die immediately, not haunt for an hour."""
         from app.ingestion.pipeline import _ingest_document
 
         session = MagicMock()
@@ -151,10 +161,17 @@ class TestIngestDocument:
             patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
             patch("app.ingestion.pipeline.cache_delete_prefix") as mock_cache,
+            patch("app.ingestion.pipeline.qa_prefix_for_bot", return_value="qa:5:") as mock_qa_prefix,
+            patch("app.ingestion.pipeline.gate_prefix_for_bot", return_value="gate:b5:") as mock_gate_prefix,
         ):
             _ingest_document(1, "doc.pdf", "text", [{"text": "text", "metadata": {}}], bot_id=5)
 
-        mock_cache.assert_called_once()
+        # Both prefixes built and invalidated
+        mock_qa_prefix.assert_called_once_with(5)
+        mock_gate_prefix.assert_called_once_with(5)
+        assert mock_cache.call_count == 2
+        invalidated_prefixes = {call.args[0] for call in mock_cache.call_args_list}
+        assert invalidated_prefixes == {"qa:5:", "gate:b5:"}
 
     def test_rollback_on_insert_error(self):
         from app.ingestion.pipeline import _ingest_document

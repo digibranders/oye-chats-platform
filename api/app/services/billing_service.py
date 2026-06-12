@@ -29,17 +29,33 @@ def _record_or_skip_webhook(session: Session, event_id: str | None, provider: st
 
     Stripe and Razorpay both retry on 5xx, so duplicate deliveries are common.
     We persist event IDs to ``processed_webhooks`` so the second delivery is a
-    no-op. Returns False if the event was already processed.
+    no-op. Returns False if the event was already processed (or another worker
+    won the race to record it).
+
+    Concurrency note: the previous ``SELECT`` + ``INSERT`` pattern had a race
+    window — two workers handling the same retry could both pass the ``SELECT``,
+    both flush, and only ``COMMIT`` would catch the duplicate (via the unique
+    constraint) by which point both had already granted credits, written
+    invoices, etc. We now use an atomic ``INSERT … ON CONFLICT DO NOTHING``
+    and key off the row count: the worker whose insert won proceeds; the
+    loser sees ``rowcount == 0`` and bails. Postgres-only — but every
+    deployment is Postgres + pgvector, so no portability cost.
     """
     if not event_id:
         logger.warning("Webhook missing event ID — rejecting to prevent duplicate processing (provider=%s)", provider)
         return False
-    existing = session.get(ProcessedWebhook, event_id)
-    if existing is not None:
-        return False
-    session.add(ProcessedWebhook(event_id=event_id, provider=provider))
+    from sqlalchemy.dialects.postgresql import insert
+
+    stmt = (
+        insert(ProcessedWebhook)
+        .values(event_id=event_id, provider=provider)
+        .on_conflict_do_nothing(index_elements=["event_id"])
+    )
+    result = session.execute(stmt)
     session.flush()
-    return True
+    # ``rowcount`` is 1 when our INSERT actually wrote a row, 0 when the
+    # ON CONFLICT clause swallowed it because somebody else got there first.
+    return (result.rowcount or 0) > 0
 
 
 def _get_stripe():
@@ -155,26 +171,56 @@ def create_checkout_session(
     if extra_metadata:
         metadata.update({str(k): str(v) for k, v in extra_metadata.items()})
 
-    discount_bps_int = max(0, min(10_000, int(discount_bps or 0)))
+    # Route through the shared helper so the quote and the eventual Stripe
+    # coupon agree to the exact bps. Bare ``int()`` truncation here used to
+    # round 12.345% one way while ``pct_to_bps`` rounded it the other —
+    # rare in practice (the input is already int bps from the DB) but
+    # eliminated outright by sharing the same normaliser.
+    from app.core.money import normalize_bps
+
+    discount_bps_int = normalize_bps(discount_bps)
     discounts_arg: list[dict] = []
     if discount_bps_int and extra_metadata and extra_metadata.get("referral_code"):
         coupon_id = _ensure_referral_coupon(stripe, code=str(extra_metadata["referral_code"]), bps=discount_bps_int)
         discounts_arg = [{"coupon": coupon_id}]
         metadata["referral_coupon_id"] = coupon_id
 
+    # Enforce "one trial per (client, plan)" lifetime gate. Without this, a
+    # customer who already used and exhausted their Starter trial could re-enter
+    # checkout for Starter and get ANOTHER 14-day trial — bypassing the gate
+    # that ``plan_service.start_trial`` enforces for the in-app trial flow.
+    # ``plan_service`` covers the dedicated /start-trial path; this guard
+    # covers the direct /checkout path that historically didn't check.
+    prior_sub_exists = (
+        session.execute(
+            select(Subscription.id).where(Subscription.client_id == client.id, Subscription.plan_id == plan.id).limit(1)
+        ).first()
+        is not None
+    )
+    effective_trial_days = plan.trial_days if (plan.trial_days > 0 and not prior_sub_exists) else None
+    if prior_sub_exists and plan.trial_days > 0:
+        logger.info(
+            "Stripe checkout for client %s plan %s: skipping trial (prior subscription on this plan exists)",
+            client.id,
+            plan.slug,
+        )
+
     create_kwargs: dict = {
         "customer": customer_id,
         "mode": "subscription",
         "line_items": [{"price": price_id, "quantity": 1}],
-        "success_url": success_url or f"{FRONTEND_URL}/subscription?status=success&session_id={{CHECKOUT_SESSION_ID}}",
-        "cancel_url": cancel_url or f"{FRONTEND_URL}/subscription?status=canceled",
+        # Land on /billing directly (not /subscription) so the React Router
+        # redirect doesn't strip the session_id query param before our
+        # success handler can read it.
+        "success_url": success_url or f"{FRONTEND_URL}/billing?subscription=success&session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": cancel_url or f"{FRONTEND_URL}/billing?subscription=cancel",
         "metadata": metadata,
         "subscription_data": {
             "metadata": {
                 "oyechats_client_id": str(client.id),
                 "oyechats_plan_id": str(plan.id),
             },
-            "trial_period_days": plan.trial_days if plan.trial_days > 0 else None,
+            "trial_period_days": effective_trial_days,
         },
     }
     # Stripe rejects sessions that mix ``allow_promotion_codes`` with a
@@ -316,6 +362,8 @@ def handle_stripe_webhook_event(session: Session, event: dict) -> str:
         return _handle_invoice_failed(session, data)
     elif event_type == "payment_intent.succeeded":
         return _handle_payment_intent_succeeded(session, data)
+    elif event_type == "charge.refunded":
+        return _handle_charge_refunded(session, data)
     else:
         return f"Unhandled event type: {event_type}"
 
@@ -387,11 +435,24 @@ def _handle_checkout_completed(session: Session, data: dict) -> str:
 
     # Grant the first month's plan credits immediately so the customer can
     # start using the product. Subsequent renewals come via invoice.paid.
-    if plan is not None:
+    #
+    # BUT: when ``status == "trialing"``, the conversion-to-paid event
+    # (``invoice.paid``) will arrive at trial-end with ``period_start`` >>
+    # ``new_sub.created_at`` — the first-invoice guard in ``_handle_invoice_paid``
+    # uses ``abs(period_start - created_at) < 86400`` to skip a redundant
+    # grant and that diff is *days* on a trialing sub, so the guard misses
+    # and we'd grant credits a second time on conversion. Skip the inline
+    # grant here and let ``invoice.paid`` do it exactly once on conversion.
+    is_trialing = (status or "").lower() == "trialing"
+    if plan is not None and not is_trialing:
         credit_service.grant_for_subscription(session, new_sub)
 
     logger.info(
-        f"Subscription created from checkout: client={client_id}, plan={plan_id}, stripe={stripe_subscription_id}"
+        "Subscription created from checkout: client=%s, plan=%s, stripe=%s, trialing=%s",
+        client_id,
+        plan_id,
+        stripe_subscription_id,
+        is_trialing,
     )
     return f"Subscription created for client {client_id}"
 
@@ -412,7 +473,12 @@ def _handle_subscription_updated(session: Session, data: dict) -> str:
         logger.warning(f"Stripe subscription {stripe_sub_id} not found in DB")
         return "Subscription not found"
 
-    sub.status = data.get("status", sub.status)
+    new_status = data.get("status", sub.status)
+    # Card rescued — clear the dunning anchor so a future failure starts
+    # its own grace window instead of inheriting the previous one.
+    if sub.status == "past_due" and new_status == "active":
+        sub.past_due_since = None
+    sub.status = new_status
     sub.cancel_at_period_end = data.get("cancel_at_period_end", False)
 
     if data.get("current_period_start"):
@@ -588,6 +654,11 @@ def _handle_invoice_failed(session: Session, data: dict) -> str:
     )
 
     if sub:
+        # Preserve the FIRST entry into past_due so the dunning grace clock
+        # doesn't reset on every retry — repeat failures keep the same
+        # anchor, only a successful payment (status → active) clears it.
+        if sub.status != "past_due":
+            sub.past_due_since = datetime.now(UTC)
         sub.status = "past_due"
         session.flush()
         logger.warning(f"Payment failed for subscription {stripe_sub_id}, marked as past_due")
@@ -780,3 +851,75 @@ def sync_plan_to_stripe(session: Session, plan: Plan) -> dict:
     session.flush()
     logger.info(f"Synced plan '{plan.name}' to Stripe: {result}")
     return result
+
+
+# ── Refund handling ─────────────────────────────────────────────────────────
+
+
+def _handle_charge_refunded(session: Session, data: dict) -> str:
+    """Reverse credits when Stripe reports a charge refund.
+
+    Fires on ``charge.refunded`` (full and partial both land here). The
+    Charge object carries ``amount`` (originally charged, minor units)
+    and ``amount_refunded`` (cumulative refunded to date). The cumulative
+    field is important: if a customer gets two ₹500 partial refunds on a
+    ₹2000 charge, we receive two events with ``amount_refunded`` = 500
+    then 1000 — we have to claw back only the delta on the second event,
+    not 1000 credits worth again.
+
+    The ``ProcessedWebhook`` row written upstream already prevents the
+    SAME event id from being applied twice, so we lean on that for retry
+    idempotency and treat each event's cumulative amount as the new
+    target state.
+    """
+    invoice_id = data.get("invoice")
+    if not invoice_id:
+        # Refunds against ad-hoc PaymentIntents (no invoice — e.g. legacy
+        # top-up flow) don't map cleanly to a grant on our side.
+        return "Refund event has no invoice — skipping clawback"
+
+    inv = session.execute(select(Invoice).where(Invoice.stripe_invoice_id == invoice_id)).scalars().first()
+    if inv is None:
+        logger.warning("charge.refunded for unknown stripe invoice %s", invoice_id)
+        return f"Invoice {invoice_id} not found"
+
+    charge_minor = int(data.get("amount") or 0)
+    cumulative_refund_minor = int(data.get("amount_refunded") or 0)
+    if cumulative_refund_minor <= 0 or charge_minor <= 0:
+        return "Refund event with zero amount"
+
+    # ``Invoice.amount_cents`` is the originally-charged amount. We track
+    # the running total of what we've already clawed back via the same
+    # field's mismatch with the cumulative refund; net delta is what's
+    # outstanding for this event.
+    already_clawed_minor = max(0, charge_minor - int(inv.amount_cents or charge_minor))
+    delta_minor = cumulative_refund_minor - already_clawed_minor
+    if delta_minor <= 0:
+        return f"Refund already applied to invoice {inv.id}"
+
+    clawed, entry_id = credit_service.clawback_refund(
+        session,
+        client_id=inv.client_id,
+        charge_minor=charge_minor,
+        refund_minor=delta_minor,
+        note=f"Refund clawback for Stripe charge {data.get('id', '?')}",
+    )
+
+    # Mark the invoice. We use "refunded" for a full refund and
+    # "partially_refunded" otherwise so support / analytics can tell them
+    # apart without re-querying Stripe.
+    if cumulative_refund_minor >= charge_minor:
+        inv.status = "refunded"
+    else:
+        inv.status = "partially_refunded"
+    session.flush()
+
+    logger.info(
+        "Stripe charge refund: invoice=%s charge=%s refund_minor=%s clawed=%s entry=%s",
+        inv.id,
+        data.get("id"),
+        delta_minor,
+        clawed,
+        entry_id,
+    )
+    return f"Refund processed: {clawed} credit(s) clawed back from invoice {inv.id}"

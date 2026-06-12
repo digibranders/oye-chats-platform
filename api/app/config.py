@@ -161,15 +161,31 @@ RAZORPAY_ENABLED = bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
 # Default billing provider for new subscriptions and top-ups. Customers on a
 # subscription continue to use whichever provider their record is tagged with;
 # this only affects new sign-ups and the admin checkout button.
-# Values: "stripe" (default — USD international) or "razorpay" (INR-only, UPI).
-# Razorpay can still be selected per-request via {"provider": "razorpay"} so
-# we keep the codepath alive for explicit Indian-customer flows.
-BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "stripe").lower()
+# Values: "razorpay" (default — INR + UPI + cards, the primary rail) or
+# "stripe" (retained only so existing Stripe subscribers can still renew /
+# cancel — new checkouts route through Razorpay).
+BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()
 
 # Display currency for the admin and landing pricing page. The provider sees
 # the actual currency on each charge; this is purely a presentation default
 # for new subscriptions when the plan row doesn't pin a currency.
-BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "USD").upper()
+BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "INR").upper()
+
+# Razorpay International Payments add-on. Disabled until the Razorpay account
+# has KYC + business verification completed for charging non-Indian cards.
+# While False, non-Indian checkout requests are short-circuited to a
+# "contact sales" response so the UI can surface a CTA instead of a failed
+# gateway call. Flip to True (env: ``INTL_PAYMENTS_ENABLED=true``) once the
+# add-on is live — no code change needed.
+INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in ("1", "true", "yes")
+
+# Display-only USD/INR rate used when rendering non-Indian quotes on the
+# pricing page. The gateway never sees this — INR remains the only currency
+# that flows to Razorpay for actual charges. Per-plan USD prices live on the
+# Plan row long-term (super-admin editor); until that column lands, this
+# fallback keeps the marketing site self-consistent. Treated as ``rupees
+# per US dollar``: a plan priced at ₹1,499 displays as ~$18 at the default.
+DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "83"))
 
 # Frontend URL for checkout redirects (Stripe success/cancel, Razorpay return).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
@@ -185,6 +201,27 @@ else:
     logger.info("Razorpay billing disabled (no RAZORPAY_KEY_ID)")
 
 logger.info(f"Default billing provider: {BILLING_PROVIDER} ({BILLING_CURRENCY})")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Free-trial lifecycle
+# ─────────────────────────────────────────────────────────────────────────────
+# ``TRIAL_CREDITS`` is the fallback credit grant when a trial is provisioned
+# without a plan reference (auth_routes.py). ``TRIAL_DATA_RETENTION_DAYS`` is
+# the grace window between trial expiry and the cron that hard-deletes bot
+# documents/sessions (worker/tasks.py).
+#
+# Trial DURATION is sourced from ``Plan.trial_days`` (seeded by alembic), NOT
+# an env var — keeping it on the plan row lets super admins change trial
+# length per-tier without a redeploy.
+TRIAL_CREDITS = int(os.getenv("TRIAL_CREDITS", "750"))
+TRIAL_DATA_RETENTION_DAYS = int(os.getenv("TRIAL_DATA_RETENTION_DAYS", "15"))
+
+# Dunning grace window — how long a subscription stays in ``past_due`` (full
+# feature access for the customer) before the auto-expire cron flips it to
+# ``expired`` and the regular gates kick in. Stripe's own dunning sequence
+# is typically 3 retries over ~7 days, so the default lines up with "we've
+# given the gateway time to recover the card, now stop bleeding LLM credits".
+PAYMENT_FAILED_GRACE_DAYS = int(os.getenv("PAYMENT_FAILED_GRACE_DAYS", "7"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler

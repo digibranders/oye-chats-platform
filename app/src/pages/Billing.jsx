@@ -4,7 +4,6 @@ import {
   Sparkles,
   Zap,
   Globe,
-  Mail,
   CreditCard,
   Users,
   Plus,
@@ -24,6 +23,8 @@ import {
   changeOperatorSeats,
   getBillingPortalUrl,
   verifyStripeTopup,
+  verifyStripeSubscription,
+  reconcileStripeSubscription,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
@@ -33,6 +34,7 @@ import Progress from '../components/ui/Progress';
 import { useToast } from '../context/ToastContext';
 import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
+import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
 import { cn } from '../lib/utils';
 
 const TRUSTED_REDIRECT_DOMAINS = ['checkout.stripe.com', 'billing.stripe.com'];
@@ -147,7 +149,12 @@ export default function Billing() {
   const [topupOpen, setTopupOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [seatBusy, setSeatBusy] = useState(false);
+  // Seat-change confirmation modal state. Stores the pending delta so the
+  // same modal handles both add (+1) and remove (-1) — surfaces price,
+  // payment provider, and resulting seat count BEFORE the backend call.
+  const [seatConfirmDelta, setSeatConfirmDelta] = useState(null);
   const [portalBusy, setPortalBusy] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
 
   // Persist tab choice in URL so refreshes / shares land on the right tab.
   useEffect(() => {
@@ -222,6 +229,44 @@ export default function Billing() {
       const cleanUrl = window.location.pathname;
       window.history.replaceState({}, '', cleanUrl);
     }
+    // Subscription checkout return — mirror of the topup verify path.
+    // Stripe doesn't reach localhost so the local sub row + credits won't
+    // reconcile from the webhook; we self-verify against the session id.
+    if (params.get('subscription') === 'success') {
+      const sessionId = params.get('session_id');
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, '', cleanUrl);
+      if (sessionId) {
+        showToast('Confirming your subscription…', 'info');
+        verifyStripeSubscription(sessionId)
+          .then((res) => {
+            if (res?.verified && res?.reason !== 'Already reconciled') {
+              showToast(
+                `You're now on the ${res.plan_slug?.charAt(0).toUpperCase() + res.plan_slug?.slice(1)} plan.`,
+                'success',
+              );
+            } else if (res?.reason === 'Already reconciled') {
+              showToast('Subscription already up to date.', 'info');
+            } else {
+              showToast(res?.reason || 'Subscription pending — it will appear shortly.', 'info');
+            }
+            loadAll({ silent: true });
+          })
+          .catch((err) => {
+            showToast(err?.message || 'Could not confirm subscription.', 'warning');
+            [1500, 4000, 8000].forEach((ms) => setTimeout(() => loadAll({ silent: true }), ms));
+          });
+        return undefined;
+      }
+      showToast('Subscription confirmed — refreshing.', 'success');
+      const timers = [800, 2500, 5000].map((ms) => setTimeout(() => loadAll({ silent: true }), ms));
+      return () => timers.forEach((t) => clearTimeout(t));
+    }
+    if (params.get('subscription') === 'cancel') {
+      showToast('Checkout canceled — your plan is unchanged.', 'info');
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, '', cleanUrl);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -230,7 +275,6 @@ export default function Billing() {
   const topupRemaining = balance?.topup || 0;
   const totalRemaining = balance?.total || 0;
   const currency = balance?.currency || plan?.currency || 'USD';
-  const currencySymbol = balance?.currency_symbol || (currency === 'USD' ? '$' : currency === 'INR' ? '₹' : currency);
 
   const planUsedPct = useMemo(() => {
     if (!monthlyGrant) return 0;
@@ -256,14 +300,31 @@ export default function Billing() {
   const usage = balance?.usage || {};
   const costs = balance?.costs || { ai_chat: 1, url_scan: 3, email_send: 1 };
 
-  // Plan credits consumed this period = grant minus what's left. Top-up
-  // consumption isn't bucketed by period (top-ups span 12 months) so we
-  // surface only the plan-bucket usage here.
-  const periodUsed = Math.max(monthlyGrant - planRemaining, 0);
+  // Total credits consumed this period across every bucket (plan, top-up,
+  // manual) — sums the same per-reason ledger tally the rows below render
+  // so the big number and the itemized breakdown can never disagree. The
+  // plan-bucket progress bar (planUsedPct) is a different question — "how
+  // much of your monthly allowance is gone" — and intentionally stays
+  // plan-only.
+  const periodUsed =
+    (usage?.ai_chat?.credits_used || 0) + (usage?.url_scan?.credits_used || 0);
 
-  async function handleSeatChange(delta) {
+  // Two-step seat change: open the confirmation modal first so the user
+  // sees the price + payment provider (Razorpay/Stripe) BEFORE we touch
+  // their subscription. The actual API call happens in ``confirmSeatChange``,
+  // invoked from the modal's confirm button.
+  function handleSeatChange(delta) {
+    setSeatConfirmDelta(delta);
+  }
+
+  async function confirmSeatChange() {
+    const delta = seatConfirmDelta;
+    if (!delta) return;
     setSeatBusy(true);
     try {
+      // Errors propagate to the modal so it can render the failure inline
+      // (e.g. "Razorpay declined the seat update") instead of closing on a
+      // toast and losing the context the user needs to fix it.
       const result = await changeOperatorSeats(delta);
       showToast(
         delta > 0
@@ -272,8 +333,6 @@ export default function Billing() {
         'success',
       );
       await loadAll({ silent: true });
-    } catch (err) {
-      showToast(err?.message || 'Failed to update seats', 'error');
     } finally {
       setSeatBusy(false);
     }
@@ -292,6 +351,35 @@ export default function Billing() {
       showToast(err?.message || 'Failed to open billing portal', 'error');
     } finally {
       setPortalBusy(false);
+    }
+  }
+
+  /**
+   * Manual escape-hatch when the local sub didn't auto-reconcile after
+   * Stripe checkout (webhook didn't reach the API, success URL dropped
+   * the session_id, browser closed mid-redirect). Asks the backend to
+   * pull the customer's most recent paid checkout from Stripe and fold
+   * it in — idempotent so spamming this button is safe.
+   */
+  async function handleSyncBilling() {
+    setSyncBusy(true);
+    try {
+      const res = await reconcileStripeSubscription();
+      if (res?.reconciled) {
+        showToast(
+          res?.reason === 'Already reconciled (no changes).'
+            ? 'Billing already in sync.'
+            : `Billing synced — you're on the ${res.plan_slug?.charAt(0).toUpperCase()}${res.plan_slug?.slice(1)} plan.`,
+          'success',
+        );
+        loadAll({ silent: true });
+      } else {
+        showToast(res?.reason || 'Nothing to reconcile.', 'info');
+      }
+    } catch (err) {
+      showToast(err?.message || 'Could not sync billing', 'error');
+    } finally {
+      setSyncBusy(false);
     }
   }
 
@@ -335,7 +423,6 @@ export default function Billing() {
               plan={plan}
               subscription={subscription}
               currency={currency}
-              currencySymbol={currencySymbol}
               monthlyGrant={monthlyGrant}
               planRemaining={planRemaining}
               topupRemaining={topupRemaining}
@@ -352,7 +439,6 @@ export default function Billing() {
           {activeTab === 'topups' && (
             <TopupsTab
               currency={currency}
-              currencySymbol={currencySymbol}
               onTopup={() => setTopupOpen(true)}
               recentTopups={history.filter((h) => h.reason === 'topup').slice(0, 5)}
             />
@@ -368,9 +454,11 @@ export default function Billing() {
               seatPriceLabel={seatPriceLabel}
               seatBusy={seatBusy}
               portalBusy={portalBusy}
+              syncBusy={syncBusy}
               onSeatChange={handleSeatChange}
               onBillingPortal={handleBillingPortal}
               onChangePlan={() => setPlanOpen(true)}
+              onSyncBilling={handleSyncBilling}
             />
           )}
 
@@ -389,27 +477,64 @@ export default function Billing() {
         }}
       />
 
+      <AddSeatConfirmModal
+        open={seatConfirmDelta !== null}
+        onClose={() => setSeatConfirmDelta(null)}
+        delta={seatConfirmDelta ?? 0}
+        seatPriceCents={plan?.extra_seat_price_cents ?? 1500}
+        currency={currency}
+        paymentProvider={subscription?.payment_provider}
+        currentSeatCount={
+          subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1
+        }
+        includedSeats={plan?.included_operator_seats ?? 1}
+        // Only count subscriptions we can actually charge against — Razorpay
+        // or Stripe. Manual/seeded subs (``payment_provider='manual'``) have
+        // no upstream record to update, so the backend's
+        // ``subscription.edit`` call would no-op or fail. Falling through to
+        // the upgrade CTA here is the honest behavior — the user must pick
+        // a real plan before they can add billable seats.
+        hasSubscription={
+          (subscription?.status === 'active' || subscription?.status === 'trialing') &&
+          ['razorpay', 'stripe'].includes(
+            (subscription?.payment_provider || '').toLowerCase(),
+          )
+        }
+        onConfirm={confirmSeatChange}
+        onUpgradeClick={() => setPlanOpen(true)}
+      />
+
       <PlanModal
         open={planOpen}
         onClose={() => setPlanOpen(false)}
         currentPlanSlug={plan?.slug || 'free'}
+        currentSubscriptionStatus={subscription?.status || null}
         currentBillingCycle={subscription?.billing_cycle || 'monthly'}
-        // ``hasActiveSubscription`` distinguishes the new-subscriber checkout
-        // path from the existing-subscriber switch path. Free + manual seeded
-        // rows count as "no active sub" so the modal picks the right CTA.
+        // ``hasActiveSubscription`` is the "do they have any sub row at all"
+        // signal (covers manual seeds too); ``hasStripeSubscription`` is the
+        // narrower "do we have a real Stripe link we can modify in place"
+        // signal. Together they let the modal pick between three CTAs:
+        // Start trial / Upgrade (redirect) / Switch (silent prorate).
         hasActiveSubscription={
           subscription?.status === 'active' || subscription?.status === 'trialing'
         }
+        hasStripeSubscription={subscription?.payment_provider === 'stripe'}
         onSuccess={(evt) => {
-          showToast(
-            evt.kind === 'switched'
-              ? `Switched to ${evt.plan.name} — Stripe is prorating the difference.`
-              : evt.kind === 'downgraded'
-                ? `Downgrade to ${evt.plan.name} scheduled at period end.`
-                : 'Plan updated.',
-            'success',
-          );
-          // Refetch a few times because the Stripe webhook might lag the
+          // Map every PlanModal outcome kind to its own toast so users get
+          // accurate feedback instead of a generic "Plan updated." for
+          // distinct outcomes (trial-start vs subscribe vs prorated swap).
+          let toastMsg = 'Plan updated.';
+          if (evt.kind === 'switched') {
+            toastMsg = `Switched to ${evt.plan.name} — the new pricing is being prorated.`;
+          } else if (evt.kind === 'downgraded') {
+            toastMsg = `Downgrade to ${evt.plan.name} scheduled at period end.`;
+          } else if (evt.kind === 'trial_started') {
+            toastMsg = `Trial started — ${evt.plan.name} unlocked for ${evt.trial_days || 14} days.`;
+          } else if (evt.kind === 'subscribed') {
+            toastMsg = `Subscribed to ${evt.plan.name}. Welcome aboard!`;
+          }
+          showToast(toastMsg, 'success');
+          // Refetch a few times because the provider webhook can lag the
           // change-plan response by a couple seconds.
           setTimeout(() => loadAll({ silent: true }), 500);
           setTimeout(() => loadAll({ silent: true }), 3500);
@@ -700,9 +825,11 @@ function SeatsTab({
   seatPriceLabel,
   seatBusy,
   portalBusy,
+  syncBusy,
   onSeatChange,
   onBillingPortal,
   onChangePlan,
+  onSyncBilling,
 }) {
   return (
     <div className="space-y-6">
@@ -731,6 +858,25 @@ function SeatsTab({
               <Button onClick={onChangePlan} size="sm">
                 <ArrowUpRight className="w-3.5 h-3.5" />
                 {plan?.monthly_price_cents > 0 ? 'Change plan' : 'Choose a plan'}
+              </Button>
+              {/* Sync billing — manual fallback for the rare case where the
+                  customer paid via Stripe but the local row didn't reconcile
+                  (webhook didn't reach us, success URL got mangled, browser
+                  closed mid-redirect). Asks Stripe for the latest paid
+                  checkout on this customer and folds it in. Idempotent. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onSyncBilling}
+                disabled={syncBusy}
+                title="Refresh billing state from Stripe"
+              >
+                {syncBusy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
+                Sync billing
               </Button>
               {subscription?.payment_provider === 'stripe' && (
                 <Button variant="outline" size="sm" onClick={onBillingPortal} disabled={portalBusy}>

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
 from app.core.origin_check import extract_hostname, is_origin_allowed
-from app.db.models import Affiliate, Bot, Client, Operator
+from app.db.models import Affiliate, Bot, Client, Operator, Subscription
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -38,16 +38,19 @@ def _resolve_operator_key(
 
 def get_current_client(
     api_key: str = Security(api_key_header),
-    bot_key: str = Security(bot_key_header),
     operator_key: str = Security(operator_key_header),
     legacy_agent_key: str = Security(legacy_agent_key_header),
 ):
     """
     Dependency: Authenticate a Client via X-API-Key header.
     Also accepts:
-    - X-Bot-Key: resolves the owning Client (widget backward compat).
     - X-Operator-Key / X-Agent-Key: resolves the operator's workspace Client.
-    Used by admin dashboard endpoints and shared endpoints.
+
+    The public ``X-Bot-Key`` header is intentionally NOT accepted here. Bot keys
+    are embedded in widget script tags and visible to every site visitor, so they
+    must never resolve to a Client identity. Widget-facing endpoints use
+    ``get_current_bot`` instead; admin-only endpoints requiring strict client
+    auth should use ``get_current_client_strict``.
     """
     effective_operator_key = _resolve_operator_key(operator_key, legacy_agent_key)
 
@@ -65,22 +68,6 @@ def get_current_client(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API Key.",
-            )
-
-        # Fallback: resolve via X-Bot-Key → owning Client
-        if bot_key:
-            stmt = select(Bot).where(Bot.bot_key == bot_key, Bot.is_active.is_(True))
-            bot = session.execute(stmt).scalars().first()
-            if bot:
-                client_stmt = select(Client).where(Client.id == bot.client_id)
-                client = session.execute(client_stmt).scalars().first()
-                if client:
-                    _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
-                    session.expunge(client)
-                    return client
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid Bot Key.",
             )
 
         # Operator fallback: resolve via X-Operator-Key → operator's workspace Client
@@ -105,7 +92,7 @@ def get_current_client(
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API Key. Please provide the X-API-Key or X-Bot-Key header.",
+            detail="Missing API Key. Please provide the X-API-Key or X-Operator-Key header.",
         )
 
 
@@ -504,3 +491,167 @@ def get_client_bot(
                 detail="Bot not found or does not belong to your account.",
             )
         return bot
+
+
+# Subscription statuses that grant full feature access. ``trialing`` is
+# included so prospects evaluating the product can exercise everything a
+# paying customer can. ``past_due`` is intentionally treated as "active" —
+# we don't yank functionality the moment a card retry fails; the dunning
+# cron handles that escalation separately.
+_ACTIVE_SUBSCRIPTION_STATUSES = frozenset({"trialing", "active", "past_due"})
+
+
+def require_active_subscription(client: Client = Depends(get_current_client)):
+    """Dependency: gate an endpoint behind a live subscription.
+
+    Resolves the authenticated client's current subscription and admits
+    only ``trialing``, ``active``, or ``past_due`` callers. Anything else
+    (``trial_expired``, ``canceled``, ``expired``, ``paused``) returns a
+    structured 403 the admin dashboard uses to route the user to billing.
+
+    The structured ``detail`` is intentionally a dict instead of a plain
+    string so frontends can branch on ``error`` without parsing English.
+    Existing routes that should accept any authenticated client unchanged
+    must NOT depend on this — pair it only with explicitly gated routes.
+    """
+    # Superadmins are platform staff, not customers — they never need a
+    # paying subscription to manage the system. Free pass.
+    if getattr(client, "is_superadmin", False):
+        return None
+
+    with get_session() as session:
+        sub = (
+            session.execute(
+                select(Subscription)
+                .where(Subscription.client_id == client.id)
+                .order_by(Subscription.created_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+
+        # No subscription at all is treated as "needs to pick a plan" —
+        # the same UX as an expired trial. Should never happen for a
+        # self-serve signup once PR1 is live; defensive for legacy rows.
+        sub_status = sub.status if sub else "missing"
+
+        if sub_status in _ACTIVE_SUBSCRIPTION_STATUSES:
+            if sub is not None:
+                # Eagerly read the few fields a handler might want before
+                # we drop the session, so we don't force the caller to
+                # reopen one just to read ``status``.
+                _ = sub.id, sub.status, sub.plan_id, sub.trial_end, sub.current_period_end
+                session.expunge(sub)
+            return sub
+
+        logger.info(
+            "subscription_gate_denied client_id=%s status=%s",
+            client.id,
+            sub_status,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "subscription_required",
+                "subscription_status": sub_status,
+                "message": (
+                    "Your trial has ended."
+                    if sub_status == "trial_expired"
+                    else "An active subscription is required to use this feature."
+                ),
+                "reactivate_url": "/billing",
+            },
+        )
+
+
+def require_active_subscription_for_workspace(
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Workspace-aware variant of :func:`require_active_subscription`.
+
+    Endpoints that accept both client (``X-API-Key``) and operator
+    (``X-Operator-Key``) callers should depend on this. The subscription
+    belongs to the workspace's owning client, so an operator's access is
+    governed by the *owner's* subscription state — when the owner's trial
+    expires, every operator in that workspace also loses access.
+
+    Returns the resolved ``Subscription`` (or ``None`` for superadmins) so
+    handlers can branch on the status without reopening a session.
+    """
+    client_id = auth["client_id"]
+
+    # Superadmin clients bypass the gate (platform staff).
+    if auth["type"] == "client":
+        client = auth["entity"]
+        if getattr(client, "is_superadmin", False):
+            return None
+
+    with get_session() as session:
+        sub = (
+            session.execute(
+                select(Subscription)
+                .where(Subscription.client_id == client_id)
+                .order_by(Subscription.created_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        sub_status = sub.status if sub else "missing"
+
+        if sub_status in _ACTIVE_SUBSCRIPTION_STATUSES:
+            if sub is not None:
+                _ = sub.id, sub.status, sub.plan_id, sub.trial_end, sub.current_period_end
+                session.expunge(sub)
+            return sub
+
+        logger.info(
+            "workspace_subscription_gate_denied client_id=%s status=%s actor=%s",
+            client_id,
+            sub_status,
+            auth["type"],
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "subscription_required",
+                "subscription_status": sub_status,
+                "message": (
+                    "Your workspace's trial has ended."
+                    if sub_status == "trial_expired"
+                    else "An active subscription is required to use this feature."
+                ),
+                "reactivate_url": "/billing",
+            },
+        )
+
+
+def bot_subscription_status(client_id: int) -> str:
+    """Return the bot owner's current subscription status as a string.
+
+    Read-only helper for widget-facing code paths (chat, public settings)
+    that need to short-circuit to a polite offline response when the owning
+    client's subscription is not live. Returns ``"missing"`` if no
+    subscription row exists, never raises.
+
+    Centralised so chat_routes.py and bot_routes.py share one source of
+    truth for "is this bot allowed to serve traffic right now?".
+    """
+    with get_session() as session:
+        sub = (
+            session.execute(
+                select(Subscription)
+                .where(Subscription.client_id == client_id)
+                .order_by(Subscription.created_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        return sub.status if sub else "missing"
+
+
+def is_bot_serving(client_id: int) -> bool:
+    """Convenience predicate: True when the bot owner can serve widget traffic."""
+    return bot_subscription_status(client_id) in _ACTIVE_SUBSCRIPTION_STATUSES

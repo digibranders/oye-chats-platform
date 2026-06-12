@@ -147,3 +147,14 @@ def qa_response_key(bot_id: int, question_hash: str) -> str:
 def qa_prefix_for_bot(bot_id: int) -> str:
     """Key prefix for all QA cache entries of a specific bot (for bulk invalidation)."""
     return f"{PREFIX}qa:{bot_id}:"
+
+
+def gate_prefix_for_bot(bot_id: int) -> str:
+    """Key prefix for all relevance-gate cache entries of a specific bot.
+
+    Used to bulk-invalidate stale gate judgments after a knowledge-base change:
+    without this, an "off-topic" judgment cached before the upload would
+    survive for an hour even after fresh docs make the question answerable.
+    Must match the layout in ``relevance_gate._gate_cache_key`` (``b{bot_id}``).
+    """
+    return f"{PREFIX}gate:b{bot_id}:"

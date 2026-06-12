@@ -2,7 +2,9 @@
 
 from unittest.mock import MagicMock, mock_open, patch
 
-from app.ingestion.extraction import load_docx, load_pdf, load_txt
+import pytest
+
+from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
 
 
 class TestLoadPdf:
@@ -46,17 +48,35 @@ class TestLoadPdf:
         assert result[0]["text"] == "Has text"
         assert result[0]["metadata"]["total_pages"] == 3
 
-    def test_empty_pdf(self):
+    def test_empty_pdf_raises(self):
+        """A PDF with no extractable text (e.g. scanned) must raise so the upload
+        route can surface a clear message instead of silently storing zero chunks.
+        """
         reader = MagicMock()
         reader.pages = []
 
         with (
             patch("builtins.open", mock_open()),
             patch("app.ingestion.extraction.PdfReader", return_value=reader),
+            pytest.raises(ExtractionError, match="No extractable text"),
         ):
-            result = load_pdf("empty.pdf")
+            load_pdf("empty.pdf")
 
-        assert result == []
+    def test_scanned_pdf_raises(self):
+        """All pages returning empty text (typical scanned PDF) must raise."""
+        page1 = MagicMock()
+        page1.extract_text.return_value = ""
+        page2 = MagicMock()
+        page2.extract_text.return_value = None
+        reader = MagicMock()
+        reader.pages = [page1, page2]
+
+        with (
+            patch("builtins.open", mock_open()),
+            patch("app.ingestion.extraction.PdfReader", return_value=reader),
+            pytest.raises(ExtractionError, match="scanned"),
+        ):
+            load_pdf("scanned.pdf")
 
 
 class TestLoadDocx:
@@ -72,15 +92,17 @@ class TestLoadDocx:
         assert result[0]["metadata"]["page"] == 1
         assert result[0]["metadata"]["total_pages"] == 1
 
-    def test_empty_paragraphs(self):
+    def test_empty_paragraphs_raises(self):
+        """A DOCX whose paragraphs all have empty text must raise rather than
+        silently store a single-newline 'document'."""
         doc = MagicMock()
         doc.paragraphs = [MagicMock(text=""), MagicMock(text="")]
 
-        with patch("app.ingestion.extraction.docx.Document", return_value=doc):
-            result = load_docx("empty.docx")
-
-        assert len(result) == 1
-        assert result[0]["text"] == "\n"
+        with (
+            patch("app.ingestion.extraction.docx.Document", return_value=doc),
+            pytest.raises(ExtractionError, match="empty or image-only"),
+        ):
+            load_docx("empty.docx")
 
     def test_single_paragraph(self):
         doc = MagicMock()
@@ -105,13 +127,12 @@ class TestLoadTxt:
         assert result[0]["metadata"]["total_pages"] == 1
         m.assert_called_once_with("test.txt", encoding="utf-8", errors="ignore")
 
-    def test_empty_file(self):
+    def test_empty_file_raises(self):
+        """An empty TXT must raise so the caller can surface a clear error
+        instead of silently storing a blank 'document'."""
         m = mock_open(read_data="")
-        with patch("builtins.open", m):
-            result = load_txt("empty.txt")
-
-        assert len(result) == 1
-        assert result[0]["text"] == ""
+        with patch("builtins.open", m), pytest.raises(ExtractionError, match="empty"):
+            load_txt("empty.txt")
 
     def test_encoding_errors_ignored(self):
         m = mock_open(read_data="Valid text")

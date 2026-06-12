@@ -23,14 +23,18 @@ litellm.drop_params = True
 
 from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_crawl_and_ingest,
+    task_delete_expired_trial_data,
     task_deliver_webhook,
     task_expire_old_topups,
+    task_expire_past_due_subscriptions,
+    task_expire_trials,
     task_ingest_documents,
     task_ingest_web_batch,
     task_process_webhook_retries,
     task_renew_due_subscriptions,
     task_send_email,
     task_send_template_email,
+    task_trial_reminder_emails,
     task_worker_heartbeat,
 )
 
@@ -113,17 +117,33 @@ class WorkerSettings:
         task_send_template_email,
         task_renew_due_subscriptions,
         task_expire_old_topups,
+        task_expire_trials,
+        task_trial_reminder_emails,
+        task_delete_expired_trial_data,
+        task_expire_past_due_subscriptions,
     ]
 
     # Cron jobs:
     # • webhook retry poll + worker heartbeat — every 30s
     # • subscription renewal safety net — once a day at 00:05 UTC
     # • top-up expiry sweep — once a day at 00:10 UTC (offset to avoid lock contention)
+    # • trial expiry — hourly at :15 so a customer whose trial ends at, say,
+    #   13:42 UTC flips within ~30 min instead of waiting until midnight
+    # • trial reminders — once a day at 09:00 UTC (≈ business morning across
+    #   IN/EU/US), so day-7 / day-11 / day-13 land at a useful hour
+    # • data hard-delete — once a day at 00:20 UTC, after renewals + top-up
+    #   sweep so a same-day reactivation has a chance to rescue the data
     cron_jobs = [
         cron(task_process_webhook_retries, second={0, 30}),
         cron(task_worker_heartbeat, second={0, 30}),
         cron(task_renew_due_subscriptions, hour=0, minute=5),
         cron(task_expire_old_topups, hour=0, minute=10),
+        cron(task_delete_expired_trial_data, hour=0, minute=20),
+        cron(task_expire_trials, minute=15),
+        cron(task_trial_reminder_emails, hour=9, minute=0),
+        # Dunning auto-expire — once a day at 00:25 UTC, after the trial
+        # crons so a same-day card rescue beats the grace-elapsed cut.
+        cron(task_expire_past_due_subscriptions, hour=0, minute=25),
     ]
 
     # Redis connection

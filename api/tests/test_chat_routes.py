@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -24,6 +25,21 @@ def _build_app(bot_override=None, auth_override=None):
     if auth_override:
         app.dependency_overrides[get_current_client_or_operator] = lambda: auth_override
     return app
+
+
+@pytest.fixture(autouse=True)
+def _allow_subscription(monkeypatch):
+    """Default every chat-route test to a healthy subscription.
+
+    PR3 added an owner-subscription check at the top of /chat and
+    /chat/stream. These tests already mock the bot row and assert
+    happy-path behaviour, so the gate would otherwise short-circuit them
+    into the offline path. Tests that specifically exercise the offline
+    path patch this same symbol back to a non-active value.
+    """
+    from app.api import chat_routes
+
+    monkeypatch.setattr(chat_routes, "bot_subscription_status", lambda _client_id: "active")
 
 
 def _default_bot(**overrides):

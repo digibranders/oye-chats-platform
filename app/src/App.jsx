@@ -8,7 +8,10 @@ import { getCurrentUser } from './services/api';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
-import AffiliateLayout from './layouts/AffiliateLayout';
+// AffiliateLayout removed — the affiliate dashboard now lives inside the
+// main AdminLayout, gated by the conditional Sidebar menu item rather than
+// a dedicated shell. The standalone layout is retained on disk for one
+// release for git-blame archaeology and will be deleted.
 
 // Global UI
 import GlobalCrawlIndicator from './components/GlobalCrawlIndicator';
@@ -17,7 +20,7 @@ import GlobalCrawlIndicator from './components/GlobalCrawlIndicator';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
-import AffiliateAccept from './pages/AffiliateAccept';
+import AffiliateInvite from './pages/AffiliateInvite';
 import Dashboard from './pages/Dashboard';
 import KnowledgeBase from './pages/KnowledgeBase';
 import Settings from './pages/Settings';
@@ -55,17 +58,21 @@ const SuperadminRoute = ({ children }) => {
     return children;
 };
 
+// AffiliateRoute removed — the dedicated layout guard is gone, the
+// AffiliateDashboard now lives inside the main AdminLayout tree which
+// is already wrapped in ProtectedRoute. AffiliateDashboard's own 403
+// EmptyState handles unenrolled-but-curious visitors.
+
 /**
- * Guard for the affiliate-only tree. Anyone authenticated can enter — the
- * AffiliateDashboard itself surfaces a 403 EmptyState if the principal
- * isn't actually enrolled. We keep the route ungated by enrollment so a
- * customer who happens to know the URL never sees a "Not Found" — they
- * get the clear "you're not enrolled" message instead.
+ * One-release backwards-compat redirect: invites delivered before the
+ * cut-over land at /affiliate-accept?token=… and need to be forwarded
+ * to /affiliate-invite preserving the query string. Once the longest
+ * unaccepted invite ages out (14 days post-cutover) this route can be
+ * deleted.
  */
-const AffiliateRoute = ({ children }) => {
-    const isAuthenticated = !!localStorage.getItem('admin_token');
-    if (!isAuthenticated) return <Navigate to="/login" replace />;
-    return children;
+const LegacyAffiliateAcceptRedirect = () => {
+    const search = typeof window !== 'undefined' ? window.location.search : '';
+    return <Navigate to={`/affiliate-invite${search}`} replace />;
 };
 
 /**
@@ -73,7 +80,13 @@ const AffiliateRoute = ({ children }) => {
  * /auth/me and route them based on who they are:
  *
  *   - superadmin           → /superadmin/overview
- *   - affiliate-only user  → /affiliate  (dedicated layout)
+ *   - affiliate-only user  → /affiliate  (inside the main admin layout
+ *                                          — the dedicated affiliate
+ *                                          shell was removed; the page
+ *                                          now lives alongside Billing,
+ *                                          Settings, etc., with the
+ *                                          Sidebar conditionally
+ *                                          rendering the menu item)
  *   - everyone else        → render the customer Dashboard inline
  *
  * Failure to fetch /auth/me falls through to the customer Dashboard so
@@ -138,10 +151,16 @@ function App() {
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
-                    {/* Affiliate magic-link landing — public; reads ?token=
-                        and either lets the recipient set a password or
-                        shows an "expired/invalid" message. */}
-                    <Route path="/affiliate-accept" element={<AffiliateAccept />} />
+                    {/* Partners invite landing — public; reads ?token= and
+                        either auto-accepts (logged-in) or shows two CTAs
+                        (sign in / sign up) for the recipient to choose. */}
+                    <Route path="/affiliate-invite" element={<AffiliateInvite />} />
+                    {/* Legacy URL — invites sent before the cut-over still
+                        point at /affiliate-accept. Preserve the token. */}
+                    <Route
+                        path="/affiliate-accept"
+                        element={<LegacyAffiliateAcceptRedirect />}
+                    />
 
                     {/* App Routes (root) */}
                     {/* CrawlProvider wraps the authenticated admin tree so the
@@ -185,10 +204,7 @@ function App() {
                         <Route path="webhooks" element={<Navigate to="/integrations?tab=webhooks" replace />} />
                         <Route path="integrations/email" element={<Navigate to="/integrations?tab=email" replace />} />
 
-                        {/* Accessible to all authenticated users.
-                            NOTE: /affiliate moved to its own layout tree
-                            below — affiliates get a dedicated shell rather
-                            than the customer dashboard. */}
+                        {/* Accessible to all authenticated users. */}
                         <Route path="billing" element={<Billing />} />
                         <Route path="credits" element={<Navigate to="/billing" replace />} />
                         <Route path="subscription" element={<Navigate to="/billing" replace />} />
@@ -196,6 +212,12 @@ function App() {
                         <Route path="support" element={<Support />} />
                         <Route path="team" element={<TeamManagement />} />
                         <Route path="settings" element={<Settings />} />
+                        {/* Affiliate dashboard — visible in the sidebar only
+                            when the current Client has an active affiliates
+                            row (Sidebar.jsx checks /auth/me.is_affiliate).
+                            The page itself surfaces a typed 403 EmptyState
+                            for curious URL-walkers who aren't enrolled. */}
+                        <Route path="affiliate" element={<AffiliateDashboard />} />
 
                         {/* Redirects for old URLs */}
                         <Route path="analytics" element={<Navigate to="/insights?tab=analytics" replace />} />
@@ -210,20 +232,6 @@ function App() {
                     {/* Backwards compat: /admin/* → /* */}
                     <Route path="/admin" element={<Navigate to="/" replace />} />
                     <Route path="/admin/*" element={<Navigate to="/" replace />} />
-
-                    {/* Affiliate — dedicated layout. Mirrors /superadmin's
-                        shape: a separate tree with its own sidebar so
-                        affiliate-only users never see the customer nav. */}
-                    <Route
-                        path="/affiliate"
-                        element={
-                            <AffiliateRoute>
-                                <AffiliateLayout />
-                            </AffiliateRoute>
-                        }
-                    >
-                        <Route index element={<AffiliateDashboard />} />
-                    </Route>
 
                     {/* Superadmin */}
                     <Route

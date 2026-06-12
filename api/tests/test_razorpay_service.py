@@ -268,12 +268,21 @@ def test_webhook_dispatcher_unknown_event_is_safe_noop():
 
 
 def test_webhook_dispatcher_skips_replay():
-    """A second delivery with the same ``x-razorpay-event-id`` is a no-op."""
+    """A second delivery with the same ``x-razorpay-event-id`` is a no-op.
+
+    The idempotency layer now uses ``INSERT … ON CONFLICT DO NOTHING`` and
+    keys off ``result.rowcount``: 1 means our INSERT actually wrote a row
+    (first delivery), 0 means another worker already recorded this event_id
+    (duplicate delivery). Simulate the duplicate-delivery case by stubbing
+    ``session.execute`` to return a result with ``rowcount=0``.
+    """
     from app.services import razorpay_service
 
     session = MagicMock()
-    # Simulate "already in processed_webhooks": session.get returns truthy.
-    session.get.return_value = object()
+    # Simulate "already in processed_webhooks": ON CONFLICT swallowed the row.
+    duplicate_result = MagicMock()
+    duplicate_result.rowcount = 0
+    session.execute.return_value = duplicate_result
 
     result = razorpay_service.handle_webhook_event(
         session, {"event": "payment.captured", "payload": {}}, event_id="evt_replay"

@@ -492,3 +492,81 @@ def grant_for_subscription(session: Session, subscription: Subscription) -> Cred
         int(plan.credits_per_month),
         note=f"{plan.name} monthly grant",
     )
+
+
+def clawback_refund(
+    session: Session,
+    *,
+    client_id: int,
+    charge_minor: int,
+    refund_minor: int,
+    note: str,
+) -> tuple[int, int | None]:
+    """Reverse credits on a refunded subscription / top-up invoice.
+
+    Accounting rule, intentionally lenient: claw back only the UNCONSUMED
+    portion of the most recent grant for this client, scaled by the
+    fraction of the original charge that was refunded. Credits already
+    spent on chats are gone — we can't unscramble the LLM tokens that
+    bought them, so the customer keeps whatever they used before the
+    refund. The clawback caps at the grant's remaining balance so this
+    can never drive the customer's overall credit balance negative.
+
+    Returns ``(amount_clawed_back, ledger_entry_id)``. The entry id is
+    ``None`` when nothing was clawed back — either because there is no
+    matching grant, the grant was already fully consumed, or the refund
+    fraction came out to zero. Callers use the tuple for the webhook
+    log line; nothing depends on the entry id.
+    """
+    if charge_minor <= 0 or refund_minor <= 0:
+        return (0, None)
+
+    _acquire_client_lock(session, client_id)
+
+    # Cap the fraction at 1.0 — a partial refund larger than the original
+    # charge shouldn't happen, but if a webhook glitch ever sends one we
+    # clamp instead of multiplying past the original grant.
+    refund_fraction = min(1.0, float(refund_minor) / float(charge_minor))
+
+    # Pick the most recent positive plan / top-up grant for this client.
+    # We don't have a hard FK from invoice → ledger today, and a renewal
+    # cron runs at most once per period, so the latest grant is in
+    # practice the one this invoice paid for. Edge case (renewed twice
+    # in the same hour) is so unlikely it isn't worth a schema change.
+    grant = (
+        session.execute(
+            select(CreditLedger)
+            .where(
+                CreditLedger.client_id == client_id,
+                CreditLedger.reason.in_(("plan_grant", "topup")),
+                CreditLedger.delta > 0,
+            )
+            .order_by(CreditLedger.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if grant is None:
+        return (0, None)
+
+    consumed = _consumed_against(session, grant.id)
+    remaining = int(grant.delta) - consumed
+    if remaining <= 0:
+        return (0, None)
+
+    intended = int(round(float(grant.delta) * refund_fraction))
+    clawback = min(intended, remaining)
+    if clawback <= 0:
+        return (0, None)
+
+    entry = CreditLedger(
+        client_id=client_id,
+        delta=-clawback,
+        reason="refund",
+        grant_id=grant.id,
+        note=note,
+    )
+    session.add(entry)
+    session.flush()
+    return (clawback, entry.id)

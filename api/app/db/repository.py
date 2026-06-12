@@ -255,8 +255,17 @@ def _owner_filter(model, bot_id=None, client_id=None):
     Defense-in-depth: always include client_id when available so that a bot_id
     belonging to a different client can never match, even if the caller forgets
     to validate bot ownership beforehand.
+
+    Raises:
+        ValueError: when both ``bot_id`` and ``client_id`` are missing/falsy.
+            Falling through silently would return ``model.client_id IS NULL``
+            which matches legacy pre-migration chunks — a cross-tenant leak
+            path waiting for a caller bug. Tenant scope must fail loudly.
     """
     from sqlalchemy import and_
+
+    if not bot_id and not client_id:
+        raise ValueError("_owner_filter requires at least one of bot_id or client_id")
 
     if bot_id and client_id:
         return and_(model.bot_id == bot_id, model.client_id == client_id)
@@ -360,9 +369,23 @@ def insert_documents(
     metadatas=None,
     bot_id: int = None,
 ):
-    """Batch insert documents. Supports both client_id (legacy) and bot_id (new)."""
+    """Batch insert documents. Supports both client_id (legacy) and bot_id (new).
+
+    ``chunks``, ``embeddings`` and ``metadatas`` MUST be the same length —
+    a partial embedding failure that returns fewer vectors than chunks would
+    otherwise silently truncate (paid embeddings discarded, no error).
+    """
+    chunks = chunks or []
+    embeddings = embeddings or []
+    metadatas = metadatas or []
+    if not (len(chunks) == len(embeddings) == len(metadatas)):
+        raise ValueError(
+            f"insert_documents length mismatch: chunks={len(chunks)}, "
+            f"embeddings={len(embeddings)}, metadatas={len(metadatas)}"
+        )
+
     data = []
-    for chunk, embedding, meta in zip(chunks or [], embeddings or [], metadatas or [], strict=False):
+    for chunk, embedding, meta in zip(chunks, embeddings, metadatas, strict=True):
         row = {
             "document_name": file_name,
             "file_hash": file_hash,
@@ -453,24 +476,29 @@ def search_keyword_documents(session, client_id: int = None, query: str = "", k=
 
 
 def search_similar_documents(
-    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 1.25
+    session, client_id: int = None, query_embedding=None, k=5, bot_id: int = None, max_distance: float = 0.78
 ):
     """Find top-k most similar documents using vector similarity with distance threshold.
 
     Uses raw SQL for the vector distance calculation to bypass pgvector Python
     package version incompatibilities with the Vector type processor.
 
-    ``max_distance`` is **L2** distance (the ``<->`` operator). For OpenAI's
-    ``text-embedding-3-small`` (normalised, 1536-dim) related-content distances
-    cluster around L2 = 0.9–1.2; truly off-topic queries land at L2 ≥ 1.29
-    against a typical SMB knowledge base. The default 1.25 sits in the natural
-    gap, capturing on-topic content while still excluding random general
-    knowledge. The earlier default of 0.65 was so tight it blocked **all**
-    chunks for normal phrasings — confirmed empirically against bot_id=2
-    (Fynix Digital, 50 chunks crawled from website) where every on-topic
-    query returned 0 chunks until this was loosened. The gate downstream
-    (CRAG relevance judge, threshold ≥0.55) provides a second filter so
-    loosening this primary cut-off doesn't make the bot answer off-topic.
+    ``max_distance`` is **cosine** distance (the ``<=>`` operator). Cosine is
+    the standard semantic-similarity metric for OpenAI ``text-embedding-3-small``
+    and matches the convention used by the pgvector ``vector_cosine_ops`` HNSW
+    index. For OpenAI's normalised 1536-dim vectors, L2 and cosine produce
+    identical rank ordering (both are monotonic in the dot product), so this
+    change preserves retrieval behaviour today while making the threshold
+    semantically meaningful and forward-compatible with any future cosine
+    HNSW index.
+
+    The default 0.78 is the math-equivalent of the previously tuned
+    ``L2 = 1.25`` (for unit vectors, ``cos_dist = L2² / 2``). That threshold
+    was empirically chosen against bot_id=2 (Fynix Digital, 50 chunks) where
+    on-topic queries cluster at cos_dist ≤ 0.7 and off-topic at ≥ 0.83. The
+    earlier tight default (L2 = 0.65 → cos_dist ≈ 0.21) blocked all chunks for
+    normal phrasings. The CRAG relevance judge downstream (threshold ≥ 0.55)
+    provides a second filter so this primary cut-off can stay generous.
     """
     if hasattr(query_embedding, "tolist"):
         query_embedding = query_embedding.tolist()
@@ -483,12 +511,13 @@ def search_similar_documents(
 
     # Execute raw SQL — bypasses pgvector Python type processor entirely.
     # Use separate static SQL strings (never interpolate into SQL text).
+    # ``<=>`` is pgvector's cosine distance operator (0 = identical, 2 = opposite).
     if bot_id:
         sql = text(
             """SELECT id, client_id, bot_id, document_name, content, metadata_info,
-                      embedding <-> CAST(:emb AS vector) AS distance
+                      embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE bot_id = :owner_id AND embedding <-> CAST(:emb AS vector) < :max_dist
+               WHERE bot_id = :owner_id AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
         )
@@ -496,9 +525,9 @@ def search_similar_documents(
     else:
         sql = text(
             """SELECT id, client_id, bot_id, document_name, content, metadata_info,
-                      embedding <-> CAST(:emb AS vector) AS distance
+                      embedding <=> CAST(:emb AS vector) AS distance
                FROM documents
-               WHERE client_id = :owner_id AND embedding <-> CAST(:emb AS vector) < :max_dist
+               WHERE client_id = :owner_id AND embedding <=> CAST(:emb AS vector) < :max_dist
                ORDER BY distance
                LIMIT :k"""
         )

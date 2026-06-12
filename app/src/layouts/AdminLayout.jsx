@@ -5,6 +5,7 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import CommandPalette from '../components/CommandPalette';
 import OnboardingWizard from '../components/OnboardingWizard';
+import TrialBanner from '../components/TrialBanner';
 import { BotProvider, useBotContext } from '../context/BotContext';
 
 const MD_BREAKPOINT = 768;
@@ -94,6 +95,10 @@ function AdminLayoutInner() {
           toggleSidebar={toggleSidebar}
           onOpenSearch={openSearch}
         />
+
+        {/* Persistent trial-state banner. Renders nothing for paying customers,
+            operators, or while /auth/me is in flight — see TrialBanner.jsx. */}
+        <TrialBanner />
 
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto min-h-0">
           <div className="max-w-7xl mx-auto h-full">

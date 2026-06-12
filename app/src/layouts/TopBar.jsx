@@ -32,8 +32,17 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    // Wipe trial-banner dismissals so the next user to log in on this
+    // tab sees their actual trial state on the first page. Dynamic
+    // import keeps the layout chunk independent of the banner component.
+    try {
+      const { clearTrialBannerDismissals } = await import('../utils/trialBanner');
+      clearTrialBannerDismissals();
+    } catch {
+      // Banner module missing/broken? Logout still works; banner stays.
+    }
     navigate('/login');
   };
 

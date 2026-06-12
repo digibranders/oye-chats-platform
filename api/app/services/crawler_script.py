@@ -188,16 +188,23 @@ def should_skip_url(url: str) -> bool:
 def url_priority(depth: int, *, from_sitemap: bool = False) -> int:
     """Lower number = higher priority (crawled first).
 
-    Priority is determined by two signals:
-    - **Sitemap presence**: URLs the site owner listed in sitemap.xml are
-      treated as high-priority (1) regardless of depth.
-    - **Crawl depth**: shallower pages are more important than deeper ones.
+    Priority ladder (lowest number wins):
+      0 → seed URL (depth 0)
+      1 → URLs the site owner curated in sitemap.xml
+      2 → BFS-discovered URLs at depth 1
+      3 → BFS-discovered URLs at depth 2
+      ...
 
-    The seed URL (depth 0) always gets priority 0 via its direct push.
+    Previously sitemap URLs shared priority ``1`` with BFS-depth-1 URLs, which
+    meant a small ``max_pages`` budget could be exhausted on arbitrary footer
+    links before the site owner's curated sitemap entries (About, Pricing,
+    Contact) were ever processed.
     """
+    if depth == 0:
+        return 0
     if from_sitemap:
         return 1
-    return depth
+    return depth + 1
 
 
 def is_html_content(html: str) -> bool:
@@ -241,16 +248,51 @@ def extract_links_from_html(html: str, base_url: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _disallow_all_parser() -> RobotFileParser:
+    """Return a robots parser configured as ``Disallow: /``.
+
+    Used when ``robots.txt`` is auth-gated (401/403) — per RFC 9309 the safe
+    interpretation is "fully disallowed" rather than "no rules", because the
+    site has explicitly indicated unauthenticated agents should not access
+    its content.
+    """
+    rp = RobotFileParser()
+    rp.parse(["User-agent: *", "Disallow: /"])
+    return rp
+
+
 async def fetch_robots_txt(base_url: str) -> RobotFileParser | None:
-    """Fetch and parse robots.txt for *base_url*. Returns None on failure."""
+    """Fetch and parse robots.txt for *base_url*.
+
+    Returns:
+        * Parsed rules on HTTP 200
+        * A ``Disallow: /`` parser on HTTP 401/403 (per RFC 9309 — auth-gated
+          robots means "not allowed")
+        * ``None`` on 404 / 5xx / network errors — caller treats as "no rules"
+
+    SSRF-hardened: rejects private/internal hosts and disables redirect
+    following so a 301 to an internal address cannot leak metadata.
+    """
     try:
         parsed = urlparse(base_url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
 
+        if not _is_url_safe(robots_url):
+            return None
+
         async with (
             aiohttp.ClientSession() as session,
-            session.get(robots_url, timeout=aiohttp.ClientTimeout(total=10)) as resp,
+            session.get(
+                robots_url,
+                timeout=aiohttp.ClientTimeout(total=10),
+                allow_redirects=False,
+            ) as resp,
         ):
+            if resp.status in (401, 403):
+                # RFC 9309: auth-gated robots.txt means the site does not
+                # grant unauthenticated crawl access — treat as fully
+                # disallowed instead of silently crawling everything.
+                return _disallow_all_parser()
             if resp.status != 200:
                 return None
             text = await resp.text()
@@ -297,8 +339,17 @@ async def fetch_sitemap_urls(
         while idx < len(sitemap_queue) and idx < max_sitemaps:
             sitemap_url = sitemap_queue[idx]
             idx += 1
+            # SSRF guard: sitemap URLs can come from attacker-controlled robots.txt
+            # or sitemap-index files. Reject any that resolve to private/internal
+            # addresses before fetching.
+            if not _is_url_safe(sitemap_url):
+                continue
             try:
-                async with session.get(sitemap_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with session.get(
+                    sitemap_url,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                    allow_redirects=False,
+                ) as resp:
                     if resp.status != 200:
                         continue
                     content = await resp.text()
@@ -499,6 +550,18 @@ def _is_url_safe(url: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+class _RetryableStatus(Exception):
+    """Marker exception raised when an HTTP 5xx warrants a retry.
+
+    Lets ``crawl_single_http`` reuse its existing ``except Exception`` retry
+    path without duplicating the sleep/loop scaffolding.
+    """
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
+
 async def crawl_single_http(
     http_session: aiohttp.ClientSession,
     url: str,
@@ -532,6 +595,24 @@ async def crawl_single_http(
                             "error": "redirect to internal address blocked (SSRF protection)",
                         }
 
+                    # Retry policy by status class:
+                    #   2xx → process (continues below)
+                    #   5xx → transient (server overloaded, e.g. 503). Retry
+                    #         once; without this a single traffic spike on
+                    #         the customer's site silently drops pages.
+                    #   any other non-200 (3xx after disabled redirects, 4xx)
+                    #         → permanent. Return immediately, no retry.
+                    if 500 <= resp.status < 600:
+                        if attempt == 1:
+                            return {
+                                "url": url,
+                                "depth": depth,
+                                "html": None,
+                                "markdown": None,
+                                "error": f"HTTP {resp.status}",
+                            }
+                        # Fall through to the post-`async with` sleep + retry.
+                        raise _RetryableStatus(resp.status)
                     if resp.status != 200:
                         return {
                             "url": url,
@@ -818,6 +899,23 @@ async def crawl_recursive(
     page_timeout = int(os.getenv("CRAWL_PAGE_TIMEOUT", "20"))
 
     max_depth = int(os.getenv("MAX_CRAWL_DEPTH", str(max_depth)))
+
+    # SSRF guard: reject seed URLs that resolve to private/internal/loopback
+    # addresses (e.g. 169.254.169.254 cloud metadata, 127.0.0.1, 10.0.0.0/8).
+    # Without this check a customer could crawl internal services and ingest
+    # their responses as RAG documents, then read them back via their bot.
+    if not _is_url_safe(start_url):
+        print(
+            json.dumps(
+                {
+                    "log": f"Crawl rejected: {start_url} resolves to a private/internal address",
+                    "error": "url_not_safe",
+                }
+            )
+        )
+        if progress_file:
+            _write_progress(progress_file, [])
+        return
 
     start_domain = get_base_domain(urlparse(start_url).netloc)
     visited: set[str] = set()

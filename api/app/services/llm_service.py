@@ -303,8 +303,15 @@ async def generate_response_stream(
         return
 
     logger.info(f"Starting LLM stream | model={_primary_model()} | prompt_length={len(prompt)}")
+    # Track whether the visitor has already received any text from the primary
+    # model. If they have, falling back mid-stream would concatenate a brand-new
+    # complete answer from the fallback onto a half-finished primary answer —
+    # the SSE consumer cannot rewind, so the user sees two stitched-together
+    # responses. In that case we end gracefully instead of falling back.
+    primary_chunks_yielded = 0
     try:
         async for chunk in _stream_from_model(_primary_model(), prompt, max_tokens, metadata, temperature):
+            primary_chunks_yielded += 1
             yield chunk
         return
     except TimeoutError as e:
@@ -312,9 +319,17 @@ async def generate_response_stream(
         yield " [Response timed out. Please try again.]"
         return
     except Exception as primary_err:
+        if primary_chunks_yielded > 0:
+            logger.warning(
+                f"Primary LLM stream failed mid-response after {primary_chunks_yielded} chunks "
+                f"({type(primary_err).__name__}): {primary_err} — suppressing fallback to avoid "
+                "concatenating two answers on the same SSE stream."
+            )
+            yield " [Response interrupted. Please try again.]"
+            return
         logger.warning(
-            f"Primary LLM stream failed ({type(primary_err).__name__}): {primary_err} "
-            f"— attempting fallback to {_fallback_model()}"
+            f"Primary LLM stream failed before yielding any chunks ({type(primary_err).__name__}): "
+            f"{primary_err} — attempting fallback to {_fallback_model()}"
         )
 
     # Fallback to secondary model

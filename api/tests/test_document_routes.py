@@ -8,7 +8,10 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.auth import get_current_client_or_operator
+from app.api.auth import (
+    get_current_client_or_operator,
+    require_active_subscription_for_workspace,
+)
 from app.api.document_routes import router
 
 
@@ -22,6 +25,9 @@ def _build_app(auth_override=None):
     app.include_router(router)
     if auth_override:
         app.dependency_overrides[get_current_client_or_operator] = lambda: auth_override
+    # See test_bot_routes — gate semantics live in test_trial_enforcement;
+    # bypassing here keeps these tests focused on document-route logic.
+    app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
     return app
 
 

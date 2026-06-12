@@ -37,6 +37,11 @@ class Client(Base):
     )
     referral_attributed_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Set when the trial hard-delete cron purges the workspace after the
+    # 15-day retention window. Stamped Client rows still exist for
+    # support / audit but no longer count as "active customers".
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
+
     # ── LEGACY columns kept for backward compatibility during migration ──
     # These will be removed once all data is migrated to Bot model.
     system_prompt = Column(Text, nullable=True)
@@ -653,6 +658,22 @@ class Subscription(Base):
     # Trial tracking
     trial_start = Column(DateTime(timezone=True), nullable=True)
     trial_end = Column(DateTime(timezone=True), nullable=True)
+    # Set by the trial-expiry cron when status flips to ``trial_expired``.
+    # The hard-delete cron uses this to know when the 15-day grace window
+    # ends. ``NULL`` for any subscription that never went through trial
+    # expiry (paid customers, free-tier users).
+    data_retention_until = Column(DateTime(timezone=True), nullable=True)
+    # Set when a payment-failed webhook flips ``status`` to ``past_due``.
+    # The auto-expire cron uses this anchor (not ``updated_at``, which
+    # mutates on every unrelated row touch) to know when the dunning
+    # grace window has elapsed. Reset to ``NULL`` when the customer's
+    # card is rescued and status flips back to ``active``.
+    past_due_since = Column(DateTime(timezone=True), nullable=True)
+    # Idempotency log for trial lifecycle emails. Keys are lifecycle
+    # stages (``day_7``, ``day_11``, ``day_13``, ``trial_ended``,
+    # ``data_deleted``); values are ISO-8601 timestamps of when each was
+    # sent. Missing key == not yet sent. Lets every cron re-run safely.
+    trial_emails_sent = Column(JSONB, nullable=False, server_default="{}", default=dict)
 
     # Cancellation
     canceled_at = Column(DateTime(timezone=True), nullable=True)
@@ -1103,7 +1124,7 @@ class AffiliateInvite(Base):
 
     Super admin invites by email; if the email doesn't match any existing
     Client, an invite row is created with a one-time token. The recipient
-    receives a link to ``/affiliate-accept?token=<raw>`` which atomically
+    receives a link to ``/affiliate-invite?token=<raw>`` which atomically
     creates their ``clients`` row and ``affiliates`` row in a single
     transaction. The raw token is emailed once and never persisted; only
     its sha256 hash is stored here. Same pattern as ``ImpersonationToken``.

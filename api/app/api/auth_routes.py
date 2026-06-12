@@ -246,6 +246,10 @@ class RegisterRequest(BaseModel):
     password: str
     company_name: str | None = None
     website: str | None = None
+    # Optional affiliate referral code captured from the ``?ref=`` cookie at
+    # signup. Silent on invalid/self-referral — registration must never fail
+    # because of a referral problem.
+    referral_code: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -276,6 +280,21 @@ class RegisterRequest(BaseModel):
         return v
 
 
+class TrialStatePayload(BaseModel):
+    """Subset of subscription state the dashboard needs to render the trial banner.
+
+    Always populated for clients that landed on a trialing subscription at
+    signup; ``None`` for accounts created without a trial (super-admin
+    seeded, legacy free-tier, etc). The admin app treats ``None`` as
+    "no trial UI" rather than zero-day urgency.
+    """
+
+    status: str  # "trialing" | "trial_expired" | "active" | ...
+    trial_end_at: str | None = None  # ISO-8601, UTC
+    days_remaining: int | None = None  # floor((trial_end - now).days)
+    credits_granted: int | None = None
+
+
 class RegisterResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -285,6 +304,10 @@ class RegisterResponse(BaseModel):
     company_name: str | None = None
     website: str | None = None
     message: str = "Account created successfully"
+    # Trial information for the dashboard's first paint. ``None`` for any
+    # registration that didn't land on a trial plan (defensive — should
+    # never happen for self-serve signups once PR1 is live).
+    trial: TrialStatePayload | None = None
 
 
 class CurrentUserResponse(BaseModel):
@@ -311,6 +334,22 @@ class CurrentUserResponse(BaseModel):
     bot_count: int
     is_superadmin: bool = False
     role: str | None = None  # operator role; None for clients
+    # Affiliate-program membership — derived from the affiliates table.
+    # ``True`` only when an active (non-deactivated) row exists for the
+    # current client; always ``False`` for operators (they're a different
+    # principal type and can't be affiliates themselves).
+    is_affiliate: bool = False
+    affiliate_id: int | None = None
+    # ``True`` for affiliates who are NOT also customers — i.e. they came
+    # in via the magic-link onboarding and never created a bot. The admin
+    # app uses this to render the dedicated AffiliateLayout instead of the
+    # full customer dashboard. ``False`` for customer-affiliates so they
+    # still get the customer UI with an "Affiliate" entry point.
+    is_affiliate_only: bool = False
+    # Trial snapshot for the dashboard's persistent banner. ``None`` for
+    # operators (the trial belongs to the workspace owner) and for clients
+    # whose subscription has never been in a trial state.
+    trial: TrialStatePayload | None = None
 
 
 @router.get("/me", response_model=CurrentUserResponse)
@@ -347,6 +386,27 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             )
 
         client: Client = auth["entity"]
+        # Look up an active affiliate row for this client. Single query, no
+        # join needed thanks to the unique index on affiliates.client_id.
+        from app.db.models import Affiliate
+
+        affiliate_row = (
+            session.execute(
+                select(Affiliate).where(
+                    Affiliate.client_id == client.id,
+                    Affiliate.deactivated_at.is_(None),
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+        # Resolve the trial snapshot in the same transaction. ``None`` for
+        # paid customers and seeded superadmins; the dashboard treats that
+        # as "no trial UI". For ``trial_expired`` we still return the
+        # payload so the banner can prompt for reactivation.
+        trial_payload = _build_trial_payload(session, client.id)
+
         return CurrentUserResponse(
             id=client.id,
             kind="client",
@@ -358,7 +418,65 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             bot_count=int(bot_count or 0),
             is_superadmin=bool(client.is_superadmin),
             role=None,
+            is_affiliate=affiliate_row is not None,
+            affiliate_id=affiliate_row.id if affiliate_row else None,
+            # Affiliate-only = active affiliate with zero bots and not a
+            # superadmin. The moment they create their first bot, they
+            # graduate to the full customer experience automatically.
+            is_affiliate_only=(
+                affiliate_row is not None and int(bot_count or 0) == 0 and not bool(client.is_superadmin)
+            ),
+            trial=trial_payload,
         )
+
+
+def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
+    """Resolve the dashboard's trial snapshot for a client.
+
+    Returns ``None`` when the client has no current subscription or the
+    subscription has never been in a trial state. The dashboard uses
+    ``None`` as "hide the trial banner entirely". For ``trialing`` and
+    ``trial_expired`` we always return a payload so the UI can render the
+    countdown or the reactivation prompt respectively.
+    """
+    from datetime import UTC, datetime
+
+    from app.db.models import Subscription
+
+    sub = (
+        session.execute(
+            select(Subscription)
+            .where(
+                Subscription.client_id == client_id,
+                Subscription.status.in_(("trialing", "trial_expired")),
+            )
+            .order_by(Subscription.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if sub is None:
+        return None
+
+    trial_end = sub.trial_end
+    days_remaining: int | None = None
+    end_iso: str | None = None
+    if trial_end is not None:
+        if trial_end.tzinfo is None:
+            trial_end = trial_end.replace(tzinfo=UTC)
+        end_iso = trial_end.isoformat()
+        days_remaining = max(0, (trial_end - datetime.now(UTC)).days) if sub.status == "trialing" else 0
+
+    plan = sub.plan
+    credits_granted = int(plan.credits_per_month or 0) if plan else None
+
+    return TrialStatePayload(
+        status=sub.status,
+        trial_end_at=end_iso,
+        days_remaining=days_remaining,
+        credits_granted=credits_granted,
+    )
 
 
 # ── Endpoints ──
@@ -465,11 +583,14 @@ def register(request: Request, body: RegisterRequest):
             session.flush()  # Get the client ID
             logger.info("Client INSERT flushed: id=%s", new_client.id)
 
-            # Auto-assign the default (free) plan to the new client
+            # Auto-assign the default plan (currently the 14-day trial). The
+            # subscription row is bound locally so we can build the trial
+            # payload + welcome email without re-querying after commit.
+            subscription = None
             try:
                 from app.services.plan_service import assign_default_plan_to_client
 
-                assign_default_plan_to_client(session, new_client.id)
+                subscription = assign_default_plan_to_client(session, new_client.id)
             except Exception as plan_err:
                 logger.warning(f"Could not assign default plan to client {new_client.id}: {plan_err}")
 
@@ -477,6 +598,64 @@ def register(request: Request, body: RegisterRequest):
             logger.info(f"Transaction committed successfully for client {new_client.id}")
 
             session.refresh(new_client)
+
+            # Build the trial payload + fire the welcome email AFTER commit.
+            # If the email layer crashes, we don't want to roll back the
+            # client row — they're already a customer, the day-1 cron will
+            # follow up.
+            trial_payload: TrialStatePayload | None = None
+            if subscription is not None and subscription.status == "trialing" and subscription.trial_end is not None:
+                from datetime import UTC, datetime
+
+                from app.config import TRIAL_CREDITS
+                from app.services.email_service import send_trial_welcome_email
+
+                trial_end = subscription.trial_end
+                if trial_end.tzinfo is None:
+                    trial_end = trial_end.replace(tzinfo=UTC)
+                days_remaining = max(0, (trial_end - datetime.now(UTC)).days)
+                credits_granted = int(subscription.plan.credits_per_month or 0) if subscription.plan else TRIAL_CREDITS
+
+                trial_payload = TrialStatePayload(
+                    status=subscription.status,
+                    trial_end_at=trial_end.isoformat(),
+                    days_remaining=days_remaining,
+                    credits_granted=credits_granted,
+                )
+
+                try:
+                    send_trial_welcome_email(
+                        new_client.email,
+                        name=new_client.name,
+                        trial_end=trial_end,
+                        credits=credits_granted,
+                        duration_days=int(subscription.plan.trial_days or 14) if subscription.plan else 14,
+                    )
+                except Exception as mail_err:
+                    # send_trial_welcome_email is already defensive — this is
+                    # the belt-and-braces guard for any import-time error.
+                    logger.warning(
+                        "trial_welcome_dispatch_failed for client %s: %s",
+                        new_client.id,
+                        mail_err,
+                    )
+
+            # Affiliate first-touch attribution. Best-effort — invalid /
+            # self-referral / inactive code all silently no-op so the
+            # signup response stays fast and successful.
+            if body.referral_code:
+                try:
+                    from app.services.affiliate_service import attribute_signup
+
+                    attribute_signup(session, new_client.id, body.referral_code)
+                    session.commit()
+                except Exception as ref_err:
+                    logger.warning(
+                        "referral_attribution_failed for client %s: %s",
+                        new_client.id,
+                        ref_err,
+                    )
+                    session.rollback()
 
             logger.info(
                 "New client registered: id=%s (%s) — no default bot (client will create manually)",
@@ -493,6 +672,7 @@ def register(request: Request, body: RegisterRequest):
                 "company_name": new_client.company_name,
                 "website": new_client.website,
                 "message": "Account created successfully",
+                "trial": trial_payload,
             }
     except HTTPException:
         raise  # Re-raise 409 (duplicate email) and other HTTP errors as-is

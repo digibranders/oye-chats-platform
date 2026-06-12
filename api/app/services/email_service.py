@@ -14,7 +14,6 @@ from app.config import (
     APP_URL,
     BRAND_NAME,
     BRAND_TAGLINE_FOOTER,
-    BRAND_TAGLINE_HEADER,
     BREVO_API_KEY,
     EMAIL_ENABLED,
     EMAIL_FROM_ADDRESS,
@@ -455,50 +454,23 @@ _RULE = "#e8e8f0"
 
 
 def _email_header() -> str:
-    """Branded header row — brand mark tile + wordmark + tagline.
+    """Branded header row — centered wordmark only.
 
-    Renders the top of every email with a consistent brand lockup. Pure
-    HTML/CSS (no images) so it works in image-blocked inboxes and offline.
-    Vertically aligns a 36×36 brand mark tile with the wordmark on a single
-    centered row, with the tagline on a second line. All brand strings
-    (name, tagline, marketing URL) come from ``app.config``.
+    Renders the top of every email as a single centered wordmark, no
+    brand-mark tile and no tagline. Pure HTML/CSS so it works in
+    image-blocked inboxes and offline. The marketing URL wraps the
+    wordmark so the brand is still clickable.
     """
-    brand_initial = html.escape(BRAND_NAME[:1].upper()) if BRAND_NAME else "O"
     return (
         f"<tr>"
         f'<td style="background-color:{_SURFACE_CARD};border-radius:20px 20px 0 0;'
         f'padding:30px 40px 26px 40px;text-align:center;">'
-        # Lockup row — brand mark + wordmark, side by side, centered
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center"'
-        f' style="margin:0 auto;">'
-        f"<tr>"
-        # Brand mark tile (36×36 rounded square with the brand's first letter)
-        f'<td width="36" height="36" align="center" valign="middle"'
-        f' style="width:36px;height:36px;background-color:{_BRAND_PRIMARY};'
-        f'border-radius:10px;text-align:center;vertical-align:middle;">'
-        f'<a href="{MARKETING_URL}" style="text-decoration:none;color:#ffffff;'
-        f'display:block;line-height:36px;">'
-        f'<span style="font-family:{_FONT_STACK};font-size:18px;font-weight:800;'
-        f'color:#ffffff;letter-spacing:-0.5px;line-height:36px;">{brand_initial}</span>'
-        f"</a>"
-        f"</td>"
-        # 12px gap
-        f'<td width="12" style="width:12px;font-size:0;line-height:0;">&nbsp;</td>'
-        # Wordmark
-        f'<td valign="middle" style="vertical-align:middle;">'
-        f'<a href="{MARKETING_URL}" style="text-decoration:none;display:block;line-height:1;">'
+        f'<a href="{MARKETING_URL}" style="text-decoration:none;display:inline-block;line-height:1;">'
         f'<span style="font-family:{_FONT_STACK};font-size:24px;font-weight:800;'
         f'letter-spacing:-0.5px;line-height:1;">'
         f"{_brand_wordmark(color=_INK_900)}"
         f"</span>"
         f"</a>"
-        f"</td>"
-        f"</tr>"
-        f"</table>"
-        # Tagline
-        f'<p style="margin:10px 0 0 0;font-family:{_FONT_STACK};font-size:10px;'
-        f"font-weight:700;letter-spacing:0.16em;text-transform:uppercase;"
-        f'color:{_INK_300};">{html.escape(BRAND_TAGLINE_HEADER)}</p>'
         f"</td>"
         f"</tr>"
     )
@@ -1221,3 +1193,536 @@ def send_visitor_confirmation_email(
         reply_to=reply_to,
         sender_name=sender,
     )
+
+
+# ── Affiliate program emails ─────────────────────────────────────────────
+# Two transactional templates, composed as raw HTML through the shared
+# ``_html_doc`` wrapper rather than via Brevo template IDs. Reason: the
+# affiliate program is internal, low-volume, and self-contained — going
+# through Brevo's template editor adds friction without buying anything.
+#
+# Both emails follow the same skeleton: short headline, two short
+# paragraphs, single primary CTA button. No metering — these are
+# operational emails, not customer-billed sends.
+
+
+def _affiliate_cta_button(href: str, label: str) -> str:
+    """Pill-shaped CTA button matching the brand palette."""
+    safe_href = html.escape(href, quote=True)
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left">'
+        f"<tr>"
+        f'<td align="center" style="border-radius:10px;background-color:{_BRAND_PRIMARY};">'
+        f'<a href="{safe_href}"'
+        f' style="display:inline-block;padding:12px 22px;font-family:{_FONT_STACK};'
+        f"font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;"
+        f'border-radius:10px;letter-spacing:0.01em;">'
+        f"{html.escape(label)}"
+        f"</a>"
+        f"</td>"
+        f"</tr>"
+        f"</table>"
+    )
+
+
+def send_affiliate_welcome_email(to_email: str, name: str | None = None) -> None:
+    """Email an existing OyeChats customer that they're now an affiliate.
+
+    Triggered from the super-admin invite endpoint when the target email
+    already has a ``clients`` row — they don't need a magic link, they just
+    need to know to log in and check ``/affiliate``. Fire-and-forget.
+    """
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+    dashboard_url = f"{APP_URL.rstrip('/')}/affiliate"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"You&rsquo;re now an OyeChats affiliate"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Hi {safe_name} — you&rsquo;ve just been enrolled in the OyeChats "
+        f"affiliate program. You can now create referral codes, share them "
+        f"anywhere, and track how each one performs from your dashboard."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Open the affiliate dashboard to create your first code:"
+        f"</p>"
+        f"{_affiliate_cta_button(dashboard_url, 'Open my affiliate dashboard')}"
+        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Need help? Reply to this email or write to "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader="You can now create referral codes and earn from every signup.",
+        body_inner=body_inner,
+        visitor=False,
+    )
+    send_email_async(
+        to_email,
+        f"You’re now an {BRAND_NAME} affiliate",
+        html_body,
+    )
+
+
+def send_affiliate_invite_email(
+    to_email: str,
+    accept_url: str,
+    *,
+    expires_in_days: int = 14,
+) -> None:
+    """Email a magic link to a non-customer who's been invited as an affiliate.
+
+    ``accept_url`` already carries the raw token (e.g.
+    ``https://app.oyechats.com/affiliate-invite?token=...``). We do not
+    persist the raw token here; it's emailed once and lives only in this
+    email body. If the recipient loses the email, super admin revokes the
+    invite and sends a new one.
+    """
+    safe_url = html.escape(accept_url, quote=True)
+    expiry_phrase = f"{expires_in_days} day" if expires_in_days == 1 else f"{expires_in_days} days"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"You&rsquo;ve been invited to {html.escape(BRAND_NAME)} Partners"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"OyeChats Partners is a hand-picked group earning recurring commission "
+        f"on every customer they bring to the platform. We&rsquo;d like you to "
+        f"join."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Click below to accept. If you already have an OyeChats account, "
+        f"you&rsquo;ll sign in and the Affiliate menu will appear in your "
+        f"sidebar. New here? You can create an account in the same flow. "
+        f"This link expires in "
+        f'<strong style="color:{_INK_900};">{html.escape(expiry_phrase)}</strong>.'
+        f"</p>"
+        f"{_affiliate_cta_button(accept_url, 'Accept your Partners invite')}"
+        f'<p style="margin:24px 0 8px 0;font-family:{_FONT_STACK};font-size:12px;'
+        f'color:{_INK_300};line-height:1.55;word-break:break-all;">'
+        f"If the button doesn&rsquo;t work, paste this link into your browser:"
+        f"</p>"
+        f'<p style="margin:0 0 16px 0;font-family:{_FONT_STACK};font-size:12px;'
+        f'color:{_INK_500};line-height:1.5;word-break:break-all;">'
+        f'<a href="{safe_url}" style="color:{_BRAND_PRIMARY};text-decoration:none;">{safe_url}</a>'
+        f"</p>"
+        f'<p style="margin:16px 0 0 0;font-family:{_FONT_STACK};font-size:12px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Didn&rsquo;t expect this email? You can safely ignore it — the invite "
+        f"will expire and no account will be created."
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=f"Accept your Partners invite. Link expires in {expiry_phrase}.",
+        body_inner=body_inner,
+        visitor=False,
+    )
+    send_email_async(
+        to_email,
+        f"You’re invited to {BRAND_NAME} Partners",
+        html_body,
+    )
+
+
+def send_trial_welcome_email(
+    to_email: str,
+    *,
+    name: str | None,
+    trial_end: datetime,
+    credits: int,
+    duration_days: int,
+) -> None:
+    """Welcome email fired the moment a customer registers and lands on the
+    14-day trial.
+
+    Day-0 in the email cadence (see PR4 for the day-7 / day-11 / day-13 /
+    day-14 follow-ups). Best-effort send — the registration endpoint never
+    blocks on this and swallows transport failures so a Brevo outage can't
+    take signup down with it.
+
+    Content priorities, in order:
+
+    1. Confirm the trial is active and state the exact end date (no
+       ambiguous "in 14 days" phrasing — the timestamp is authoritative).
+    2. Quote the credit allowance so the prospect knows the cap.
+    3. One primary CTA to the dashboard. Quick-start tips inline rather
+       than a separate "what now?" email so day-0 carries its weight.
+    """
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+    dashboard_url = APP_URL.rstrip("/")
+    knowledge_url = f"{dashboard_url}/knowledge"
+    chatbot_url = f"{dashboard_url}/chatbot"
+    billing_url = f"{dashboard_url}/billing"
+
+    # Render the deadline in a forgiving, date-only format so timezone
+    # drift between sender and recipient doesn't make the email lie.
+    end_human = trial_end.strftime("%B %-d, %Y")
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"Welcome to {html.escape(BRAND_NAME)}, {safe_name} &mdash; your "
+        f"{duration_days}-day free trial is live"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"You&rsquo;ve got <strong>{credits:,} credits</strong> to spend "
+        f"however you like &mdash; chats, URL crawls, document uploads. "
+        f"Your trial runs until "
+        f'<strong style="color:{_INK_900};">{html.escape(end_human)}</strong>. '
+        f"No card on file, no auto-charge."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Pop the dashboard open and let&rsquo;s get your first bot answering "
+        f"customer questions:"
+        f"</p>"
+        f"{_affiliate_cta_button(dashboard_url, 'Open my dashboard')}"
+        f'<p style="margin:28px 0 12px 0;font-family:{_FONT_STACK};font-size:13px;'
+        f"font-weight:600;color:{_INK_900};letter-spacing:0.02em;"
+        f'text-transform:uppercase;">'
+        f"A 3-step path to your first chat"
+        f"</p>"
+        f'<ol style="margin:0 0 8px 0;padding-left:20px;font-family:{_FONT_STACK};'
+        f'font-size:14px;color:{_INK_500};line-height:1.65;">'
+        f"<li>"
+        f'<a href="{html.escape(knowledge_url, quote=True)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;font-weight:600;">'
+        f"Upload your knowledge base"
+        f"</a> &mdash; PDFs, docs, or just paste your website URL and we crawl it."
+        f"</li>"
+        f"<li>"
+        f'<a href="{html.escape(chatbot_url, quote=True)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;font-weight:600;">'
+        f"Style the widget"
+        f"</a> &mdash; colors, logo, welcome message, all of it."
+        f"</li>"
+        f"<li>"
+        f'<a href="{html.escape(chatbot_url, quote=True)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;font-weight:600;">'
+        f"Drop the script tag"
+        f"</a> on your site &mdash; one line of HTML and you&rsquo;re live."
+        f"</li>"
+        f"</ol>"
+        f'<p style="margin:28px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Love what you see before day {duration_days}? "
+        f'<a href="{html.escape(billing_url, quote=True)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">Pick a plan any time</a> '
+        f"to keep your bot live past the trial. Stuck on something? Just "
+        f"reply to this email or write to "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=(
+            f"You’ve got {credits:,} credits and {duration_days} days to "
+            f"build the bot that answers your customers’ questions."
+        ),
+        body_inner=body_inner,
+        visitor=False,
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Welcome to {BRAND_NAME} — your {duration_days}-day trial is live",
+            html_body,
+        )
+    except Exception as exc:
+        # Registration must not fail because of a transport glitch. The
+        # day-1 nudge cron (PR4) acts as a soft retry — if the customer
+        # never gets day-0 they still get day-1.
+        local, _, domain = to_email.partition("@")
+        redacted = f"{local[:1]}***@{domain}" if local and domain else "***"
+        logger.warning("trial_welcome_email_failed for %s: %s", redacted, exc)
+        _capture_email_failure(exc, event="trial_welcome", email=to_email)
+
+
+# ── Trial lifecycle cadence (PR4) ─────────────────────────────────────────
+#
+# Four touchpoints fired by the worker crons in ``app.worker.tasks``:
+#
+# * ``trial_day_7``   — midpoint check-in, celebrates activation
+# * ``trial_days_left`` — parameterised "X days remaining" warning
+#                        (used for day-11 and day-13 fires)
+# * ``trial_ended``   — day-14, asks for plan + card; quotes the
+#                        15-day data-retention window
+# * ``trial_data_deleted`` — final notification after the retention
+#                        window lapses and the worker has purged
+#                        bots / documents / sessions
+#
+# Each helper swallows transport failures the same way ``send_trial_welcome_email``
+# does. The cron records its own ``trial_emails_sent`` marker only after
+# the helper returns; a Brevo blip therefore lets the next cron tick
+# retry instead of pretending the email landed.
+
+
+def _trial_redact(to_email: str) -> str:
+    local, _, domain = to_email.partition("@")
+    return f"{local[:1]}***@{domain}" if local and domain else "***"
+
+
+def _trial_cta_button(href: str, label: str) -> str:
+    """Trial-cadence emails share the affiliate pill — the design system has
+    one primary CTA shape and this is it."""
+    return _affiliate_cta_button(href, label)
+
+
+def send_trial_day_7_email(
+    to_email: str,
+    *,
+    name: str | None,
+    days_remaining: int,
+    plan_name: str,
+) -> None:
+    """Halfway-through nudge. Tone: encouraging, not salesy."""
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+    dashboard_url = APP_URL.rstrip("/")
+    billing_url = f"{dashboard_url}/billing"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"You&rsquo;re halfway through your {html.escape(plan_name)} trial, {safe_name}"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Quick check-in &mdash; you&rsquo;ve got "
+        f'<strong style="color:{_INK_900};">{days_remaining} days left</strong>. '
+        f"If your bot is live and answering visitors, you&rsquo;re ahead of the curve. "
+        f"If you haven&rsquo;t uploaded knowledge or dropped the script tag yet, "
+        f"this is the week to do it."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Open the dashboard to see your stats or finish the setup:"
+        f"</p>"
+        f"{_trial_cta_button(dashboard_url, 'Open my dashboard')}"
+        f'<p style="margin:28px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Already sold? "
+        f'<a href="{html.escape(billing_url, quote=True)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">Pick a plan</a> '
+        f"any time &mdash; conversion preserves your bot, documents, and chat history."
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=f"Halfway through your trial — {days_remaining} days left.",
+        body_inner=body_inner,
+        visitor=False,
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"You’re halfway through your {BRAND_NAME} trial",
+            html_body,
+        )
+    except Exception as exc:
+        logger.warning("trial_day_7_email_failed for %s: %s", _trial_redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_day_7", email=to_email)
+
+
+def send_trial_days_left_email(
+    to_email: str,
+    *,
+    name: str | None,
+    days_remaining: int,
+    plan_name: str,
+) -> None:
+    """Urgency reminder fired at day-11 (3 left) and day-13 (1 left)."""
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+    dashboard_url = APP_URL.rstrip("/")
+    billing_url = f"{dashboard_url}/billing"
+
+    # Tone scales with urgency — 1 day left is the "tomorrow" frame.
+    if days_remaining <= 1:
+        headline = f"Your {html.escape(plan_name)} trial ends tomorrow"
+        body_lead = (
+            f"Heads up &mdash; your trial wraps up in about "
+            f'<strong style="color:{_INK_900};">{days_remaining} day</strong>. '
+            f"After that your widget will switch to its offline message until you pick a plan."
+        )
+        subject = f"Your {BRAND_NAME} trial ends tomorrow"
+    else:
+        headline = f"{days_remaining} days left in your {html.escape(plan_name)} trial"
+        body_lead = (
+            f"You&rsquo;ve got "
+            f'<strong style="color:{_INK_900};">{days_remaining} days</strong> '
+            f"to keep evaluating. If you&rsquo;d like your bot to stay live without a gap, "
+            f"pick a plan before the trial ends."
+        )
+        subject = f"{days_remaining} days left in your {BRAND_NAME} trial"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"Hi {safe_name} &mdash; {headline.lower()}"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"{body_lead}"
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Your knowledge base, settings, and chat history are kept safe for "
+        f"15 days after the trial ends &mdash; nothing is lost if you decide later."
+        f"</p>"
+        f"{_trial_cta_button(billing_url, 'Pick a plan')}"
+        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Questions about pricing? Reply to this email or write to "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=f"{days_remaining} day{'s' if days_remaining != 1 else ''} left in your trial.",
+        body_inner=body_inner,
+        visitor=False,
+    )
+    try:
+        send_email_async(to_email, subject, html_body)
+    except Exception as exc:
+        logger.warning(
+            "trial_days_left_email_failed for %s (days=%s): %s",
+            _trial_redact(to_email),
+            days_remaining,
+            exc,
+        )
+        _capture_email_failure(exc, event="trial_days_left", email=to_email, days_remaining=days_remaining)
+
+
+def send_trial_ended_email(
+    to_email: str,
+    *,
+    name: str | None,
+    plan_name: str,
+    data_retention_until: datetime,
+) -> None:
+    """Fired the moment the expiry cron flips status to ``trial_expired``."""
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+    billing_url = f"{APP_URL.rstrip('/')}/billing"
+    retention_human = data_retention_until.strftime("%B %-d, %Y")
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"Your {html.escape(plan_name)} trial has ended"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Hi {safe_name} &mdash; your trial of "
+        f'<strong style="color:{_INK_900};">{html.escape(plan_name)}</strong> '
+        f"wrapped up today. Your bot is now showing its offline message to visitors. "
+        f"Pick a plan and your bot is back online within a minute."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Your knowledge base, settings, and chat history are kept safe until "
+        f'<strong style="color:{_INK_900};">{html.escape(retention_human)}</strong>. '
+        f"After that date, the workspace is permanently deleted."
+        f"</p>"
+        f"{_trial_cta_button(billing_url, 'Choose a plan to reactivate')}"
+        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Trial didn&rsquo;t fit? We&rsquo;d love quick feedback &mdash; "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=(f"Your trial has ended. Reactivate by {retention_human} to keep your bot and data."),
+        body_inner=body_inner,
+        visitor=False,
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Your {BRAND_NAME} trial has ended — pick a plan to keep your bot live",
+            html_body,
+        )
+    except Exception as exc:
+        logger.warning("trial_ended_email_failed for %s: %s", _trial_redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_ended", email=to_email)
+
+
+def send_trial_data_deleted_email(
+    to_email: str,
+    *,
+    name: str | None,
+) -> None:
+    """Sent after the hard-delete cron purges the workspace.
+
+    No CTA — at this point the customer's account is deactivated. Brief,
+    factual, leaves the door open for sign-up later.
+    """
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"Your {html.escape(BRAND_NAME)} workspace has been deleted"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Hi {safe_name} &mdash; as scheduled, we&rsquo;ve permanently deleted the "
+        f"bots, documents, and chat history from your trial workspace. Nothing is "
+        f"recoverable from this account."
+        f"</p>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"If you ever want to give {html.escape(BRAND_NAME)} another look, you can "
+        f"start fresh any time &mdash; no hard feelings."
+        f"</p>"
+        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Questions? Reply to this email or write to "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader="Your trial workspace has been permanently deleted.",
+        body_inner=body_inner,
+        visitor=False,
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Your {BRAND_NAME} workspace has been deleted",
+            html_body,
+        )
+    except Exception as exc:
+        logger.warning("trial_data_deleted_email_failed for %s: %s", _trial_redact(to_email), exc)
+        _capture_email_failure(exc, event="trial_data_deleted", email=to_email)

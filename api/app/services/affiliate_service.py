@@ -24,7 +24,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Affiliate, AffiliateInvite, Client, ReferralClick, ReferralCode
+from app.db.models import Affiliate, AffiliateInvite, Client, Plan, ReferralClick, ReferralCode, Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -57,26 +57,13 @@ INVITE_TOKEN_BYTES = 32
 MAX_COMMISSION_BPS = 10000
 
 
-def pct_to_bps(pct: int | float | None) -> int | None:
-    """Convert a human percentage (0–100, possibly decimal) to basis points.
-
-    Returns ``None`` if input is ``None`` (caller wants to skip the update).
-    Raises ``ValueError`` on out-of-range input — surfaced as a 400 at the
-    route layer. We round half-up to the nearest bps so 12.345% → 1234 bps.
-    """
-    if pct is None:
-        return None
-    if pct < 0 or pct > 100:
-        raise ValueError("Commission percentage must be between 0 and 100.")
-    return int(round(float(pct) * 100))
-
-
-def bps_to_pct(bps: int | None) -> float | None:
-    """Convert basis points back to a human percentage (one decimal)."""
-    if bps is None:
-        return None
-    return round(bps / 100, 2)
-
+# Re-export the canonical implementations from ``app.core.money`` so any
+# existing import (``from app.services.affiliate_service import pct_to_bps``)
+# keeps working without dragging the old behaviour around. Centralising
+# means an admin's ``12.345%`` becomes the SAME bps value here, in the
+# billing-service Stripe coupon flow, and in the audit metadata — fixing
+# the "quote vs invoice differ by 1 bps" gap surfaced by the audit.
+from app.core.money import bps_to_pct, pct_to_bps  # noqa: E402,F401
 
 # ─── Exceptions ─────────────────────────────────────────────────────────
 
@@ -131,6 +118,13 @@ class InviteAlreadyUsed(AffiliateProgramError):
 
 class InviteAlreadyPending(AffiliateProgramError):
     """Raised when a new invite is requested for an email that already has a pending one."""
+
+
+class InviteEmailMismatch(AffiliateProgramError):
+    """Raised when an existing-client tries to redeem a token addressed to a
+    different email. Keeps invites bound to the email they were sent to so
+    one person can't redeem another's invite by pasting the URL while signed
+    into their own account."""
 
 
 class CommissionSplitExceedsPool(AffiliateProgramError):
@@ -625,19 +619,139 @@ def list_code_referrals(
         tld = domain.rsplit(".", 1)[-1] if "." in domain else domain
         return f"{local_head}***@***.{tld}"
 
-    referrals = [
-        {
-            "client_id": int(r.id),
-            "name": r.name or None,
-            "email": r.email if include_platform else _mask_email(r.email),
-            "attributed_at": r.referral_attributed_at.isoformat() if r.referral_attributed_at else None,
+    # ── Per-customer pricing distribution ──
+    #
+    # For each referred customer we look up their CURRENT active subscription
+    # (if any) and compute how each $ of their monthly bill is split. The
+    # breakdown follows the same model as the percentage one above:
+    #
+    #     customer pays full plan_price × (1 - customer_discount_pct/100)
+    #     affiliate earns  full_plan_price × affiliate_commission_pct/100
+    #     platform keeps   full_plan_price × platform_pct/100   (super admin only)
+    #     customer saved   full_plan_price × customer_discount_pct/100
+    #
+    # ``full_plan_price`` is sourced from the customer's plan row at the
+    # current billing cycle. Free / no-sub / no-price customers fall to all
+    # zeroes — no contribution to the aggregate either way.
+    #
+    # We batch the plan + subscription lookups in two queries so a 100-
+    # referral code stays a constant-time fetch.
+    client_ids = [int(r.id) for r in rows]
+
+    # Map client_id → (plan_price_cents, currency, plan_slug)
+    subs_by_client: dict[int, tuple[int, str, str]] = {}
+    if client_ids:
+        sub_rows = session.execute(
+            select(
+                Subscription.client_id,
+                Subscription.billing_cycle,
+                Plan.monthly_price_cents,
+                Plan.annual_price_cents,
+                Plan.currency,
+                Plan.slug,
+            )
+            .join(Plan, Plan.id == Subscription.plan_id)
+            .where(
+                Subscription.client_id.in_(client_ids),
+                Subscription.status.in_(("active", "trialing")),
+            )
+        ).all()
+        for sub_row in sub_rows:
+            # Annual subs are billed once a year for `annual_price_cents`;
+            # we report the *monthly equivalent* on the per-customer card so
+            # the affiliate sees apples-to-apples earnings per referral.
+            cycle = (sub_row.billing_cycle or "monthly").lower()
+            if cycle == "annual" and sub_row.annual_price_cents:
+                monthly_equiv = sub_row.annual_price_cents // 12
+            else:
+                monthly_equiv = int(sub_row.monthly_price_cents or 0)
+            subs_by_client[int(sub_row.client_id)] = (
+                monthly_equiv,
+                str(sub_row.currency or "USD"),
+                str(sub_row.slug or ""),
+            )
+
+    aff_share = aff_bps / MAX_COMMISSION_BPS
+    cust_share = cust_bps / MAX_COMMISSION_BPS
+    platform_share = max(0.0, 1.0 - pool_bps / MAX_COMMISSION_BPS) if include_platform else 0.0
+
+    # Aggregate totals — sum across every referred customer's monthly-equiv
+    # contribution. Surfaced at the top of the modal so the affiliate can
+    # see "your codes are pulling in ~$X/mo at full price" at a glance.
+    total_full_cents = 0
+    total_aff_cents = 0
+    total_cust_saved_cents = 0
+    total_platform_cents = 0
+    total_paying = 0
+    distribution_currency: str | None = None
+
+    referrals: list[dict] = []
+    for r in rows:
+        client_id = int(r.id)
+        sub_info = subs_by_client.get(client_id)
+        if sub_info:
+            full_cents, currency, plan_slug = sub_info
+        else:
+            full_cents, currency, plan_slug = 0, "USD", "free"
+
+        # Currency consistency: if the customer set has more than one
+        # currency we surface that in the aggregate (the modal renders a
+        # plain symbol per-row anyway). Pick the first non-empty currency
+        # for the aggregate label; flag the mismatch on the response so
+        # the UI doesn't pretend an inconsistent set is one currency.
+        if full_cents > 0:
+            distribution_currency = distribution_currency or currency
+
+        aff_cents = int(full_cents * aff_share)
+        cust_saved_cents = int(full_cents * cust_share)
+        platform_cents = int(full_cents * platform_share) if include_platform else 0
+        paid_cents = full_cents - cust_saved_cents
+
+        if full_cents > 0:
+            total_full_cents += full_cents
+            total_aff_cents += aff_cents
+            total_cust_saved_cents += cust_saved_cents
+            total_platform_cents += platform_cents
+            total_paying += 1
+
+        per_customer: dict[str, int | str | None] = {
+            "plan_slug": plan_slug,
+            "currency": currency,
+            "full_price_cents": full_cents,
+            "paid_cents": paid_cents,
+            "affiliate_earns_cents": aff_cents,
+            "customer_saved_cents": cust_saved_cents,
         }
-        for r in rows
-    ]
+        if include_platform:
+            per_customer["platform_cents"] = platform_cents
+
+        referrals.append(
+            {
+                "client_id": client_id,
+                "name": r.name or None,
+                "email": r.email if include_platform else _mask_email(r.email),
+                "attributed_at": r.referral_attributed_at.isoformat() if r.referral_attributed_at else None,
+                "pricing": per_customer,
+            }
+        )
+
+    distribution: dict[str, int | str | None] = {
+        # ``currency`` is the dominant currency in the referral set. When
+        # the set is empty (no paying referrals yet) we report None so the
+        # UI can render "—" instead of pretending it's USD.
+        "currency": distribution_currency,
+        "paying_referrals": total_paying,
+        "monthly_total_cents": total_full_cents,
+        "monthly_affiliate_cents": total_aff_cents,
+        "monthly_customer_saved_cents": total_cust_saved_cents,
+    }
+    if include_platform:
+        distribution["monthly_platform_cents"] = total_platform_cents
 
     return {
         "code": str(code.code),
         "breakdown": breakdown,
+        "distribution": distribution,
         "referrals": referrals,
     }
 
@@ -889,6 +1003,77 @@ def accept_invite(
     return client, affiliate
 
 
+def accept_invite_for_existing_client(
+    session: Session,
+    raw_token: str,
+    client: Client,
+) -> Affiliate:
+    """Accept a magic-link invite for a CURRENTLY-LOGGED-IN client.
+
+    Separate from ``accept_invite`` because the existing-client path doesn't
+    create a new Client row — it just creates the Affiliate row tied to the
+    one the caller is already authenticated as. The auth check happens at
+    the route layer; this function trusts ``client`` is who they claim.
+
+    The token's target email MUST match the client's email. We enforce this
+    to prevent a logged-in attacker from redeeming someone else's invite by
+    pasting their token. Returns 403 (via ``AffiliateProgramError`` subclass)
+    on mismatch — separate from the not-found case so the UI can render
+    "this invite is for X@example.com — sign in with that email instead".
+
+    Raises:
+      InviteNotFound / InviteExpired / InviteAlreadyUsed (token-state errors)
+      InviteEmailMismatch (client doesn't own the invited email)
+      AlreadyAffiliate (client is already an active affiliate)
+      AffiliateLimitReached (5-affiliate cap hit between invite and accept)
+    """
+    invite = lookup_invite_by_token(session, raw_token)
+
+    # Token-vs-caller email check — case-insensitive to mirror how email
+    # comparison happens elsewhere in the auth layer.
+    if (invite.email or "").strip().lower() != (client.email or "").strip().lower():
+        raise InviteEmailMismatch(
+            f"This invite was sent to {invite.email}. Sign in with that account, or contact sales to update the invite."
+        )
+
+    # Already enrolled? Treat as a soft success — the link was probably
+    # clicked twice. Surfacing this distinctly lets the UI deep-link to the
+    # dashboard with a "you're already a Partner" toast instead of an error.
+    existing = session.execute(select(Affiliate).where(Affiliate.client_id == client.id)).scalars().first()
+    if existing is not None and existing.deactivated_at is None:
+        # Mark the invite consumed even though we didn't create a new row,
+        # so a third click hits InviteAlreadyUsed. The mutation must be
+        # COMMITTED before we raise — the outer session context-manager
+        # rolls back on exception, so a plain assignment + raise would
+        # silently lose the write and the invite would stay pending until
+        # expiry, defeating the comment's promise.
+        if invite.accepted_at is None:
+            invite.accepted_at = datetime.now(UTC)
+            session.commit()
+        raise AlreadyAffiliate(f"{client.email} is already an active affiliate.")
+
+    # Re-check the cap at accept-time.
+    if count_active_affiliates(session) >= MAX_ACTIVE_AFFILIATES:
+        raise AffiliateLimitReached(
+            f"Active affiliates are capped at {MAX_ACTIVE_AFFILIATES}. "
+            "The program filled up before you accepted — contact support."
+        )
+
+    affiliate = Affiliate(
+        client_id=client.id,
+        invited_by=invite.invited_by,
+        max_active_codes=invite.max_active_codes,
+    )
+    session.add(affiliate)
+    invite.accepted_at = datetime.now(UTC)
+    session.flush()
+    logger.info(
+        "affiliate_invite_accepted_for_existing",
+        extra={"invite_id": invite.id, "client_id": client.id, "affiliate_id": affiliate.id},
+    )
+    return affiliate
+
+
 def revoke_invite(session: Session, invite_id: int) -> AffiliateInvite:
     """Mark a pending invite as revoked. Idempotent; already-revoked invites no-op."""
     invite = session.get(AffiliateInvite, invite_id)
@@ -1016,6 +1201,33 @@ def update_affiliate(
     if commission_bps is not None:
         if commission_bps < 0 or commission_bps > MAX_COMMISSION_BPS:
             raise AffiliateProgramError("Commission must be between 0% and 100%.")
+        # Reducing the pool to below the total committed by an existing
+        # code would leave that code paying out more than the affiliate
+        # is allowed to earn — silently honouring it is how programs lose
+        # money. We refuse the reduction and list the conflicting codes
+        # so the admin can deactivate or shrink them first.
+        current_pool = int(aff.commission_bps or 0)
+        if commission_bps < current_pool:
+            conflicting = (
+                session.execute(
+                    select(ReferralCode).where(
+                        ReferralCode.affiliate_id == aff.id,
+                        ReferralCode.active.is_(True),
+                        (ReferralCode.affiliate_commission_bps + ReferralCode.customer_discount_bps) > commission_bps,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if conflicting:
+                names = ", ".join(c.code for c in conflicting[:5])
+                more = "" if len(conflicting) <= 5 else f" (and {len(conflicting) - 5} more)"
+                new_pct = bps_to_pct(commission_bps)
+                raise CommissionSplitExceedsPool(
+                    f"Cannot reduce pool to {new_pct}% — {len(conflicting)} active code(s) "
+                    f"already commit a higher split: {names}{more}. "
+                    "Deactivate or shrink those codes first, then retry the pool change."
+                )
         aff.commission_bps = commission_bps
 
     if deactivate is True and aff.deactivated_at is None:

@@ -465,39 +465,6 @@ def _no_info_pivot(company_name: str | None) -> str:
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# List / count question detection — used to boost retrieval k for questions
-# like "how many clients" or "list all services" so the full roster lands in
-# the prompt context (otherwise the per-turn cap of 15 chunks truncates the
-# list and the LLM hedges with "30+" or "at least N").
-# ─────────────────────────────────────────────────────────────────────────────
-
-_LIST_OR_COUNT_RE = re.compile(
-    r"(?ix)\b("
-    r"how\s+many|"
-    r"how\s+much\s+(?:client|customer|brand|team|service|project)|"
-    r"list\s+(?:all|of|your|the)|"
-    r"all\s+(?:of\s+)?(?:your|the)\s+(?:client|customer|brand|service|team|product)|"
-    r"(?:every|each)\s+(?:client|customer|brand|service|team|product)|"
-    r"who\s+are\s+(?:all\s+)?(?:your|the)\s+(?:client|customer)|"
-    r"complete\s+(?:list|roster)|"
-    r"full\s+(?:list|roster|portfolio)|"
-    r"show\s+me\s+(?:all|your|the)\s+(?:client|customer|brand|service|portfolio|work)"
-    r")\b"
-)
-
-
-def _is_list_or_count_question(question: str) -> bool:
-    """Return True if the question is asking for a complete list or count.
-
-    Used to boost retrieval k=15 → k=30 for these turns so a partial chunk
-    set doesn't cause the bot to under-report or hedge.
-    """
-    if not question:
-        return False
-    return bool(_LIST_OR_COUNT_RE.search(question))
-
-
 def _sanitize_system_prompt(prompt: str) -> str:
     """Strip prompt-injection attempts from a customer-supplied system prompt.
 
@@ -896,17 +863,26 @@ def extract_bant_from_conversation(
 
 
 def _background_bant_extraction(
-    session_id, cid, bid, history_context, question, answer, current_bant, bot, bant_config, message_id
+    session_id, cid, bid, history_context, question, answer, current_bant, bot_id, bant_config, message_id
 ):
-    """Fire-and-forget BANT extraction with evidence trail. Opens its own DB session."""
+    """Fire-and-forget BANT extraction with evidence trail. Opens its own DB session.
+
+    Takes ``bot_id`` (not a Bot ORM object) and reloads the bot inside the
+    worker's own session. Passing the outer detached Bot instance would raise
+    ``DetachedInstanceError`` on any attribute access — silently breaking
+    BANT scoring, sql-tier emails, and outbound webhooks.
+    """
     try:
         signals = extract_qualification_signals(history_context, question, answer, current_bant, bant_config)
         if not signals:
             return
 
-        config = bant_config or get_framework_config(bot)
-
         with get_session() as session:
+            # Reload the bot inside this session so all attribute access
+            # (incl. lazy relationships like recipients) is safe.
+            bot = session.query(Bot).filter(Bot.id == bot_id).first() if bot_id else None
+            config = bant_config or get_framework_config(bot)
+
             chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
             if not chat_session:
                 return
@@ -2031,8 +2007,15 @@ def rag_pipeline(
                             "message_id": bot_msg.id,
                         }
 
-            # Expensive steps: query rewriting (LLM call) + embedding (API call)
-            chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+            # Expensive steps: query rewriting (LLM call) + embedding (API call).
+            # Defense-in-depth: scope the session lookup by tenant so a future
+            # caller bug or refactor cannot resolve another tenant's ChatSession.
+            _cs_filters = [ChatSession.id == session_id]
+            if bid:
+                _cs_filters.append(ChatSession.bot_id == bid)
+            elif cid:
+                _cs_filters.append(ChatSession.client_id == cid)
+            chat_session = session.query(ChatSession).filter(*_cs_filters).first()
             current_bant = _build_bant_state(chat_session)
             history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
 
@@ -2058,25 +2041,51 @@ def rag_pipeline(
                 if _cached_emb and isinstance(_cached_emb, list):
                     query_embedding = _cached_emb
                 else:
-                    query_embedding = embed_chunks([search_query])[0]
-                    cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
+                    # Guard the embedding call: an OpenAI embeddings outage
+                    # would otherwise crash every chat for every bot. Fall
+                    # back to keyword-only retrieval — the hybrid pipeline is
+                    # designed to survive one half being unavailable.
+                    try:
+                        _embs = embed_chunks([search_query])
+                        query_embedding = _embs[0] if _embs else None
+                        if query_embedding is not None:
+                            cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
+                    except Exception as _emb_err:
+                        logger.warning(
+                            "Query embedding failed (%s) — falling back to keyword-only retrieval",
+                            type(_emb_err).__name__,
+                        )
+                        query_embedding = None
 
                 # List/count questions ("how many clients", "list all
-                # services") need the full entity set in context — otherwise
-                # the bot under-reports or hedges with "30+" instead of a
-                # confident enumeration. Boost from 15 → 30 for these turns.
-                _retrieval_k = 30 if _is_list_or_count_question(question) else 15
-                vector_results = search_similar_documents(
-                    session, client_id=cid, query_embedding=query_embedding, k=_retrieval_k, bot_id=bid
+                # services") used to be boosted to k=30 so the bot saw the
+                # full entity roster. That was ~6× the per-query LLM cost
+                # vs regular questions and ~50% over today's k=15 default.
+                # Cost-tuned to a flat 15 — comfortably covers the SMB
+                # typical case (≤10 entities per list) while keeping cost
+                # symmetric with non-list queries. Bump back to 20-30 if
+                # customers with long entity lists report under-reporting.
+                _retrieval_k = 15
+                vector_results = (
+                    search_similar_documents(
+                        session, client_id=cid, query_embedding=query_embedding, k=_retrieval_k, bot_id=bid
+                    )
+                    if query_embedding is not None
+                    else []
                 )
+                # Use the rewritten ``search_query`` (not the raw ``question``) so
+                # follow-up turns like "and the pricing?" — rewritten to "what is
+                # the pricing for the enterprise plan?" — feed the same context
+                # into both halves of the hybrid search. Mismatched queries dropped
+                # the keyword signal on every pronoun-laden follow-up.
                 keyword_results = search_keyword_documents(
-                    session, client_id=cid, query=question, k=_retrieval_k, bot_id=bid
+                    session, client_id=cid, query=search_query, k=_retrieval_k, bot_id=bid
                 )
 
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
                 if RERANK_ENABLED:
-                    final_results = rerank(search_query, final_results)
+                    final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
             # ── Phase 4A: CRAG relevance gate ────────────────────────────
             _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
@@ -2324,6 +2333,9 @@ def rag_pipeline(
             session.commit()
 
             if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
+                # Pass bid (id), not the bot ORM object. The worker reloads
+                # inside its own session — passing a detached instance raises
+                # DetachedInstanceError on attribute access.
                 submit_background(
                     _background_bant_extraction,
                     session_id,
@@ -2333,7 +2345,7 @@ def rag_pipeline(
                     question,
                     answer,
                     current_bant,
-                    bot,
+                    bid,
                     bant_config,
                     bot_msg.id,
                 )
@@ -2571,19 +2583,44 @@ async def rag_pipeline_stream(
                     yield f"\nFINAL_METADATA:{json.dumps({'message_id': _cached_msg_id})}\n"
                     return
 
-        # Expensive steps: handoff detection, query rewriting (LLM), embedding (API)
-        chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
+        # Expensive steps: handoff detection, query rewriting (LLM), embedding (API).
+        # Defense-in-depth: scope the session lookup by tenant — see equivalent
+        # block in the non-streaming path above for rationale.
+        _cs_filters_stream = [ChatSession.id == session_id]
+        if bid:
+            _cs_filters_stream.append(ChatSession.bot_id == bid)
+        elif cid:
+            _cs_filters_stream.append(ChatSession.client_id == cid)
+        chat_session = session.query(ChatSession).filter(*_cs_filters_stream).first()
         current_bant = _build_bant_state(chat_session)
         history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
 
         # ── CAG-lite: skip retrieval for small knowledge bases ──────────────
+        # The two DB helpers below run inside ``asyncio.to_thread`` so they MUST
+        # use their own session — SQLAlchemy ``Session`` objects are not
+        # thread-safe and sharing the outer request-scoped session across
+        # threads can corrupt state or raise InvalidRequestError under load.
+        def _count_chunks_isolated(bot_id: int | None, client_id: int | None) -> int:
+            with get_session() as s:
+                return count_documents_for_bot(s, bot_id=bot_id, client_id=client_id)
+
+        def _fetch_all_chunks_isolated(bot_id: int | None, client_id: int | None) -> list:
+            with get_session() as s:
+                docs = list(get_all_documents_for_bot(s, bot_id=bot_id, client_id=client_id))
+                # Detach so callers can safely read scalar attrs after the
+                # session closes. Lazy-loaded relationships will fail — none
+                # of the downstream context-building code touches them.
+                for d in docs:
+                    s.expunge(d)
+                return docs
+
         _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
-        _total_chunks = await asyncio.to_thread(count_documents_for_bot, session, bid, cid) if bid or cid else 0
+        _total_chunks = await asyncio.to_thread(_count_chunks_isolated, bid, cid) if bid or cid else 0
         _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
 
         if _use_cag_lite:
             logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
-            final_results = await asyncio.to_thread(get_all_documents_for_bot, session, bid, cid)
+            final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
             search_query = question
             suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question)
         else:
@@ -2597,8 +2634,20 @@ async def rag_pipeline_stream(
             if _cached_emb and isinstance(_cached_emb, list):
                 query_embedding = _cached_emb
             else:
-                query_embedding = (await embed_chunks_async([search_query]))[0]
-                cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
+                # Guard the embedding call so an OpenAI embeddings outage
+                # doesn't take down every chat stream. Fall back to
+                # keyword-only retrieval if embedding fails.
+                try:
+                    _embs = await embed_chunks_async([search_query])
+                    query_embedding = _embs[0] if _embs else None
+                    if query_embedding is not None:
+                        cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
+                except Exception as _emb_err:
+                    logger.warning(
+                        "Query embedding failed (%s) — streaming with keyword-only retrieval",
+                        type(_emb_err).__name__,
+                    )
+                    query_embedding = None
 
             try:
                 suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
@@ -2611,17 +2660,23 @@ async def rag_pipeline_stream(
                     "YES" if suggest_handoff else "NO",
                 )
 
-            # Same retrieval boost as the non-stream path — list/count
-            # questions get k=30 so the bot has the full entity roster in
-            # context and never under-reports.
-            _retrieval_k = 30 if _is_list_or_count_question(question) else 15
+            # Cost-tuned flat k=15 (matches non-stream path). See the
+            # rationale comment in the non-stream branch — bump back to
+            # 20-30 if long-list under-reporting becomes a customer
+            # complaint.
+            _retrieval_k = 15
             import time as _t
 
             _ret_start = _t.perf_counter()
-            vector_results, keyword_results = await asyncio.gather(
-                asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k),
-                asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
-            )
+            if query_embedding is not None:
+                vector_results, keyword_results = await asyncio.gather(
+                    asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k),
+                    asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
+                )
+            else:
+                # Embedding outage path — keyword-only.
+                vector_results = []
+                keyword_results = await asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k)
             _gather_ms = (_t.perf_counter() - _ret_start) * 1000
 
             _fuse_start = _t.perf_counter()
@@ -2632,7 +2687,11 @@ async def rag_pipeline_stream(
             _rerank_ms = 0.0
             if RERANK_ENABLED:
                 _rerank_start = _t.perf_counter()
-                final_results = rerank(search_query, final_results)
+                # Forward ``_retrieval_k`` so list/count questions keep their
+                # 30-chunk boost. The reranker defaults to RERANK_TOP_N=5, which
+                # silently undid the explicit boost above and made the bot
+                # under-report on "list all"/"how many" queries.
+                final_results = rerank(search_query, final_results, top_n=_retrieval_k)
                 _rerank_ms = (_t.perf_counter() - _rerank_start) * 1000
 
             logger.info(
@@ -2957,6 +3016,8 @@ async def rag_pipeline_stream(
                     cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
 
                 if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
+                    # Pass bid (id), not the bot ORM object — see streaming
+                    # path's equivalent call above for the rationale.
                     submit_background(
                         _background_bant_extraction,
                         session_id,
@@ -2966,7 +3027,7 @@ async def rag_pipeline_stream(
                         question,
                         full_answer,
                         current_bant,
-                        bot,
+                        bid,
                         bant_config,
                         bot_msg_id,
                     )

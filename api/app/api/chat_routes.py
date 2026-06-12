@@ -14,7 +14,7 @@ from pydantic import Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.auth import get_current_bot, get_current_client_or_operator
+from app.api.auth import bot_subscription_status, get_current_bot, get_current_client_or_operator
 from app.core.exceptions import SessionOwnershipError
 from app.core.langfuse_client import get_langfuse
 from app.core.rate_limit import key_from_bot_key, limiter
@@ -216,6 +216,30 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
         logger.warning(f"Background geolocation failed for session {session_id}: {e}")
 
 
+_DEFAULT_OFFLINE_MESSAGE = "We're currently away. Please leave a message and we'll get back to you soon."
+
+
+def _polite_offline_payload(bot: Bot, *, reason: str) -> dict:
+    """Build the no-LLM response served when the bot's owner can't take traffic.
+
+    Returns the customer-configured ``offline_message`` (falling back to a
+    neutral default) wrapped in a stable schema the widget already knows
+    how to render. HTTP 200 is intentional: from the visitor's point of
+    view nothing is broken, the team is just away.
+    """
+    message = (bot.offline_message or "").strip() or _DEFAULT_OFFLINE_MESSAGE
+    return {
+        "answer": message,
+        "status": "service_unavailable",
+        "reason": reason,
+        "metadata": {
+            "service_unavailable": True,
+            "offline": True,
+            "reason": reason,
+        },
+    }
+
+
 @router.post("/chat")
 @limiter.limit("30/minute", key_func=key_from_bot_key)
 def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
@@ -224,6 +248,22 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
     and generates a standalone answer.
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
+    # ── Subscription gate (widget side) ──
+    # When the bot owner's trial has expired (or the subscription is
+    # otherwise inactive) we return HTTP 200 with the configured offline
+    # message instead of a 4xx error. The visitor sees a polite "we're
+    # away" reply; nothing on the customer's website breaks. Credits are
+    # not deducted on this path.
+    owner_status = bot_subscription_status(bot.client_id)
+    if owner_status not in ("trialing", "active", "past_due"):
+        logger.info(
+            "chat_blocked_inactive_subscription bot_id=%s client_id=%s status=%s",
+            bot.id,
+            bot.client_id,
+            owner_status,
+        )
+        return _polite_offline_payload(bot, reason=f"subscription_{owner_status}")
+
     # ── Credit enforcement: must match /chat/stream ──
     from app.services import credit_service
 
@@ -289,6 +329,27 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
         raise HTTPException(status_code=500, detail="Chat request failed. Please try again.") from e
 
 
+def _offline_stream(bot: Bot, reason: str):
+    """SSE generator that mirrors the rag-pipeline protocol on the offline path.
+
+    The widget expects ``METADATA:{...}`` → text chunks → ``FINAL_METADATA:{...}``.
+    We emit a complete shape here so the widget's parser doesn't fall into
+    its error path when the bot is offline — visitor sees the offline
+    message rendered like a normal reply.
+    """
+    import json
+
+    message = (bot.offline_message or "").strip() or _DEFAULT_OFFLINE_MESSAGE
+    metadata = {
+        "service_unavailable": True,
+        "offline": True,
+        "reason": reason,
+    }
+    yield f"METADATA:{json.dumps(metadata)}\n"
+    yield message
+    yield f"\nFINAL_METADATA:{json.dumps({**metadata, 'answer': message})}\n"
+
+
 @router.post("/chat/stream")
 @limiter.limit("30/minute", key_func=key_from_bot_key)
 async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
@@ -297,6 +358,24 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     Protocol: METADATA:{json} → text chunks → FINAL_METADATA:{json}
     Authenticated via X-Bot-Key or X-API-Key (resolves default bot).
     """
+    # ── Subscription gate (widget side) ──
+    # Mirror ``/chat`` — when the bot owner's subscription is inactive,
+    # stream the offline message rather than running the RAG pipeline. No
+    # credits are deducted; the SSE shape stays the same so the widget
+    # renders the message exactly like a normal short reply.
+    owner_status = bot_subscription_status(bot.client_id)
+    if owner_status not in ("trialing", "active", "past_due"):
+        logger.info(
+            "chat_stream_blocked_inactive_subscription bot_id=%s client_id=%s status=%s",
+            bot.id,
+            bot.client_id,
+            owner_status,
+        )
+        return StreamingResponse(
+            _offline_stream(bot, reason=f"subscription_{owner_status}"),
+            media_type="text/event-stream",
+        )
+
     # ── Credit enforcement: deduct 1 credit per AI reply (configurable) ──
     from app.services import credit_service
 

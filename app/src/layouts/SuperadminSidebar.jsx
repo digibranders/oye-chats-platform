@@ -4,6 +4,7 @@ import {
     Users as UsersIcon,
     Sparkles,
     MessageSquareQuote,
+    Gift,
     PanelLeftClose,
     PanelLeftOpen,
 } from 'lucide-react';
@@ -16,6 +17,7 @@ export default function SuperadminSidebar({ isOpen, setIsOpen }) {
     const menuItems = [
         { path: '/superadmin/overview', name: 'Global Overview', icon: Activity },
         { path: '/superadmin/clients', name: 'Manage Clients', icon: UsersIcon },
+        { path: '/superadmin/affiliates', name: 'Affiliates', icon: Gift },
         { path: '/superadmin/feedback', name: 'Global Feedback', icon: MessageSquareQuote },
     ];
 

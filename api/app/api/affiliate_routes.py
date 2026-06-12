@@ -24,10 +24,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.auth import (
     get_current_affiliate,
-    get_current_client,
     get_current_client_strict,
     get_superadmin,
 )
+from app.api.auth import get_current_client_strict as get_current_client
 from app.config import FRONTEND_URL
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
@@ -47,6 +47,7 @@ from app.services.affiliate_service import (
     InvalidCodeFormat,
     InviteAlreadyPending,
     InviteAlreadyUsed,
+    InviteEmailMismatch,
     InviteExpired,
     InviteNotFound,
     NotAffiliate,
@@ -280,6 +281,11 @@ def _to_http(exc: AffiliateProgramError) -> HTTPException:
         return HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc))
     if isinstance(exc, InviteExpired):
         return HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc))
+    if isinstance(exc, InviteEmailMismatch):
+        # 403 — the principal is authenticated but not authorised for this
+        # specific token. UI uses the distinct status to render targeted
+        # "this invite is for X — sign in with that email" copy.
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if isinstance(exc, (ClientNotFound, CodeNotFound, NotAffiliate, InviteNotFound)):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -453,11 +459,29 @@ def list_my_codes(affiliate: Affiliate = Depends(get_current_affiliate)):
         return affiliate_service.list_codes_with_stats(session, affiliate.id)
 
 
+class ReferralPricing(BaseModel):
+    """Dollar-amount split for a single referred customer's monthly bill.
+
+    Cents are the minor unit of ``currency``. Values are 0 when the customer
+    has no paid subscription yet (Free tier, never converted, or paused).
+    """
+
+    plan_slug: str
+    currency: str
+    full_price_cents: int
+    paid_cents: int  # what the customer actually pays after discount
+    affiliate_earns_cents: int  # what the affiliate gets per month
+    customer_saved_cents: int  # the discount amount
+    # Super-admin only — what stays with the platform after both shares.
+    platform_cents: int | None = None
+
+
 class ReferralRow(BaseModel):
     client_id: int
     name: str | None
     email: str  # masked for affiliate, full for super admin
     attributed_at: str | None
+    pricing: ReferralPricing
 
 
 class CommissionBreakdown(BaseModel):
@@ -470,9 +494,26 @@ class CommissionBreakdown(BaseModel):
     platform_pct: float | None = None
 
 
+class PricingDistribution(BaseModel):
+    """Aggregate monthly $ rolled up across every paying referral.
+
+    Lets the affiliate see "your code is pulling ~$X/mo from N customers"
+    at a glance without summing the per-row cards by eye.
+    """
+
+    currency: str | None
+    paying_referrals: int
+    monthly_total_cents: int  # total customer payments before discount
+    monthly_affiliate_cents: int  # affiliate's total monthly earnings
+    monthly_customer_saved_cents: int  # total discount paid out to customers
+    # Super-admin only.
+    monthly_platform_cents: int | None = None
+
+
 class CodeReferralsResponse(BaseModel):
     code: str
     breakdown: CommissionBreakdown
+    distribution: PricingDistribution
     referrals: list[ReferralRow]
 
 
@@ -607,7 +648,7 @@ def invite(
       fires a welcome email pointing at ``/affiliate``. Response
       ``kind == "instant"``.
     * **Stranger**: creates an ``AffiliateInvite`` row + raw token, and
-      fires a magic-link email pointing at ``/affiliate-accept?token=...``.
+      fires a magic-link email pointing at ``/affiliate-invite?token=...``.
       Response ``kind == "pending_invite"``. The raw token is never
       returned to the caller (super admin) — only embedded in the email,
       so a compromised admin session can't replay invites.
@@ -650,7 +691,11 @@ def invite(
         # pending_invite — magic-link path
         invite_row = result["invite"]
         raw_token = result["raw_token"]
-        accept_url = f"{FRONTEND_URL.rstrip('/')}/affiliate-accept?token={raw_token}"
+        # New URL — landing page handles both sign-in and sign-up branches
+        # based on whether the recipient already has an account. The old
+        # ``/affiliate-accept`` path is kept as a redirect for any email
+        # delivered before the cut-over.
+        accept_url = f"{FRONTEND_URL.rstrip('/')}/affiliate-invite?token={raw_token}"
         try:
             send_affiliate_invite_email(
                 invite_row.email,
@@ -705,10 +750,11 @@ def revoke(invite_id: int):
 def lookup_invite(request: Request, token: str):
     """Resolve a magic-link token to its target email + expiry.
 
-    Called by the ``/affiliate-accept`` page before showing the form, so
-    the recipient sees their email pre-filled (read-only) and the expiry
-    notice. Rate-limited to slow token enumeration. Returns 404/410 for
-    invalid / used / expired tokens.
+    Called by the ``/affiliate-invite`` landing page before deciding which
+    branch to render — the recipient sees their invited email + expiry
+    deadline, and (when logged in) the page auto-fires accept-existing.
+    Rate-limited to slow token enumeration. Returns 404/410 for invalid /
+    used / expired tokens.
     """
     with get_session() as session:
         try:
@@ -761,6 +807,61 @@ def accept_invite(request: Request, body: AcceptInviteRequest):
             client_id=client.id,
             name=client.name,
             is_affiliate=True,
+        )
+
+
+class AcceptInviteForExistingRequest(BaseModel):
+    token: str
+
+
+class AcceptInviteForExistingResponse(BaseModel):
+    is_affiliate: bool = True
+    message: str
+
+
+@router.post(
+    "/affiliate-invites/accept-existing",
+    response_model=AcceptInviteForExistingResponse,
+)
+@limiter.limit("10/minute")
+def accept_invite_existing(
+    request: Request,
+    body: AcceptInviteForExistingRequest,
+    client: Client = Depends(get_current_client),
+):
+    """Accept an invite while already signed in as an OyeChats client.
+
+    The other accept endpoint creates a brand-new Client+Affiliate pair —
+    this one wires an Affiliate row to the client who's already
+    authenticated. Used by the unified `/affiliate-invite` landing page
+    when the recipient already has an account.
+
+    Status codes:
+      * 200 — affiliate row created, fire the welcome email
+      * 403 — token's email doesn't match the logged-in client
+      * 404 — token doesn't exist
+      * 409 — client is already an active affiliate
+      * 410 — token expired or already used
+    """
+    with get_session() as session:
+        try:
+            # Re-load client into this session — the Depends gives us a
+            # detached row from the auth check.
+            db_client = session.get(Client, client.id)
+            if db_client is None:
+                raise HTTPException(status_code=404, detail="Client not found.")
+            affiliate_service.accept_invite_for_existing_client(session, body.token, db_client)
+            session.commit()
+        except AffiliateProgramError as e:
+            raise _to_http(e) from e
+
+        try:
+            send_affiliate_welcome_email(client.email, client.name)
+        except Exception as e:
+            logger.warning("affiliate_welcome_email_failed_after_accept_existing: %s", e)
+
+        return AcceptInviteForExistingResponse(
+            message=f"Welcome to OyeChats Partners, {client.name or 'friend'}!",
         )
 
 

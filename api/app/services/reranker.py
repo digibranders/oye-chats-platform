@@ -24,7 +24,19 @@ _ranker_unavailable: bool = False
 
 
 def _get_ranker():
-    """Return the FlashRank Ranker singleton, or None if unavailable."""
+    """Return the FlashRank Ranker singleton, or None if unavailable.
+
+    Failure handling distinguishes two cases:
+
+    * ``ImportError`` — the ``flashrank`` package isn't installed. This will
+      not recover without a redeploy, so we sticky-disable to avoid spamming
+      logs every request.
+    * Any other exception (model file missing, OOM, transient ``/tmp`` wipe)
+      is treated as **transient**: we log a warning but DO NOT sticky-disable,
+      so the next request retries the load. Previously a single transient
+      error silently disabled reranking for the entire process lifetime and
+      degraded RAG quality with no visibility.
+    """
     global _ranker, _ranker_unavailable
 
     if _ranker_unavailable:
@@ -38,9 +50,18 @@ def _get_ranker():
         _ranker = Ranker(model_name="ms-marco-MiniLM-L-2-v2", cache_dir="/tmp/flashrank_cache")
         logger.info("FlashRank reranker loaded (ms-marco-MiniLM-L-2-v2)")
         return _ranker
-    except Exception as exc:
-        logger.warning("FlashRank unavailable — reranking disabled: %s", exc)
+    except ImportError as exc:
+        logger.warning(
+            "FlashRank package not installed — reranking permanently disabled this process: %s",
+            exc,
+        )
         _ranker_unavailable = True
+        return None
+    except Exception as exc:
+        logger.warning(
+            "FlashRank load failed (transient — will retry on next call): %s",
+            exc,
+        )
         return None
 
 
@@ -69,6 +90,8 @@ def rerank(query: str, documents: list, top_n: int | None = None) -> list:
 
     ranker = _get_ranker()
     if ranker is None:
+        # Surface the skip so silent quality degradation is observable.
+        logger.info("rerank_skipped: ranker unavailable, returning RRF order (top_n=%d)", effective_top_n)
         return documents[:effective_top_n]
 
     try:
