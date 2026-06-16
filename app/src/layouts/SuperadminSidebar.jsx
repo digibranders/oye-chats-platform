@@ -7,6 +7,7 @@ import {
     Gift,
     PanelLeftClose,
     PanelLeftOpen,
+    BarChart3,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import SettingsDropup from '../components/SettingsDropup';
@@ -17,6 +18,7 @@ export default function SuperadminSidebar({ isOpen, setIsOpen }) {
     const menuItems = [
         { path: '/superadmin/overview', name: 'Global Overview', icon: Activity },
         { path: '/superadmin/clients', name: 'Manage Clients', icon: UsersIcon },
+        { path: '/superadmin/pricing-insights', name: 'Pricing Insights', icon: BarChart3 },
         { path: '/superadmin/affiliates', name: 'Affiliates', icon: Gift },
         { path: '/superadmin/feedback', name: 'Global Feedback', icon: MessageSquareQuote },
     ];

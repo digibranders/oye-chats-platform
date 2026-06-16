@@ -279,6 +279,70 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     return count
 
 
+async def task_promote_scheduled_downgrades(ctx: dict) -> int:
+    """Cron: promote subscriptions whose scheduled downgrade cutover has passed.
+
+    Razorpay's ``subscription.completed`` webhook is the canonical trigger;
+    this cron is a safety net for webhook outages and for the manual / Stripe
+    legacy paths that don't emit ``completed`` cleanly. Both routes call into
+    ``transition_service.promote_scheduled_change``, which is idempotent — if
+    the webhook already promoted the row the cron's match-set is empty.
+
+    Runs daily a few minutes after the renewal cron so we don't race a
+    period roll-forward against a scheduled change cutover. Rows whose
+    cutover is more than a day in the future are ignored.
+
+    Returns the number of subscriptions promoted this run.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.db.models import Subscription
+    from app.db.session import get_session
+    from app.services import transition_service
+
+    def _run() -> int:
+        now = datetime.now(UTC)
+        promoted = 0
+        with get_session() as session:
+            subs = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.scheduled_change_at.is_not(None),
+                        Subscription.scheduled_change_at <= now,
+                        # Only promote rows that are still alive — don't
+                        # resurrect a row a human / webhook already finalised.
+                        Subscription.status.in_(("active", "trialing", "past_due")),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for sub in subs:
+                try:
+                    result = transition_service.promote_scheduled_change(session, sub)
+                except Exception:
+                    # Don't kill the loop on one bad row — log and skip so
+                    # the rest of the queue still gets processed.
+                    logger.exception(
+                        "task_promote_scheduled_downgrades: failed for sub_id=%s",
+                        sub.id,
+                    )
+                    continue
+                if result is not None:
+                    promoted += 1
+            session.commit()
+        return promoted
+
+    loop = asyncio.get_running_loop()
+    total = await loop.run_in_executor(None, _run)
+    if total:
+        logger.info("task_promote_scheduled_downgrades: promoted %d subscription(s)", total)
+    return total
+
+
 async def task_expire_old_topups(ctx: dict) -> int:
     """Cron task: write off any unredeemed credits in top-up grants that are
     past their 12-month expiry. Runs daily; idempotent (already-expired grants

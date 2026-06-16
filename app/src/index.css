@@ -314,3 +314,45 @@ body {
   outline-offset: 2px;
   border-radius: inherit;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Pointer-cursor defaults for every interactive element.
+
+   Browser defaults are inconsistent: <a href> already shows the index-finger
+   pointer, but <button> shows the arrow, and anything ARIA-promoted to a
+   button via role="button" stays as a plain pointer too. This block snaps
+   them all into the same "I'm clickable" affordance so the entire admin
+   reads as interactive without per-component ``cursor-pointer`` classes.
+
+   The disabled variants get ``not-allowed`` so the cursor honestly mirrors
+   the disabled state — important on the seat ± buttons, sub-cancel, etc.
+   that toggle between active and gated. We exclude ``aria-disabled="true"``
+   from the pointer set too, since several of our shadcn-style components
+   convey disabled via aria-attribute rather than the HTML attribute.
+   ────────────────────────────────────────────────────────────────────── */
+button:not(:disabled):not([aria-disabled="true"]),
+[role="button"]:not([aria-disabled="true"]):not(.cursor-default),
+a[href],
+[role="link"],
+label[for],
+summary,
+select:not(:disabled),
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled),
+input[type="submit"]:not(:disabled),
+input[type="button"]:not(:disabled),
+input[type="reset"]:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled,
+button[aria-disabled="true"],
+[role="button"][aria-disabled="true"],
+select:disabled,
+input:disabled,
+textarea:disabled,
+fieldset:disabled,
+fieldset:disabled *:not(label) {
+  cursor: not-allowed;
+}
+

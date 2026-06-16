@@ -229,7 +229,7 @@ export default function PlanModal({
         setTimeout(() => referralInputRef.current?.focus(), 40);
     }
 
-    async function handleCta() {
+    async function handleCta(actionKind = 'auto') {
         if (!selected) return;
         if (selected.slug === 'enterprise') {
             window.open(
@@ -261,17 +261,18 @@ export default function PlanModal({
             return;
         }
 
-        // Trial-start path — taken when the customer is on Free / no sub
-        // and the selected plan offers a trial. No card collected; the
-        // backend swaps the free sub for a ``trialing`` one and grants
-        // the plan's full credit allowance. Conversion to a paid card
-        // happens later through createCheckoutSession (day 14 prompt).
-        if (canStartTrial({
+        // Trial-start path. When the user explicitly clicked "Upgrade"
+        // (actionKind='paid') we deliberately skip the trial — that's the
+        // whole point of the two-button shape. ``actionKind='auto'`` is the
+        // legacy single-button code path: take the trial when eligible.
+        const trialEligible = canStartTrial({
             plan: selected,
             isCurrent: selected.slug === currentPlanSlug,
             currentPlanSlug,
             currentSubscriptionStatus,
-        })) {
+        });
+        const takeTrialPath = actionKind === 'trial' || (actionKind === 'auto' && trialEligible);
+        if (takeTrialPath) {
             setSubmitError('');
             setSubmitting(true);
             try {
@@ -379,12 +380,27 @@ export default function PlanModal({
                 return;
             }
 
+            // New paid→paid Razorpay downgrade path — the backend queues the
+            // cutover at period end instead of swapping immediately. Surface
+            // the effective date so the parent can render a "switching on X"
+            // banner / toast.
+            if (status === 'downgrade_scheduled') {
+                onSuccess?.({
+                    kind: 'downgrade_scheduled',
+                    plan: selected,
+                    response: res,
+                    effectiveAt: res?.effective_at || null,
+                });
+                onClose();
+                return;
+            }
+
             throw new Error(res?.message || 'Unexpected response from server.');
         } catch (err) {
+            const detail = err?.response?.data?.detail;
             // Backend returns 402 with {contact_sales} when intl payments
             // are off — turn that into the same mailto path the geo check
             // already takes, in case geo lookup raced or fell back to null.
-            const detail = err?.response?.data?.detail;
             if (detail && typeof detail === 'object' && detail.code === 'intl_payments_unavailable') {
                 const email = detail.contact_sales || geo?.contact_sales_email || SUPPORT_EMAIL;
                 window.open(
@@ -393,6 +409,19 @@ export default function PlanModal({
                     )}`,
                     '_blank',
                     'noopener,noreferrer',
+                );
+                return;
+            }
+            // Seat-overflow on a downgrade — the customer has more active
+            // operators than the target plan allows. The backend's payload
+            // includes ``active_seats`` / ``allowed_seats`` / ``excess`` so
+            // we can render specific copy ("Deactivate 3 operators") instead
+            // of a generic error.
+            if (detail && typeof detail === 'object' && detail.code === 'seat_overflow') {
+                const excess = detail.excess || (detail.active_seats - detail.allowed_seats);
+                setSubmitError(
+                    detail.message
+                        || `You have ${detail.active_seats} active operator(s) but ${selected.name} only includes ${detail.allowed_seats}. Deactivate ${excess} operator(s) on the Team page before downgrading.`,
                 );
                 return;
             }
@@ -519,6 +548,7 @@ export default function PlanModal({
                                                 currentSubscriptionStatus={currentSubscriptionStatus}
                                                 hasActiveSubscription={hasActiveSubscription}
                                                 hasStripeSubscription={hasStripeSubscription}
+                                                currentPlan={plans.find((p) => p.slug === currentPlanSlug) || null}
                                                 submitting={submitting}
                                                 submitError={submitError}
                                                 onCta={handleCta}
@@ -567,7 +597,7 @@ export default function PlanModal({
 function CycleToggle({ value, onChange, disabled }) {
     const opts = [
         { value: 'monthly', label: 'Monthly' },
-        { value: 'annual',  label: 'Annual', save: 'Save 30%' },
+        { value: 'annual',  label: 'Annual', save: 'Save 20%' },
     ];
     return (
         <div
@@ -665,7 +695,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
 /** The right-hand "focused plan" detail pane. */
 function FocusedPlan({
     plan, billingCycle, geo, isCurrent, currentPlanSlug, currentSubscriptionStatus,
-    hasActiveSubscription, hasStripeSubscription,
+    hasActiveSubscription, hasStripeSubscription, currentPlan,
     submitting, submitError, onCta, referral,
 }) {
     const meta = TIER_META[plan.slug] || { icon: Sparkles, accent: 'slate', description: '' };
@@ -673,10 +703,19 @@ function FocusedPlan({
     const features = useMemo(() => buildFeatureList(plan, geo), [plan, geo]);
     const isFree = plan.slug === 'free';
     const isEnterprise = plan.slug === 'enterprise';
-    const cta = ctaFor({
+    // Detect transition direction so the paid-path CTA can be labelled
+    // "Upgrade" vs "Downgrade" honestly. Free / Enterprise / new-customer
+    // paths fall through with both flags false — the generic copy applies.
+    const currentPrice = Number(currentPlan?.monthly_price_cents || 0);
+    const targetPrice = Number(plan.monthly_price_cents || 0);
+    const isUpgradeFromPaid = hasActiveSubscription && currentPrice > 0 && targetPrice > currentPrice;
+    const isDowngradeFromPaid = hasActiveSubscription && currentPrice > 0 && targetPrice < currentPrice && targetPrice > 0;
+    const ctas = ctasFor({
         plan, isCurrent, currentPlanSlug, currentSubscriptionStatus,
         hasActiveSubscription, hasStripeSubscription,
+        isUpgradeFromPaid, isDowngradeFromPaid,
     });
+    const primary = ctas[0];
 
     // Referral discount only applies to paid recurring plans. Free has no
     // price to discount; Enterprise is a custom-quote conversation.
@@ -731,32 +770,47 @@ function FocusedPlan({
                 </div>
             )}
 
-            {/* CTA */}
-            <button
-                type="button"
-                onClick={onCta}
-                disabled={submitting || isCurrent}
-                className={cn(
-                    'w-full inline-flex items-center justify-center gap-2 h-12 rounded-xl font-semibold text-[14px] transition-colors',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
-                    'disabled:opacity-60 disabled:cursor-not-allowed',
-                    isCurrent
-                        ? 'bg-surface-100 dark:bg-surface-800 text-surface-700 dark:text-surface-300 border border-surface-200 dark:border-surface-700'
-                        : accent.cta,
-                )}
-            >
-                {submitting ? (
-                    <Loader2 size={16} className="animate-spin" />
-                ) : isEnterprise ? (
-                    <Mail size={16} />
-                ) : isFree ? null : (
-                    <ExternalLink size={16} />
-                )}
-                {cta.label}
-            </button>
+            {/* CTAs — usually one button; Starter / Standard with an
+                eligible trial render two (trial + paid). The first CTA
+                gets the accent style, secondaries get a ghost outline so
+                the trial path stays the visual default without removing
+                the upgrade option for power users. */}
+            <div className="space-y-2">
+                {ctas.map((cta, i) => {
+                    const isSecondary = cta.variant === 'secondary';
+                    const showIcon = !isSecondary && !isCurrent;
+                    return (
+                        <button
+                            key={cta.kind}
+                            type="button"
+                            onClick={() => onCta(cta.kind)}
+                            disabled={submitting || cta.kind === 'current' || cta.kind === 'noop'}
+                            className={cn(
+                                'w-full inline-flex items-center justify-center gap-2 h-12 rounded-xl font-semibold text-[14px] transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
+                                'disabled:opacity-60 disabled:cursor-not-allowed',
+                                isSecondary
+                                    ? 'border border-surface-200 dark:border-surface-700 bg-transparent text-surface-700 dark:text-surface-200 hover:bg-surface-50 dark:hover:bg-surface-800'
+                                    : isCurrent
+                                        ? 'bg-surface-100 dark:bg-surface-800 text-surface-700 dark:text-surface-300 border border-surface-200 dark:border-surface-700'
+                                        : accent.cta,
+                            )}
+                        >
+                            {submitting && i === 0 ? (
+                                <Loader2 size={16} className="animate-spin" />
+                            ) : !showIcon ? null : isEnterprise ? (
+                                <Mail size={16} />
+                            ) : isFree ? null : (
+                                <ExternalLink size={16} />
+                            )}
+                            {cta.label}
+                        </button>
+                    );
+                })}
+            </div>
 
             <p className="text-[11px] text-surface-500 dark:text-surface-400 leading-relaxed">
-                {cta.note}
+                {primary.note}
             </p>
         </div>
     );
@@ -1085,68 +1139,95 @@ function canStartTrial({ plan, isCurrent, currentPlanSlug, currentSubscriptionSt
     return !(currentSubscriptionStatus === 'active' && onPaidPlan);
 }
 
-function ctaFor({
+/**
+ * Build the CTA list for the focused plan card. Returns an array so cards
+ * that legitimately offer two paths (e.g. Starter — try the trial OR pay
+ * immediately) render both buttons stacked. ``kind`` drives the click
+ * handler's branching; ``variant`` drives the button style (``primary`` is
+ * the accent-coloured CTA, ``secondary`` is a ghost outline that lives
+ * underneath).
+ */
+function ctasFor({
     plan, isCurrent, currentPlanSlug, currentSubscriptionStatus,
-    hasActiveSubscription, hasStripeSubscription,
+    hasActiveSubscription, hasStripeSubscription, isUpgradeFromPaid, isDowngradeFromPaid,
 }) {
     if (isCurrent) {
-        return {
+        return [{
+            kind: 'current',
+            variant: 'primary',
             label: 'Current plan',
             note: 'You’re on this plan. To change billing cycle or cancel, use the billing portal on the Billing overview.',
-        };
+        }];
     }
     if (plan.slug === 'enterprise') {
-        return {
+        return [{
+            kind: 'enterprise',
+            variant: 'primary',
             label: 'Contact sales',
             note: 'A sales engineer will reach out within one business day with a custom proposal.',
-        };
+        }];
     }
     if (plan.slug === 'free') {
         if (hasActiveSubscription) {
-            return {
+            return [{
+                kind: 'downgrade_free',
+                variant: 'primary',
                 label: 'Downgrade to Free',
                 note: 'Your current subscription will end at the close of the current billing period. Existing top-up credits stay intact.',
-            };
+            }];
         }
-        return {
+        return [{
+            kind: 'noop',
+            variant: 'primary',
             label: 'You’re on Free',
             note: 'Free tier is your default — no action required.',
-        };
+        }];
     }
-    // Trialable paid plans take precedence over geo / checkout branches.
-    // The trial doesn't collect a card, so payment-gateway availability is
-    // irrelevant until conversion on day 14 — that's when the geo check
-    // actually matters and will reappear in the reactivation modal.
+
+    // Compose the paid-path CTA first — its shape depends on whether the
+    // customer already has a billable subscription (silent swap vs. fresh
+    // checkout) and the direction of the transition (upgrade vs. downgrade).
+    let paidLabel;
+    let paidNote;
+    if (isDowngradeFromPaid) {
+        paidLabel = `Downgrade to ${plan.name}`;
+        paidNote = 'You’ll keep your current plan until the end of this billing cycle, then switch to ' +
+            `${plan.name}. We’ll email you the day before the change.`;
+    } else if (hasStripeSubscription) {
+        paidLabel = `Switch to ${plan.name}`;
+        paidNote = 'We prorate the difference between your current and new plan automatically. Credits reset to the new monthly grant on the next renewal.';
+    } else if (isUpgradeFromPaid) {
+        paidLabel = `Upgrade to ${plan.name}`;
+        paidNote = `A secure Razorpay checkout will open. We credit your unused ${currentPlanSlug ?? 'current plan'} time back as bonus credits the moment the new mandate activates.`;
+    } else if (hasActiveSubscription) {
+        paidLabel = `Upgrade to ${plan.name}`;
+        paidNote = 'A secure Razorpay checkout will open to authorise your card or UPI. The new plan kicks in the moment the first payment clears.';
+    } else {
+        paidLabel = `Subscribe to ${plan.name}`;
+        paidNote = 'A secure checkout will open to authorise your card or UPI. The new plan kicks in the moment the first payment clears.';
+    }
+    const paid = { kind: 'paid', variant: 'primary', label: paidLabel, note: paidNote };
+
+    // Trial CTA. When a trial is available, we surface both buttons:
+    // "Start your 14-day trial" (primary) AND the paid-path CTA (secondary
+    // ghost) so the customer can skip the trial and go straight to paid
+    // without losing the option. The trial doesn't collect a card so it's
+    // strictly the lower-friction default and gets the accent button.
     if (canStartTrial({ plan, isCurrent, currentPlanSlug, currentSubscriptionStatus })) {
         const isSwap = currentSubscriptionStatus === 'trialing';
-        return {
-            label: `Start free trial — ${plan.name}`,
+        const trialDays = Number(plan.trial_days || 14);
+        const trial = {
+            kind: 'trial',
+            variant: 'primary',
+            label: `Start your ${trialDays}-day trial`,
             note: isSwap
-                ? `Switches your current trial to ${plan.name}. Your trial of ${currentPlanSlug ?? 'the previous plan'} ends immediately; the new 14 days start now. No card required.`
-                : '14-day free trial, no card required. Your bot goes live with the plan’s full credit allowance from day one.',
+                ? `Switches your current trial to ${plan.name}. Your trial of ${currentPlanSlug ?? 'the previous plan'} ends immediately; the new ${trialDays} days start now. No card required.`
+                : `${trialDays}-day free trial, no card required. Your bot goes live with the plan’s full credit allowance from day one.`,
         };
+        return [trial, { ...paid, variant: 'secondary' }];
     }
-    // Paid target. Two sub-cases:
-    //   * Real provider-linked sub already exists → silent prorated swap.
-    //   * Anything else (no sub OR manual seed) → fresh Razorpay checkout
-    //     so the customer can authorise a UPI mandate or card before being
-    //     moved onto the new plan.
-    if (hasStripeSubscription) {
-        return {
-            label: `Switch to ${plan.name}`,
-            note: 'We prorate the difference between your current and new plan automatically. Credits reset to the new monthly grant on the next renewal.',
-        };
-    }
-    if (hasActiveSubscription) {
-        return {
-            label: `Upgrade to ${plan.name}`,
-            note: 'A secure Razorpay checkout will open to authorise your card or UPI. The new plan kicks in the moment the first payment clears.',
-        };
-    }
-    return {
-        label: `Subscribe to ${plan.name}`,
-        note: 'A secure checkout will open to authorise your card or UPI. The new plan kicks in the moment the first payment clears.',
-    };
+
+    return [paid];
 }
 
 // Per-slug fallback crawl limits — mirror the latest alembic revision so
@@ -1203,7 +1284,10 @@ function buildFeatureList(plan, geo) {
     if (credits != null) {
         out.push(`${credits.toLocaleString()} credits / month`);
     }
-    if (seats > 0) {
+    // Operator seats are a live-chat concept — surfacing them on Free (which
+    // has no live chat) is misleading. Suppressed for that slug only; every
+    // other tier keeps the seat line.
+    if (seats > 0 && plan.slug !== 'free') {
         out.push(
             seatCents > 0
                 ? `${seats} operator seat${seats === 1 ? '' : 's'} included (+${sym}${(seatDisplay.cents / 100).toFixed(0)}/mo each extra)`
@@ -1229,11 +1313,9 @@ function buildFeatureList(plan, geo) {
         out.push('Basic widget customization');
         out.push('Lead capture forms');
     } else if (plan.slug === 'starter') {
-        out.push('Up to 3 chatbots');
         if (plan.trial_days > 0) out.push(`${plan.trial_days}-day free trial`);
         out.push('Priority email support');
     } else if (plan.slug === 'standard') {
-        out.push('Unlimited chatbots');
         if (plan.trial_days > 0) out.push(`${plan.trial_days}-day free trial`);
     }
 

@@ -632,7 +632,15 @@ class Plan(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    subscriptions = relationship("Subscription", back_populates="plan")
+    # ``foreign_keys`` is required because Subscription has TWO FKs into Plan
+    # (``plan_id`` for the active plan, ``scheduled_plan_id`` for a queued
+    # downgrade). Without the disambiguation, SQLAlchemy can't decide which
+    # FK ``Plan.subscriptions`` should follow and refuses to map.
+    subscriptions = relationship(
+        "Subscription",
+        back_populates="plan",
+        foreign_keys="Subscription.plan_id",
+    )
 
 
 class Subscription(Base):
@@ -688,13 +696,36 @@ class Subscription(Base):
     stripe_customer_id = Column(String, index=True, nullable=True)
     razorpay_subscription_id = Column(String, unique=True, index=True, nullable=True)
     razorpay_customer_id = Column(String, index=True, nullable=True)
+    # Set when a paid→paid transition replaces an existing Razorpay mandate.
+    # The activation handler reads this to distinguish a "this is the second
+    # subscription in a plan-change" event from a fresh first-time signup.
+    prev_razorpay_subscription_id = Column(String, nullable=True)
+
+    # Scheduled plan change — populated when a paid→paid downgrade is queued
+    # for cutover at the end of the current billing cycle. The cron + the
+    # gateway's ``subscription.completed`` webhook both check these columns;
+    # whichever fires first promotes the change and clears the trio.
+    scheduled_plan_id = Column(Integer, ForeignKey("plans.id", ondelete="SET NULL"), nullable=True)
+    scheduled_billing_cycle = Column(String(16), nullable=True)
+    scheduled_change_at = Column(DateTime(timezone=True), nullable=True)
+    # Proration value (plan-currency cents) for unused time on the previous
+    # plan. Applied as a credit-ledger ``topup`` once the new subscription's
+    # ``activated`` webhook confirms payment cleared. Zero means no pending
+    # credit — never NULL so arithmetic stays simple.
+    upgrade_credit_pending_cents = Column(Integer, default=0, server_default="0", nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
     client = relationship("Client", backref="subscriptions")
-    plan = relationship("Plan", back_populates="subscriptions")
+    plan = relationship("Plan", back_populates="subscriptions", foreign_keys=[plan_id])
+    # Read-only relationship for the queued downgrade target. Loading via
+    # ``session.get(Plan, sub.scheduled_plan_id)`` works without it, but
+    # making the relationship explicit lets call sites that already have a
+    # Subscription instance touch ``.scheduled_plan.name`` without a
+    # second query.
+    scheduled_plan = relationship("Plan", foreign_keys=[scheduled_plan_id])
     invoices = relationship("Invoice", back_populates="subscription", cascade="all, delete-orphan")
 
     __table_args__ = (

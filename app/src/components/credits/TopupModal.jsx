@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, Loader2, ExternalLink, Zap } from 'lucide-react';
+import { Loader2, ExternalLink, Zap } from 'lucide-react';
+import CreditCoin from '../icons/CreditCoin';
 import Dialog, {
   DialogHeader,
   DialogTitle,
@@ -153,7 +154,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
       <DialogHeader onClose={onClose}>
         <DialogTitle>
           <span className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-primary-500" />
+            <CreditCoin className="w-5 h-5 text-primary-500" />
             Top up credits
           </span>
         </DialogTitle>

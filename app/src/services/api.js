@@ -605,6 +605,49 @@ export const getGlobalFeedbackData = async () => {
     }
 };
 
+/**
+ * Superadmin: Fetches global revenue metrics (MRR, ARR, lifetime, subscription counts).
+ * @returns {Promise<Object>}
+ */
+export const getSuperadminRevenue = async () => {
+    try {
+        const response = await api.get('/superadmin/revenue');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching revenue metrics:', error);
+        throw buildApiError(error, 'Failed to load revenue metrics');
+    }
+};
+
+/**
+ * Superadmin: Fetches all plans configured on the platform.
+ * @returns {Promise<Array>}
+ */
+export const getSuperadminPlans = async () => {
+    try {
+        const response = await api.get('/superadmin/plans');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching plans:', error);
+        throw buildApiError(error, 'Failed to load plans');
+    }
+};
+
+/**
+ * Superadmin: Fetches subscriptions, optionally filtered by status.
+ * @param {{status?: string}} [params]
+ * @returns {Promise<Array>}
+ */
+export const getSuperadminSubscriptions = async (params = {}) => {
+    try {
+        const response = await api.get('/superadmin/subscriptions', { params });
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching subscriptions:', error);
+        throw buildApiError(error, 'Failed to load subscriptions');
+    }
+};
+
 // --- BOT CRUD ENDPOINTS ---
 
 /**
@@ -1233,6 +1276,15 @@ export const changePlan = async (planId, billingCycle = null) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to change plan');
+    }
+};
+
+export const cancelScheduledChange = async () => {
+    try {
+        const response = await api.post('/subscriptions/cancel-scheduled-change');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to cancel the scheduled plan change');
     }
 };
 
