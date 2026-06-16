@@ -16,6 +16,7 @@ import {
   ListOrdered,
   ArrowUpRight,
 } from 'lucide-react';
+import CreditCoin from '../components/icons/CreditCoin';
 import {
   getCreditBalance,
   getCreditHistory,
@@ -25,6 +26,7 @@ import {
   verifyStripeTopup,
   verifyStripeSubscription,
   reconcileStripeSubscription,
+  cancelScheduledChange,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
@@ -96,6 +98,31 @@ const REASON_LABEL = {
   expiry: 'Top-up expiry',
 };
 
+// The raw `reason` field is the ledger bucket the row belongs to (used by
+// FIFO accounting), not how a human should read the row. Two cases need
+// disambiguation before display:
+//   • `topup` is used for both real purchases AND proration credits issued
+//     when a customer upgrades mid-cycle. The backend stamps the latter with
+//     a `note` beginning with "Upgrade credit" — we surface that as a
+//     distinct label so customers don't think they were charged.
+//   • `plan_grant` covers both the +N grant AND the paired -N deduction that
+//     zeroes out the previous month's unused plan credits ("use-it-or-lose-it").
+//     Reading the deduction as "Plan grant" with a negative amount is
+//     contradictory; show it as "Plan reset" instead.
+function resolveReasonLabel(row) {
+  const reason = row?.reason;
+  const note = (row?.note || '').toLowerCase();
+  const delta = Number(row?.delta) || 0;
+
+  if (reason === 'topup' && note.startsWith('upgrade credit')) {
+    return 'Plan upgrade credit';
+  }
+  if (reason === 'plan_grant' && delta < 0) {
+    return 'Plan reset';
+  }
+  return REASON_LABEL[reason] || reason;
+}
+
 function reasonStyle(reason, delta) {
   if (delta > 0) return 'text-emerald-600 dark:text-emerald-400';
   if (reason === 'expiry') return 'text-amber-600 dark:text-amber-400';
@@ -128,7 +155,7 @@ const COST_ROWS = [
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: Activity },
-  { id: 'topups', label: 'Buy credits', icon: Sparkles },
+  { id: 'topups', label: 'Buy credits', icon: CreditCoin },
   { id: 'seats', label: 'Plan & seats', icon: Users },
   { id: 'history', label: 'History', icon: ListOrdered },
 ];
@@ -155,6 +182,7 @@ export default function Billing() {
   const [seatConfirmDelta, setSeatConfirmDelta] = useState(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
+  const [cancelScheduledBusy, setCancelScheduledBusy] = useState(false);
 
   // Persist tab choice in URL so refreshes / shares land on the right tab.
   useEffect(() => {
@@ -291,11 +319,10 @@ export default function Billing() {
 
   const seatLimit = subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1;
   const includedSeats = plan?.included_operator_seats ?? 1;
-  // Seat-fee fallback used to be ₹1199 cents-worth (119900) when the system
-  // was INR. Now defaults to $15 (1500) so a freshly-seeded admin DB with
-  // missing extra_seat_price_cents still renders a sensible "+$15/mo"
-  // label instead of either ₹1199 or nothing.
-  const seatPriceLabel = fmtCurrency(plan?.extra_seat_price_cents ?? 1500, currency);
+  // Seat-fee fallback for an admin DB that hasn't picked up the new pricing
+  // migration yet. Defaults to the current $5 / mo headline so the row reads
+  // "+$5/mo" instead of falling back to a stale figure or a blank label.
+  const seatPriceLabel = fmtCurrency(plan?.extra_seat_price_cents ?? 500, currency);
 
   const usage = balance?.usage || {};
   const costs = balance?.costs || { ai_chat: 1, url_scan: 3, email_send: 1 };
@@ -361,6 +388,34 @@ export default function Billing() {
    * pull the customer's most recent paid checkout from Stripe and fold
    * it in — idempotent so spamming this button is safe.
    */
+  /**
+   * Clear a queued downgrade. The backend resets ``scheduled_*`` to NULL
+   * but leaves ``cancel_at_period_end`` alone — the gateway mandate was
+   * cancelled when the downgrade was scheduled, so the customer needs to
+   * re-authorise payment to stay on their current plan past the cycle.
+   * We surface that next step in the success toast.
+   */
+  async function handleCancelScheduledChange() {
+    setCancelScheduledBusy(true);
+    try {
+      const res = await cancelScheduledChange();
+      if (res?.status === 'no_change_pending') {
+        showToast('Nothing was scheduled.', 'info');
+      } else {
+        showToast(
+          res?.message
+            || 'Scheduled change cancelled. Re-authorise payment to stay on your current plan past cycle end.',
+          'success',
+        );
+      }
+      loadAll({ silent: true });
+    } catch (err) {
+      showToast(err?.message || 'Could not cancel the scheduled change.', 'error');
+    } finally {
+      setCancelScheduledBusy(false);
+    }
+  }
+
   async function handleSyncBilling() {
     setSyncBusy(true);
     try {
@@ -403,12 +458,24 @@ export default function Billing() {
           Refresh
         </Button>
         <Button onClick={() => setTopupOpen(true)} disabled={loading}>
-          <Sparkles className="w-4 h-4" />
+          <CreditCoin className="w-4 h-4" />
           Buy more credits
         </Button>
       </PageHeader>
 
       <Tabs tabs={TABS} activeTab={activeTab} onChange={setActiveTab} variant="underline" />
+
+      {/* Scheduled-change banner — surfaces a queued downgrade so the user
+          knows what's coming and can back out before cutover. Rendered above
+          every tab body since the change applies account-wide, not per tab. */}
+      {subscription?.scheduled_change && (
+        <ScheduledChangeBanner
+          scheduled={subscription.scheduled_change}
+          currentPlanName={plan?.name}
+          busy={cancelScheduledBusy}
+          onCancel={handleCancelScheduledChange}
+        />
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-24 text-surface-500">
@@ -481,7 +548,7 @@ export default function Billing() {
         open={seatConfirmDelta !== null}
         onClose={() => setSeatConfirmDelta(null)}
         delta={seatConfirmDelta ?? 0}
-        seatPriceCents={plan?.extra_seat_price_cents ?? 1500}
+        seatPriceCents={plan?.extra_seat_price_cents ?? 500}
         currency={currency}
         paymentProvider={subscription?.payment_provider}
         currentSeatCount={
@@ -525,13 +592,24 @@ export default function Billing() {
           // distinct outcomes (trial-start vs subscribe vs prorated swap).
           let toastMsg = 'Plan updated.';
           if (evt.kind === 'switched') {
-            toastMsg = `Switched to ${evt.plan.name} — the new pricing is being prorated.`;
+            const credit = Number(evt.response?.proration_credit_cents || 0);
+            toastMsg = credit > 0
+              ? `Switched to ${evt.plan.name}. Unused time credited (${fmtCurrency(credit, currency)}).`
+              : `Switched to ${evt.plan.name} — the new pricing is being prorated.`;
           } else if (evt.kind === 'downgraded') {
             toastMsg = `Downgrade to ${evt.plan.name} scheduled at period end.`;
+          } else if (evt.kind === 'downgrade_scheduled') {
+            const when = evt.effectiveAt
+              ? new Date(evt.effectiveAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+              : 'the end of this billing cycle';
+            toastMsg = `Downgrade to ${evt.plan.name} scheduled for ${when}. You'll keep your current plan until then.`;
           } else if (evt.kind === 'trial_started') {
             toastMsg = `Trial started — ${evt.plan.name} unlocked for ${evt.trial_days || 14} days.`;
           } else if (evt.kind === 'subscribed') {
-            toastMsg = `Subscribed to ${evt.plan.name}. Welcome aboard!`;
+            const credit = Number(evt.response?.proration_credit_cents || 0);
+            toastMsg = credit > 0
+              ? `Subscribed to ${evt.plan.name}. Unused previous-plan time credited (${fmtCurrency(credit, currency)}).`
+              : `Subscribed to ${evt.plan.name}. Welcome aboard!`;
           }
           showToast(toastMsg, 'success');
           // Refetch a few times because the provider webhook can lag the
@@ -543,6 +621,69 @@ export default function Billing() {
     </div>
   );
 }
+
+// ── Scheduled-change banner ──
+
+/**
+ * Surfaces a queued downgrade so the user always knows what's coming and
+ * can back out before cutover. Renders amber to match the existing "low
+ * balance" warning aesthetic without being as loud as a destructive red.
+ *
+ * @param {{plan_name, plan_slug, effective_at}} scheduled - From /current's
+ *   ``subscription.scheduled_change`` payload. ``effective_at`` is ISO-8601.
+ * @param {string} currentPlanName - For copy: "You're on Standard until …".
+ * @param {boolean} busy - Disables the cancel button while the API call is in flight.
+ * @param {function} onCancel - Click handler that calls cancelScheduledChange().
+ */
+function ScheduledChangeBanner({ scheduled, currentPlanName, busy, onCancel }) {
+  const when = scheduled?.effective_at
+    ? new Date(scheduled.effective_at).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : null;
+  const targetName = scheduled?.plan_name || 'a different plan';
+  return (
+    <div
+      role="status"
+      className={cn(
+        'flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 rounded-xl border',
+        'border-amber-300/60 dark:border-amber-500/30',
+        'bg-amber-50/80 dark:bg-amber-500/10',
+        'text-amber-900 dark:text-amber-200',
+      )}
+    >
+      <div className="text-[13px] leading-snug">
+        <p className="font-semibold">
+          Scheduled downgrade to {targetName}
+          {when ? ` on ${when}` : ''}.
+        </p>
+        <p className="text-amber-800/90 dark:text-amber-200/80 mt-0.5">
+          You’ll keep {currentPlanName || 'your current plan'} until then. The autopay mandate was
+          cancelled — you can re-authorise to stay on {currentPlanName || 'your current plan'} past
+          cycle end.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={busy}
+        className={cn(
+          'shrink-0 inline-flex items-center justify-center px-3 py-1.5 rounded-lg text-[12px] font-semibold',
+          'border border-amber-400/70 dark:border-amber-500/40',
+          'bg-white/70 dark:bg-amber-500/10 text-amber-900 dark:text-amber-100',
+          'hover:bg-white dark:hover:bg-amber-500/20 transition-colors',
+          'disabled:opacity-60 disabled:cursor-not-allowed',
+        )}
+      >
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+        Cancel scheduled change
+      </button>
+    </div>
+  );
+}
+
 
 // ── Tabs ──
 
@@ -608,7 +749,7 @@ function OverviewTab({
           <CardHeader>
             <CardTitle>
               <span className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-primary-500" /> Top-up credits
+                <CreditCoin className="w-4 h-4 text-primary-500" /> Top-up credits
               </span>
             </CardTitle>
           </CardHeader>
@@ -626,7 +767,7 @@ function OverviewTab({
             </div>
             <div className="mt-4">
               <Button variant="outline" size="sm" onClick={onTopup}>
-                <Sparkles className="w-3.5 h-3.5" />
+                <CreditCoin className="w-3.5 h-3.5" />
                 Top up
               </Button>
             </div>
@@ -759,7 +900,7 @@ function TopupsTab({ currency, onTopup, recentTopups }) {
           </p>
           <div className="flex">
             <Button onClick={onTopup}>
-              <Sparkles className="w-4 h-4" />
+              <CreditCoin className="w-4 h-4" />
               Open top-up packs
             </Button>
           </div>
@@ -969,7 +1110,7 @@ function HistoryTab({ history, totalRemaining }) {
                       {fmtDateTime(row.created_at)}
                     </td>
                     <td className="px-3 py-2 text-surface-700 dark:text-surface-200">
-                      {REASON_LABEL[row.reason] || row.reason}
+                      {resolveReasonLabel(row)}
                     </td>
                     <td className="px-3 py-2 text-surface-500 dark:text-surface-400 max-w-md truncate">
                       {row.note || '—'}

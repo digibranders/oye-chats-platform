@@ -40,6 +40,7 @@ import SuperadminOverview from './pages/superadmin/Overview';
 import SuperadminClients from './pages/superadmin/Clients';
 import SuperadminFeedback from './pages/superadmin/Feedback';
 import SuperadminAffiliates from './pages/superadmin/Affiliates';
+import SuperadminPricingInsights from './pages/superadmin/PricingInsights';
 
 // Components
 import AccessDenied from './components/AccessDenied';
@@ -244,6 +245,7 @@ function App() {
                     >
                         <Route path="overview" element={<SuperadminOverview />} />
                         <Route path="clients" element={<SuperadminClients />} />
+                        <Route path="pricing-insights" element={<SuperadminPricingInsights />} />
                         <Route path="affiliates" element={<SuperadminAffiliates />} />
                         <Route path="feedback" element={<SuperadminFeedback />} />
                     </Route>

@@ -31,6 +31,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_ingest_documents,
     task_ingest_web_batch,
     task_process_webhook_retries,
+    task_promote_scheduled_downgrades,
     task_renew_due_subscriptions,
     task_send_email,
     task_send_template_email,
@@ -116,6 +117,7 @@ class WorkerSettings:
         task_send_email,
         task_send_template_email,
         task_renew_due_subscriptions,
+        task_promote_scheduled_downgrades,
         task_expire_old_topups,
         task_expire_trials,
         task_trial_reminder_emails,
@@ -137,6 +139,12 @@ class WorkerSettings:
         cron(task_process_webhook_retries, second={0, 30}),
         cron(task_worker_heartbeat, second={0, 30}),
         cron(task_renew_due_subscriptions, hour=0, minute=5),
+        # Scheduled-downgrade safety net — runs after the renewal cron so a
+        # row whose period just rolled forward via renewal isn't picked up
+        # for promotion in the same tick. The Razorpay
+        # ``subscription.completed`` webhook is the primary trigger; this
+        # cron only catches missed webhooks.
+        cron(task_promote_scheduled_downgrades, hour=0, minute=7),
         cron(task_expire_old_topups, hour=0, minute=10),
         cron(task_delete_expired_trial_data, hour=0, minute=20),
         cron(task_expire_trials, minute=15),

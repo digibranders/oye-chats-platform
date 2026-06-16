@@ -239,6 +239,7 @@ def create_subscription(
     *,
     seat_quantity: int | None = None,
     total_count: int = 120,
+    extra_notes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
 
@@ -272,6 +273,14 @@ def create_subscription(
         "oyechats_plan_id": str(plan.id),
         "billing_cycle": billing_cycle,
     }
+    if extra_notes:
+        # Caller-supplied notes carry transition metadata (e.g.
+        # ``prev_razorpay_subscription_id``). String-coerce defensively —
+        # Razorpay rejects non-string note values.
+        for key, value in extra_notes.items():
+            if value is None:
+                continue
+            notes[str(key)] = str(value)
 
     quantity = max(int(seat_quantity or plan.included_operator_seats or 1), 1)
 
@@ -679,6 +688,11 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             old.status = "canceled"
             old.canceled_at = datetime.now(UTC)
 
+        # ``notes.prev_razorpay_subscription_id`` is set by the upgrade /
+        # scheduled-promotion paths so we can recognise this is a transition
+        # (not a first-time signup) and apply any pending proration credit.
+        prev_rzp_sub_id = (notes.get("prev_razorpay_subscription_id") or "").strip() or None
+
         local = Subscription(
             client_id=client_id,
             plan_id=plan_id,
@@ -690,11 +704,26 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             payment_provider="razorpay",
             razorpay_subscription_id=razorpay_sub_id,
             razorpay_customer_id=customer_id,
+            prev_razorpay_subscription_id=prev_rzp_sub_id,
         )
         session.add(local)
         session.flush()
 
+        # Expire any unused plan_grant from the prior subscription before
+        # handing out the new plan's allowance. Without this, a free-tier
+        # customer who upgrades to Standard mid-cycle sees their leftover
+        # free credits stacked on top of the new grant (e.g. 500 + 10,000
+        # → 10,500 / 10,000). Mirrors the same reset → grant ordering used
+        # by the Stripe change-plan path and ``start_trial_subscription``.
+        credit_service.reset_monthly_plan_credits(session, client_id)
         credit_service.grant_for_subscription(session, local)
+
+        # Apply any pending upgrade proration as a top-up credit. Idempotent —
+        # the old sub's column is zeroed the first time this runs, so webhook
+        # replays don't double-credit.
+        from app.services import transition_service
+
+        transition_service.apply_pending_proration(session, local, prev_rzp_sub_id)
         logger.info(
             "Activated Razorpay subscription %s → local %s (client %s)",
             razorpay_sub_id,
@@ -807,12 +836,37 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
 
 
 def _handle_subscription_completed(session: Session, payload: dict[str, Any]) -> str:
+    """Razorpay subscription completed — final invoice debited, no more cycles.
+
+    Two paths from here:
+
+      * Plain end-of-life: mark local row ``expired`` and return.
+      * Scheduled downgrade cutover: a queued ``scheduled_plan_id`` is on
+        the row. Promote it (status → expired + spin up a new Razorpay sub
+        for the queued plan), so the customer transitions smoothly into
+        the lower tier instead of dropping to no-subscription.
+    """
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
         return "subscription entity missing"
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
+
+    if local.scheduled_plan_id:
+        # Promotion path. ``promote_scheduled_change`` flips status to
+        # expired itself so the partial-unique index allows the new row.
+        from app.services import transition_service
+
+        new_payload = transition_service.promote_scheduled_change(session, local)
+        session.flush()
+        if new_payload is None:
+            # Race or stale state — fall through to plain expiry below.
+            local.status = "expired"
+            session.flush()
+            return f"Subscription {sub_entity.get('id')} completed (scheduled change cleared)"
+        return f"Subscription {sub_entity.get('id')} completed → promoted scheduled change"
+
     local.status = "expired"
     session.flush()
     return f"Subscription {sub_entity.get('id')} completed"

@@ -54,6 +54,56 @@ const SystemMessage = ({ text }) => (
     </div>
 );
 
+// Initials helper — handles unicode names and empty values defensively.
+const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+    if (parts.length === 0) return '?';
+    return parts.map(part => Array.from(part)[0] || '').join('').toUpperCase();
+};
+
+// Operator joined notice — replaces the plain "X joined" text divider with a
+// prominent pill showing the operator's initials, name, department, and time.
+// Mirrors the bot-identity badge style so the live-chat handoff feels like a
+// natural identity swap rather than a silent system event.
+const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
+    const primaryColor = sanitizeColor(settings?.primary_color, '#3A0CA3');
+    const timeLabel = (() => {
+        if (!timestamp) return '';
+        const d = new Date(timestamp);
+        if (Number.isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    })();
+    return (
+        <div className="flex justify-center my-3 px-4" style={{ animation: 'fadeUp 0.35s ease-out' }}>
+            <div
+                className="inline-flex items-center gap-2.5 rounded-full pl-1.5 pr-3.5 py-1.5 bg-white border shadow-sm"
+                style={{ borderColor: `${primaryColor}26` }}
+            >
+                <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold flex-shrink-0"
+                    style={{ backgroundColor: primaryColor }}
+                    aria-hidden="true"
+                >
+                    {getInitials(name)}
+                </div>
+                <div className="flex flex-col leading-tight">
+                    <span className="text-[12px] font-semibold text-[#16202C]">
+                        {name || 'Support'}
+                        {department ? (
+                            <span className="font-normal text-gray-500"> · {department}</span>
+                        ) : null}
+                    </span>
+                    <span className="text-[10px] text-gray-400">
+                        joined the chat{timeLabel ? ` · ${timeLabel}` : ''}
+                    </span>
+                </div>
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" aria-hidden="true" />
+            </div>
+        </div>
+    );
+};
+
 // Date separator — shown between messages from different days (Intercom/Crisp pattern)
 const DateSeparator = ({ date }) => {
     const label = (() => {
@@ -516,21 +566,37 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         scrollToBottom,
     ]);
 
-    // Inject "operator joined" system message when operator first connects
+    // Inject "operator joined" notice when operator first connects.
+    // Uses a dedicated `operator_joined` message type (rendered as a richer
+    // pill with avatar/name/department) instead of the plain system divider.
     useEffect(() => {
         if (operatorName && !prevOperatorNameRef.current) {
             setMessages(prev => [
                 ...prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with the support team...')),
                 {
                     id: `sys-joined-${Date.now()}`,
-                    type: 'system',
-                    text: `${operatorName}${operatorDepartment ? ` from ${operatorDepartment}` : ''} joined`,
+                    type: 'operator_joined',
+                    operatorName,
+                    operatorDepartment,
                     timestamp: new Date().toISOString(),
                 }
             ]);
         }
         prevOperatorNameRef.current = operatorName;
     }, [operatorName, operatorDepartment]);
+
+    // Strip the "Connecting…" system divider once the offline-message form
+    // takes over (handoff timed out or the user chose "Leave a message").
+    // The form itself is the new affordance — the divider above it just
+    // duplicates intent that no longer matches the state.
+    useEffect(() => {
+        if (chatMode !== 'unavailable') return;
+        setMessages(prev => prev.some(
+            m => m.type === 'system' && m.text === 'Connecting you with the support team...'
+        )
+            ? prev.filter(m => !(m.type === 'system' && m.text === 'Connecting you with the support team...'))
+            : prev);
+    }, [chatMode]);
 
     // Waiting timer + auto-timeout
     const WAITING_TIMEOUT_SECONDS = settings.operator_timeout_seconds || 300; // 5 min default
@@ -1151,24 +1217,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, []);
 
     // ── Header rendering ─────────────────────────────────────────────────────────
+    // Waiting + live modes both keep the bot-mode date/time chrome so the
+    // widget's header doesn't reshuffle as the session transitions. The
+    // "Connecting…" state is communicated in-band: a system line in the
+    // transcript, the input placeholder, and the body waiting indicator —
+    // duplicating it in the header was redundant. A subtle "Reconnecting..."
+    // overlay still appears when the WS is dropping mid-live-chat: that's a
+    // connection-health signal, not an identity swap.
     const renderHeader = () => {
-        if (chatMode === 'waiting') {
-            return (
-                <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                        <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-                    </div>
-                    <h3 className="font-semibold text-sm text-[#16202C]">{settings.waiting_message || 'Connecting to support...'}</h3>
-                </div>
-            );
-        }
-        // Live-chat mode: keep the header consistent with bot mode (same
-        // date/time chrome) so the widget's chrome doesn't reshuffle when
-        // an operator joins. The operator's identity is already surfaced
-        // in-band via per-message "Operator Name" labels and the
-        // "<Name> joined" system line. A subtle "Reconnecting..." overlay
-        // still appears when the WS is dropping — that's a connection-
-        // health signal, not an identity swap.
         if (chatMode === 'live' && liveConnectionStatus === 'reconnecting') {
             return (
                 <span className="text-[11px] font-medium text-amber-600 tracking-wide">
@@ -1483,6 +1539,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         }
                         if (msg.type === 'system') {
                             items.push(<SystemMessage key={msg.id} text={msg.text} />);
+                        } else if (msg.type === 'operator_joined') {
+                            items.push(
+                                <OperatorJoinedNotice
+                                    key={msg.id}
+                                    name={msg.operatorName}
+                                    department={msg.operatorDepartment}
+                                    timestamp={msg.timestamp}
+                                    settings={settings}
+                                />
+                            );
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
                                 <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>

@@ -338,7 +338,7 @@ export default function Subscription() {
                       : 'text-surface-500 dark:text-surface-400'
                   )}
                 >
-                  {cycle === 'monthly' ? 'Monthly' : 'Annual (Save 30%)'}
+                  {cycle === 'monthly' ? 'Monthly' : 'Annual (Save 20%)'}
                 </button>
               ))}
             </div>

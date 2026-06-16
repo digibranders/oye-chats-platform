@@ -1,6 +1,6 @@
 import { useEffect, useReducer } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Globe, ExternalLink, AlertCircle, FileStack, Hash } from 'lucide-react';
+import { X, Globe, ExternalLink, AlertCircle, FileStack } from 'lucide-react';
 import { getDocumentPages } from '../services/api';
 import { cn } from '../lib/utils';
 
@@ -107,7 +107,7 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
                     {loading
                       ? 'Loading pages…'
                       : data
-                        ? `${data.total_pages} page${data.total_pages !== 1 ? 's' : ''} · ${data.total_chunks} chunk${data.total_chunks !== 1 ? 's' : ''} crawled`
+                        ? `${data.total_pages} page${data.total_pages !== 1 ? 's' : ''} crawled`
                         : 'Crawled pages'}
                   </p>
                 </div>
@@ -130,8 +130,7 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
                   {[...Array(6)].map((_, i) => (
                     <div key={i} className="flex items-center gap-4 px-6 py-4">
                       <div className="h-3 bg-surface-200 dark:bg-surface-800 rounded w-2/5" />
-                      <div className="h-3 bg-surface-200 dark:bg-surface-800 rounded w-1/4 ml-auto" />
-                      <div className="h-3 bg-surface-200 dark:bg-surface-800 rounded w-10" />
+                      <div className="h-3 bg-surface-200 dark:bg-surface-800 rounded w-10 ml-auto" />
                     </div>
                   ))}
                 </div>
@@ -168,9 +167,8 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
               {!loading && !error && data && data.pages.length > 0 && (
                 <>
                   {/* Column headers */}
-                  <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 px-6 py-2.5 border-b border-surface-100 dark:border-surface-800 bg-surface-50 dark:bg-surface-900/50 sticky top-0">
+                  <div className="grid grid-cols-[1fr_auto] gap-x-4 px-6 py-2.5 border-b border-surface-100 dark:border-surface-800 bg-surface-50 dark:bg-surface-900/50 sticky top-0">
                     <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider">Path / Title</span>
-                    <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider text-right">Chunks</span>
                     <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider text-right w-6" />
                   </div>
 
@@ -180,7 +178,7 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
                       return (
                         <li
                           key={idx}
-                          className="grid grid-cols-[1fr_auto_auto] gap-x-4 items-center px-6 py-3.5 hover:bg-surface-50 dark:hover:bg-surface-800/40 transition-colors duration-150 group"
+                          className="grid grid-cols-[1fr_auto] gap-x-4 items-center px-6 py-3.5 hover:bg-surface-50 dark:hover:bg-surface-800/40 transition-colors duration-150 group"
                         >
                           {/* Path + title */}
                           <div className="min-w-0">
@@ -192,12 +190,6 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
                                 {page.title}
                               </span>
                             )}
-                          </div>
-
-                          {/* Chunk count */}
-                          <div className="flex items-center gap-1 text-xs text-surface-400 shrink-0">
-                            <Hash size={10} className="text-surface-300 dark:text-surface-600" />
-                            <span>{page.chunk_count}</span>
                           </div>
 
                           {/* External link */}
@@ -229,11 +221,6 @@ export default function SourcePagesDrawer({ sourceUrl, botId, onClose }) {
                 <div className="flex items-center gap-1.5 text-xs text-surface-400">
                   <span className="font-semibold text-surface-700 dark:text-surface-300">{data.total_pages}</span>
                   pages indexed
-                </div>
-                <div className="w-px h-3 bg-surface-200 dark:bg-surface-700" />
-                <div className="flex items-center gap-1.5 text-xs text-surface-400">
-                  <span className="font-semibold text-surface-700 dark:text-surface-300">{data.total_chunks}</span>
-                  total chunks
                 </div>
               </div>
             )}

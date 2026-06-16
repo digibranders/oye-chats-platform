@@ -29,7 +29,7 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.core.geo import resolve_country
-from app.db.models import Client, CreditLedger, Invoice, Subscription
+from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service
 from app.services.plan_service import get_active_plans, get_client_plan, get_client_subscription
@@ -264,6 +264,13 @@ def get_current_subscription(client: Client = Depends(get_current_client)):
 
         sub_data = None
         if sub:
+            # Inline the queued change so the Billing page can render its
+            # banner ("Switching to Starter on Aug 15 — Cancel") off a single
+            # call instead of fetching plans separately to resolve the name.
+            scheduled_plan = None
+            if sub.scheduled_plan_id:
+                scheduled_plan = session.get(Plan, sub.scheduled_plan_id)
+
             sub_data = {
                 "id": sub.id,
                 "status": sub.status,
@@ -277,6 +284,17 @@ def get_current_subscription(client: Client = Depends(get_current_client)):
                 "cancel_at_period_end": sub.cancel_at_period_end,
                 "payment_provider": sub.payment_provider,
                 "created_at": sub.created_at.isoformat() if sub.created_at else None,
+                "scheduled_change": (
+                    {
+                        "plan_id": sub.scheduled_plan_id,
+                        "plan_slug": scheduled_plan.slug if scheduled_plan else None,
+                        "plan_name": scheduled_plan.name if scheduled_plan else None,
+                        "billing_cycle": sub.scheduled_billing_cycle,
+                        "effective_at": sub.scheduled_change_at.isoformat() if sub.scheduled_change_at else None,
+                    }
+                    if sub.scheduled_plan_id
+                    else None
+                ),
             }
 
         return {
@@ -330,7 +348,7 @@ def get_billing_geo(request: Request, _client: Client = Depends(get_current_clie
     # that ``resolve_country`` honours.
     return {
         "country": country,
-        "display_currency": "INR" if indian else "USD",
+        "display_currency": "USD",
         "display_rate": DISPLAY_USD_TO_INR,
         "intl_payments_enabled": INTL_PAYMENTS_ENABLED,
         "razorpay_enabled": RAZORPAY_ENABLED,
@@ -862,6 +880,90 @@ def change_plan(
             )
             return {"status": "downgraded", "message": msg}
 
+        # ── Branch 2a: paid → paid via Razorpay → upgrade-now, prorated ──
+        # Razorpay can't modify a subscription's plan in place — we must
+        # cancel the current mandate and open a fresh one. Upgrades take
+        # effect immediately because the customer wants the new features
+        # now; we credit unused current-period time back via
+        # ``upgrade_credit_pending_cents`` so they aren't double-billed.
+        if (
+            sub is not None
+            and sub.razorpay_subscription_id
+            and sub.plan
+            and new_plan.monthly_price_cents > (sub.plan.monthly_price_cents or 0)
+        ):
+            from app.services import razorpay_service, transition_service
+
+            billing_cycle = request.billing_cycle or sub.billing_cycle or "monthly"
+            try:
+                payload = transition_service.execute_paid_upgrade(session, client, sub, new_plan, billing_cycle)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except razorpay_service.RazorpayBillingError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+            session.commit()
+            payload.setdefault("provider", "razorpay")
+            payload.setdefault("status", "checkout_required")
+            payload.setdefault(
+                "message",
+                f"Confirm payment to activate {new_plan.name}. Your unused {sub.plan.name} time will be credited.",
+            )
+            return payload
+
+        # ── Branch 2b: paid → paid via Razorpay → downgrade scheduled at period end ──
+        # Customer keeps the higher tier until the current cycle ends. No
+        # immediate Razorpay action is needed except telling the gateway to
+        # stop autopay after the current cycle; the cutover spawns a fresh
+        # subscription for the lower tier (handled by webhook + cron).
+        if (
+            sub is not None
+            and sub.razorpay_subscription_id
+            and sub.plan
+            and new_plan.monthly_price_cents < (sub.plan.monthly_price_cents or 0)
+        ):
+            from app.services import razorpay_service, transition_service
+
+            # Seat overflow → 409 with picker payload; frontend lists the
+            # offending operators and asks the admin to deactivate enough
+            # before retrying.
+            overflow = transition_service.check_seat_overflow(session, client.id, new_plan)
+            if overflow is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "seat_overflow",
+                        "active_seats": overflow.active_seats,
+                        "allowed_seats": overflow.allowed_seats,
+                        "excess": overflow.excess,
+                        "message": (
+                            f"You have {overflow.active_seats} active operator(s) but "
+                            f"{new_plan.name} only includes {overflow.allowed_seats}. "
+                            f"Deactivate {overflow.excess} operator(s) before downgrading."
+                        ),
+                    },
+                )
+
+            billing_cycle = request.billing_cycle or sub.billing_cycle or "monthly"
+            try:
+                cutover_at = transition_service.schedule_paid_downgrade(session, sub, new_plan, billing_cycle)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except razorpay_service.RazorpayBillingError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+            session.commit()
+            return {
+                "status": "downgrade_scheduled",
+                "effective_at": cutover_at.isoformat(),
+                "scheduled_plan_slug": new_plan.slug,
+                "scheduled_plan_name": new_plan.name,
+                "message": (
+                    f"Downgrade to {new_plan.name} scheduled for "
+                    f"{cutover_at:%b %d, %Y}. You'll keep {sub.plan.name} until then."
+                ),
+            }
+
         # ── Branch 2: real Stripe subscription → silent prorated swap ──
         if sub is not None and sub.stripe_subscription_id:
             billing_cycle = request.billing_cycle or sub.billing_cycle
@@ -990,6 +1092,45 @@ def change_plan(
 
 
 # ── Cancellation ──
+
+
+@router.post("/cancel-scheduled-change")
+def cancel_scheduled_change_endpoint(client: Client = Depends(get_current_client)):
+    """Clear a queued downgrade so the customer stays on their current plan.
+
+    Idempotent: returns ``{"status": "no_change_pending"}`` when nothing is
+    queued. When a change WAS queued, this resets ``scheduled_*`` to NULL and
+    leaves ``cancel_at_period_end`` alone — the gateway mandate was cancelled
+    at-cycle-end when the downgrade was scheduled, so the customer must
+    re-authorise to keep the current plan past cycle end. We surface that as
+    ``mandate_action`` in the response so the frontend can prompt accordingly.
+    """
+    from app.services import transition_service
+
+    with get_session() as session:
+        sub = get_client_subscription(session, client.id)
+        if sub is None:
+            raise HTTPException(status_code=404, detail="No subscription found.")
+
+        cleared = transition_service.cancel_scheduled_change(session, sub)
+        if not cleared:
+            return {"status": "no_change_pending"}
+
+        session.commit()
+        logger.info(
+            "Client %s cancelled scheduled change on sub=%s",
+            client.id,
+            sub.id,
+        )
+        # The mandate was cancelled at the gateway when the downgrade was
+        # scheduled; tell the UI so it can show a "Re-authorise to stay on
+        # current plan" CTA. We don't auto-resume — the customer should make
+        # an explicit choice rather than being silently re-billed.
+        return {
+            "status": "scheduled_change_cancelled",
+            "mandate_action": "reauthorise_required",
+            "message": "Scheduled downgrade cancelled. Re-authorise payment to stay on your current plan past cycle end.",
+        }
 
 
 class CancelSubscriptionRequest(BaseModel):
