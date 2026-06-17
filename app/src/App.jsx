@@ -19,6 +19,7 @@ import GlobalCrawlIndicator from './components/GlobalCrawlIndicator';
 // Pages
 import Login from './pages/Login';
 import Register from './pages/Register';
+import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import AffiliateInvite from './pages/AffiliateInvite';
 import Dashboard from './pages/Dashboard';
@@ -151,6 +152,7 @@ function App() {
                     {/* Public */}
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
+                    <Route path="/verify-email" element={<VerifyEmail />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
                     {/* Partners invite landing — public; reads ?token= and
                         either auto-accepts (logged-in) or shows two CTAs

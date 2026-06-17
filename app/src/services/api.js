@@ -127,6 +127,33 @@ export const registerClient = async (
 };
 
 /**
+ * Verify a client's email address with the 6-digit OTP.
+ * @param {string} email
+ * @param {string} otp
+ */
+export const verifyEmail = async (email, otp) => {
+    try {
+        const response = await api.post('/auth/verify-email', { email, otp });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Verification failed');
+    }
+};
+
+/**
+ * Re-send the email verification OTP.
+ * @param {string} email
+ */
+export const resendVerification = async (email) => {
+    try {
+        const response = await api.post('/auth/resend-verification', { email });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to resend code');
+    }
+};
+
+/**
  * Apply a referral code for the currently-authenticated customer.
  * Called from the checkout modal before the user pays. Returns
  * { attributed: bool, message: string } — always resolves (never throws

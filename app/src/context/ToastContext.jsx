@@ -172,6 +172,12 @@ export function ToastProvider({ children }) {
                 position="top-right"
                 offset={20}
                 gap={10}
+                // Always expand so toasts stack vertically instead of collapsing
+                // into the "card stack behind" visual that Sonner shows by default.
+                expand={true}
+                visibleToasts={5}
+                // Sit above every modal/overlay in the app (highest is z-[200]).
+                style={{ zIndex: 9999 }}
                 // ``richColors`` is intentionally off — we render every toast
                 // through ``toast.custom`` and don't want sonner adding its
                 // own colour layer underneath ours. ``unstyled`` on the toast

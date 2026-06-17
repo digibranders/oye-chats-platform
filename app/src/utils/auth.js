@@ -72,6 +72,8 @@ export const AUTH_STORAGE_KEYS = [
     'admin_token',
     'admin_name',
     'admin_client_id',
+    'admin_is_verified',
+    'admin_pending_email',
     'auth_type',
     'operator_role',
     'operator_id',

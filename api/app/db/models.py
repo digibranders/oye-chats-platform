@@ -23,6 +23,11 @@ class Client(Base):
     max_bots = Column(Integer, default=100, server_default="100", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Email OTP verification
+    is_verified = Column(Boolean, default=False, nullable=False, server_default="false")
+    email_otp = Column(String, nullable=True)
+    email_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     # Password reset fields
     reset_otp = Column(String, nullable=True)
     reset_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
