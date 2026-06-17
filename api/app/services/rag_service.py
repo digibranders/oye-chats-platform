@@ -1170,24 +1170,48 @@ Eligible dimensions (use the exact dimension key, lowercase):
 {cta_lines}
 """
 
-        # Only suggest qualification if visitor has shown some engagement
-        has_engagement = any(bs.get(f"{d}_score", 0) > 0 for d in conversation_order)
-        engagement_gate = (
-            "The visitor has shown engagement — you may ask ONE qualifying question."
-            if has_engagement
-            else "The visitor has not shown buying signals yet — focus on answering helpfully. Do NOT ask qualifying questions."
-        )
+        # Determine probing posture based on conversation depth and unassessed dimensions.
+        # missing_dims = dimensions that haven't cleared 60% of their max score yet.
+        has_prior_turns = bool(history_context and history_context.strip())
+        next_dim_to_probe = missing_dims[0] if missing_dims else None
+        next_dim_cfg = config.get(next_dim_to_probe, {}) if next_dim_to_probe else {}
+        next_dim_cta = (next_dim_cfg.get("cta_prompt") or "") if next_dim_cfg else ""
+
+        if not next_dim_to_probe:
+            probing_instruction = (
+                "All qualification dimensions are well-assessed. "
+                "Suggest a clear next step (book a demo, see pricing, talk to our team) "
+                "rather than asking more qualifying questions."
+            )
+        elif has_prior_turns:
+            probing_instruction = f"""The conversation is underway. After fully answering the visitor's question, naturally weave in ONE question targeting **{next_dim_to_probe.upper()}** — the next unassessed dimension.
+
+EMBEDDING RULES:
+- Answer the question FIRST. The qualifying question always comes at the end.
+- Make it feel like genuine curiosity, not a sales script. One short sentence is enough.
+- Suggested angle: "{next_dim_cta}"
+- Connect the question to what you just discussed — do not switch context abruptly.
+- GOOD: End your answer, then add one brief curious question tied to your reply ("Out of curiosity — {next_dim_cta.lower()}" or similar natural bridge).
+- BAD: "Can I ask a few quick questions to understand your needs?" (survey framing)
+- BAD: Opening with the qualifying question before answering."""
+        else:
+            probing_instruction = f"""This appears to be an early exchange. Answer the visitor helpfully first.
+If their message shows real intent (not just a greeting or one-word opener), close with a single soft question about **{next_dim_to_probe.upper()}**.
+- Suggested angle: "{next_dim_cta}"
+- For greetings or very short openers ("hi", "hello", "hey"): skip the probe — just answer warmly."""
 
         qualification_section = f"""
-5. LEAD QUALIFICATION (SUBTLE & SECONDARY):
-Your PRIMARY job is answering the user's question. {engagement_gate}
+5. LEAD QUALIFICATION (ACTIVE & CONVERSATIONAL):
+Your PRIMARY job is answering the visitor's question. Qualification is secondary — but it IS your responsibility to surface it naturally.
 
-Rules for qualification:
-- NEVER prioritize qualification over answering the question. Answer first.
-- Ask about only ONE missing field per response. Never ask multiple questions.
-- Frame questions naturally, not as a survey/checklist.
-- Priority order for missing fields: {", ".join(d.upper() for d in conversation_order)}
-- If all scores are above 0, do NOT ask qualifying questions. Suggest next steps.
+{probing_instruction}
+
+UNIVERSAL RULES:
+- ONE qualifying question per response, maximum. Never two.
+- Always answer first — never open with a qualifying question.
+- Never frame it as a survey, checklist, or "quick question about your needs".
+- If the visitor has already volunteered information about a dimension, do NOT ask about it again.
+- Priority order: {", ".join(d.upper() for d in conversation_order)}
 
 CURRENT QUALIFICATION STATE:
 {state_text}

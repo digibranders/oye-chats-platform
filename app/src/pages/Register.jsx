@@ -69,6 +69,8 @@ export default function Register() {
       localStorage.setItem('admin_token', data.access_token);
       localStorage.setItem('admin_name', data.name);
       localStorage.setItem('admin_client_id', data.client_id.toString());
+      localStorage.setItem('admin_is_verified', 'false');
+      localStorage.setItem('admin_pending_email', email.trim());
       localStorage.setItem('auth_type', 'client');
       localStorage.setItem('is_superadmin', 'false');
       localStorage.setItem('company_name', data.company_name || '');
@@ -83,11 +85,9 @@ export default function Register() {
         .then((m) => m.clearTrialBannerDismissals())
         .catch(() => {});
 
-      if (affiliateToken) {
-        navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
-      } else {
-        navigate('/chatbot');
-      }
+      // Navigate to email verification — the guard below also handles the
+      // re-render case (setIsLoading(false) fires after navigate).
+      navigate(`/verify-email?email=${encodeURIComponent(email.trim())}`);
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
@@ -96,6 +96,10 @@ export default function Register() {
   };
 
   if (localStorage.getItem('admin_token')) {
+    if (localStorage.getItem('admin_is_verified') === 'false') {
+      const pending = localStorage.getItem('admin_pending_email') || '';
+      return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
+    }
     const isSuper = localStorage.getItem('is_superadmin') === 'true';
     if (affiliateToken && !isSuper) {
       return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;

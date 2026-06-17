@@ -1013,6 +1013,39 @@ def send_password_reset_email(to_email: str, otp: str):
     )
 
 
+def send_verification_otp_email(to_email: str, name: str, otp: str) -> None:
+    """Send a 6-digit email verification code via Brevo (raw HTML — no dedicated template yet)."""
+    safe_name = _esc(name or "there")
+    safe_otp = _esc(otp)
+
+    html = f"""
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <div style="background:#2563eb;padding:28px 32px;border-radius:8px 8px 0 0">
+    <h1 style="color:#fff;margin:0;font-size:22px">Verify your email</h1>
+  </div>
+  <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
+    <p style="margin:0 0 16px">Hi {safe_name},</p>
+    <p style="margin:0 0 24px;color:#6b7280">
+      Thanks for signing up for OyeChats. Use the code below to verify your email address.
+      The code expires in <strong>15 minutes</strong>.
+    </p>
+    <div style="background:#f3f4f6;border-radius:8px;padding:20px 32px;text-align:center;margin-bottom:24px">
+      <span style="font-size:36px;font-weight:700;letter-spacing:10px;color:#111827;font-family:monospace">{safe_otp}</span>
+    </div>
+    <p style="margin:0;font-size:13px;color:#9ca3af">
+      If you didn&apos;t create an OyeChats account, you can safely ignore this email.
+    </p>
+  </div>
+</div>
+"""
+
+    send_email_async(
+        to_email=to_email,
+        subject="Your OyeChats verification code",
+        html_body=html,
+    )
+
+
 # ── Visitor-Facing Email Templates ──
 
 

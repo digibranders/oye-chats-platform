@@ -48,6 +48,7 @@ dependencies = [
     "trafilatura>=2.0.0",
     "stripe>=11.0.0",
     "razorpay>=1.4.2",
+    "python-jose[cryptography]>=3.5.0",
 ]
 
 [dependency-groups]

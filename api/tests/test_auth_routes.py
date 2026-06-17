@@ -58,6 +58,7 @@ class TestLogin:
             api_key="api-key-123",
             hashed_password="hashed",
             is_superadmin=False,
+            is_verified=True,
             company_name="Test Co",
             website="https://example.com",
         )
@@ -116,6 +117,7 @@ class TestLogin:
             api_key="key",
             hashed_password="h",
             is_superadmin=False,
+            is_verified=True,
             company_name="Co",
             website="",
         )

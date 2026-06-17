@@ -236,6 +236,7 @@ class LoginResponse(BaseModel):
     client_id: int
     name: str
     is_superadmin: bool
+    is_verified: bool = True
     company_name: str | None = None
     website: str | None = None
 
@@ -303,10 +304,7 @@ class RegisterResponse(BaseModel):
     is_superadmin: bool = False
     company_name: str | None = None
     website: str | None = None
-    message: str = "Account created successfully"
-    # Trial information for the dashboard's first paint. ``None`` for any
-    # registration that didn't land on a trial plan (defensive — should
-    # never happen for self-serve signups once PR1 is live).
+    message: str = "Account created successfully."
     trial: TrialStatePayload | None = None
 
 
@@ -482,6 +480,99 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
 # ── Endpoints ──
 
 
+# ── Email Verification ──
+
+
+class VerifyEmailRequest(BaseModel):
+    email: str
+    otp: str
+
+    @field_validator("email")
+    @classmethod
+    def normalise_email(cls, v):
+        return v.strip().lower()
+
+
+class ResendVerificationRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def normalise_email(cls, v):
+        return v.strip().lower()
+
+
+@router.post("/verify-email")
+@limiter.limit("10/minute")
+def verify_email(request: Request, body: VerifyEmailRequest):
+    """Verify a client's email using the 6-digit OTP sent at registration."""
+    try:
+        with get_session() as session:
+            stmt = select(Client).where(Client.email == body.email).limit(1)
+            client = session.execute(stmt).scalars().first()
+
+            if not client or not client.email_otp or not client.email_otp_expires_at:
+                raise HTTPException(status_code=400, detail="Invalid or expired code. Please request a new one.")
+
+            if datetime.now(UTC) > client.email_otp_expires_at:
+                client.email_otp = None
+                client.email_otp_expires_at = None
+                session.commit()
+                raise HTTPException(status_code=400, detail="Code has expired. Please request a new one.")
+
+            if not hmac.compare_digest(client.email_otp, body.otp.strip()):
+                raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
+
+            client.is_verified = True
+            client.email_otp = None
+            client.email_otp_expires_at = None
+            session.commit()
+
+            logger.info("Email verified for client %s", client.id)
+            return {"message": "Email verified successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("verify_email failed: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Verification failed. Please try again.") from e
+
+
+@router.post("/resend-verification")
+@limiter.limit("2/minute")
+def resend_verification(request: Request, body: ResendVerificationRequest):
+    """Re-send a fresh 6-digit verification OTP. Safe to call on unknown emails."""
+    try:
+        with get_session() as session:
+            stmt = select(Client).where(Client.email == body.email).limit(1)
+            client = session.execute(stmt).scalars().first()
+
+            # Always return success to prevent email enumeration.
+            if not client or client.is_verified:
+                return {"message": "If an unverified account exists, a new code has been sent."}
+
+            otp = str(secrets.randbelow(900000) + 100000)
+            client.email_otp = otp
+            client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+            session.commit()
+
+            try:
+                from app.services.email_service import send_verification_otp_email
+
+                send_verification_otp_email(client.email, client.name, otp)
+            except Exception as mail_err:
+                logger.warning("resend_verification_otp_failed for client %s: %s", client.id, mail_err)
+
+            return {"message": "If an unverified account exists, a new code has been sent."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("resend_verification failed: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="An error occurred.") from e
+
+
+# ── Password Reset ──
+
+
 class RequestPasswordResetRequest(BaseModel):
     email: str
 
@@ -506,10 +597,7 @@ class ResetPasswordRequest(BaseModel):
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("10/minute")
 def login(request: Request, body: LoginRequest):
-    """
-    Authenticate a Client via Email and Password for Admin Dashboard access.
-    Returns the Client's API Key to be used as a Bearer/API token for subsequent requests.
-    """
+    """Authenticate a Client and return their permanent API key."""
     try:
         with get_session() as session:
             stmt = select(Client).where(Client.email == body.email.strip().lower()).limit(1)
@@ -517,36 +605,30 @@ def login(request: Request, body: LoginRequest):
 
             if not client:
                 logger.warning("Login failed: unknown email %s", _redact_email(_sanitize_for_log(body.email)))
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Incorrect email or password",
-                )
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
             if not verify_password(body.password, client.hashed_password):
                 logger.warning("Login failed: incorrect password for %s", _redact_email(_sanitize_for_log(body.email)))
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Incorrect email or password",
-                )
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
-            logger.info(f"Successful dashboard login for client {client.id} ({client.name})")
+            logger.info("Successful dashboard login for client %s (%s)", client.id, client.name)
 
             return {
                 "access_token": client.api_key,
                 "token_type": "bearer",
                 "client_id": client.id,
                 "name": client.name,
-                "is_superadmin": getattr(client, "is_superadmin", False),
-                "company_name": getattr(client, "company_name", None),
-                "website": getattr(client, "website", None),
+                "is_superadmin": bool(client.is_superadmin),
+                "is_verified": bool(client.is_verified),
+                "company_name": client.company_name,
+                "website": client.website,
             }
     except HTTPException:
         raise
     except Exception as e:
         logger.error("LOGIN FAILED for %s: %s", _redact_email(_sanitize_for_log(body.email)), type(e).__name__)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed. Please try again.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Login failed. Please try again."
         ) from e
 
 
@@ -605,8 +687,6 @@ def register(request: Request, body: RegisterRequest):
             # follow up.
             trial_payload: TrialStatePayload | None = None
             if subscription is not None and subscription.status == "trialing" and subscription.trial_end is not None:
-                from datetime import UTC, datetime
-
                 from app.config import TRIAL_CREDITS
                 from app.services.email_service import send_trial_welcome_email
 
@@ -657,10 +737,23 @@ def register(request: Request, body: RegisterRequest):
                     )
                     session.rollback()
 
+            # Generate and persist the email OTP (15-minute window).
+            otp = str(secrets.randbelow(900000) + 100000)
+            new_client.email_otp = otp
+            new_client.email_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+            new_client.is_verified = False
+            session.commit()
+
+            # Fire verification email after commit — failure must not roll back the account.
+            try:
+                from app.services.email_service import send_verification_otp_email
+
+                send_verification_otp_email(new_client.email, new_client.name, otp)
+            except Exception as mail_err:
+                logger.warning("verification_otp_email_failed for client %s: %s", new_client.id, mail_err)
+
             logger.info(
-                "New client registered: id=%s (%s) — no default bot (client will create manually)",
-                new_client.id,
-                new_client.name,
+                "New client registered: id=%s (%s) — verification OTP dispatched", new_client.id, new_client.name
             )
 
             return {
@@ -669,9 +762,10 @@ def register(request: Request, body: RegisterRequest):
                 "client_id": new_client.id,
                 "name": new_client.name,
                 "is_superadmin": False,
+                "is_verified": False,
                 "company_name": new_client.company_name,
                 "website": new_client.website,
-                "message": "Account created successfully",
+                "message": "Account created successfully.",
                 "trial": trial_payload,
             }
     except HTTPException:

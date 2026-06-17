@@ -55,7 +55,7 @@ def get_current_client(
     effective_operator_key = _resolve_operator_key(operator_key, legacy_agent_key)
 
     with get_session() as session:
-        # Primary: resolve via X-API-Key
+        # Primary: resolve via X-API-Key (permanent api_key UUID).
         if api_key:
             stmt = select(Client).where(Client.api_key == api_key)
             client = session.execute(stmt).scalars().first()
