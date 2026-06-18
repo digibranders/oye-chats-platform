@@ -177,10 +177,20 @@ export default function KnowledgeBase() {
   const supportedExtensions = ['.pdf', '.docx', '.txt', '.md'];
   const supportedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'text/markdown'];
 
-  const filterFiles = (fileList) => Array.from(fileList).filter(file => {
-    const ext = '.' + file.name.split('.').pop().toLowerCase();
-    return supportedTypes.includes(file.type) || supportedExtensions.includes(ext);
-  });
+  const MAX_FILE_SIZE = 15 * 1024 * 1024;
+  const filterFiles = (fileList) => {
+    const accepted = [];
+    for (const file of Array.from(fileList)) {
+      const ext = '.' + file.name.split('.').pop().toLowerCase();
+      if (!supportedTypes.includes(file.type) && !supportedExtensions.includes(ext)) continue;
+      if (file.size > MAX_FILE_SIZE) {
+        showToast(`"${file.name}" exceeds the 15 MB limit.`, 'error');
+        continue;
+      }
+      accepted.push(file);
+    }
+    return accepted;
+  };
 
   const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); const files = filterFiles(e.dataTransfer.files); if (files.length > 0) setSelectedFiles(prev => [...prev, ...files]); };
   const handleFileSelect = (e) => { if (e.target.files) setSelectedFiles(prev => [...prev, ...filterFiles(e.target.files)]); };
@@ -318,7 +328,7 @@ export default function KnowledgeBase() {
                 <UploadCloud size={28} />
               </div>
               <h3 className="text-surface-900 dark:text-white font-medium mb-1 text-sm">Drag and drop your documents here</h3>
-              <p className="text-surface-400 text-xs mb-5">PDF, DOCX, TXT, MD (Max 50MB)</p>
+              <p className="text-surface-400 text-xs mb-5">PDF, DOCX, TXT, MD (Max 15MB)</p>
               <input type="file" multiple accept=".pdf,.docx,.txt,.md" className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -629,12 +639,18 @@ export default function KnowledgeBase() {
               </div>
             ) : (
               <div className="overflow-hidden border border-surface-200 dark:border-surface-800 rounded-xl">
-                <table className="w-full text-left">
+                <table className="w-full text-left table-fixed">
+                  <colgroup>
+                    <col className="w-[50%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[20%]" />
+                  </colgroup>
                   <thead className="bg-surface-50 dark:bg-surface-800/50 border-b border-surface-200 dark:border-surface-800">
                     <tr>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Source</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Type</th>
-                      <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider text-right">Date</th>
+                      <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Date</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider text-right">Actions</th>
                     </tr>
                   </thead>
@@ -671,7 +687,7 @@ export default function KnowledgeBase() {
                               {isUrl ? 'Website' : 'Document'}
                             </span>
                           </td>
-                          <td className="px-5 py-3.5 text-sm text-surface-400 text-right">{dateStr}</td>
+                          <td className="px-5 py-3.5 text-sm text-surface-400">{dateStr}</td>
                           <td className="px-5 py-3.5 text-right">
                             {confirmingRecrawl === doc.name ? (
                               <div className="flex items-center justify-end gap-1.5">

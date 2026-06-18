@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { getAuthState } from '../utils/auth';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
-import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus, Mail } from 'lucide-react';
+import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus, Mail, MoreHorizontal, Headphones } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -1355,82 +1355,83 @@ export default function Interface({ embedded = false }) {
                     {/* Chat Window Preview Wrapper — matches widget classic theme */}
                     <div className="w-full max-w-[360px] bg-white rounded-2xl overflow-hidden shadow-[0_20px_40px_-15px_rgba(0,0,0,0.15)] flex flex-col border border-[#BBE7FF]/30 transition-colors">
 
-                        {/* 1. Header — white bg, dark text (matches widget classic theme) */}
-                        <div className="bg-white px-5 py-3.5 flex items-center justify-between shrink-0 border-b border-surface-100">
-                            <div className="flex items-center gap-3">
-                                {avatarType === 'orb' ? (
-                                    <div
-                                        className="w-10 h-10 rounded-full flex-shrink-0"
-                                        style={{
-                                            background: `radial-gradient(circle at 35% 35%, ${orbColor || primaryColor}44, ${orbColor || primaryColor}bb, ${orbColor || primaryColor})`,
-                                            boxShadow: `0 0 10px ${orbColor || primaryColor}55`,
-                                            animation: 'pulse 2.5s ease-in-out infinite'
-                                        }}
-                                    />
-                                ) : avatarType === 'mascot' ? (
-                                    <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: primaryColor }}>
-                                        <Bot className="w-5 h-5 text-white" />
-                                    </div>
-                                ) : logo ? (
-                                    <img src={logo} alt="logo" className="w-10 h-10 rounded-full object-cover" />
-                                ) : (
-                                    <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
-                                        <Bot className="w-5 h-5 text-white" />
-                                    </div>
-                                )}
-                                <div className="flex flex-col">
-                                    <span className="font-semibold text-sm text-[#16202C] leading-tight">
-                                        {botName || 'AI Assistant'}
-                                    </span>
-                                    {previewState === 'waiting' && (
-                                        <span className="text-[11px] text-amber-500 font-medium">Connecting...</span>
-                                    )}
-                                    {previewState === 'unavailable' && (
-                                        <span className="text-[11px] text-surface-400 font-medium">Offline</span>
-                                    )}
-                                    {previewState === 'chat' && (
-                                        <span className="text-[11px] text-emerald-500 font-medium">Online</span>
-                                    )}
-                                </div>
-                            </div>
+                        {/* 1. Header bar — date/time + action icons */}
+                        <div className="bg-white px-5 py-2.5 flex items-center justify-between shrink-0">
+                            <span className="text-[11px] text-gray-400 font-medium tracking-wide">
+                                {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
                             <div className="flex items-center gap-1">
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-surface-400">
-                                    <Plus className="w-4 h-4" />
+                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400">
+                                    <MoreHorizontal className="w-4 h-4" />
                                 </div>
-                                <div className="w-7 h-7 flex items-center justify-center text-surface-400">
+                                <div className="w-7 h-7 flex items-center justify-center text-gray-400">
                                     <X className="w-5 h-5" />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 2. Messages Area — conditional by previewState */}
-                        <div className="flex-grow px-5 py-4 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[380px] bg-white">
+                        {/* 2. Floating agent badge */}
+                        {previewState === 'chat' && (
+                            <div className="shrink-0 flex justify-center -mb-5 relative z-10">
+                                <div
+                                    className="inline-flex items-center gap-2 rounded-full pl-1.5 pr-3.5 py-1.5 shadow-lg border border-white/40"
+                                    style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)' }}
+                                >
+                                    {avatarType === 'orb' ? (
+                                        <div
+                                            className="w-8 h-8 rounded-full flex-shrink-0"
+                                            style={{
+                                                background: `radial-gradient(circle at 35% 35%, ${orbColor || primaryColor}44, ${orbColor || primaryColor}bb, ${orbColor || primaryColor})`,
+                                                boxShadow: `0 0 8px ${orbColor || primaryColor}44`,
+                                            }}
+                                        />
+                                    ) : avatarType === 'mascot' ? (
+                                        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: primaryColor }}>
+                                            <Bot className="w-4 h-4 text-white" />
+                                        </div>
+                                    ) : logo ? (
+                                        <img src={logo} alt="logo" className="w-8 h-8 rounded-full object-cover" />
+                                    ) : (
+                                        <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: primaryColor }}>
+                                            <Bot className="w-4 h-4 text-white" />
+                                        </div>
+                                    )}
+                                    <div className="flex flex-col">
+                                        <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
+                                            {botName || 'AI Assistant'}
+                                        </span>
+                                        <span className="text-[10px] text-gray-400 leading-tight">AI Assistant</span>
+                                    </div>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 3. Messages Area — conditional by previewState */}
+                        <div className="flex-grow px-5 py-4 flex flex-col gap-5 overflow-y-auto no-scrollbar transition-colors duration-200 min-h-[340px] bg-white" style={{ paddingTop: previewState === 'chat' ? 24 : undefined }}>
 
                             {previewState === 'chat' && (
-                                <>
-                                    {/* Welcome Screen */}
-                                    <div className="flex flex-col items-start text-left w-full pt-2">
-                                        <h2 className="text-2xl font-bold text-[#16202C]">
-                                            {(welcomeTitle || 'Hi there 👋').replace(/\p{Extended_Pictographic}/gu, '').trim() || 'Hi there'}
-                                        </h2>
-                                        <p className="text-[15px] text-surface-500 mt-1">
-                                            {welcomeSubtitle || 'How can we help you today?'}
-                                        </p>
-                                        <div className="flex flex-wrap gap-2 mt-5 justify-start">
-                                            {(Array.isArray(widgetMessages.welcome_suggestions) && widgetMessages.welcome_suggestions.length > 0
-                                                ? widgetMessages.welcome_suggestions
-                                                : ['Our Services', 'About us', 'Contact us']
-                                            ).filter(Boolean).map((s) => (
-                                                <span
-                                                    key={s}
-                                                    className="px-4 py-2 rounded-full text-[13px] text-surface-600 bg-surface-50 border border-surface-200"
-                                                >
-                                                    {s}
-                                                </span>
-                                            ))}
-                                        </div>
+                                <div className="flex flex-col items-start text-left w-full pt-2">
+                                    <h2 className="text-2xl font-bold text-[#16202C]">
+                                        {(welcomeTitle || 'Hi there 👋').replace(/\p{Extended_Pictographic}/gu, '').trim() || 'Hi there'}
+                                    </h2>
+                                    <p className="text-[15px] text-gray-500 mt-1">
+                                        {welcomeSubtitle || 'How can I help you today?'}
+                                    </p>
+                                    <div className="flex flex-wrap gap-2 mt-5 justify-start">
+                                        {(Array.isArray(widgetMessages.welcome_suggestions) && widgetMessages.welcome_suggestions.length > 0
+                                            ? widgetMessages.welcome_suggestions
+                                            : ['Our Services', 'About us', 'Contact us']
+                                        ).filter(Boolean).map((s) => (
+                                            <span
+                                                key={s}
+                                                className="px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200"
+                                            >
+                                                {s}
+                                            </span>
+                                        ))}
                                     </div>
-                                </>
+                                </div>
                             )}
 
                             {previewState === 'waiting' && (
@@ -1448,37 +1449,54 @@ export default function Interface({ embedded = false }) {
                                         <p className="text-[14px] font-semibold text-[#16202C]">
                                             {waitingMessage || 'Connecting you to support...'}
                                         </p>
-                                        <p className="text-[12px] text-surface-400 mt-1">Please wait a moment.</p>
+                                        <p className="text-[12px] text-gray-400 mt-1">Please wait a moment.</p>
                                     </div>
                                 </div>
                             )}
 
                             {previewState === 'unavailable' && (
                                 <div className="flex flex-col items-center justify-center h-full py-10 gap-4 text-center">
-                                    <div className="w-14 h-14 rounded-full bg-surface-100 flex items-center justify-center">
-                                        <Bot className="w-7 h-7 text-surface-400" />
+                                    <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
+                                        <Bot className="w-7 h-7 text-gray-400" />
                                     </div>
                                     <div>
                                         <p className="text-[14px] font-semibold text-[#16202C]">
                                             {offlineMessage || 'Our team is currently unavailable.'}
                                         </p>
-                                        <p className="text-[12px] text-surface-400 mt-1">Leave a message and we&apos;ll get back to you.</p>
+                                        <p className="text-[12px] text-gray-400 mt-1">Leave a message and we&apos;ll get back to you.</p>
                                     </div>
                                 </div>
                             )}
                         </div>
 
-                        {/* 3. Input Area — only shown in chat state */}
+                        {/* 4. Input + Footer — only shown in chat state */}
                         {previewState === 'chat' && (
-                            <div className="px-4 pb-4 pt-2 shrink-0 bg-white">
-                                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 pt-3 pb-2 shadow-sm">
-                                    <div className="text-[14px] text-surface-400">Ask anything...</div>
-                                    <div className="flex items-center justify-between mt-2">
-                                        <Paperclip className="w-5 h-5 text-[#16202C]" />
-                                        <svg width="20" height="20" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: primaryColor }}>
-                                            <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
-                                        </svg>
-                                    </div>
+                            <div className="px-4 pb-3 pt-1 shrink-0 bg-white">
+                                {/* Input box */}
+                                <div className="rounded-2xl border border-[#BBE7FF]/50 bg-white px-4 py-3 shadow-sm flex items-center justify-between">
+                                    <span className="text-[14px] text-gray-400">{widgetMessages.input_placeholder || 'Write a message...'}</span>
+                                    <svg width="18" height="18" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ color: primaryColor }}>
+                                        <path d="M29.0178 16.0651L28.5877 16.4951L2.66773 29.7851C1.93773 30.1551 1.07772 30.0051 0.537723 29.4551C0.00772303 28.9251 -0.172253 28.0851 0.187747 27.3651L5.28772 17.1651L17.4377 14.9951L5.25775 12.7751L0.207767 2.67508C-0.162233 1.93508 -0.022277 1.09507 0.537723 0.535067C1.06772 0.00506717 1.91775 -0.174899 2.62775 0.195101L28.5577 13.4551L29.0277 13.9251C29.4377 14.6151 29.4377 15.3851 29.0277 16.0751L29.0178 16.0651Z" fill="currentColor" />
+                                    </svg>
+                                </div>
+
+                                {/* Privacy notice */}
+                                <p className="text-[10px] text-gray-400 leading-snug mt-2 px-1">
+                                    This chat may be monitored and recorded according to our{' '}
+                                    <span className="font-semibold underline text-gray-500">Privacy Policy</span>.
+                                </p>
+
+                                {/* Footer — Live chat + Branding */}
+                                <div className="flex items-center justify-between gap-3 mt-3 pt-1 px-1">
+                                    {liveChatEnabled ? (
+                                        <div className="flex items-center gap-1 text-[11px] text-gray-400">
+                                            <Headphones size={12} />
+                                            <span>{widgetMessages.live_chat_label || 'Live chat'}</span>
+                                        </div>
+                                    ) : (
+                                        <div />
+                                    )}
+                                    <span className="text-[10px] text-gray-300">Powered by OyeChats</span>
                                 </div>
                             </div>
                         )}

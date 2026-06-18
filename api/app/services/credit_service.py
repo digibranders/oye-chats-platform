@@ -74,6 +74,11 @@ _DEFAULT_PRICING: dict[str, Any] = {
     "credit_cost.ai_chat": 1,
     "credit_cost.url_scan": 3,
     "credit_cost.email_send": 1,
+    # Per-file knowledge base upload. Documents go through OpenAI embedding +
+    # chunking + pgvector storage, so they cost real money to ingest. 2 credits
+    # is the agreed price (Free 5 docs = 10 credits worst case; Standard 35
+    # docs = 70 credits — negligible against the plan allowance).
+    "credit_cost.document_upload": 2,
     "seat_price_cents": 1500,
     "topup_expiry_months": 12,
     "low_balance_warn_pct": 20,

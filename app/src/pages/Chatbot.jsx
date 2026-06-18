@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { getAuthState } from '../utils/auth';
 import {
-    Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2,
-    X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, Palette, ExternalLink, Link2
+    Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2, ArrowLeft,
+    X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Link2
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
@@ -14,21 +14,16 @@ import IntegrationGuide from '../components/IntegrationGuide';
 import DomainRestrictions from '../components/DomainRestrictions';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
-import Tabs from '../components/ui/Tabs';
+
 import Interface from './Interface';
 import { cn, normalizeUrl } from '../lib/utils';
-
-const botPageTabs = [
-    { id: 'bots', label: 'Bots', icon: Bot },
-    { id: 'appearance', label: 'Appearance', icon: Palette },
-];
 
 export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading, error: botError } = useBotContext();
     const { showToast } = useToast();
     const { isBotManager } = getAuthState();
     const [searchParams, setSearchParams] = useSearchParams();
-    const [botTab, setBotTab] = useState(searchParams.get('tab') || 'bots');
+    const botTab = searchParams.get('tab') || 'bots';
     const [isCreateOpen, setIsCreateOpen] = useState(false);
     const [newBotName, setNewBotName] = useState('');
     const [newBotWebsite, setNewBotWebsite] = useState('');
@@ -146,8 +141,16 @@ export default function Chatbot() {
     if (botTab === 'appearance') {
         return (
             <div className="space-y-4 animate-fade-in">
-                <PageHeader title="My Bots" subtitle="Manage your chatbot instances and customize appearance" />
-                <Tabs tabs={botPageTabs} activeTab={botTab} onChange={setBotTab} />
+                <div>
+                    <button
+                        onClick={() => setSearchParams({}, { replace: true })}
+                        className="flex items-center gap-1.5 text-[13px] font-medium text-surface-400 dark:text-surface-500 hover:text-surface-700 dark:hover:text-surface-200 transition-colors mb-2"
+                    >
+                        <ArrowLeft size={14} />
+                        My Bots
+                    </button>
+                    <PageHeader title="Appearance" subtitle="Customize your chatbot's look and feel" />
+                </div>
                 <Interface embedded />
             </div>
         );
@@ -155,7 +158,7 @@ export default function Chatbot() {
 
     return (
         <div className="space-y-6 animate-fade-in">
-            <PageHeader title="My Bots" subtitle="Manage your chatbot instances and customize appearance">
+            <PageHeader title="My Bots" subtitle="Manage your chatbot instances">
                 {isBotManager && (
                     <button
                         onClick={() => setIsCreateOpen(true)}
@@ -165,7 +168,6 @@ export default function Chatbot() {
                     </button>
                 )}
             </PageHeader>
-            <Tabs tabs={botPageTabs} activeTab={botTab} onChange={setBotTab} />
 
             {loading ? (
                 <div className="flex flex-col items-center py-16 text-surface-400 dark:text-surface-500">

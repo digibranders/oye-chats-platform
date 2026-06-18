@@ -149,6 +149,9 @@ class CreateDepartmentRequest(BaseModel):
 class UpdateDepartmentRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    # Per-department business hours — same JSONB shape as bot.business_hours.
+    # Sentinel ``{}`` (empty dict) clears the schedule (always open).
+    business_hours: dict | None = None
 
 
 class AcceptChatRequest(BaseModel):
@@ -174,6 +177,7 @@ def list_departments(auth=Depends(get_current_client_or_operator)):
                     "id": d.id,
                     "name": d.name,
                     "description": d.description,
+                    "business_hours": d.business_hours,
                     "created_at": d.created_at.isoformat() if d.created_at else None,
                 }
                 for d in departments
@@ -217,8 +221,35 @@ def update_department(
             dept.name = request.name.strip()
         if request.description is not None:
             dept.description = request.description
+        if request.business_hours is not None:
+            # Empty dict means "clear" — treat as None in the DB so the
+            # resolver short-circuits to "always open" cleanly.
+            dept.business_hours = request.business_hours or None
+            # Invalidate state caches for every bot in this workspace —
+            # otherwise visitors keep seeing the stale "out of hours" UI
+            # for up to 5 seconds after the admin saves.
+            from app.db.models import Bot
+            from app.services.live_chat_availability_service import invalidate as invalidate_state
+
+            bot_ids = (
+                session.execute(
+                    select(Bot.id).where(
+                        Bot.client_id == auth["client_id"],
+                        Bot.is_active.is_(True),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for bot_id in bot_ids:
+                invalidate_state(bot_id)
         session.commit()
-        return {"id": dept.id, "name": dept.name, "description": dept.description}
+        return {
+            "id": dept.id,
+            "name": dept.name,
+            "description": dept.description,
+            "business_hours": dept.business_hours,
+        }
 
 
 @router.delete("/departments/{department_id}")
@@ -410,12 +441,18 @@ async def update_operator(
             operator.notification_preferences = request.notification_preferences
 
         session.commit()
+        # Capture name BEFORE the session context closes — accessing
+        # ``operator.name`` after the ``with`` block raises
+        # ``DetachedInstanceError`` because SQLAlchemy tries to refresh
+        # the expired attribute against a closed session. Mirrors the same
+        # pattern used in ``delete_operator`` below.
+        operator_name = operator.name
 
     # Update operator's department in WS manager without triggering reconnect
     if department_changed:
         await manager.update_operator_department(operator_id, new_department_id)
 
-    return {"success": True, "message": f"Operator '{operator.name}' updated."}
+    return {"success": True, "message": f"Operator '{operator_name}' updated."}
 
 
 @router.delete("/{operator_id}")
@@ -452,7 +489,26 @@ def delete_operator(operator_id: int, auth=Depends(get_current_client_or_operato
 
 @router.post("/handoff")
 async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_current_bot)):
-    """Called by the widget (via REST) to initiate a handoff request."""
+    """Visitor-initiated live chat request — runs through the state machine.
+
+    The state machine ``LiveChatAvailabilityService`` decides what the widget
+    should do based on the workspace's current live-chat reality (feature
+    flag, operator presence, business hours, queue capacity). The endpoint
+    returns a structured response the widget reads to pick its UI mode:
+
+    * ``suggested_action == "route"`` — queue + notify operators (current path)
+    * ``suggested_action == "wait"``  — queue + tell widget to show queue UI
+      with auto-fallback timer
+    * ``suggested_action == "offline_form"`` — do NOT queue, tell widget to
+      switch to the offline message form with the matching ``state`` as the
+      fallback reason
+
+    Side effects (audit log, webhook, email notifications) only fire when
+    the visitor will actually be queued — no point waking operators when the
+    state machine has already decided to fall back to the form.
+    """
+    from app.services import live_chat_availability_service as availability_svc
+
     with get_session() as session:
         chat_session = session.execute(
             select(ChatSession).where(ChatSession.id == request.session_id)
@@ -468,6 +524,62 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             session.add(chat_session)
             session.flush()
 
+        # Re-fetch bot in this session so SQLAlchemy doesn't complain about
+        # detached instance access later. The Depends() bot may be from a
+        # different session.
+        db_bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if db_bot is None:
+            # Defensive: bot was deleted between request and processing
+            return {
+                "success": False,
+                "state": "feature_disabled",
+                "suggested_action": "offline_form",
+                "fallback_reason": "feature_disabled",
+            }
+
+        # ── State machine decides what happens ─────────────────────────────
+        # Pass the department_id so per-department business hours apply
+        # (Sales 9-6 vs Support 24/7 in the same workspace).
+        availability = availability_svc.resolve_live_chat_state(db_bot, session, department_id=request.department_id)
+
+        # When the state machine says "show the offline form", we short-circuit
+        # WITHOUT marking the session as waiting and WITHOUT firing operator
+        # notifications. The widget gets the reason as fallback metadata so it
+        # can render the right copy (no_operators vs out_of_hours vs ...).
+        if availability.suggested_action == availability_svc.SuggestedAction.OFFLINE_FORM:
+            # Audit the fallback so admins can see why visitors fell back.
+            # Distinct action from "handoff_requested" so analytics can split
+            # successful queue entries from instant fallbacks.
+            session.add(
+                ChatAuditLog(
+                    session_id=request.session_id,
+                    action="handoff_fell_back",
+                    details={
+                        "reason": availability.state.value,
+                        "requested_department_id": request.department_id,
+                    },
+                )
+            )
+            session.commit()
+            logger.info(
+                "Handoff fell back to offline form: session=%s bot=%s reason=%s",
+                request.session_id,
+                bot.id,
+                availability.state.value,
+            )
+            return {
+                "success": True,
+                "state": availability.state.value,
+                "suggested_action": "offline_form",
+                "fallback_reason": availability.state.value,
+                "message_key": availability.message_key,
+                "next_available_at": availability.next_available_at,
+            }
+
+        # State is AVAILABLE or ALL_BUSY → proceed with the existing queue +
+        # notify flow. ALL_BUSY still queues (visitor will wait for capacity);
+        # AVAILABLE queues and the next operator notification fires.
+
         # Update session status
         chat_session.status = "waiting"
         chat_session.handoff_reason = (
@@ -476,8 +588,6 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         if request.department_id:
             chat_session.department_id = request.department_id
 
-        # Get bot for timeout setting (re-fetch within this session)
-        db_bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
         timeout = db_bot.operator_timeout_seconds if db_bot else 120
 
         # Audit log — handoff requested
@@ -485,10 +595,17 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             ChatAuditLog(
                 session_id=request.session_id,
                 action="handoff_requested",
-                details={"reason": request.reason, "department_id": request.department_id},
+                details={
+                    "reason": request.reason,
+                    "department_id": request.department_id,
+                    "state": availability.state.value,
+                },
             )
         )
         session.commit()
+
+        # Bust the state cache — the queue size just changed.
+        availability_svc.invalidate(db_bot.id)
 
         # Get visitor name for queue display
         lead_info = get_lead_info_by_session(session, request.session_id)
@@ -523,6 +640,10 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                 for recipient in recipients:
                     send_handoff_request_email(recipient, bot.name, request.reason, contact, reply_to=reply_to)
 
+        # Cache queue timeout for the response — read BEFORE the session
+        # closes so the value travels out cleanly.
+        queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
+
     # Schedule in-memory queue update as a background task so the REST response
     # is not held up by WebSocket sends. asyncio.create_task() is safe here
     # because async endpoints run directly on the event loop.
@@ -536,7 +657,19 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         )
     )
 
-    return {"success": True, "status": "waiting"}
+    # Echo the resolved state so the widget can pick its UI mode without
+    # waiting for the first WebSocket status push.
+    return {
+        "success": True,
+        "status": "waiting",
+        "state": availability.state.value,
+        "suggested_action": availability.suggested_action.value,
+        "message_key": availability.message_key,
+        "queue_position": availability.queue_position,
+        "eta_seconds": availability.eta_seconds,
+        "queue_timeout_seconds": queue_timeout,
+        "online_operator_count": availability.online_operator_count,
+    }
 
 
 @router.post("/cancel-handoff/{session_id}")

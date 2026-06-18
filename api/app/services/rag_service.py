@@ -718,9 +718,44 @@ def _framework_dimensions(config: dict | None) -> list[str]:
     return dims
 
 
+# Routing-intent patterns: the visitor is asking to be connected to a human,
+# not describing a qualified business pain. The extraction LLM has historically
+# been tricked by these into scoring Need as if "wants help" == "has urgent
+# need". Belt-and-braces with the prompt-level negative examples in
+# ``extract_qualification_signals`` — if a signal still slips through, the
+# prompt is broken, not this filter.
+_HANDOFF_INTENT_PATTERNS = re.compile(
+    # "(talk|speak|connect|chat) [optional filler word] (to|with) [a/an] (human|agent|...)"
+    # — the optional ``me|us|with someone`` between the verb and to/with covers
+    # phrasings like "connect ME with support" and "speak with an agent".
+    r"\b(talk|speak|connect|chat)(\s+\w+){0,2}\s+(to|with)\s+(an?\s+)?(human|person|agent|operator|someone|support|team|representative|rep)\b"
+    # "(real|live) (person|human|agent|support)" — bare reference to a person.
+    r"|\b(real|live)\s+(person|human|agent|support)\b"
+    # Help-seeking with "can/could you/i/someone HELP me" — note "help" is the
+    # main verb here, not the object of get/have.
+    r"|\b(can|could)\s+(i|you|someone)\s+(get|have\s+some\s+)?help\b"
+    # "Get me a human" / "get me an agent" — direct request for a person.
+    r"|\bget\s+me\s+(an?\s+)?(human|person|agent|someone)\b"
+    # Variations of the handoff noun itself.
+    r"|\b(hand\s*off|handoff|handover)\b",
+    re.IGNORECASE,
+)
+
+
 def _should_skip_bant_extraction(question: str, current_bant: dict, framework_config: dict | None = None) -> bool:
-    """Return True if BANT extraction should be skipped to save LLM cost."""
+    """Return True if BANT extraction should be skipped to save LLM cost.
+
+    Skip conditions, in priority order:
+    1. Message is too short to plausibly contain a signal (< 10 chars).
+    2. Message is a clear routing request to talk to a human (see
+       ``_HANDOFF_INTENT_PATTERNS``). These previously produced false-positive
+       Need signals and corrupted lead scores via the never-downgrade rule.
+    3. All dimensions are already saturated (≥ 20/25); further extraction is
+       pointless because the post-process rejects equal-or-lower scores.
+    """
     if len(question.strip()) < 10:
+        return True
+    if _HANDOFF_INTENT_PATTERNS.search(question):
         return True
     dimensions = _framework_dimensions(framework_config) or ["need", "budget", "authority", "timeline"]
     scores = [int(current_bant.get(f"{dim}_score", 0) or 0) for dim in dimensions]
@@ -790,7 +825,7 @@ def extract_qualification_signals(
 
         rubric_text = "\n".join(rubric_lines)
 
-        extraction_prompt = f"""Analyze this conversation and extract NEW BANT qualification signals.
+        extraction_prompt = f"""You are a STRICT signal extractor. Your job is to decide whether the user's latest message contains NEW, EXPLICITLY-STATED qualification signals. Default to NO SIGNAL.
 
 CONVERSATION HISTORY:
 {history_context}
@@ -799,32 +834,86 @@ LATEST EXCHANGE:
 User: {question}
 Bot: {bot_answer}
 
-CURRENT BANT STATE AND SCORING RUBRIC:
+CURRENT QUALIFICATION STATE AND SCORING RUBRIC:
 {rubric_text}
 
-INSTRUCTIONS:
-- If the user's message is a greeting, thank you, or small talk, return an empty signals list immediately.
-- Only extract signals that are NEW in this latest exchange. Do not re-extract existing data.
-- For each new signal, provide the exact user quote, a structured summary, confidence level, and a score (0-25) based on the rubric options above.
-- Match the score to the closest rubric option that fits the user's statement.
-- If no new signals are found, return an empty signals list.
-- Only extract signals from the USER's messages, not the bot's responses.
-- If a statement is ambiguous or vague, use confidence "low" and assign a conservative score from the lower end of the rubric.
-- Do not infer qualification signals the user did not explicitly state. Stick to what was said.
+CORE PRINCIPLES (apply to EVERY dimension):
+1. STATEMENT vs QUESTION. Extract only from STATEMENTS the user makes about themselves. "What is your pricing?" is a question about us, not a budget signal about the user.
+2. PRESENT-TENSE COMMITMENT, not PAST or HYPOTHETICAL. "We have 5k allocated" is a signal. "We SPENT 50k last year" is history. "We MIGHT spend 5k" is hypothetical. The verb tense and modality are load-bearing.
+3. A REQUEST FOR HELP IS NOT A STATED NEED. "Connect me with support", "I want to talk to a human", "can someone help me" are ROUTING actions. They are NOT evidence of qualified pain.
+4. NEVER INFER. If you cannot quote the exact user span that proves the signal, do not extract it. The "extracted_value" field must directly summarise the quoted span, not your interpretation of what the user might have meant.
+5. Only extract signals from the USER's messages, never from the bot's responses.
+6. Only extract NEW signals from the LATEST exchange. Do not re-extract existing data.
 
-NEGATIVE EXAMPLES — Do NOT extract signals from these:
-- "Hi, how are you?" — greeting, no signal
-- "Thanks, that's helpful" — acknowledgment, no signal
-- "Can you tell me more about your product?" — product inquiry, not a qualification statement
-- "Interesting" / "I see" / "Okay" — filler, no signal
-- "What integrations do you support?" — feature question, not BANT
-- "Let me think about it" — non-committal, no new information
+═══════════════════════════════════════════════════════
+DIMENSION-SPECIFIC GUIDANCE
+═══════════════════════════════════════════════════════
 
-POSITIVE EXAMPLES — These ARE signals:
-- "We need to solve this by Q3" — Timeline signal
-- "Our budget is around $5K per month" — Budget signal
-- "I'm the VP of Engineering and I'll make the final call" — Authority signal
-- "We're losing $50K/month due to this problem" — Need signal (urgent)"""
+NEED — a stated PROBLEM or PAIN the user is trying to solve:
+  POSITIVE (these ARE need signals):
+    + "Our current chatbot can't answer pricing questions"      (tool failure)
+    + "We're losing 10 hours a week to manual triage"           (quantified pain)
+    + "We need SSO for SOC 2 compliance"                        (compliance pain)
+    + "Customers complain about 24-hour response times"         (customer-facing problem)
+  NEGATIVE (these are NOT need signals):
+    - "I want to talk to a human"                               (routing action, not need)
+    - "Connect me with support"                                 (routing action)
+    - "Can someone help me?"                                    (ambiguous help-seeking)
+    - "Hi, I have a question"                                   (conversation opener)
+    - "Tell me more about your product"                         (exploration, not need)
+    - "Do you support SSO?"                                     (feature question, NOT need)
+    - "What integrations do you offer?"                         (feature question)
+    - "We've been burned by tools before"                       (concern, not stated current pain)
+
+BUDGET — a stated CURRENT financial commitment or allocation:
+  POSITIVE (these ARE budget signals; note PRESENT TENSE + commitment):
+    + "We HAVE 5k a month allocated for this"                   (present allocation)
+    + "Our budget for this initiative is around 10k"            (current capacity)
+    + "I'm APPROVED to spend up to 20k"                         (authority + amount)
+    + "We've ALREADY APPROVED 3 lakh for a chatbot"             (pre-approved)
+  NEGATIVE (these are NOT budget signals; past, hypothetical, or about others):
+    - "Last year we SPENT 50k on tools that didn't work"        (PAST tense, not current)
+    - "Our previous vendor COST us 5k a month"                  (past + competitor pricing)
+    - "How much does this cost?"                                (pricing question, NOT budget)
+    - "Do you have a free trial?"                               (plan question)
+    - "We want something affordable"                            (too vague, no number)
+    - "It depends on the price"                                 (contingent, not committed)
+    - "We've never spent more than 2k"                          (historical ceiling)
+    - "Your competitor charges 100 a month"                     (market intel, not user's budget)
+
+AUTHORITY — the user's stated ROLE in the buying decision:
+  POSITIVE (these ARE authority signals):
+    + "I'm the VP of Engineering and I'll make the final call"  (title + decision power)
+    + "I run customer success and own the tooling budget"       (role + budget control)
+    + "I'd need to loop in our CFO before signing"              (influencer with named approver)
+    + "I'm just evaluating tools for my manager"                (low authority, evaluator only)
+  NEGATIVE (these are NOT authority signals):
+    - "Who usually buys your product?"                          (question about us, not user)
+    - "I think this looks great"                                (opinion, not authority)
+    - "We are a team of 5"                                      (company size, not role)
+    - "My boss told me to find a chatbot"                       (mandate received, not authority)
+
+TIMELINE — a stated DECISION or IMPLEMENTATION window:
+  POSITIVE (these ARE timeline signals):
+    + "We need to be live by end of Q1"                         (specific date)
+    + "Decision by Nov 30, our RFP closes that day"             (hard deadline + driver)
+    + "Evaluating this month, signing within 30 days"           (decision window)
+    + "Looking to roll this out in the next 6 months"           (soft but real window)
+  NEGATIVE (these are NOT timeline signals):
+    - "Soon"                                                    (too vague, no commitment)
+    - "Eventually" / "down the road"                            (vague)
+    - "No rush"                                                 (absence of timeline)
+    - "When can your bot be deployed?"                          (question about us)
+    - "We might need this someday"                              (hedged hypothetical)
+
+═══════════════════════════════════════════════════════
+SCORING DISCIPLINE
+═══════════════════════════════════════════════════════
+- Match the score to the CLOSEST rubric option that fits the user's actual statement.
+- If a statement is ambiguous or hedged ("might", "possibly", "maybe", "I think we'd"), use confidence "low" and score from the LOWER end of the rubric.
+- If the user already volunteered information about a dimension in earlier turns AND this latest message adds nothing new for that dimension, do NOT re-extract.
+- Greetings, acknowledgments, fillers ("hi", "thanks", "okay", "interesting", "let me think") → return an empty signals list.
+- When in doubt, return NO signal. False positives are more harmful than false negatives — a missed signal is fixable on the next turn; a false signal corrupts the lead's score permanently because of the never-downgrade rule downstream."""
 
         response = litellm.completion(
             model=LLM_MODEL,
@@ -1184,21 +1273,25 @@ Eligible dimensions (use the exact dimension key, lowercase):
                 "rather than asking more qualifying questions."
             )
         elif has_prior_turns:
-            probing_instruction = f"""The conversation is underway. After fully answering the visitor's question, naturally weave in ONE question targeting **{next_dim_to_probe.upper()}** — the next unassessed dimension.
+            probing_instruction = f"""The conversation is underway. After fully answering the visitor's question, naturally weave in ONE question targeting **{next_dim_to_probe.upper()}**, the next unassessed dimension.
 
 EMBEDDING RULES:
 - Answer the question FIRST. The qualifying question always comes at the end.
 - Make it feel like genuine curiosity, not a sales script. One short sentence is enough.
 - Suggested angle: "{next_dim_cta}"
-- Connect the question to what you just discussed — do not switch context abruptly.
-- GOOD: End your answer, then add one brief curious question tied to your reply ("Out of curiosity — {next_dim_cta.lower()}" or similar natural bridge).
+- Connect the question to what you just discussed; do not switch context abruptly.
+- FORMAT: Put the follow-up question on its OWN line, separated from your answer by a blank line. Never run it inline at the end of your last sentence.
+- BANNED PHRASE: Do NOT begin the question with "Out of curiosity". That phrase has become the chatbot equivalent of "Per my last email"; visitors recognise it instantly as a script. Vary your bridges: just ask the question directly, or use "Quick question:", "By the way,", "If you don't mind me asking,", or no preamble at all.
 - BAD: "Can I ask a few quick questions to understand your needs?" (survey framing)
-- BAD: Opening with the qualifying question before answering."""
+- BAD: Opening with the qualifying question before answering.
+- BAD: "Out of curiosity, when..." (banned opener; rephrase)."""
         else:
             probing_instruction = f"""This appears to be an early exchange. Answer the visitor helpfully first.
 If their message shows real intent (not just a greeting or one-word opener), close with a single soft question about **{next_dim_to_probe.upper()}**.
 - Suggested angle: "{next_dim_cta}"
-- For greetings or very short openers ("hi", "hello", "hey"): skip the probe — just answer warmly."""
+- FORMAT: Put the follow-up question on its OWN line, separated from your answer by a blank line.
+- Never begin the question with "Out of curiosity"; vary your phrasing or ask directly.
+- For greetings or very short openers ("hi", "hello", "hey"): skip the probe; just answer warmly."""
 
         qualification_section = f"""
 5. LEAD QUALIFICATION (ACTIVE & CONVERSATIONAL):
@@ -1421,7 +1514,8 @@ RULES:
 7. Only ask a follow-up question if the user's query is genuinely ambiguous.
 8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
 9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".
-10. LINKS: Whenever you mention any URL (website, pricing, contact, booking link, social media, docs, support page, etc.), format it as a markdown link with short, descriptive text — e.g. `[our pricing page](https://example.com/pricing)`, `[book a demo](https://example.com/book)`, `[contact us](https://example.com/contact)`. NEVER paste a bare URL or write the URL as plain text in parentheses — bare URLs do NOT render as clickable in the chat widget. Use the visible page/action name as the link label, not the URL itself. Only http:// and https:// links are allowed. This rule applies ONLY to actual URLs — internal sentinel tokens like `[CTA:timeline]`, `[LEAVE_MESSAGE_CARD]`, or `[MEETING_CARD]` are NOT URLs and MUST be emitted exactly as documented elsewhere in these instructions, not rewritten as markdown links.{custom_prompt_section}{tone_section}{company_section}{services_section}
+10. LINKS: Whenever you mention any URL (website, pricing, contact, booking link, social media, docs, support page, etc.), format it as a markdown link with short, descriptive text — e.g. `[our pricing page](https://example.com/pricing)`, `[book a demo](https://example.com/book)`, `[contact us](https://example.com/contact)`. NEVER paste a bare URL or write the URL as plain text in parentheses — bare URLs do NOT render as clickable in the chat widget. Use the visible page/action name as the link label, not the URL itself. Only http:// and https:// links are allowed. This rule applies ONLY to actual URLs — internal sentinel tokens like `[CTA:timeline]`, `[LEAVE_MESSAGE_CARD]`, or `[MEETING_CARD]` are NOT URLs and MUST be emitted exactly as documented elsewhere in these instructions, not rewritten as markdown links.
+11. PUNCTUATION: Do NOT use the em-dash character (—) anywhere in your response. The em-dash is a well-known AI-generated-text tell and makes your replies feel robotic. Use a period, comma, colon, semicolon, or a plain hyphen (-) instead. This rule has no exceptions; substitute the em-dash even when quoting or paraphrasing reference material.{custom_prompt_section}{tone_section}{company_section}{services_section}
 {qualification_section}
 {handoff_section}
 {meeting_section}

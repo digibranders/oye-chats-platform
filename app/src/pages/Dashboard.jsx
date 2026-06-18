@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Sparkles, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity, Link2, Check } from 'lucide-react';
+import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity, Link2, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
@@ -173,11 +173,11 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-surface-900 dark:text-white tracking-tight flex items-center gap-2">
             {greeting}, {adminName.split(' ')[0]}
             <motion.span
-              animate={{ rotate: [0, 14, -8, 14, -4, 10, 0] }}
-              transition={{ duration: 2, delay: 0.5 }}
-              className="inline-block origin-[70%_80%]"
+              whileHover={{ rotate: [0, 14, -8, 14, -4, 10, 0] }}
+              transition={{ duration: 0.8 }}
+              className="inline-block origin-[70%_80%] cursor-default select-none text-[22px] leading-none"
             >
-              <Sparkles size={22} className="text-primary-500" />
+              👋
             </motion.span>
           </h1>
           <p className="text-surface-500 mt-1 text-sm flex items-center gap-1.5">
