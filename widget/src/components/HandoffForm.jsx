@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Mail, ArrowRight, Headphones, Building2, ArrowLeft, ChevronDown } from 'lucide-react';
-import { getDepartments } from '../services/api';
+import { User, Mail, ArrowRight, Headphones, ArrowLeft } from 'lucide-react';
 import { sanitizeColor } from '../services/sanitize';
 
 const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 'pending' }) => {
@@ -11,39 +10,29 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
     const [formData, setFormData] = useState({
         name: existingLeadInfo?.name || '',
         email: existingLeadInfo?.email || '',
-        department_id: null,
     });
-    // null = not yet loaded; [] = loaded with no departments; [...] = loaded with departments
-    const [departments, setDepartments] = useState(null);
     const [emailError, setEmailError] = useState('');
     const autoSubmitAttemptedRef = useRef(false);
 
     const isSubmitting = status === 'submitting';
     const primaryColor = sanitizeColor(settings.primary_color, '#3A0CA3');
 
+    // Auto-submit when all required info is already on file (skip the form
+    // entirely). Department picker was removed — all chats go into the
+    // single shared pool and the backend's routing service picks the
+    // operator. Removing the picker also removes the getDepartments() round
+    // trip we used to wait on before auto-submit was allowed to fire.
     useEffect(() => {
-        getDepartments().then((data) => {
-            if (data.departments && data.departments.length > 1) {
-                setDepartments(data.departments);
-            } else {
-                setDepartments([]);
-            }
-        }).catch(() => setDepartments([]));
-    }, []);
-
-    // Auto-submit when all required info is already on file (skip the form entirely)
-    useEffect(() => {
-        if (!hasAllRequired || departments === null || autoSubmitAttemptedRef.current) return;
+        if (!hasAllRequired || autoSubmitAttemptedRef.current) return;
         autoSubmitAttemptedRef.current = true;
         const timer = setTimeout(() => {
             onSubmit({
                 name: existingLeadInfo.name,
                 email: existingLeadInfo.email,
-                department_id: null,
             });
         }, 300);
         return () => clearTimeout(timer);
-    }, [departments, hasAllRequired, existingLeadInfo, onSubmit]);
+    }, [hasAllRequired, existingLeadInfo, onSubmit]);
 
     const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -135,25 +124,6 @@ const HandoffForm = ({ settings, onSubmit, onCancel, existingLeadInfo, status = 
                             {emailError && (
                                 <p className="mt-0.5 ml-1 text-[11px] text-red-500">{emailError}</p>
                             )}
-                        </div>
-                    )}
-
-                    {/* Department dropdown — shown only when multiple departments exist */}
-                    {departments && departments.length > 0 && (
-                        <div className={`flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 focus-within:border-blue-300 focus-within:bg-white transition-colors ${isSubmitting ? 'opacity-60' : ''}`}>
-                            <Building2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                            <select
-                                value={formData.department_id || ''}
-                                onChange={(e) => setFormData(prev => ({ ...prev, department_id: e.target.value ? Number(e.target.value) : null }))}
-                                className="flex-1 bg-transparent outline-none text-[13px] text-[#16202C] appearance-none cursor-pointer"
-                                disabled={isSubmitting}
-                            >
-                                <option value="">Select department</option>
-                                {departments.map((dept) => (
-                                    <option key={dept.id} value={dept.id}>{dept.name}</option>
-                                ))}
-                            </select>
-                            <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0 pointer-events-none" />
                         </div>
                     )}
 

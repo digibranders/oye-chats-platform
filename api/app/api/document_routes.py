@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["documents"])
 
 # Upload limits (bytes)
-_MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB per file
+_MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB per file
 _MAX_TOTAL_UPLOAD = 60 * 1024 * 1024  # 60 MB per request
 
 
@@ -189,15 +189,17 @@ def ingest_documents(
     a paid-feature action. Customers with an expired trial can still see
     and delete what they already uploaded, just not add more until they
     reactivate.
+
+    Credit-metered at ``credit_cost.document_upload`` per file (default 2).
+    Cost is calculated against the post-validation file count so unsupported
+    extensions and oversize files don't burn credits. Deduction happens
+    BEFORE the disk write so we never persist a file we can't bill for; if
+    a write later fails, the per-file cost is refunded.
     """
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
     _verify_bot_ownership(bot_id, client_id)
 
-    # File ingestion is no longer credit-metered (URL crawling is the metered
-    # ingest path; uploads are unlimited within the plan). The legacy
-    # ``knowledge_pages`` limit was a soft storage cap that's been retired
-    # along with the per-metric ``UsageRecord`` table.
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
@@ -219,7 +221,7 @@ def ingest_documents(
         if file_size > _MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"File '{file.filename}' exceeds 20 MB limit ({file_size / (1024 * 1024):.1f} MB).",
+                detail=f"File '{file.filename}' exceeds 15 MB limit ({file_size / (1024 * 1024):.1f} MB).",
             )
         total_bytes += file_size
         if total_bytes > _MAX_TOTAL_UPLOAD:
@@ -229,7 +231,58 @@ def ingest_documents(
             )
         file_buffers.append((file.filename, content))
 
-    # ── Phase 2: All files validated — write to disk ──
+    if not file_buffers:
+        raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) supplied.")
+
+    # ── Phase 1.5: Credit pre-flight ──
+    # Charge upfront so a client with insufficient credits can't slip
+    # past validation, write 60 MB to disk, and only fail at ingest time.
+    # Refund happens below if any file write actually fails.
+    from app.services import credit_service
+
+    per_doc_cost = 0
+    deducted_amount = 0
+    with get_session() as db:
+        per_doc_cost = credit_service.get_credit_cost(db, "document_upload")
+        total_cost = per_doc_cost * len(file_buffers)
+        if total_cost > 0:
+            try:
+                credit_service.check_and_deduct(
+                    db,
+                    client_id,
+                    total_cost,
+                    reason="document_upload",
+                    reference_id=bot_id,
+                )
+                db.commit()
+                deducted_amount = total_cost
+            except credit_service.InsufficientCredits as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "error": "insufficient_credits",
+                        "required": exc.required,
+                        "available": exc.available,
+                        "per_document_cost": per_doc_cost,
+                        "document_count": len(file_buffers),
+                        "message": (
+                            f"Uploading {len(file_buffers)} document(s) costs {exc.required} credits, "
+                            f"but you only have {exc.available}. Top up or upgrade to continue."
+                        ),
+                    },
+                ) from exc
+            except credit_service.KillSwitchActive as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": "billing_paused",
+                        "message": "Billing is temporarily paused for maintenance.",
+                    },
+                ) from exc
+
+    # ── Phase 2: All files validated + credits secured — write to disk ──
     base_dir = Path(DOCUMENTS_DIR).resolve()
     for filename, content in file_buffers:
         file_path = (base_dir / filename).resolve()
@@ -244,6 +297,33 @@ def ingest_documents(
             logger.info(f"Saved file: {filename} ({len(content) / 1024:.0f} KB)")
         except Exception as e:
             logger.error(f"Failed to save {filename}: {e}")
+
+    # Refund credits for any files that failed to save. The pre-flight
+    # charged for ``len(file_buffers)`` but only ``len(saved_files)`` are
+    # actually being ingested. The delta is unfair to bill for.
+    failed_count = len(file_buffers) - len(saved_files)
+    if failed_count > 0 and per_doc_cost > 0:
+        refund_amount = per_doc_cost * failed_count
+        with get_session() as db:
+            try:
+                credit_service.refund(
+                    db,
+                    client_id,
+                    refund_amount,
+                    reference_id=bot_id or 0,
+                    note=f"document_upload partial failure ({failed_count} files)",
+                )
+                db.commit()
+                deducted_amount -= refund_amount
+            except Exception as refund_err:
+                # Refund failure is non-fatal — log loudly so it can be
+                # reconciled manually if it ever happens.
+                logger.error(
+                    "Document upload refund failed for client=%s amount=%s: %s",
+                    client_id,
+                    refund_amount,
+                    refund_err,
+                )
 
     if not saved_files:
         raise HTTPException(status_code=400, detail="No valid files (PDF, DOCX, TXT, MD) saved.")
@@ -267,6 +347,8 @@ def ingest_documents(
         "message": "Documents are being processed",
         "files_uploaded": saved_files,
         "status": "processing",
+        "credits_charged": deducted_amount,
+        "credits_per_document": per_doc_cost,
     }
     if job_id:
         response["job_id"] = job_id

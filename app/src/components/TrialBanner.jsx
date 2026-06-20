@@ -84,7 +84,7 @@ export default function TrialBanner() {
                         </span>
                     </span>
                     <Link
-                        to="/billing"
+                        to="/billing?tab=seats"
                         className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white text-rose-700 text-[13px] font-semibold hover:bg-rose-50 transition-colors"
                     >
                         Reactivate now
@@ -128,7 +128,7 @@ export default function TrialBanner() {
                             </span>
                         </span>
                         <Link
-                            to="/billing"
+                            to="/billing?tab=seats"
                             className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-semibold transition-colors"
                         >
                             Choose a plan
@@ -162,7 +162,7 @@ export default function TrialBanner() {
                         </span>
                     </span>
                     <Link
-                        to="/billing"
+                        to="/billing?tab=seats"
                         className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[12.5px] font-semibold transition-colors"
                     >
                         Pick a plan

@@ -3,7 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Sparkles,
   Zap,
+  MessageSquare,
   Globe,
+  FileText,
   CreditCard,
   Users,
   Plus,
@@ -15,6 +17,7 @@ import {
   Activity,
   ListOrdered,
   ArrowUpRight,
+  Info,
 } from 'lucide-react';
 import CreditCoin from '../components/icons/CreditCoin';
 import {
@@ -91,6 +94,7 @@ const REASON_LABEL = {
   plan_grant: 'Plan grant',
   topup: 'Top-up purchase',
   ai_chat: 'AI chat reply',
+  document_upload: 'Document upload',
   url_scan: 'URL crawl',
   email_send: 'Customer email',
   manual_adjust: 'Manual adjustment',
@@ -132,10 +136,20 @@ function reasonStyle(reason, delta) {
 const COST_ROWS = [
   {
     key: 'ai_chat',
-    icon: Zap,
+    icon: MessageSquare,
     label: 'AI chat reply',
     detail: 'Each completed answer your bot streams to a visitor.',
     iconColor: 'text-amber-500',
+  },
+  {
+    // Knowledge-base document upload — charged at /ingest pre-flight before
+    // the file is even written to disk. Refunded if a file fails to save.
+    // Cost lives in PricingConfig (default 2) so super-admins can tune it.
+    key: 'document_upload',
+    icon: FileText,
+    label: 'Document upload (per file)',
+    detail: 'Charged per file added to your knowledge base. Refunded if a file fails to save.',
+    iconColor: 'text-violet-500',
   },
   {
     key: 'url_scan',
@@ -144,6 +158,7 @@ const COST_ROWS = [
     detail: 'Charged per page actually ingested into your knowledge base.',
     iconColor: 'text-sky-500',
   },
+  
   // {
   //   key: 'email_send',
   //   icon: Mail,
@@ -325,7 +340,9 @@ export default function Billing() {
   const seatPriceLabel = fmtCurrency(plan?.extra_seat_price_cents ?? 500, currency);
 
   const usage = balance?.usage || {};
-  const costs = balance?.costs || { ai_chat: 1, url_scan: 3, email_send: 1 };
+  // Merge per-key so a backend payload that hasn't been redeployed since a
+  // new cost was added still renders a sensible default instead of "0 credits".
+  const costs = { ai_chat: 1,document_upload: 2, url_scan: 3,  email_send: 1, ...(balance?.costs || {}) };
 
   // Total credits consumed this period across every bucket (plan, top-up,
   // manual) — sums the same per-reason ledger tally the rows below render
@@ -334,7 +351,9 @@ export default function Billing() {
   // much of your monthly allowance is gone" — and intentionally stays
   // plan-only.
   const periodUsed =
-    (usage?.ai_chat?.credits_used || 0) + (usage?.url_scan?.credits_used || 0);
+    (usage?.ai_chat?.credits_used || 0)
+    + (usage?.url_scan?.credits_used || 0)
+    + (usage?.document_upload?.credits_used || 0);
 
   // Two-step seat change: open the confirmation modal first so the user
   // sees the price + payment provider (Razorpay/Stripe) BEFORE we touch
@@ -703,9 +722,12 @@ function OverviewTab({
   balance,
   onTopup,
 }) {
+  const planBalancePct = Math.max(0, 100 - planUsedPct);
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Card 1 — Plan credits */}
         <Card>
           <CardHeader>
             <CardTitle>
@@ -723,7 +745,7 @@ function OverviewTab({
             </div>
             <Progress value={planUsedPct} className="mt-3" />
             <div className="mt-3 flex items-center justify-between text-xs text-surface-500 dark:text-surface-400">
-              <span>{planUsedPct}% used this period</span>
+              <span>{planBalancePct}% balance</span>
               <span>Resets {fmtDate(balance?.resets_at)}</span>
             </div>
             {/* Two-state footer: amber low-balance warning when *total* runway
@@ -745,12 +767,63 @@ function OverviewTab({
           </CardContent>
         </Card>
 
+        {/* Card 2 — Used this period */}
         <Card>
           <CardHeader>
             <CardTitle>
               <span className="flex items-center gap-2">
-                <CreditCoin className="w-4 h-4 text-primary-500" /> Top-up credits
+                <Activity className="w-4 h-4 text-emerald-500" /> Used this period
               </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-surface-900 dark:text-surface-50">
+              {fmtNumber(periodUsed)}
+            </div>
+            <div className="text-xs text-surface-500 mt-1">credits consumed</div>
+            <div className="mt-3 space-y-1.5 text-xs">
+              <UsageRow label="AI chats" credits={usage?.ai_chat?.credits_used || 0} count={usage?.ai_chat?.event_count || 0} />
+              <UsageRow label="Documents uploaded" credits={usage?.document_upload?.credits_used || 0} count={usage?.document_upload?.event_count || 0} />
+              <UsageRow label="URL pages" credits={usage?.url_scan?.credits_used || 0} count={usage?.url_scan?.event_count || 0} />
+              {/* <UsageRow label="Customer emails" credits={usage?.email_send?.credits_used || 0} count={usage?.email_send?.event_count || 0} /> */}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Card 3 — Top-up credits */}
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <span className="flex items-center gap-2">
+                  <CreditCoin className="w-4 h-4 text-primary-500" /> Top-up credits
+                </span>
+                <div className="relative group">
+                  <Info className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 cursor-help" />
+                  <div
+                    className={cn(
+                      'absolute right-0 top-5 z-10 w-64 rounded-xl border p-3 shadow-lg',
+                      'border-surface-200 dark:border-surface-700',
+                      'bg-white dark:bg-surface-900',
+                      'text-xs text-surface-600 dark:text-surface-300 leading-relaxed',
+                      'opacity-0 invisible group-hover:opacity-100 group-hover:visible',
+                      'transition-all duration-150',
+                    )}
+                  >
+                    <p className="font-semibold text-surface-900 dark:text-surface-50 mb-1.5">What are top-up credits?</p>
+                    <p className="mb-2">
+                      Top-up credits are extra credits you purchase on top of your monthly plan allowance. They work just like plan credits — each AI reply or URL page crawled deducts from your balance.
+                    </p>
+                    <p className="font-medium text-surface-700 dark:text-surface-200 mb-1">Why top up?</p>
+                    <ul className="space-y-1 pl-3 list-disc marker:text-primary-400">
+                      <li>Keep your bot online when your monthly allowance runs out</li>
+                      <li>Roll over for 12 months — no use-it-or-lose-it pressure</li>
+                      <li>Larger packs come with bonus credits</li>
+                      <li>Used after plan credits are exhausted (FIFO order)</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -770,27 +843,6 @@ function OverviewTab({
                 <CreditCoin className="w-3.5 h-3.5" />
                 Top up
               </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              <span className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-emerald-500" /> Used this period
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-surface-900 dark:text-surface-50">
-              {fmtNumber(periodUsed)}
-            </div>
-            <div className="text-xs text-surface-500 mt-1">credits consumed</div>
-            <div className="mt-3 space-y-1.5 text-xs">
-              <UsageRow label="AI chats" credits={usage?.ai_chat?.credits_used || 0} count={usage?.ai_chat?.event_count || 0} />
-              <UsageRow label="URL pages" credits={usage?.url_scan?.credits_used || 0} count={usage?.url_scan?.event_count || 0} />
-              {/* <UsageRow label="Customer emails" credits={usage?.email_send?.credits_used || 0} count={usage?.email_send?.event_count || 0} /> */}
             </div>
           </CardContent>
         </Card>
@@ -822,7 +874,7 @@ function OverviewTab({
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-surface-500 dark:text-surface-400">
-                Total credits: <strong className="text-surface-700 dark:text-surface-200">{fmtNumber(totalRemaining)}</strong>
+                Total credits Remaining: <strong className="text-surface-700 dark:text-surface-200">{fmtNumber(totalRemaining)}</strong>
               </span>
             </div>
           </div>

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
   Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, Sparkles, CreditCard,
-  Gift,
+  Gift, Palette,
 } from 'lucide-react';
 import { useBotContext } from '../context/BotContext';
 import { getAuthState } from '../utils/auth';
@@ -15,6 +15,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const location = useLocation();
   const { bots, selectedBot, selectBot, loading, error: botError } = useBotContext();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [expandedMenus, setExpandedMenus] = useState({});
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const { isOperator: isOperatorRole, isBotManager } = getAuthState();
@@ -90,20 +91,34 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const configItems = isOperatorRole
     ? [{ path: '/team', name: 'Team', icon: UsersRound }]
     : [
-        { path: '/chatbot', name: 'My Bots', icon: Bot },
+        { path: '/chatbot', name: 'My Bots', icon: Bot, children: [
+          { path: '/chatbot?tab=appearance', name: 'Appearance', icon: Palette },
+        ] },
         { path: '/team', name: 'Team', icon: UsersRound },
         ...(isAffiliate ? [{ path: '/affiliate', name: 'Affiliate', icon: Gift }] : []),
         { path: '/billing', name: 'Billing', icon: CreditCard },
       ];
 
-  const isActive = (item) =>
-    location.pathname === item.path ||
-    (item.path !== '/' && location.pathname.startsWith(item.path));
+  const isActive = (item) => {
+    if (item.path.includes('?')) {
+      const [pathname, search] = item.path.split('?');
+      return location.pathname === pathname && location.search === `?${search}`;
+    }
+    return location.pathname === item.path ||
+      (item.path !== '/' && location.pathname.startsWith(item.path));
+  };
+
+  const isParentActive = (item) =>
+    item.path !== '/' && location.pathname.startsWith(item.path.split('?')[0]);
 
   const renderLink = (item, index) => {
     const Icon = item.icon;
     const active = isActive(item);
+    const parentActive = isParentActive(item);
     const hasBadge = item.badge > 0;
+    const hasChildren = item.children?.length > 0;
+    const menuKey = item.path;
+    const isExpanded = hasChildren && (expandedMenus[menuKey] ?? parentActive);
     return (
       <motion.div
         key={item.path}
@@ -113,7 +128,17 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
       >
         <NavLink
           to={item.path}
-          onClick={handleNavClick}
+          onClick={(e) => {
+            if (hasChildren && parentActive) {
+              e.preventDefault();
+              setExpandedMenus((prev) => ({ ...prev, [menuKey]: !isExpanded }));
+              return;
+            }
+            if (hasChildren) {
+              setExpandedMenus((prev) => ({ ...prev, [menuKey]: true }));
+            }
+            handleNavClick();
+          }}
           className={cn(
             'relative flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group',
             isOpen ? 'w-full' : 'w-10 h-10 justify-center',
@@ -153,9 +178,42 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
                   {item.badge > 99 ? '99+' : item.badge}
                 </span>
               )}
+              {hasChildren && (
+                <ChevronDown
+                  size={14}
+                  className={cn(
+                    'ml-auto text-surface-400 dark:text-surface-500 transition-transform duration-200',
+                    isExpanded && 'rotate-180'
+                  )}
+                />
+              )}
             </>
           )}
         </NavLink>
+        {hasChildren && isOpen && isExpanded && (
+          <div className="ml-7 mt-0.5 space-y-0.5">
+            {item.children.map((child) => {
+              const ChildIcon = child.icon;
+              const childActive = isActive(child);
+              return (
+                <NavLink
+                  key={child.path}
+                  to={child.path}
+                  onClick={handleNavClick}
+                  className={cn(
+                    'flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-150',
+                    childActive
+                      ? 'text-primary-600 dark:text-primary-400 bg-primary-50/60 dark:bg-white/[0.05]'
+                      : 'text-surface-400 dark:text-surface-500 hover:text-surface-700 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-white/[0.04]'
+                  )}
+                >
+                  <ChildIcon size={14} className={childActive ? 'text-primary-500 dark:text-primary-400' : 'text-surface-400 dark:text-surface-500'} />
+                  {child.name}
+                </NavLink>
+              );
+            })}
+          </div>
+        )}
       </motion.div>
     );
   };

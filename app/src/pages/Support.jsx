@@ -3,6 +3,7 @@ import { Headphones, Inbox } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import Tabs from '../components/ui/Tabs';
 import PageHeader from '../components/ui/PageHeader';
+import LiveChatStatusPill from '../components/LiveChatStatusPill';
 import LiveChat from './LiveChat';
 import OfflineMessages from './OfflineMessages';
 
@@ -26,6 +27,13 @@ export default function Support() {
     <div className="flex flex-col h-full gap-4">
       <div className="flex-shrink-0">
         <PageHeader title="Support" subtitle="Manage live conversations and offline messages" />
+        {/* Live chat readiness — shows the empty-state nudge for workspaces
+            with zero operators, or the operator-online count once configured.
+            Placed between the header and tabs so it's visible on first load
+            but doesn't crowd the active tab content. */}
+        <div className="mt-3">
+          <LiveChatStatusPill />
+        </div>
         <div className="mt-4">
           <Tabs tabs={tabs} activeTab={activeTab} onChange={handleTabChange} />
         </div>

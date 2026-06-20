@@ -74,15 +74,52 @@ _DEFAULT_PRICING: dict[str, Any] = {
     "credit_cost.ai_chat": 1,
     "credit_cost.url_scan": 3,
     "credit_cost.email_send": 1,
+    # Per-file knowledge base upload. Documents go through OpenAI embedding +
+    # chunking + pgvector storage, so they cost real money to ingest. 2 credits
+    # is the agreed price (Free 5 docs = 10 credits worst case; Standard 35
+    # docs = 70 credits — negligible against the plan allowance).
+    "credit_cost.document_upload": 2,
     "seat_price_cents": 1500,
     "topup_expiry_months": 12,
     "low_balance_warn_pct": 20,
     "kill_switch": False,
+    # Top-up packs charge in INR via Razorpay but advertise USD prices in
+    # the modal — see the ``a2c3e4f5b6d7_topup_packs_usd_reprice`` migration
+    # for the contract.
     "topup_packs": [
-        {"amount": 19, "credits": 2000, "currency": "USD", "bonus_pct": 0},
-        {"amount": 49, "credits": 5500, "currency": "USD", "bonus_pct": 10},
-        {"amount": 99, "credits": 12000, "currency": "USD", "bonus_pct": 20, "badge": "Best value"},
-        {"amount": 249, "credits": 32500, "currency": "USD", "bonus_pct": 30},
+        {
+            "amount": 1599,
+            "currency": "INR",
+            "display_amount": 19,
+            "display_currency": "USD",
+            "credits": 2000,
+            "bonus_pct": 0,
+        },
+        {
+            "amount": 3999,
+            "currency": "INR",
+            "display_amount": 49,
+            "display_currency": "USD",
+            "credits": 5500,
+            "bonus_pct": 10,
+        },
+        {
+            "amount": 7999,
+            "currency": "INR",
+            "display_amount": 99,
+            "display_currency": "USD",
+            "credits": 12000,
+            "bonus_pct": 20,
+            "badge": "Best value",
+        },
+        {
+            "amount": 19999,
+            "currency": "INR",
+            "display_amount": 249,
+            "display_currency": "USD",
+            "credits": 32500,
+            "bonus_pct": 30,
+        },
     ],
 }
 

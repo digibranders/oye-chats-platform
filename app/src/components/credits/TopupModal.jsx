@@ -173,11 +173,19 @@ export default function TopupModal({ open, onClose, onSuccess }) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {packs.map((pack) => {
+              // ``amount`` is the gateway-native major unit (rupees for
+              // Razorpay) — keep using it as the submission/key value so
+              // the backend can match this pack row. ``displayAmount``
+              // is what we render: packs may ship a USD display price
+              // (display_amount/display_currency) while still charging
+              // INR at checkout.
               const amount = Number(pack.amount ?? pack.usd ?? 0);
               const currency = pack.currency || 'USD';
+              const displayAmount = Number(pack.display_amount ?? amount);
+              const displayCurrency = pack.display_currency || currency;
               const featured = (pack.bonus_pct || 0) >= 20;
               const submitting = submittingPack === amount;
-              const perK = pricePerKCredits(amount, pack.credits);
+              const perK = pricePerKCredits(displayAmount, pack.credits);
               return (
                 <button
                   key={amount}
@@ -200,7 +208,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
                   )}
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="text-2xl font-bold tabular-nums text-surface-900 dark:text-surface-50">
-                      {formatAmount(amount, currency)}
+                      {formatAmount(displayAmount, displayCurrency)}
                     </span>
                   </div>
                   <div className="mt-1 flex items-center gap-1.5 text-sm text-surface-600 dark:text-surface-300 flex-wrap">
@@ -217,7 +225,7 @@ export default function TopupModal({ open, onClose, onSuccess }) {
                   </div>
                   {perK && (
                     <div className="mt-3 text-xs text-surface-500 dark:text-surface-400">
-                      {formatAmount(perK, currency)} per 1,000 credits
+                      {formatAmount(perK, displayCurrency)} per 1,000 credits
                     </div>
                   )}
                   <div className="mt-4 flex items-center text-xs font-medium text-primary-600 dark:text-primary-400">

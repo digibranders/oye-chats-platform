@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown } from 'lucide-react';
+import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
 import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
@@ -27,8 +27,13 @@ const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure abo
 // `bot → unavailable` covers the "Leave a message" CTA (header menu option and
 // the inline [LEAVE_MESSAGE_CARD] card) that drops the visitor straight from
 // the AI chat into the offline-message form without a live-chat handoff first.
+// `connecting` is the brief (~10s) "checking with our team" state shown after
+// a handoff submission while the resolver re-checks for operator availability.
+// From there it either rolls forward to `waiting` (operator found) or
+// `unavailable` (timeout — show the compact message-only form).
 const _VALID_TRANSITIONS = {
-    bot: ['waiting', 'unavailable'],
+    bot: ['waiting', 'unavailable', 'connecting'],
+    connecting: ['waiting', 'unavailable', 'bot'],
     waiting: ['live', 'bot', 'unavailable'],
     live: ['bot', 'unavailable'],
     unavailable: ['bot'],
@@ -598,6 +603,60 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             : prev);
     }, [chatMode]);
 
+    // Connecting state: 10-second "checking with our team" window after a
+    // handoff submission. At 5s we re-call the resolver in case an operator
+    // came online while the visitor was filling the form; at 10s we give up
+    // and fall through to the compact offline form. The re-check is cheap
+    // (resolver is 5s-cached) and the side effects on /handoff are still
+    // suppressed for the offline_form path, so calling it twice is safe.
+    useEffect(() => {
+        if (chatMode !== 'connecting') return;
+
+        let cancelled = false;
+        const retryTimer = setTimeout(async () => {
+            if (cancelled) return;
+            try {
+                const retry = await requestHandoff(sessionId, {
+                    name: liveChatState?.capturedName || offlineForm.name,
+                    email: liveChatState?.capturedEmail || offlineForm.email,
+                });
+                if (cancelled) return;
+                const retryAction = retry?.suggested_action;
+                if (retryAction === 'route' || retryAction === 'wait') {
+                    // Lucky — operator came online in the gap. Roll forward
+                    // to the waiting screen instead of the offline form.
+                    setLiveChatState({
+                        suggestedAction: retryAction,
+                        state: retry?.state,
+                        queuePosition: retry?.queue_position,
+                        etaSeconds: retry?.eta_seconds,
+                        queueTimeoutSeconds: retry?.queue_timeout_seconds,
+                        onlineOperatorCount: retry?.online_operator_count,
+                    });
+                    setChatMode('waiting');
+                }
+            } catch {
+                // Network error during the silent re-check is fine — we'll
+                // fall through to the offline form at the 10s mark anyway.
+            }
+        }, 5000);
+
+        const fallbackTimer = setTimeout(() => {
+            if (cancelled) return;
+            setChatMode('unavailable');
+        }, 10000);
+
+        return () => {
+            cancelled = true;
+            clearTimeout(retryTimer);
+            clearTimeout(fallbackTimer);
+        };
+        // sessionId / form fields are stable for the duration of this
+        // connecting window; we intentionally don't re-run the timer on
+        // every keystroke. eslint-disable to silence the exhaustive-deps warn.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chatMode]);
+
     // Waiting timer + auto-timeout
     const WAITING_TIMEOUT_SECONDS = settings.operator_timeout_seconds || 300; // 5 min default
     useEffect(() => {
@@ -988,6 +1047,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, [sessionId, showWelcome, exitWelcome, injectHandoffForm]);
 
     const [isSubmittingHandoff, setIsSubmittingHandoff] = useState(false);
+    // Live chat availability state from the backend resolver. Set on the
+    // handoff response so the UI can branch to queue / route / offline_form
+    // based on backend state, not assumptions. Cleared when the visitor
+    // either connects to an operator, falls back to the form, or leaves.
+    const [liveChatState, setLiveChatState] = useState(null);
     const handleHandoffSubmit = async (formData) => {
         if (isSubmittingHandoff) return;
         setIsSubmittingHandoff(true);
@@ -995,7 +1059,65 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             m.type === 'handoff_form' ? { ...m, status: 'submitting' } : m
         ));
         try {
-            await requestHandoff(sessionId, formData);
+            // The backend state machine returns suggested_action that tells
+            // the widget exactly what to render. The visitor never sees a
+            // fake "connecting..." spinner when there's literally no one to
+            // connect them to — backend tells us instantly.
+            const response = await requestHandoff(sessionId, formData);
+            const suggestedAction = response?.suggested_action || 'route';
+            const fallbackReason = response?.fallback_reason || response?.state || null;
+
+            handoffFormInjectedRef.current = false;
+
+            if (suggestedAction === 'offline_form') {
+                // The visitor just submitted name+email. Instantly bouncing
+                // them to an offline form feels rude ("we never even tried").
+                // Instead: show a 10-second "Connecting you with our team"
+                // state, re-check the resolver at 5s in case an operator
+                // came online (e.g. they were typing when the visitor
+                // clicked Connect), and only fall back to the message form
+                // at the timeout. Name+email are pre-stashed so the fallback
+                // form asks ONLY for the message.
+                setLiveChatState({
+                    suggestedAction,
+                    state: response?.state,
+                    fallbackReason,
+                    messageKey: response?.message_key,
+                    nextAvailableAt: response?.next_available_at,
+                    // Carry the captured contact data so the compact offline
+                    // form pre-fills + skips the name/email re-prompt.
+                    capturedName: formData.name,
+                    capturedEmail: formData.email,
+                });
+                setOfflineForm(prev => ({
+                    ...prev,
+                    name: formData.name || prev.name,
+                    email: formData.email || prev.email,
+                }));
+                setMessages(prev => [
+                    ...prev.filter(m => m.type !== 'handoff_form'),
+                    {
+                        id: `sys-connecting-${Date.now()}`,
+                        type: 'system',
+                        text: 'Connecting you with the support team...',
+                        timestamp: new Date().toISOString(),
+                    },
+                ]);
+                setChatMode('connecting');
+                return;
+            }
+
+            // suggested_action is "route" or "wait" — both proceed to the
+            // waiting screen but with different progress UI. Store the queue
+            // metadata so LiveChatMode / the waiting overlay can render it.
+            setLiveChatState({
+                suggestedAction,
+                state: response?.state,
+                queuePosition: response?.queue_position,
+                etaSeconds: response?.eta_seconds,
+                queueTimeoutSeconds: response?.queue_timeout_seconds,
+                onlineOperatorCount: response?.online_operator_count,
+            });
             setMessages(prev => [
                 ...prev.filter(m => m.type !== 'handoff_form'),
                 {
@@ -1005,7 +1127,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     timestamp: new Date().toISOString(),
                 }
             ]);
-            handoffFormInjectedRef.current = false;
             setChatMode('waiting');
         } catch {
             setMessages(prev => [
@@ -1175,12 +1296,28 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         e.preventDefault();
         setOfflineSubmitting(true);
         try {
+            // Build the chat transcript from rendered messages so the responding
+            // operator has full conversation context. Cap at 200 turns (backend
+            // also caps, this is just a network-saver).
+            const transcript = (messages || [])
+                .filter(m => m.type !== 'handoff_form' && m.type !== 'system' && m.text)
+                .slice(-200)
+                .map(m => ({
+                    role: m.sender === 'bot' ? 'bot' : 'user',
+                    content: typeof m.text === 'string' ? m.text : '',
+                    ts: m.timestamp || '',
+                }));
+
             await submitOfflineMessage({
                 name: offlineForm.name,
                 email: offlineForm.email,
                 phone: offlineForm.phone || null,
                 message: offlineForm.message,
                 session_id: sessionId,
+                // The resolver state that drove the fallback. Used by the
+                // admin panel to filter / categorize offline messages.
+                reason: liveChatState?.fallbackReason || 'manual',
+                transcript,
             });
             setOfflineSubmitted(true);
         } catch {
@@ -1750,6 +1887,46 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 )}
 
                 {/* Offline message form — inline in stream */}
+                {/* Connecting state — 10-second "checking with our team"
+                    window. Either rolls forward to waiting/live (operator
+                    came online during the 5s re-check) or transitions to
+                    the compact offline form below. */}
+                {chatMode === 'connecting' && !isInitializing && (
+                    <div
+                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 max-w-xs"
+                        style={{ animation: 'fadeUp 0.3s ease-out' }}
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="relative flex-shrink-0">
+                                <div
+                                    className="w-9 h-9 rounded-full flex items-center justify-center"
+                                    style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
+                                >
+                                    <Headphones
+                                        className="w-4 h-4"
+                                        style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                    />
+                                </div>
+                                <span
+                                    className="absolute inset-0 rounded-full animate-ping"
+                                    style={{
+                                        backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}30`,
+                                        animationDuration: '1.8s',
+                                    }}
+                                />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-[13px] font-semibold text-[#16202C] leading-tight">
+                                    Connecting you with our team
+                                </p>
+                                <p className="text-[11px] text-gray-400 leading-tight mt-1">
+                                    This usually takes just a few seconds…
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {chatMode === 'unavailable' && !isInitializing && (
                     <div
                         className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
@@ -1783,7 +1960,67 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     Continue chatting with AI
                                 </button>
                             </div>
-                        ) : (
+                        ) : (() => {
+                            // Compact mode: when the visitor came here from a
+                            // handoff fallback they already gave us name+email
+                            // in HandoffForm. Re-prompting for them would be
+                            // hostile UX. Detect via `liveChatState?.fallbackReason`
+                            // — only set on the handoff-fallback path, never on
+                            // the direct "Leave a message" CTA.
+                            const isCompact = !!(
+                                liveChatState?.fallbackReason &&
+                                offlineForm.name?.trim() &&
+                                offlineForm.email?.trim()
+                            );
+
+                            if (isCompact) {
+                                return (
+                                    <>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <Mail className="w-4 h-4 flex-shrink-0" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                                            <p className="text-[13px] font-semibold text-[#16202C]">Our team is currently unavailable</p>
+                                        </div>
+                                        <p className="text-[12px] text-gray-500 mb-3">
+                                            Leave a message and we&apos;ll get back to you at{' '}
+                                            <strong className="text-gray-700">{offlineForm.email}</strong>.
+                                        </p>
+                                        <form onSubmit={handleOfflineSubmit} className="space-y-2">
+                                            <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 focus-within:border-blue-300 focus-within:bg-white transition-colors">
+                                                <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+                                                <textarea
+                                                    placeholder="How can we help you?"
+                                                    required
+                                                    rows={3}
+                                                    autoFocus
+                                                    value={offlineForm.message}
+                                                    onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
+                                                    className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none"
+                                                />
+                                            </div>
+                                            <button
+                                                type="submit"
+                                                disabled={offlineSubmitting || !offlineForm.message.trim()}
+                                                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
+                                                style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
+                                            >
+                                                {offlineSubmitting
+                                                    ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                    : 'Send Message'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleReturnToBot}
+                                                disabled={offlineSubmitting}
+                                                className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
+                                            >
+                                                Continue with AI instead
+                                            </button>
+                                        </form>
+                                    </>
+                                );
+                            }
+
+                            return (
                             <>
                                 <div className="flex items-center gap-2 mb-1">
                                     <Mail className="w-4 h-4 flex-shrink-0" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
@@ -1832,7 +2069,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </button>
                                 </form>
                             </>
-                        )}
+                            );
+                        })()}
                     </div>
                 )}
 

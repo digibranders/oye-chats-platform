@@ -161,6 +161,18 @@ class Bot(Base):
     operator_disconnect_timeout = Column(Integer, default=60, server_default="60", nullable=False)
     business_hours = Column(sqlalchemy.JSON, nullable=True)  # e.g. {"mon":{"start":"09:00","end":"17:00"}, ...}
 
+    # ── Live chat availability state machine (b1f2a3c4d5e6) ──
+    # Routing strategy applied when multiple online operators have capacity.
+    # least_busy = fewest active chats wins, ties break by round-robin cursor.
+    # round_robin = strict cursor advance regardless of load.
+    # first_available = first online+capacity operator returned by the index.
+    live_chat_routing_strategy = Column(String, default="least_busy", server_default="least_busy", nullable=False)
+    # Seconds a visitor waits in the queue before the widget auto-falls back
+    # to the offline message form. Default 20s per product spec.
+    live_chat_queue_timeout_seconds = Column(Integer, default=20, server_default="20", nullable=False)
+    # Reject queue entries past this cap (returns "queue_full" state).
+    live_chat_max_queue_size = Column(Integer, default=10, server_default="10", nullable=False)
+
     # Configurable messages shown to visitors (admin-editable from the Live Chat settings tab)
     welcome_title = Column(String, default="Hi there 👋", server_default="Hi there 👋", nullable=False)
     welcome_subtitle = Column(
@@ -460,6 +472,11 @@ class Department(Base):
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
+    # Per-department business hours. Same JSONB shape as ``Bot.business_hours``
+    # for code reuse. When a chat session has a ``department_id``, the live
+    # chat state resolver checks THIS column first; the bot-level value is the
+    # workspace-wide fallback when no department is selected.
+    business_hours = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     client = relationship("Client")
@@ -477,6 +494,10 @@ class Operator(Base):
     email = Column(String, nullable=False)
     is_online = Column(Boolean, default=False, server_default="false", nullable=False)
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    # Manual DND toggle — operator can stay "online" (WS connected) but stop
+    # accepting new chat assignments. Independent of is_online so capacity
+    # planning can distinguish "off shift" from "busy with admin tasks".
+    is_accepting_chats = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Auth credentials (for separate operator login)
@@ -525,6 +546,13 @@ class OfflineMessage(Base):
     visitor_phone = Column(String, nullable=True)
     message_body = Column(Text, nullable=False)
     status = Column(String, default="new", server_default="new", nullable=False)  # new|read|replied
+    # Full chat history captured at form submit so the responding operator has
+    # context. Shape: [{"role": "user|bot", "content": "...", "ts": "iso"}, ...]
+    transcript = Column(JSONB, nullable=True)
+    # Which availability state triggered the fallback to the offline form.
+    # One of: no_operators | out_of_hours | all_offline | all_busy | queue_timeout
+    # | queue_full | feature_disabled | manual. Drives admin filtering + analytics.
+    fallback_reason = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     read_at = Column(DateTime(timezone=True), nullable=True)
     replied_at = Column(DateTime(timezone=True), nullable=True)
@@ -546,6 +574,41 @@ class ChatAuditLog(Base):
 
     session = relationship("ChatSession")
     operator = relationship("Operator")
+
+
+class LiveChatQueueEntry(Base):
+    """Persistent FIFO queue for visitors waiting on a live operator.
+
+    Persisted (not just in-memory) so the queue survives API restarts and
+    Redis flushes. Position is computed at insert time from
+    ``COUNT(*) WHERE bot_id = X AND dequeued_at IS NULL``; we don't try to
+    keep positions densely packed — dequeue_reason marks exits and a daily
+    cron prunes resolved entries.
+    """
+
+    __tablename__ = "live_chat_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(
+        String,
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    bot_id = Column(
+        Integer,
+        ForeignKey("bots.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = Column(Integer, nullable=False)
+    enqueued_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    dequeued_at = Column(DateTime(timezone=True), nullable=True)
+    # assigned | timeout | abandoned | bot_returned
+    dequeue_reason = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_live_chat_queue_bot_id_dequeued_at", "bot_id", "dequeued_at"),
+        Index("ix_live_chat_queue_session_id", "session_id"),
+    )
 
 
 class CannedResponse(Base):

@@ -347,6 +347,11 @@ export default function LiveChat({ embedded = false }) {
                                 : { ...operator, is_online: false, active_chats: 0 };
                         });
                     });
+                    // Re-broadcast so the LiveChatStatusPill on the Support
+                    // page header can refresh instantly instead of waiting
+                    // for its 5s poll. Decoupled via a window CustomEvent so
+                    // we don't have to introduce a context just for this.
+                    window.dispatchEvent(new CustomEvent('oyechats:operators-changed'));
                     break;
 
                 case 'message': {

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.db.models import ChatSession, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
+from app.services import operator_presence_service as presence
 from app.services.session_state_machine import InvalidTransitionError, transition_session
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,11 @@ class ConnectionManager:
         self._operator_departments: dict[int, int | None] = {}
         # operator_id → operator name (cached on connect for roster broadcasts)
         self._operator_names: dict[int, str] = {}
+        # operator_id → client_id (cached on connect so disconnect cleanup
+        # can address the right Redis presence bucket without a DB lookup
+        # — important because the cleanup runs after the operator row may
+        # have been mutated).
+        self._operator_client_ids: dict[int, int] = {}
         # session_id → { name, reason } (visitor metadata for queue display)
         self._session_metadata: dict[str, dict] = {}
         # operator_id → queued messages while WS is in grace period
@@ -274,6 +280,7 @@ class ConnectionManager:
         department_id: int | None = None,
         operator_name: str = "",
         is_online: bool = True,
+        client_id: int | None = None,
         subprotocol: str | None = None,
     ):
         self._ensure_background_tasks()
@@ -293,6 +300,15 @@ class ConnectionManager:
         self.operator_connections[operator_id] = ws
         self._operator_departments[operator_id] = department_id
         self._operator_names[operator_id] = operator_name
+        if client_id is not None:
+            self._operator_client_ids[operator_id] = client_id
+            # Mark in Redis presence — the state resolver and routing service
+            # read from this set. Without this the live chat availability
+            # service would say "all_offline" even with operators connected.
+            presence.mark_online(operator_id, client_id)
+            # Bust state cache for this workspace's bots so the next visitor
+            # request_handoff sees the fresh "available" state immediately.
+            self._invalidate_workspace_state_caches(client_id)
         logger.info(f"Operator connected: {operator_id} ({operator_name}, dept={department_id})")
 
         # Send init state to this operator
@@ -350,6 +366,35 @@ class ConnectionManager:
         if task and not task.done():
             task.cancel()
 
+    def _invalidate_workspace_state_caches(self, client_id: int) -> None:
+        """Bust the 5s LiveChatAvailability cache for every bot in this workspace.
+
+        Called whenever operator presence changes (online → offline or vice
+        versa). Without this, a freshly-online operator can take up to 5
+        seconds before visitors see the state shift from ALL_OFFLINE to
+        AVAILABLE — disastrous for UX. Cheap operation (one Redis DELETE
+        per bot), and bots-per-workspace is bounded by plan limits.
+        """
+        try:
+            from app.db.models import Bot
+            from app.services.live_chat_availability_service import invalidate as invalidate_state
+
+            with get_session() as db:
+                bot_ids = (
+                    db.execute(
+                        select(Bot.id).where(
+                            Bot.client_id == client_id,
+                            Bot.is_active.is_(True),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for bot_id in bot_ids:
+                    invalidate_state(bot_id)
+        except Exception:
+            logger.debug("Workspace state cache invalidation failed", exc_info=True)
+
     async def _operator_disconnect_timeout(self, operator_id: int):
         """Full cleanup when an operator doesn't reconnect within the grace period."""
         try:
@@ -360,6 +405,14 @@ class ConnectionManager:
                     f"Operator {operator_id} did not reconnect within "
                     f"{self.DEFAULT_OPERATOR_DISCONNECT_TIMEOUT}s — marking offline"
                 )
+                # Pull cached client_id BEFORE we forget it so we can ask the
+                # presence service to drop this operator from the workspace
+                # online set + invalidate dependent state caches.
+                client_id_for_presence = self._operator_client_ids.pop(operator_id, None)
+                if client_id_for_presence is not None:
+                    presence.mark_offline(operator_id, client_id_for_presence)
+                    self._invalidate_workspace_state_caches(client_id_for_presence)
+
                 self._operator_departments.pop(operator_id, None)
                 self._operator_names.pop(operator_id, None)
                 self._operator_message_queue.pop(operator_id, None)  # Discard stale queue

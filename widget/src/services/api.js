@@ -363,6 +363,16 @@ export const submitOfflineMessage = async (formData) => {
                 message: formData.message,
                 session_id: formData.session_id || null,
                 department_id: formData.department_id || null,
+                // Why visitor fell back to the form — the resolver state at the
+                // time of fallback (no_operators, out_of_hours, queue_timeout,
+                // etc.). Lets admin filter offline messages by cause and powers
+                // the "why am I getting so many of these?" analytics.
+                reason: formData.reason || 'manual',
+                // Up to 200 turns of the bot conversation that preceded the
+                // fallback. Operator who replies has full context instead of
+                // a cold inbound from someone who already wrote three pages
+                // worth of questions to our bot.
+                transcript: Array.isArray(formData.transcript) ? formData.transcript.slice(-200) : null,
             }),
         });
         if (!response.ok) throw new Error('Failed to submit offline message');

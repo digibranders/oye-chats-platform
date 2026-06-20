@@ -19,16 +19,6 @@ const THEME_OPTIONS = [
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const DAYS = [
-    { key: 'mon', label: 'Monday' },
-    { key: 'tue', label: 'Tuesday' },
-    { key: 'wed', label: 'Wednesday' },
-    { key: 'thu', label: 'Thursday' },
-    { key: 'fri', label: 'Friday' },
-    { key: 'sat', label: 'Saturday' },
-    { key: 'sun', label: 'Sunday' },
-];
-
 const DEFAULT_FLAGS = {
     file_sharing: false,
     post_chat_rating: true,
@@ -36,14 +26,6 @@ const DEFAULT_FLAGS = {
     queue_position: false,
     typing_preview: true,
     email_transcript: false,
-};
-
-const DEFAULT_BUSINESS_HOURS = {
-    enabled: false,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    days: Object.fromEntries(
-        DAYS.map(({ key }) => [key, { enabled: key !== 'sat' && key !== 'sun', start: '09:00', end: '17:00' }])
-    ),
 };
 
 // Simple toggle switch component
@@ -112,8 +94,15 @@ export default function Settings() {
     // Bot data
     const [botId, setBotId] = useState(null);
     const [flags, setFlags] = useState(DEFAULT_FLAGS);
-    const [businessHours, setBusinessHours] = useState(DEFAULT_BUSINESS_HOURS);
     const [loadingBot, setLoadingBot] = useState(true);
+
+    // Live chat queue/routing settings — backed by columns added in the
+    // b1f2a3c4d5e6 migration. Defaults match the migration's server_default
+    // so the UI stays consistent for bots created before this section
+    // shipped.
+    const [queueTimeoutSeconds, setQueueTimeoutSeconds] = useState(20);
+    const [maxQueueSize, setMaxQueueSize] = useState(10);
+    const [savingQueueCfg, setSavingQueueCfg] = useState(false);
 
     // Tone & Personality
     const [brandTone, setBrandTone] = useState('');
@@ -124,7 +113,6 @@ export default function Settings() {
 
     // Saving state: key → true while in-flight
     const [saving, setSaving] = useState({});
-    const [savingHours, setSavingHours] = useState(false);
 
     // Sync from selected bot in BotContext
     useEffect(() => {
@@ -139,8 +127,11 @@ export default function Settings() {
         setCompanyName(selectedBot.company_name || '');
         setCompanyDescription(selectedBot.company_description || '');
         setSystemPrompt(selectedBot.system_prompt || '');
-        if (selectedBot.business_hours) {
-            setBusinessHours({ ...DEFAULT_BUSINESS_HOURS, ...selectedBot.business_hours });
+        if (typeof selectedBot.live_chat_queue_timeout_seconds === 'number') {
+            setQueueTimeoutSeconds(selectedBot.live_chat_queue_timeout_seconds);
+        }
+        if (typeof selectedBot.live_chat_max_queue_size === 'number') {
+            setMaxQueueSize(selectedBot.live_chat_max_queue_size);
         }
         setLoadingBot(false);
     }, [selectedBot, botsLoading]);
@@ -164,28 +155,23 @@ export default function Settings() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [botId]);
 
-    // Save the full business_hours object
-    const saveBusinessHours = useCallback(async (updatedHours) => {
+    // Persist a single live-chat queue setting. Optimistic UI: caller updates
+    // local state first, this method commits and shows a toast on failure
+    // (reverting is the caller's responsibility — kept simple because there
+    // are only two fields and a network failure is rare).
+    const saveQueueSetting = useCallback(async (patch) => {
         if (!botId) return;
-        setSavingHours(true);
+        setSavingQueueCfg(true);
         try {
-            await updateBot(botId, { business_hours: updatedHours });
+            await updateBot(botId, patch);
         } catch {
-            showToast('error', 'Failed to save business hours.');
+            showToast('error', 'Failed to save live chat setting.');
         } finally {
-            setSavingHours(false);
+            setSavingQueueCfg(false);
         }
         // showToast is stable — intentionally omitted
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [botId]);
-
-    const updateBusinessHours = useCallback((updater) => {
-        setBusinessHours((prev) => {
-            const next = updater(prev);
-            saveBusinessHours(next);
-            return next;
-        });
-    }, [saveBusinessHours]);
 
     // Save tone & personality settings
     const saveToneSettings = useCallback(async () => {
@@ -493,17 +479,21 @@ export default function Settings() {
                 </div>
             )}
 
-            {/* ── Business Hours ───────────────────────────────────────────── */}
+
+            {/* ── Live Chat Queue ──────────────────────────────────────────── */}
             {showBotConfig && (
                 <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
                     <div className="flex items-start justify-between gap-4 mb-1">
                         <div>
-                            <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50">Business Hours</h2>
+                            <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50 flex items-center gap-2">
+                                <Clock size={16} className="text-primary-600 dark:text-primary-400" />
+                                Live Chat Queue
+                            </h2>
                             <p className="text-sm text-surface-500 dark:text-surface-400 mt-1">
-                                When enabled, visitors outside your hours will see an offline form instead of live chat.
+                                How long visitors wait in queue before the offline form appears, and how many can wait at once.
                             </p>
                         </div>
-                        {savingHours && <Loader2 size={14} className="animate-spin text-surface-400 dark:text-surface-500 flex-shrink-0 mt-1" />}
+                        {savingQueueCfg && <Loader2 size={14} className="animate-spin text-surface-400 dark:text-surface-500 flex-shrink-0 mt-1" />}
                     </div>
 
                     {loadingBot ? (
@@ -513,115 +503,83 @@ export default function Settings() {
                         </div>
                     ) : (
                         <div className="mt-5 space-y-5">
-                            {/* Master enable toggle */}
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium text-surface-800 dark:text-surface-200">Enable business hours</span>
-                                <Toggle
-                                    checked={businessHours.enabled}
-                                    onChange={(v) =>
-                                        updateBusinessHours((prev) => ({ ...prev, enabled: v }))
-                                    }
+                            {/* Queue wait timeout — the most impactful setting.
+                                Drives the widget's auto-fallback to the offline
+                                form. Tighter values feel snappy but frustrate
+                                B2B visitors waiting for a considered answer;
+                                longer values feel patient but lose impatient
+                                ecommerce visitors. */}
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="flex-1 min-w-0">
+                                    <label htmlFor="queue-timeout" className="text-sm font-medium text-surface-800 dark:text-surface-200 block">
+                                        Wait time before offline form
+                                    </label>
+                                    <p className="text-xs text-surface-400 dark:text-surface-500 mt-0.5">
+                                        How long a visitor waits in the queue before they&apos;re offered the offline form.
+                                    </p>
+                                </div>
+                                <select
+                                    id="queue-timeout"
+                                    value={queueTimeoutSeconds}
+                                    onChange={(e) => {
+                                        const v = Number(e.target.value);
+                                        setQueueTimeoutSeconds(v);
+                                        saveQueueSetting({ live_chat_queue_timeout_seconds: v });
+                                    }}
+                                    className={cn(
+                                        'text-sm border border-surface-200 dark:border-surface-600 rounded-lg px-3 py-1.5',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500'
+                                    )}
+                                >
+                                    <option value={15}>15 seconds (snappy)</option>
+                                    <option value={20}>20 seconds (recommended)</option>
+                                    <option value={30}>30 seconds</option>
+                                    <option value={60}>60 seconds (patient)</option>
+                                    <option value={90}>90 seconds (B2B)</option>
+                                </select>
+                            </div>
+
+                            {/* Max queue size — reject queue entries past this
+                                cap. Default 10 is a sensible "if you have
+                                more than 10 waiting, you've got a staffing
+                                issue not a tooling issue". */}
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="flex-1 min-w-0">
+                                    <label htmlFor="max-queue-size" className="text-sm font-medium text-surface-800 dark:text-surface-200 block">
+                                        Maximum queue size
+                                    </label>
+                                    <p className="text-xs text-surface-400 dark:text-surface-500 mt-0.5">
+                                        Visitors beyond this number see the offline form immediately.
+                                    </p>
+                                </div>
+                                <input
+                                    id="max-queue-size"
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    value={maxQueueSize}
+                                    onChange={(e) => setMaxQueueSize(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+                                    onBlur={() => saveQueueSetting({ live_chat_max_queue_size: maxQueueSize })}
+                                    className={cn(
+                                        'text-sm border border-surface-200 dark:border-surface-600 rounded-lg px-3 py-1.5 w-20 text-center',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500'
+                                    )}
                                 />
                             </div>
 
-                            {businessHours.enabled && (
-                                <>
-                                    {/* Timezone */}
-                                    <div className="flex items-center justify-between gap-4">
-                                        <label className="text-sm text-surface-700 dark:text-surface-300 flex-shrink-0">Timezone</label>
-                                        <select
-                                            value={businessHours.timezone}
-                                            onChange={(e) =>
-                                                updateBusinessHours((prev) => ({ ...prev, timezone: e.target.value }))
-                                            }
-                                            className={cn(
-                                                'text-sm border border-surface-200 dark:border-surface-600 rounded-lg px-3 py-1.5',
-                                                'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
-                                                'focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
-                                                'max-w-xs'
-                                            )}
-                                        >
-                                            {Intl.supportedValuesOf('timeZone').map((tz) => (
-                                                <option key={tz} value={tz}>{tz}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-
-                                    {/* Day rows */}
-                                    <div className="divide-y divide-surface-100 dark:divide-surface-700 border border-surface-100 dark:border-surface-700 rounded-xl overflow-hidden">
-                                        {DAYS.map(({ key, label }) => {
-                                            const day = businessHours.days?.[key] || { enabled: false, start: '09:00', end: '17:00' };
-                                            return (
-                                                <div key={key} className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-surface-900">
-                                                    <Toggle
-                                                        id={`bh-${key}`}
-                                                        checked={day.enabled}
-                                                        onChange={(v) =>
-                                                            updateBusinessHours((prev) => ({
-                                                                ...prev,
-                                                                days: {
-                                                                    ...prev.days,
-                                                                    [key]: { ...day, enabled: v },
-                                                                },
-                                                            }))
-                                                        }
-                                                    />
-                                                    <label htmlFor={`bh-${key}`} className="text-sm text-surface-700 dark:text-surface-300 w-24 flex-shrink-0 cursor-pointer">
-                                                        {label}
-                                                    </label>
-                                                    {day.enabled ? (
-                                                        <div className="flex items-center gap-2 ml-auto">
-                                                            <input
-                                                                type="time"
-                                                                value={day.start}
-                                                                onChange={(e) =>
-                                                                    updateBusinessHours((prev) => ({
-                                                                        ...prev,
-                                                                        days: {
-                                                                            ...prev.days,
-                                                                            [key]: { ...day, start: e.target.value },
-                                                                        },
-                                                                    }))
-                                                                }
-                                                                className={cn(
-                                                                    'text-xs border border-surface-200 dark:border-surface-600 rounded-lg px-2 py-1',
-                                                                    'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
-                                                                    'focus:outline-none focus:ring-1 focus:ring-primary-500/30 dark:focus:ring-primary-500/40'
-                                                                )}
-                                                            />
-                                                            <span className="text-surface-400 dark:text-surface-500 text-xs">to</span>
-                                                            <input
-                                                                type="time"
-                                                                value={day.end}
-                                                                onChange={(e) =>
-                                                                    updateBusinessHours((prev) => ({
-                                                                        ...prev,
-                                                                        days: {
-                                                                            ...prev.days,
-                                                                            [key]: { ...day, end: e.target.value },
-                                                                        },
-                                                                    }))
-                                                                }
-                                                                className={cn(
-                                                                    'text-xs border border-surface-200 dark:border-surface-600 rounded-lg px-2 py-1',
-                                                                    'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
-                                                                    'focus:outline-none focus:ring-1 focus:ring-primary-500/30 dark:focus:ring-primary-500/40'
-                                                                )}
-                                                            />
-                                                        </div>
-                                                    ) : (
-                                                        <span className="ml-auto text-xs text-surface-400 dark:text-surface-500">Closed</span>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-
-                                    <p className="text-xs text-surface-400 dark:text-surface-500">
-                                        Outside of business hours, visitors will see an offline form to leave a message.
-                                    </p>
-                                </>
-                            )}
+                            {/* Routing strategy — informational. We expose the
+                                column but only "least_busy" is supported in
+                                practice; the field is here for future tiers
+                                that may want explicit round-robin. */}
+                            <div className="rounded-lg bg-surface-50 dark:bg-surface-800/50 px-4 py-3 border border-surface-100 dark:border-surface-700">
+                                <p className="text-xs text-surface-600 dark:text-surface-300">
+                                    <strong className="text-surface-900 dark:text-surface-100">Routing:</strong>{' '}
+                                    Least-busy. Chats go to the operator with the fewest active conversations,
+                                    falling back to round-robin when operators are tied.
+                                </p>
+                            </div>
                         </div>
                     )}
                 </div>

@@ -111,10 +111,14 @@ def _parse_request_context(fastapi_request: Request):
     """Extract IP address, device, and browser from the request (no blocking HTTP calls)."""
     user_agent = fastapi_request.headers.get("user-agent", "Unknown")
 
+    # Cloudflare sets CF-Connecting-IP to the real visitor IP. Check it first
+    # before falling back to X-Forwarded-For (which Nginx rewrites to the
+    # Cloudflare datacenter IP) or the loopback address of the proxy connection.
     ip_address = (
-        fastapi_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        fastapi_request.headers.get("cf-connecting-ip", "").strip()
+        or fastapi_request.headers.get("x-forwarded-for", "").split(",")[0].strip()
         or fastapi_request.headers.get("x-real-ip", "")
-        or (fastapi_request.client.host if fastapi_request.client else "127.0.0.1")
+        or (fastapi_request.client.host if fastapi_request.client else "unknown")
     )
 
     device = "Other"
@@ -152,17 +156,11 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             logger.warning("Invalid IP address rejected: %r", ip_address[:100])
             return
 
-        is_local = parsed_ip.is_loopback or ip_address == ""
-        is_private = parsed_ip.is_private
-        if is_local or is_private:
-            try:
-                with urllib.request.urlopen("https://api.ipify.org?format=json", timeout=2.0) as resp:
-                    resolved = json.loads(resp.read().decode()).get("ip", "")
-                # Re-validate the resolved IP before using it in URLs
-                ipaddress.ip_address(resolved)
-                ip_address = resolved
-            except (Exception, ValueError):
-                return
+        is_local = parsed_ip.is_loopback or parsed_ip.is_private
+        if is_local:
+            # Local/private IPs are from dev testing or internal health checks —
+            # there is no meaningful visitor geolocation to resolve.
+            return
 
         if not ip_address:
             return

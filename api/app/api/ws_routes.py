@@ -286,6 +286,87 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 # Widget polls for current status — recovers from lost WS messages
                 await manager._restore_visitor_state(session_id)
 
+            elif msg_type == "submit_offline_form":
+                # Visitor fell back to the offline form mid-flow (queue timed
+                # out, operators went offline while waiting, etc.). Persist
+                # an OfflineMessage with the chat transcript so the responding
+                # operator has the conversation context that led to the form.
+                #
+                # The widget sends:
+                #   { type, name, email, phone, message, reason, transcript }
+                # Field validation matches the existing /operator/offline-message
+                # HTTP endpoint contract.
+                name = (data.get("name") or "").strip()[:200]
+                email = (data.get("email") or "").strip()[:300]
+                phone = (data.get("phone") or "").strip()[:50] or None
+                message = (data.get("message") or "").strip()[:5000]
+                reason = (data.get("reason") or "manual").strip()[:50]
+                transcript_in = data.get("transcript")
+
+                if not name or not email or not message:
+                    await ws.send_json(
+                        {"type": "offline_form_error", "message": "Name, email, and message are required."}
+                    )
+                    continue
+
+                # Sanitize transcript shape — accept list of dicts only,
+                # drop anything weird. Caps at 200 turns to prevent abuse.
+                if isinstance(transcript_in, list):
+                    transcript = [
+                        {
+                            "role": str(m.get("role", "user"))[:20],
+                            "content": str(m.get("content", ""))[:5000],
+                            "ts": str(m.get("ts", ""))[:40],
+                        }
+                        for m in transcript_in[:200]
+                        if isinstance(m, dict)
+                    ]
+                else:
+                    transcript = None
+
+                with get_session() as session:
+                    from app.db.models import OfflineMessage
+
+                    offline_msg = OfflineMessage(
+                        bot_id=bot_id,
+                        session_id=session_id,
+                        visitor_name=name,
+                        visitor_email=email,
+                        visitor_phone=phone,
+                        message_body=message,
+                        transcript=transcript,
+                        fallback_reason=reason,
+                    )
+                    session.add(offline_msg)
+                    session.commit()
+
+                await ws.send_json({"type": "offline_form_submitted"})
+                logger.info(
+                    "Offline form submitted via WS: session=%s bot=%s reason=%s transcript_len=%s",
+                    session_id,
+                    bot_id,
+                    reason,
+                    len(transcript) if transcript else 0,
+                )
+
+            elif msg_type == "leave_queue":
+                # Visitor decided not to wait — drop them from the queue and
+                # let the bot conversation resume. Cleaner than them just
+                # closing the widget (which would also clear queue state but
+                # leaves the audit trail unclear).
+                with get_session() as session:
+                    from app.services import live_chat_queue_service as queue_svc
+
+                    queue_svc.abandon(session_id, session)
+                    chat_session = session.execute(
+                        select(ChatSession).where(ChatSession.id == session_id)
+                    ).scalar_one_or_none()
+                    if chat_session and chat_session.status == "waiting":
+                        chat_session.status = "bot"
+                        chat_session.assigned_operator_id = None
+                        session.commit()
+                await ws.send_json({"type": "queue_left"})
+
             elif msg_type == "visitor_end_chat":
                 # Visitor deliberately ended the chat (clicked "End chat and return to AI").
                 # Close the session immediately in DB and notify the operator — do NOT
@@ -445,6 +526,7 @@ async def operator_websocket(
         department_id=department_id,
         operator_name=operator_name,
         is_online=is_online,
+        client_id=client_id,
         subprotocol=accepted_subprotocol,
     )
 
@@ -460,6 +542,29 @@ async def operator_websocket(
 
             if msg_type == "ping":
                 await ws.send_json({"type": "pong"})
+
+            elif msg_type == "heartbeat":
+                # Operator presence refresh — extends Redis TTL so the state
+                # resolver keeps this operator in the "online" candidate set.
+                # The widget heartbeat ("ping") is separate; this one is for
+                # cross-process presence and only operators send it.
+                from app.services import operator_presence_service as presence
+
+                presence.mark_online(operator_id, client_id)
+
+            elif msg_type == "set_availability":
+                # Manual DND toggle. accepting=False means "stay online but
+                # stop receiving new chat assignments" — active chats keep
+                # running. accepting=True puts the operator back in the pool.
+                accepting = bool(data.get("accepting", True))
+                with get_session() as session:
+                    from app.services import operator_presence_service as presence
+
+                    presence.set_accepting_chats(operator_id, accepting, session)
+                # Invalidate state caches so the resolver picks up the new
+                # availability immediately (visitors don't see stale "wait" UI).
+                manager._invalidate_workspace_state_caches(client_id)
+                await ws.send_json({"type": "availability_updated", "accepting": accepting})
 
             elif msg_type == "message":
                 if not rate_limiter.allow():

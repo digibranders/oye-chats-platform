@@ -184,6 +184,86 @@ class TestShouldSkipBantExtraction:
         assert _should_skip_bant_extraction("We need this tool urgently", bant) is False
 
 
+class TestHandoffIntentSkip:
+    """Regression guards for the routing-intent skip filter. These messages
+    historically produced false-positive Need signals (~15/25) because the
+    extractor LLM treated "wants help" as evidence of qualified pain. The
+    filter now short-circuits before the LLM is even called.
+
+    See `_HANDOFF_INTENT_PATTERNS` in rag_service for the pattern surface.
+    """
+
+    def test_skips_talk_to_a_human(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        assert _should_skip_bant_extraction("I want to talk to a human please", {}) is True
+
+    def test_skips_connect_me_with_support(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        assert _should_skip_bant_extraction("Please connect me with support", {}) is True
+
+    def test_skips_speak_with_an_agent(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        assert _should_skip_bant_extraction("Can I speak with an agent", {}) is True
+
+    def test_skips_can_someone_help_me(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        assert _should_skip_bant_extraction("Can someone help me with this?", {}) is True
+
+    def test_skips_get_me_a_real_person(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        assert _should_skip_bant_extraction("Get me a real person", {}) is True
+
+    def test_skips_handoff_keyword(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        assert _should_skip_bant_extraction("I'd like a handoff to your team", {}) is True
+
+    def test_does_NOT_skip_genuine_need_statement(self):
+        """A real Need statement that just happens to mention "team" or "help"
+        must still go through extraction. The skip filter targets routing
+        intent, not topical overlap.
+        """
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        # Mentions "team" but isn't a routing request — should NOT be skipped.
+        assert (
+            _should_skip_bant_extraction(
+                "Our team is drowning in support tickets and we need automation",
+                {},
+            )
+            is False
+        )
+
+    def test_does_NOT_skip_budget_statement_mentioning_team(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        # "team budget" is a real Budget signal, not a routing request.
+        assert (
+            _should_skip_bant_extraction(
+                "Our team budget for this initiative is around $5k a month",
+                {},
+            )
+            is False
+        )
+
+    def test_does_NOT_skip_authority_statement(self):
+        from app.services.rag_service import _should_skip_bant_extraction
+
+        # No routing language — must proceed to extraction.
+        assert (
+            _should_skip_bant_extraction(
+                "I'm the VP of Engineering and I make the final call on tooling",
+                {},
+            )
+            is False
+        )
+
+
 # ── BANT state building ─────────────────────────────────────────────────────
 
 

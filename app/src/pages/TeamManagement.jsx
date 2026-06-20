@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import BusinessHoursEditor from '../components/BusinessHoursEditor';
 import {
     UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones,
     MessageSquareText, Eye, EyeOff, Pencil, Check, ChevronDown,
@@ -45,7 +47,7 @@ export default function TeamManagement() {
 
     // Edit department
     const [editingDept, setEditingDept] = useState(null); // dept object
-    const [editDeptForm, setEditDeptForm] = useState({ name: '', description: '' });
+    const [editDeptForm, setEditDeptForm] = useState({ name: '', description: '', business_hours: null });
     const [editDeptError, setEditDeptError] = useState('');
     const [editDeptSaving, setEditDeptSaving] = useState(false);
 
@@ -148,7 +150,11 @@ export default function TeamManagement() {
     // ── Edit Department ──────────────────────────────────────────────────────
     const openEditDept = (dept) => {
         setEditingDept(dept);
-        setEditDeptForm({ name: dept.name, description: dept.description || '' });
+        setEditDeptForm({
+            name: dept.name,
+            description: dept.description || '',
+            business_hours: dept.business_hours || null,
+        });
         setEditDeptError('');
     };
 
@@ -157,9 +163,12 @@ export default function TeamManagement() {
         setEditDeptError('');
         setEditDeptSaving(true);
         try {
+            // Send empty object to clear business hours back to "always open"
+            // (the backend translates `{}` → null on the column).
             await updateDepartment(editingDept.id, {
                 name: editDeptForm.name.trim(),
                 description: editDeptForm.description.trim() || null,
+                business_hours: editDeptForm.business_hours || {},
             });
             showToast('success', `Department "${editDeptForm.name}" updated`);
             setEditingDept(null);
@@ -293,6 +302,21 @@ export default function TeamManagement() {
                                         Create Operator
                                     </button>
                                 </form>
+                                {/* Business hours nudge — set workspace-wide
+                                    in Settings → Live Chat Queue (per-operator
+                                    schedules aren't a v1 feature). Helper text
+                                    sets the right expectation so admins don't
+                                    look for a per-operator hours field that
+                                    doesn't exist. */}
+                                <p className="col-span-2 mt-3 text-[12px] text-surface-500 dark:text-surface-400">
+                                    Business hours and queue behaviour apply to all operators.{' '}
+                                    <Link
+                                        to="/settings"
+                                        className="font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                                    >
+                                        Configure in Settings → Live Chat
+                                    </Link>
+                                </p>
                             </motion.div>
                         )}
                     </AnimatePresence>
@@ -549,19 +573,33 @@ export default function TeamManagement() {
                                                 <form onSubmit={handleEditDept} className="px-4 pb-4 pt-0 border-t border-surface-100 dark:border-surface-800 bg-surface-50 dark:bg-surface-800/40">
                                                     <p className="text-[11px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500 mt-3 mb-3">Edit Department</p>
                                                     {editDeptError && <p className="text-sm text-rose-600 dark:text-rose-400 mb-3">{editDeptError}</p>}
-                                                    <div className="flex gap-3">
+                                                    <div className="flex gap-3 mb-4">
                                                         <input type="text" placeholder="Name *" required value={editDeptForm.name}
                                                             onChange={(e) => setEditDeptForm(p => ({ ...p, name: e.target.value }))} className={inputCls} />
                                                         <input type="text" placeholder="Description"
                                                             value={editDeptForm.description} onChange={(e) => setEditDeptForm(p => ({ ...p, description: e.target.value }))} className={inputCls} />
-                                                        <button type="submit" disabled={editDeptSaving}
-                                                            className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white rounded-xl text-sm font-medium transition-colors shrink-0">
-                                                            {editDeptSaving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <Check size={14} />}
-                                                            Save
-                                                        </button>
+                                                    </div>
+
+                                                    {/* Per-department business hours — replaces the workspace-wide
+                                                        Settings → Business Hours section so Sales (9-6) and Support
+                                                        (24/7) can coexist. Saves on form submit alongside name+desc. */}
+                                                    <div className="rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-4 mb-4">
+                                                        <BusinessHoursEditor
+                                                            value={editDeptForm.business_hours}
+                                                            onChange={(next) => setEditDeptForm(p => ({ ...p, business_hours: next }))}
+                                                            disabled={editDeptSaving}
+                                                        />
+                                                    </div>
+
+                                                    <div className="flex gap-3 justify-end">
                                                         <button type="button" onClick={() => setEditingDept(null)}
-                                                            className="px-3 py-2 text-sm text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 transition-colors shrink-0">
+                                                            className="px-3 py-2 text-sm text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 transition-colors">
                                                             Cancel
+                                                        </button>
+                                                        <button type="submit" disabled={editDeptSaving}
+                                                            className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white rounded-xl text-sm font-medium transition-colors">
+                                                            {editDeptSaving ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <Check size={14} />}
+                                                            Save changes
                                                         </button>
                                                     </div>
                                                 </form>
