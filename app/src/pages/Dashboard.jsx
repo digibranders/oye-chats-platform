@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity, Link2, Check } from 'lucide-react';
+import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity, Link2, Check, Lock, Crown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import { getDashboardStats, getTopQuestions, getLeadStats, getFeedbackData, getOfflineMessages, getBotDemoUrl, trackDemoShareClick } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
+import useEntitlements from '../hooks/useEntitlements';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
 import StatCard from '../components/ui/StatCard';
 import EmptyState from '../components/ui/EmptyState';
 import { cn } from '../lib/utils';
@@ -27,6 +29,12 @@ const fadeUp = {
 
 export default function Dashboard() {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
+  // Lead Funnel / BANT widgets are paid-feature surfaces. Free users see a
+  // locked tile in the same slot so the upsell stays discoverable from the
+  // dashboard (matches the sidebar / Appearance / Integrations pattern).
+  const { entitlements: ent } = useEntitlements();
+  const { requestUpgrade } = useUpgradeModal();
+  const leadFunnelLocked = !ent.hasFeature('bant');
   const { showToast } = useToast();
   const [stats, setStats] = useState(null);
   const [topQuestions, setTopQuestions] = useState([]);
@@ -151,9 +159,39 @@ export default function Dashboard() {
   }
 
   const quickActions = [
-    { icon: Upload, label: 'Upload documents', desc: 'Add to your knowledge base', to: '/knowledge', color: 'from-primary-500/10 to-violet-500/10 dark:from-primary-500/20 dark:to-violet-500/20' },
-    { icon: Palette, label: 'Customize appearance', desc: 'Brand your chatbot', to: '/chatbot?tab=appearance', color: 'from-amber-500/10 to-orange-500/10 dark:from-amber-500/20 dark:to-orange-500/20' },
-    { icon: Code2, label: 'Get embed code', desc: 'Add to your website', to: '/chatbot', color: 'from-emerald-500/10 to-sky-500/10 dark:from-emerald-500/20 dark:to-sky-500/20' },
+    {
+      icon: Upload,
+      label: 'Upload documents',
+      desc: 'Add to your knowledge base',
+      to: '/knowledge',
+      gradient: 'from-violet-50 via-violet-50/60 to-indigo-50/40 dark:from-violet-500/20 dark:via-violet-500/10 dark:to-indigo-500/10',
+      ring: 'hover:border-violet-300 dark:hover:border-violet-500/50',
+      iconBg: 'bg-violet-100 dark:bg-violet-500/20',
+      iconColor: 'text-violet-600 dark:text-violet-300',
+      arrowColor: 'group-hover:text-violet-500 dark:group-hover:text-violet-300',
+    },
+    {
+      icon: Palette,
+      label: 'Customize appearance',
+      desc: 'Brand your chatbot',
+      to: '/chatbot?tab=appearance',
+      gradient: 'from-amber-50 via-amber-50/60 to-orange-50/40 dark:from-amber-500/20 dark:via-orange-500/10 dark:to-rose-500/10',
+      ring: 'hover:border-amber-300 dark:hover:border-amber-500/50',
+      iconBg: 'bg-amber-100 dark:bg-amber-500/20',
+      iconColor: 'text-amber-600 dark:text-amber-300',
+      arrowColor: 'group-hover:text-amber-500 dark:group-hover:text-amber-300',
+    },
+    {
+      icon: Code2,
+      label: 'Get embed code',
+      desc: 'Add to your website',
+      to: '/chatbot',
+      gradient: 'from-emerald-50 via-teal-50/60 to-sky-50/40 dark:from-emerald-500/20 dark:via-teal-500/10 dark:to-sky-500/10',
+      ring: 'hover:border-emerald-300 dark:hover:border-emerald-500/50',
+      iconBg: 'bg-emerald-100 dark:bg-emerald-500/20',
+      iconColor: 'text-emerald-600 dark:text-emerald-300',
+      arrowColor: 'group-hover:text-emerald-500 dark:group-hover:text-emerald-300',
+    },
   ];
   const demoOpens = stats?.demo_opens ?? 0;
   const demoShares = stats?.demo_shares ?? 0;
@@ -246,57 +284,70 @@ export default function Dashboard() {
             key={action.to}
             onClick={() => navigate(action.to)}
             className={cn(
-              'flex items-center gap-3 p-4 rounded-xl border transition-all text-left group',
-              'bg-gradient-to-br border-surface-200 dark:border-surface-800',
-              'hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-sm',
-              action.color
+              'relative flex items-center gap-3 p-4 rounded-xl border transition-all text-left group overflow-hidden',
+              'bg-gradient-to-br border-surface-200/80 dark:border-surface-800',
+              'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30',
+              action.gradient,
+              action.ring,
             )}
           >
-            <div className="w-10 h-10 rounded-lg bg-white dark:bg-surface-800 shadow-sm flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-              <action.icon size={18} className="text-primary-600 dark:text-primary-400" />
+            <div className={cn(
+              'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110 group-hover:rotate-3',
+              action.iconBg,
+            )}>
+              <action.icon size={18} className={action.iconColor} />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-surface-900 dark:text-white">{action.label}</p>
-              <p className="text-xs text-surface-500">{action.desc}</p>
+              <p className="text-xs text-surface-500 dark:text-surface-400">{action.desc}</p>
             </div>
-            <ArrowRight size={14} className="text-surface-600 dark:text-surface-300 group-hover:text-primary-500 group-hover:translate-x-0.5 transition-all" />
+            <ArrowRight size={14} className={cn(
+              'text-surface-400 dark:text-surface-500 transition-all group-hover:translate-x-0.5',
+              action.arrowColor,
+            )} />
           </button>
         ))}
         <button
           onClick={handleShareDemo}
           disabled={!selectedBot?.id}
           className={cn(
-            'flex items-center gap-3 p-4 rounded-xl border transition-all text-left group',
-            'bg-gradient-to-br from-fuchsia-500/10 to-primary-500/10 dark:from-fuchsia-500/20 dark:to-primary-500/20',
-            'border-surface-200 dark:border-surface-800 hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-sm',
-            !selectedBot?.id && 'opacity-60 cursor-not-allowed hover:border-surface-200 dark:hover:border-surface-800 hover:shadow-none'
+            'relative flex items-center gap-3 p-4 rounded-xl border transition-all text-left group overflow-hidden',
+            'bg-gradient-to-br from-fuchsia-50 via-fuchsia-50/60 to-primary-50/40 dark:from-fuchsia-500/20 dark:via-primary-500/10 dark:to-violet-500/10',
+            'border-surface-200/80 dark:border-surface-800',
+            'hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-black/30 hover:border-fuchsia-300 dark:hover:border-fuchsia-500/50',
+            !selectedBot?.id && 'opacity-60 cursor-not-allowed hover:translate-y-0 hover:border-surface-200 dark:hover:border-surface-800 hover:shadow-none',
           )}
         >
-          <div className="w-10 h-10 rounded-lg bg-white dark:bg-surface-800 shadow-sm flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+          <div className={cn(
+            'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110 group-hover:rotate-3',
+            copiedDemo
+              ? 'bg-emerald-100 dark:bg-emerald-500/20'
+              : 'bg-fuchsia-100 dark:bg-fuchsia-500/20',
+          )}>
             {copiedDemo ? (
-              <Check size={18} className="text-emerald-600 dark:text-emerald-400" />
+              <Check size={18} className="text-emerald-600 dark:text-emerald-300" />
             ) : (
-              <Link2 size={18} className="text-primary-600 dark:text-primary-400" />
+              <Link2 size={18} className="text-fuchsia-600 dark:text-fuchsia-300" />
             )}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-surface-900 dark:text-white">
               {copiedDemo ? 'Demo link copied' : 'Share demo link'}
             </p>
-            <p className="text-xs text-surface-500">
+            <p className="text-xs text-surface-500 dark:text-surface-400">
               {isLoading
                 ? 'Loading demo traction...'
                 : `${demoOpens} opens from ${demoShares} shares`}
             </p>
-            <p className="mt-1 text-[11px] font-semibold text-primary-600 dark:text-primary-400">
+            <p className="mt-1 text-[11px] font-semibold text-fuchsia-600 dark:text-fuchsia-300">
               {demoOpenRateLabel}
             </p>
           </div>
           <span className={cn(
-            'text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full shrink-0 transition-colors',
+            'text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full shrink-0 transition-colors border',
             copiedDemo
-              ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400'
-              : 'bg-white/80 dark:bg-surface-800 text-surface-500 dark:text-surface-400'
+              ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/15 dark:text-emerald-300 border-emerald-500/20 dark:border-emerald-400/30'
+              : 'bg-white/70 dark:bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-200/60 dark:border-fuchsia-400/30',
           )}>
             {copiedDemo ? 'Copied' : 'Copy link'}
           </span>
@@ -305,21 +356,78 @@ export default function Dashboard() {
 
       {/* Lead Funnel + Activity Feed row */}
       <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Lead Funnel Mini */}
+        {/* Lead Funnel Mini — locked on Free; renders the real chart on
+            paid plans. The card chrome (icon, title) is reused so a plan
+            upgrade visually swaps the body without a layout shift. */}
         <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
-              <Target size={18} className="text-emerald-600 dark:text-emerald-400" />
+            <div className={cn(
+              'w-9 h-9 rounded-xl flex items-center justify-center',
+              leadFunnelLocked
+                ? 'bg-surface-100 dark:bg-surface-800'
+                : 'bg-emerald-50 dark:bg-emerald-500/10',
+            )}>
+              <Target size={18} className={cn(
+                leadFunnelLocked
+                  ? 'text-surface-400 dark:text-surface-500'
+                  : 'text-emerald-600 dark:text-emerald-400',
+              )} />
             </div>
-            <div>
-              <h2 className="text-base font-bold text-surface-900 dark:text-white">Lead Funnel</h2>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base font-bold text-surface-900 dark:text-white flex items-center gap-1.5">
+                Lead Funnel
+                {leadFunnelLocked && (
+                  <span
+                    className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-600 leading-none dark:bg-amber-500/15 dark:text-amber-400"
+                    aria-label="Upgrade required"
+                  >
+                    <Lock size={11} strokeWidth={2.4} className="block" />
+                  </span>
+                )}
+              </h2>
               <p className="text-xs text-surface-500">Qualification stages</p>
             </div>
-            <button onClick={() => navigate('/leads')} className="ml-auto text-xs text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1">
-              View all <ArrowRight size={12} />
-            </button>
+            {!leadFunnelLocked && (
+              <button onClick={() => navigate('/leads')} className="ml-auto text-xs text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1">
+                View all <ArrowRight size={12} />
+              </button>
+            )}
           </div>
-          {leadStats ? (
+          {leadFunnelLocked ? (
+            <button
+              type="button"
+              onClick={() => requestUpgrade('view_qualification')}
+              className={cn(
+                'group w-full flex items-center gap-5 px-4 py-5 rounded-xl text-left',
+                'bg-gradient-to-br from-primary-50/80 to-fuchsia-50/40 dark:from-primary-500/10 dark:to-fuchsia-500/5',
+                'border border-primary-200/60 dark:border-primary-500/20',
+                'transition-all hover:from-primary-100/80 hover:to-fuchsia-100/40',
+                'dark:hover:from-primary-500/15 dark:hover:to-fuchsia-500/10',
+              )}
+            >
+              <div className="relative shrink-0">
+                <div className="absolute inset-[-6px] rounded-full bg-gradient-to-br from-primary-500/30 to-primary-700/20 blur-md opacity-70" />
+                <div className="relative w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-md shadow-primary-500/30 flex items-center justify-center">
+                  <Crown size={20} strokeWidth={2.2} />
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-primary-700 dark:text-primary-300">
+                  Standard feature
+                </p>
+                <p className="mt-0.5 text-[13.5px] font-semibold text-surface-900 dark:text-surface-50">
+                  Score every conversation with BANT
+                </p>
+                <p className="mt-1 text-[12px] leading-snug text-surface-600 dark:text-surface-400">
+                  Auto-rank visitors as Unqualified · MQL · SAL · SQL so your team sees hot leads first.
+                </p>
+              </div>
+              <ArrowRight
+                size={16}
+                className="shrink-0 text-primary-600 dark:text-primary-400 transition-transform group-hover:translate-x-0.5"
+              />
+            </button>
+          ) : leadStats ? (
             <div className="flex items-center gap-6">
               <div className="w-28 h-28 shrink-0">
                 <ResponsiveContainer width="100%" height="100%">

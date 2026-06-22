@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
     MessageSquareWarning, Paperclip, Star, Award, AlignLeft, Clock, Mail, Loader2,
     Sparkles, KeyRound, Eye, EyeOff, Check, Sun, Moon, Monitor, Palette,
+    Inbox, X,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
@@ -111,6 +112,24 @@ export default function Settings() {
     const [systemPrompt, setSystemPrompt] = useState('');
     const [savingTone, setSavingTone] = useState(false);
 
+    // Visitor Messages — the always-available offline-form config. Free
+    // plans don't get the Live Chat appearance tab OR the Integrations page,
+    // so this card is their ONLY surface for setting where offline messages
+    // get delivered AND where visitor email replies route. Paid users see
+    // the same fields here AND in Appearance → Live Chat / Integrations →
+    // Email (all paths write to the same bot columns, so they stay in sync).
+    const [visitorMessagesEnabled, setVisitorMessagesEnabled] = useState(true);
+    const [offlineMessage, setOfflineMessage] = useState(
+        "We'll be right back! Leave a message and we'll follow up shortly.",
+    );
+    const [notificationEmails, setNotificationEmails] = useState([]);
+    const [notifEmailInput, setNotifEmailInput] = useState('');
+    // Single reply-to address — distinct from notification recipients above:
+    // notifications go OUT to those addresses; this is where visitor REPLIES
+    // come back to. Mirrors the Integrations → Email "Reply-To" field.
+    const [replyToEmail, setReplyToEmail] = useState('');
+    const [savingVisitorMessages, setSavingVisitorMessages] = useState(false);
+
     // Saving state: key → true while in-flight
     const [saving, setSaving] = useState({});
 
@@ -133,6 +152,28 @@ export default function Settings() {
         if (typeof selectedBot.live_chat_max_queue_size === 'number') {
             setMaxQueueSize(selectedBot.live_chat_max_queue_size);
         }
+        // Visitor messages — bot.live_chat_enabled is the toggle that decides
+        // whether the widget surfaces a "Talk to us" / "Leave a message" CTA
+        // at all. For Free users this gates the offline form path because no
+        // live operators ever come online. Default to ENABLED so newly-created
+        // Free workspaces can receive visitor messages out of the box.
+        setVisitorMessagesEnabled(selectedBot.live_chat_enabled ?? true);
+        setOfflineMessage(
+            selectedBot.offline_message
+            || "We'll be right back! Leave a message and we'll follow up shortly.",
+        );
+        // notification_emails is JSONB shaped `{ default: [...] }`; fall back
+        // to the legacy single-string `notification_email` field for bots
+        // created before the multi-email column was added.
+        const multi = selectedBot.notification_emails?.default;
+        if (Array.isArray(multi) && multi.length) {
+            setNotificationEmails(multi);
+        } else if (selectedBot.notification_email) {
+            setNotificationEmails([selectedBot.notification_email]);
+        } else {
+            setNotificationEmails([]);
+        }
+        setReplyToEmail(selectedBot.reply_to_email || '');
         setLoadingBot(false);
     }, [selectedBot, botsLoading]);
 
@@ -172,6 +213,48 @@ export default function Settings() {
         // showToast is stable — intentionally omitted
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [botId]);
+
+    // Persist the visitor-messages bundle. Combines the toggle, the
+    // offline-message body, and the notification-email chips into a single
+    // PATCH so the API call count stays predictable. Both legacy keys
+    // (`notification_email`) and the new shape are written for backend
+    // compatibility — matches the convention used in Interface.jsx.
+    const saveVisitorMessages = useCallback(async () => {
+        if (!botId) return;
+        setSavingVisitorMessages(true);
+        try {
+            // Commit any unsubmitted chip text so users don't lose what's in
+            // the input when they click Save.
+            const pendingEmail = notifEmailInput.trim();
+            const isValidEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+            let emails = notificationEmails;
+            if (pendingEmail && isValidEmail(pendingEmail) && !emails.includes(pendingEmail)) {
+                emails = [...emails, pendingEmail];
+                setNotificationEmails(emails);
+                setNotifEmailInput('');
+            }
+            const trimmedReplyTo = replyToEmail.trim();
+            if (trimmedReplyTo && !isValidEmail(trimmedReplyTo)) {
+                showToast('error', 'Reply-to must be a valid email address.');
+                setSavingVisitorMessages(false);
+                return;
+            }
+            await updateBot(botId, {
+                live_chat_enabled: visitorMessagesEnabled,
+                offline_message: offlineMessage,
+                notification_email: emails[0] || null,
+                notification_emails: emails.length > 0 ? { default: emails } : null,
+                reply_to_email: trimmedReplyTo || null,
+            });
+            showToast('success', 'Visitor messages saved.');
+        } catch {
+            showToast('error', 'Failed to save visitor messages.');
+        } finally {
+            setSavingVisitorMessages(false);
+        }
+        // showToast is stable — intentionally omitted
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [botId, visitorMessagesEnabled, offlineMessage, notificationEmails, notifEmailInput, replyToEmail]);
 
     // Save tone & personality settings
     const saveToneSettings = useCallback(async () => {
@@ -329,6 +412,183 @@ export default function Settings() {
                                 saving={saving.email_transcript}
                                 onChange={(v) => toggleFlag('email_transcript', v)}
                             />
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ── Visitor Messages ─────────────────────────────────────────
+                The single source of truth for the offline-form configuration.
+                Always available regardless of plan — Free workspaces rely on
+                this card because their Appearance → Live Chat tab is hidden.
+                For paid users the same fields also appear in Appearance with
+                more controls; both write to the same Bot columns. */}
+            {showBotConfig && (
+                <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+                    <div className="flex items-center gap-2 mb-1">
+                        <Inbox size={16} className="text-primary-600 dark:text-primary-400" />
+                        <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50">Visitor Messages</h2>
+                    </div>
+                    <p className="text-sm text-surface-500 dark:text-surface-400 mb-5">
+                        Let visitors leave a message when there&apos;s no one to chat live. Submissions land in <strong className="font-semibold text-surface-700 dark:text-surface-300">Support → Messages</strong> and are emailed to the addresses below.
+                    </p>
+
+                    {loadingBot ? (
+                        <div className="flex items-center gap-2 text-surface-400 dark:text-surface-500 text-sm py-2">
+                            <Loader2 size={14} className="animate-spin" />
+                            Loading settings…
+                        </div>
+                    ) : (
+                        <div className="space-y-5">
+                            {/* Master toggle */}
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <label htmlFor="visitor-messages-toggle" className="text-sm font-medium text-surface-800 dark:text-surface-200 block">
+                                        Show &ldquo;Leave a message&rdquo; in the widget
+                                    </label>
+                                    <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                                        Visitors get a contact form whenever no operator is available.
+                                    </p>
+                                </div>
+                                <Toggle
+                                    id="visitor-messages-toggle"
+                                    checked={visitorMessagesEnabled}
+                                    onChange={setVisitorMessagesEnabled}
+                                />
+                            </div>
+
+                            {/* Offline message text */}
+                            <div>
+                                <label className="text-sm font-medium text-surface-800 dark:text-surface-200 mb-2 block">
+                                    Offline message
+                                </label>
+                                <textarea
+                                    value={offlineMessage}
+                                    onChange={(e) => setOfflineMessage(e.target.value)}
+                                    maxLength={240}
+                                    rows={2}
+                                    placeholder="We'll be right back! Leave a message and we'll follow up shortly."
+                                    className={cn(
+                                        'w-full px-4 py-3 rounded-xl border border-surface-200 dark:border-surface-600',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
+                                        'outline-none transition-all resize-none text-sm',
+                                    )}
+                                />
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
+                                    Shown above the message form so visitors know what to expect.
+                                </p>
+                            </div>
+
+                            {/* Reply-to email — where visitor replies land */}
+                            <div>
+                                <label htmlFor="settings-reply-to-input" className="text-sm font-medium text-surface-800 dark:text-surface-200 mb-2 block">
+                                    Reply-to email
+                                </label>
+                                <input
+                                    id="settings-reply-to-input"
+                                    type="email"
+                                    value={replyToEmail}
+                                    onChange={(e) => setReplyToEmail(e.target.value)}
+                                    placeholder="support@yourdomain.com"
+                                    className={cn(
+                                        'w-full px-4 py-2.5 rounded-xl border border-surface-200 dark:border-surface-600',
+                                        'bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100',
+                                        'placeholder:text-surface-400 dark:placeholder:text-surface-500',
+                                        'focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-500/30 focus:border-primary-500',
+                                        'outline-none transition-all text-sm',
+                                    )}
+                                />
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
+                                    Visitors get notification emails from <span className="font-mono">notifications@oyechats.com</span>; their replies route here.
+                                </p>
+                            </div>
+
+                            {/* Notification emails — chip input */}
+                            <div>
+                                <label className="text-sm font-medium text-surface-800 dark:text-surface-200 mb-2 block">
+                                    Notify these email addresses
+                                </label>
+                                <div
+                                    className={cn(
+                                        'min-h-[44px] flex flex-wrap items-center gap-1.5 px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-600',
+                                        'bg-white dark:bg-surface-800 focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-500/20',
+                                        'transition-all',
+                                    )}
+                                    onClick={() => document.getElementById('settings-notif-email-input')?.focus()}
+                                    role="presentation"
+                                >
+                                    {notificationEmails.map((email) => (
+                                        <span
+                                            key={email}
+                                            className="inline-flex items-center gap-1 px-2 py-1 bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300 text-xs rounded-md font-medium"
+                                        >
+                                            <span className="truncate max-w-[200px]">{email}</span>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setNotificationEmails((prev) => prev.filter((x) => x !== email));
+                                                }}
+                                                className="flex-shrink-0 ml-0.5 p-0.5 rounded hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors"
+                                                aria-label={`Remove ${email}`}
+                                            >
+                                                <X size={10} />
+                                            </button>
+                                        </span>
+                                    ))}
+                                    <input
+                                        id="settings-notif-email-input"
+                                        type="email"
+                                        value={notifEmailInput}
+                                        onChange={(e) => setNotifEmailInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ',') {
+                                                e.preventDefault();
+                                                const val = notifEmailInput.trim().replace(/,$/, '');
+                                                if (val && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) && !notificationEmails.includes(val)) {
+                                                    setNotificationEmails((prev) => [...prev, val]);
+                                                    setNotifEmailInput('');
+                                                }
+                                            } else if (e.key === 'Backspace' && !notifEmailInput && notificationEmails.length > 0) {
+                                                setNotificationEmails((prev) => prev.slice(0, -1));
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            const val = notifEmailInput.trim();
+                                            if (val && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) && !notificationEmails.includes(val)) {
+                                                setNotificationEmails((prev) => [...prev, val]);
+                                                setNotifEmailInput('');
+                                            }
+                                        }}
+                                        placeholder={notificationEmails.length === 0 ? 'sales@yourcompany.com' : 'Add another…'}
+                                        className="flex-1 min-w-[160px] text-sm text-surface-700 dark:text-surface-200 bg-transparent outline-none placeholder:text-surface-400 dark:placeholder:text-surface-500 py-0.5"
+                                    />
+                                </div>
+                                <p className="text-xs text-surface-400 dark:text-surface-500 mt-1.5">
+                                    Press Enter or comma to add. Leave empty to skip email notifications and only collect messages in the inbox.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={saveVisitorMessages}
+                                disabled={savingVisitorMessages}
+                                className="py-2.5 px-5 bg-primary-600 hover:bg-primary-700 dark:bg-primary-600 dark:hover:bg-primary-500 text-white text-sm font-medium rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {savingVisitorMessages ? (
+                                    <>
+                                        <Loader2 size={14} className="animate-spin" />
+                                        Saving…
+                                    </>
+                                ) : (
+                                    <>
+                                        <Check size={14} />
+                                        Save Visitor Messages
+                                    </>
+                                )}
+                            </button>
                         </div>
                     )}
                 </div>

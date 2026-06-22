@@ -484,11 +484,18 @@ export default function Webhooks({ embedded = false }) {
                         </p>
                     </div>
 
-                    <div className="grid md:grid-cols-3 gap-4">
+                    {/* ``items-stretch`` keeps all three cards the same
+                        height; ``min-h`` on the description normalises the
+                        one-line vs two-line text variance so the Copy
+                        buttons and accordions line up horizontally across
+                        cards. Without these the HubSpot card (whose
+                        description wraps) was pushing its CTA ~20px below
+                        the other two. */}
+                    <div className="grid md:grid-cols-3 gap-4 items-stretch">
                         {CRM_TEMPLATES.map((template) => (
-                            <div key={template.id} className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 space-y-3">
+                            <div key={template.id} className="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-2xl p-5 flex flex-col gap-3">
                                 <h3 className="text-sm font-bold text-surface-900 dark:text-surface-100">{template.title}</h3>
-                                <p className="text-sm text-surface-500 dark:text-surface-400">{template.description}</p>
+                                <p className="text-sm text-surface-500 dark:text-surface-400 min-h-[2.75rem]">{template.description}</p>
 
                                 <button
                                     onClick={async () => {

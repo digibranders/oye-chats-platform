@@ -350,6 +350,33 @@ class CurrentUserResponse(BaseModel):
     trial: TrialStatePayload | None = None
 
 
+@router.get("/me/entitlements")
+def get_my_entitlements(auth: dict = Depends(get_current_client_or_operator)):
+    """Return the resolved plan entitlements for the authenticated workspace.
+
+    Used by the admin app's ``useEntitlements`` hook to drive every feature
+    gate, limit display, and upgrade prompt without each component
+    re-fetching the plan. Operators see the entitlements of the client
+    they belong to — that's the workspace they're acting in, not their
+    own (operators don't have personal subscriptions).
+
+    Response shape mirrors ``PlanEntitlements.to_json_dict()`` plus a small
+    set of derived booleans the UI uses heavily.
+    """
+    from app.services.plan_entitlements_service import get_entitlements
+
+    client_id = auth["client_id"]
+    with get_session() as session:
+        entitlements = get_entitlements(client_id, session, include_usage=True)
+
+    payload = entitlements.to_json_dict()
+    # Derived helpers — saves the frontend a handful of conditionals.
+    payload["is_free"] = entitlements.plan_slug == "free"
+    payload["is_enterprise"] = entitlements.plan_slug == "enterprise"
+    payload["topup_allowed"] = entitlements.has_feature("topup_allowed")
+    return payload
+
+
 @router.get("/me", response_model=CurrentUserResponse)
 def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operator)):
     """Return the authenticated principal's profile + workspace bot count.

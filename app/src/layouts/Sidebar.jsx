@@ -3,12 +3,15 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
-  Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, Sparkles, CreditCard,
-  Gift, Palette,
+  Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, CreditCard,
+  Gift, Palette, Lock,
 } from 'lucide-react';
+import OyeChatsMark from '../components/OyeChatsMark';
 import { useBotContext } from '../context/BotContext';
 import { getAuthState } from '../utils/auth';
 import { getOfflineMessages, getLeadStats, getCurrentUser } from '../services/api';
+import useEntitlements from '../hooks/useEntitlements';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { cn } from '../lib/utils';
 
 export default function Sidebar({ isOpen, isMobile, onClose }) {
@@ -19,6 +22,17 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const { isOperator: isOperatorRole, isBotManager } = getAuthState();
+  // Entitlements drive which paid-only menu items render. Free users see
+  // a slimmer sidebar; Standard+ see the full set. The hook is cheap
+  // (Redis-cached server-side; module-cached client-side) so calling it
+  // from the Sidebar — a component that mounts on every authenticated
+  // page — is fine.
+  const { entitlements: ent } = useEntitlements();
+  // requestUpgrade is the global trigger for the premium upsell modal —
+  // every gated click in this sidebar goes through it so the surface is
+  // identical (copy, plan transition chip, CTA) wherever a free user hits
+  // a wall.
+  const { requestUpgrade } = useUpgradeModal();
   const [unreadMsgs, setUnreadMsgs] = useState(0);
   const [newLeads, setNewLeads] = useState(0);
   // Affiliate membership is derived from /auth/me (single source of truth =
@@ -71,7 +85,35 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   }, [isOperatorRole]);
 
   const handleNavClick = () => { if (isMobile && onClose) onClose(); };
-  const handleCreateBot = () => { setDropdownOpen(false); navigate('/chatbot?create=true'); };
+  // Create-bot click is gated on the workspace's plan limit. The Chatbot
+  // page also runs the same guard, but intercepting here avoids the brief
+  // flash where the create modal opens and immediately demands an upgrade.
+  const handleCreateBot = () => {
+    setDropdownOpen(false);
+    const botLimit = ent.limitFor('bots');
+    const canCreate = ent.withinLimit('bots', bots.length);
+    if (!canCreate) {
+      // Pass the plan + cap context so the modal can pick the right
+      // narrative (buy-a-seat vs. upgrade-your-plan vs. you've-hit-the-
+      // ceiling-on-this-plan).
+      requestUpgrade('add_bot', {
+        current: bots.length,
+        limit: botLimit,
+        planName: ent.planName,
+        canPurchase: ent.canPurchaseBotSeat,
+        hardCap: (ent.limits || {}).max_bots_cap,
+      });
+      return;
+    }
+    navigate('/chatbot?create=true');
+  };
+
+  // Free plan gating. Support stays UNLOCKED for everyone: Free users can
+  // configure the offline-message form in Settings and read incoming
+  // visitor messages in Support → Messages. The Live Chat *sub-tab* inside
+  // Support is the part that's locked (handled in Support.jsx). Leads
+  // remains fully locked for Free since it's an entirely paid surface.
+  const leadsLocked = ent.isFree;
 
   const mainItems = isOperatorRole
     ? [{ path: '/support', name: 'Support', icon: Headphones, badge: unreadMsgs }]
@@ -79,10 +121,50 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         { path: '/', name: 'Overview', icon: LayoutDashboard },
         { path: '/knowledge', name: 'Sources', icon: BookOpen },
         { path: '/insights', name: 'Insights', icon: BarChart3 },
-        { path: '/support', name: 'Support', icon: Headphones, badge: unreadMsgs },
-        { path: '/leads', name: 'Leads', icon: Target, badge: newLeads },
-        { path: '/qualification', name: 'Qualification', icon: Crosshair },
-        { path: '/integrations', name: 'Integrations', icon: Plug },
+        {
+          path: '/support',
+          name: 'Support',
+          icon: Headphones,
+          // Support is always reachable. Visitor messages inbox works on
+          // every plan; the Live Chat sub-tab inside the page handles its
+          // own upsell.
+          badge: unreadMsgs,
+        },
+        {
+          path: '/leads',
+          name: 'Leads',
+          icon: Target,
+          badge: leadsLocked ? 0 : newLeads,
+          locked: leadsLocked,
+          lockedReason: 'Lead capture and the leads dashboard are included on Starter and above.',
+          lockedIntent: 'view_leads',
+        },
+        // Qualification (BANT) is a Standard+ feature. We render it on
+        // every paid surface AND on Free with a lock badge so the value
+        // is discoverable from the sidebar — same upsell pattern as Leads
+        // and Integrations. Click on Free opens the upgrade modal instead
+        // of routing into a backend-403'd page.
+        {
+          path: '/qualification',
+          name: 'Qualification',
+          icon: Crosshair,
+          locked: !ent.hasFeature('bant'),
+          lockedReason: 'Lead qualification (BANT) is included on Standard and above.',
+          lockedIntent: 'view_qualification',
+        },
+        // Integrations covers webhooks, meeting booking, and per-event
+        // email routing — all paid surfaces. Free users handle the email
+        // basics they actually need from Settings → Visitor Messages, so
+        // the sidebar locks the whole page rather than presenting an
+        // Integrations page with one usable tab and two locked ones.
+        {
+          path: '/integrations',
+          name: 'Integrations',
+          icon: Plug,
+          locked: ent.isFree,
+          lockedReason: 'Webhooks, meetings, and per-event email routing are included on Starter and above.',
+          lockedIntent: 'view_integrations',
+        },
       ];
 
   // Affiliate entry slots between Team and Billing so it sits alongside
@@ -94,7 +176,20 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         { path: '/chatbot', name: 'My Bots', icon: Bot, children: [
           { path: '/chatbot?tab=appearance', name: 'Appearance', icon: Palette },
         ] },
-        { path: '/team', name: 'Team', icon: UsersRound },
+        // Team management (operators, departments, canned responses) only
+        // makes sense when live chat is on. Locking at the sidebar gives
+        // Free users a consistent upsell surface — same pattern as Leads
+        // / Qualification / Integrations. Operators logged in as their
+        // role above keep their unlocked Team item; they can only exist
+        // on paid plans by definition.
+        {
+          path: '/team',
+          name: 'Team',
+          icon: UsersRound,
+          locked: !ent.hasFeature('live_chat'),
+          lockedReason: 'Operators, departments, and quick replies are included on Starter and above.',
+          lockedIntent: 'view_team',
+        },
         ...(isAffiliate ? [{ path: '/affiliate', name: 'Affiliate', icon: Gift }] : []),
         { path: '/billing', name: 'Billing', icon: CreditCard },
       ];
@@ -127,8 +222,18 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
         transition={{ duration: 0.2, delay: index * 0.03 }}
       >
         <NavLink
-          to={item.path}
+          to={item.locked ? '#' : item.path}
           onClick={(e) => {
+            // Locked items open the premium upsell modal in place of
+            // navigation. We deliberately do NOT navigate to /billing
+            // here — the modal explains the value first; the user is
+            // one click from /billing inside the modal if they want it.
+            if (item.locked) {
+              e.preventDefault();
+              requestUpgrade(item.lockedIntent || 'view_support');
+              handleNavClick();
+              return;
+            }
             if (hasChildren && parentActive) {
               e.preventDefault();
               setExpandedMenus((prev) => ({ ...prev, [menuKey]: !isExpanded }));
@@ -142,12 +247,14 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
           className={cn(
             'relative flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group',
             isOpen ? 'w-full' : 'w-10 h-10 justify-center',
-            active
+            active && !item.locked
               ? 'bg-primary-50 dark:bg-white/[0.08] text-primary-700 dark:text-white'
-              : 'text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/[0.05] hover:text-surface-700 dark:hover:text-surface-200'
+              : item.locked
+                ? 'text-surface-400 dark:text-surface-500 hover:bg-surface-100/60 dark:hover:bg-white/[0.04] hover:text-surface-500 dark:hover:text-surface-400'
+                : 'text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/[0.05] hover:text-surface-700 dark:hover:text-surface-200'
           )}
-          title={!isOpen ? item.name : undefined}
-          aria-label={item.name}
+          title={!isOpen ? `${item.name}${item.locked ? ' (Upgrade required)' : ''}` : undefined}
+          aria-label={`${item.name}${item.locked ? ' — upgrade required' : ''}`}
         >
           {active && (
             <motion.div
@@ -161,10 +268,20 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
               size={18}
               className={cn(
                 'transition-colors',
-                active ? 'text-primary-500 dark:text-primary-400' : 'text-surface-400 dark:text-surface-500 group-hover:text-surface-600 dark:group-hover:text-surface-300'
+                item.locked
+                  ? 'text-surface-300 dark:text-surface-600 group-hover:text-surface-400 dark:group-hover:text-surface-500'
+                  : active ? 'text-primary-500 dark:text-primary-400' : 'text-surface-400 dark:text-surface-500 group-hover:text-surface-600 dark:group-hover:text-surface-300'
               )}
             />
-            {hasBadge && !isOpen && (
+            {/* Collapsed-sidebar locked indicator: replaces the badge dot with
+                a tiny lock so the gated state is visible even when only the
+                icon column is showing. Mutually exclusive with the badge. */}
+            {item.locked && !isOpen && (
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 rounded-full flex items-center justify-center">
+                <Lock size={8} className="text-white" strokeWidth={3} />
+              </span>
+            )}
+            {hasBadge && !isOpen && !item.locked && (
               <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 rounded-full text-[8px] text-white flex items-center justify-center font-bold leading-none">
                 {item.badge > 9 ? '9+' : item.badge}
               </span>
@@ -172,8 +289,21 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
           </div>
           {isOpen && (
             <>
-              <span className="truncate text-[13px] font-medium flex-1">{item.name}</span>
-              {hasBadge && (
+              <span className={cn('truncate text-[13px] font-medium flex-1', item.locked && 'text-surface-400 dark:text-surface-500')}>{item.name}</span>
+              {/* Expanded-sidebar locked indicator: a small lock pill next to
+                  the label, with the upgrade reason as a tooltip. Renders in
+                  place of any unread badge — the customer can't act on the
+                  badge anyway until they upgrade. */}
+              {item.locked && (
+                <span
+                  className="ml-auto inline-flex items-center justify-center w-5 h-5 rounded-md bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  title={item.lockedReason || 'Upgrade required'}
+                  aria-hidden="true"
+                >
+                  <Lock size={11} strokeWidth={2.5} />
+                </span>
+              )}
+              {hasBadge && !item.locked && (
                 <span className="ml-auto min-w-[18px] h-[18px] px-1 bg-rose-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold leading-none">
                   {item.badge > 99 ? '99+' : item.badge}
                 </span>
@@ -233,8 +363,8 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
       {/* Logo */}
       <div className="flex items-center h-16 px-4 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center flex-shrink-0 shadow-lg shadow-primary-500/25">
-            <Sparkles size={18} />
+          <div className="w-9 h-9 overflow-hidden flex items-center justify-center flex-shrink-0">
+            <OyeChatsMark size={36} />
           </div>
           {isOpen && (
             <motion.span

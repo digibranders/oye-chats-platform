@@ -332,11 +332,35 @@ def create_operator(request: CreateOperatorRequest, auth=Depends(get_current_cli
     _prevent_role_escalation(auth, request.role)
     client_id = auth["client_id"]
 
-    # ── Plan enforcement: check live_chat feature and operator limit ──
+    # ── Plan enforcement: live_chat feature + operator count limit ──
+    # ``enforce_feature`` is the legacy gate; the new entitlements service
+    # adds quantitative limit checks (e.g. Starter = 1 operator included).
+    from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
     from app.services.plan_service import enforce_feature
 
     with get_session() as db:
         enforce_feature(db, client_id, "live_chat")
+        entitlements = get_entitlements(client_id, db, include_usage=True)
+        operator_limit = entitlements.limit_for("operators")
+        if operator_limit != UNLIMITED:
+            current_operators = int(entitlements.usage.get("operators", 0))
+            if current_operators >= operator_limit:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "limit_reached",
+                        "limit": "operators",
+                        "current": current_operators,
+                        "max": operator_limit,
+                        "current_plan": entitlements.plan_slug,
+                        "message": (
+                            f"You've reached your plan's operator limit "
+                            f"({current_operators}/{operator_limit}). "
+                            f"Upgrade or purchase a seat to add more."
+                        ),
+                        "upgrade_url": "/billing",
+                    },
+                )
         db.commit()
 
     with get_session() as session:

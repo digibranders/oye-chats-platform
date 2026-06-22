@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { motion } from 'framer-motion';
+import { Lock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', className }) {
@@ -76,21 +77,25 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
   return (
     <div role="tablist" className={cn('flex items-center gap-1 p-1 bg-surface-100 dark:bg-surface-800 rounded-xl w-fit', className)}>
       {tabs.map((tab, index) => {
-        const isActive = activeTab === tab.id;
+        const isActive = activeTab === tab.id && !tab.locked;
         const Icon = tab.icon;
         return (
           <button
             key={tab.id}
             role="tab"
             aria-selected={isActive}
+            aria-disabled={tab.locked ? 'true' : undefined}
             tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(tab.id)}
             onKeyDown={(e) => handleKeyDown(e, index)}
+            title={tab.locked ? 'Available on Starter and above' : undefined}
             className={cn(
               'relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
               isActive
                 ? 'text-surface-900 dark:text-surface-50'
-                : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200'
+                : tab.locked
+                  ? 'text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300'
+                  : 'text-surface-500 hover:text-surface-700 dark:text-surface-400 dark:hover:text-surface-200'
             )}
           >
             {isActive && (
@@ -103,6 +108,17 @@ export default function Tabs({ tabs, activeTab, onChange, variant = 'pills', cla
             <span className="relative z-10 flex items-center gap-2">
               {Icon && <Icon size={15} />}
               {tab.label}
+              {tab.locked && (
+                <span
+                  className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-600 leading-none dark:bg-amber-500/15 dark:text-amber-400"
+                  aria-hidden="true"
+                >
+                  {/* `block` strips the inline-SVG baseline gap so the
+                      glyph centers on the geometric midpoint of the
+                      badge instead of sitting on the text baseline. */}
+                  <Lock size={11} strokeWidth={2.4} className="block" />
+                </span>
+              )}
             </span>
           </button>
         );

@@ -160,7 +160,12 @@ class WorkerSettings:
     # Worker behavior
     # Default to 2 concurrent jobs on 2GB droplets. Increase to 5 on 4GB+.
     max_jobs = int(os.getenv("WORKER_MAX_JOBS", "2"))
-    job_timeout = int(os.getenv("WORKER_JOB_TIMEOUT", "600"))  # 10 min
+    # ~27 min — matches CRAWL_SUBPROCESS_TIMEOUT so ARQ never kills a crawl
+    # that the subprocess itself is still allowed to run. Sized to fit
+    # Standard plan's 1500-page advertised cap with margin and to give
+    # Enterprise customers a usable single-shot ceiling until auto-
+    # segmentation (Tier 3) ships.
+    job_timeout = int(os.getenv("WORKER_JOB_TIMEOUT", "1600"))
     max_tries = 3
     retry_defer = True  # Exponential backoff on retry
 

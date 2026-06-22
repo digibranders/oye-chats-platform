@@ -4,13 +4,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import BusinessHoursEditor from '../components/BusinessHoursEditor';
 import {
     UsersRound, Building2, Plus, Trash2, X, Shield, User, Headphones,
-    MessageSquareText, Eye, EyeOff, Pencil, Check, ChevronDown,
+    MessageSquareText, Eye, EyeOff, Pencil, Check, ChevronDown, Lock,
 } from 'lucide-react';
 import {
     getOperators, createOperator, updateOperator, deleteOperator,
     getDepartments, createDepartment, updateDepartment, deleteDepartment,
 } from '../services/api';
 import { useToast } from '../context/ToastContext';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
+import useEntitlements from '../hooks/useEntitlements';
 import CannedResponses from './CannedResponses';
 import { getAuthState } from '../utils/auth';
 import { cn } from '../lib/utils';
@@ -22,6 +24,20 @@ const inputCls = 'w-full px-3 py-2 rounded-xl border border-surface-200 dark:bor
 export default function TeamManagement() {
     const { isOperator, isBotManager } = getAuthState();
     const { showToast } = useToast();
+    const { requestUpgrade } = useUpgradeModal();
+    const { entitlements: ent } = useEntitlements();
+    // Live-chat-derived team features (operators, departments, canned
+    // responses) are all bundled behind the `live_chat` plan feature. Free
+    // plans render the team page so users can SEE the surface, but every
+    // add-action opens the upgrade modal instead of mutating state.
+    const liveChatEnabled = ent.hasFeature('live_chat');
+    const requireLiveChat = (intent) => {
+        if (!liveChatEnabled) {
+            requestUpgrade(intent);
+            return false;
+        }
+        return true;
+    };
 
     const [operators, setOperators] = useState([]);
     const [departments, setDepartments] = useState([]);
@@ -253,10 +269,20 @@ export default function TeamManagement() {
                         </p>
                         {isBotManager && (
                             <button
-                                onClick={() => { setShowCreateOperator(true); setCreateError(''); }}
-                                className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors"
+                                onClick={() => {
+                                    if (!requireLiveChat('add_operator')) return;
+                                    setShowCreateOperator(true);
+                                    setCreateError('');
+                                }}
+                                className={cn(
+                                    'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors',
+                                    liveChatEnabled
+                                        ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                                        : 'bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-sm shadow-primary-500/30 hover:shadow-md hover:shadow-primary-500/40',
+                                )}
                             >
-                                <Plus size={15} /> Add Operator
+                                {liveChatEnabled ? <Plus size={15} /> : <Lock size={13} strokeWidth={2.6} />}
+                                Add Operator
                             </button>
                         )}
                     </div>
@@ -484,10 +510,19 @@ export default function TeamManagement() {
                         </p>
                         {isBotManager && (
                             <button
-                                onClick={() => setShowCreateDept(true)}
-                                className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors"
+                                onClick={() => {
+                                    if (!requireLiveChat('add_department')) return;
+                                    setShowCreateDept(true);
+                                }}
+                                className={cn(
+                                    'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors',
+                                    liveChatEnabled
+                                        ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                                        : 'bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-sm shadow-primary-500/30 hover:shadow-md hover:shadow-primary-500/40',
+                                )}
                             >
-                                <Plus size={15} /> Add Department
+                                {liveChatEnabled ? <Plus size={15} /> : <Lock size={13} strokeWidth={2.6} />}
+                                Add Department
                             </button>
                         )}
                     </div>

@@ -655,3 +655,108 @@ def bot_subscription_status(client_id: int) -> str:
 def is_bot_serving(client_id: int) -> bool:
     """Convenience predicate: True when the bot owner can serve widget traffic."""
     return bot_subscription_status(client_id) in _ACTIVE_SUBSCRIPTION_STATUSES
+
+
+# ── Plan entitlement dependencies ──────────────────────────────────────────
+# Drop-in FastAPI dependencies that check feature flags + numeric limits
+# against the resolved plan entitlements. Errors follow the same structured
+# 403/402 contract the frontend already handles for subscription gating.
+
+
+def require_feature(feature_name: str):
+    """Return a FastAPI dependency that 403s when the feature is not on the plan.
+
+    Usage::
+
+        @router.post("/webhooks")
+        def create_webhook(
+            payload: ...,
+            client: Client = Depends(get_current_client),
+            _: None = Depends(require_feature("webhooks")),
+        ):
+            ...
+
+    Superadmins always pass. The structured detail payload mirrors the
+    ``require_active_subscription`` 403 shape so the admin app can route
+    every gate failure through one upgrade flow.
+    """
+
+    def _dependency(client: Client = Depends(get_current_client)):
+        if getattr(client, "is_superadmin", False):
+            return None
+
+        with get_session() as session:
+            from app.services.plan_entitlements_service import get_entitlements
+
+            entitlements = get_entitlements(client.id, session)
+
+        if entitlements.has_feature(feature_name):
+            return None
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "feature_locked",
+                "feature": feature_name,
+                "current_plan": entitlements.plan_slug,
+                "message": (
+                    f"The '{feature_name}' feature is not included in your current plan. Upgrade to unlock it."
+                ),
+                "upgrade_url": "/billing",
+            },
+        )
+
+    return _dependency
+
+
+def enforce_limit(limit_name: str, current_count_callable=None):
+    """Return a FastAPI dependency that 403s when the resource would exceed the plan limit.
+
+    Caller must pass a ``current_count_callable(client_id, db_session) -> int``
+    so the dependency knows how many of this resource already exist. Common
+    counts are computed inline by the route (e.g. ``len(existing_bots)``);
+    the callable shape lets routes that already have the data avoid a
+    duplicate DB hit. When omitted, falls back to the usage numbers the
+    entitlements service computes generically (``bots``, ``operators``,
+    ``documents``, ``leads``).
+
+    Returns ``None`` on success so it composes cleanly as ``Depends(...)``.
+    """
+
+    def _dependency(client: Client = Depends(get_current_client)):
+        if getattr(client, "is_superadmin", False):
+            return None
+
+        with get_session() as session:
+            from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
+
+            entitlements = get_entitlements(client.id, session, include_usage=True)
+            limit = entitlements.limit_for(limit_name)
+
+            if limit == UNLIMITED:
+                return None
+
+            if current_count_callable is not None:
+                current = int(current_count_callable(client.id, session))
+            else:
+                current = int(entitlements.usage.get(limit_name, 0))
+
+            if current < limit:
+                return None
+
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "limit_reached",
+                    "limit": limit_name,
+                    "current": current,
+                    "max": limit,
+                    "current_plan": entitlements.plan_slug,
+                    "message": (
+                        f"You've reached your plan's '{limit_name}' limit ({current}/{limit}). Upgrade to add more."
+                    ),
+                    "upgrade_url": "/billing",
+                },
+            )
+
+    return _dependency

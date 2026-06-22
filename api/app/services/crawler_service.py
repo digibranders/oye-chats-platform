@@ -14,8 +14,12 @@ from app.core.cache import PREFIX, get_redis
 
 logger = logging.getLogger(__name__)
 
-# Maximum wall-clock time for the crawler subprocess (10 minutes)
-_SUBPROCESS_TIMEOUT = int(os.getenv("CRAWL_SUBPROCESS_TIMEOUT", "600"))
+# Maximum wall-clock time for the crawler subprocess (~27 minutes).
+# Bumped 600s → 900s → 1600s so heavyweight CMS crawls (1000+ HTTP pages or
+# 100+ JS pages) actually fit inside one ARQ job. 1600s is comfortably under
+# the 30-minute UX cliff where customers assume the crawl is broken, and
+# leaves margin below the 3540s hard ceiling imposed by ``_PROGRESS_TTL``.
+_SUBPROCESS_TIMEOUT = int(os.getenv("CRAWL_SUBPROCESS_TIMEOUT", "1600"))
 
 # Time to wait between SIGTERM and SIGKILL when tearing down a stuck crawler.
 _SUBPROCESS_KILL_GRACE = 5
@@ -38,7 +42,7 @@ _PROGRESS_TTL = 3600  # keep terminal state visible to the UI for an hour
 _CANCEL_TTL = _SUBPROCESS_TIMEOUT + 60  # cancel flag self-expires after the crawl can't possibly still be running
 _DEFAULT_LOCK_TTL = _SUBPROCESS_TIMEOUT + 120  # subprocess + ingestion margin
 _PROGRESS_MIRROR_INTERVAL = 1.0  # seconds between temp-file → Redis mirror ticks
-_CANCEL_POLL_INTERVAL = 1.0  # seconds between cancel-flag checks while crawl runs
+_CANCEL_POLL_INTERVAL = 0.5  # seconds between cancel-flag checks while crawl runs (snappier UX; cheap on Redis)
 # Tight enough that the user perceives Cancel as snappy (Playwright pages can
 # be stuck mid-``goto`` for many seconds without ever reaching our cooperative
 # checkpoint — SIGTERM-via-process-group is the only reliable way out). Loose
@@ -71,13 +75,17 @@ def _cancel_key(client_id: int) -> str:
 
 
 # A "running" progress row is considered dead if its heartbeat falls more
-# than this many seconds behind wall-clock. The orchestrator pulses the
-# heartbeat on every progress write — URL discovery, batch ingestion,
-# brand-tone extraction. 120s is comfortably above the slowest healthy
-# pulse interval and well under the 10-min subprocess timeout, so a worker
-# that gets SIGKILL'd mid-crawl is reported as failed within ~2 minutes of
-# the next ``GET /crawl/progress`` instead of waiting out the 1-hour TTL.
-_HEARTBEAT_STALE_SECONDS = 120
+# than this many seconds behind wall-clock. The mirror task below stamps an
+# UNCONDITIONAL heartbeat every ``_PROGRESS_MIRROR_INTERVAL`` seconds — even
+# when the URL list is unchanged — so a healthy crawl that's mid-batch on a
+# slow site never trips the reaper. 240s gives realistic margin for: a fully
+# JS-mode batch on a heavyweight CMS (3-5 pages × 30s page timeout = up to
+# 150s of zero new URLs), plus head-of-line waits in ``asyncio.gather`` on
+# the HTTP path, plus the brand-tone / company-context LLM extraction that
+# runs synchronously after Phase 2. A SIGKILL'd worker is still reaped within
+# 4 minutes of the next ``GET /crawl/progress`` instead of waiting out the
+# 1-hour Redis TTL.
+_HEARTBEAT_STALE_SECONDS = 240
 
 
 def set_crawl_progress(
@@ -139,6 +147,36 @@ def set_crawl_progress(
     except Exception:
         logger.debug("set_crawl_progress failed for client=%s", client_id, exc_info=True)
         _local_progress[int(client_id)] = payload
+
+
+def _touch_heartbeat(client_id: int) -> None:
+    """Re-stamp ``heartbeat_at`` on the in-flight progress row without changing
+    any other field.
+
+    Used by the progress mirror's idle tick so a slow batch (no new URLs for
+    60-150s while ``asyncio.gather`` waits for the slowest page) doesn't trip
+    the read-side staleness reaper. No-op when no row exists yet, when the
+    row isn't ``running``, or when Redis is unreachable.
+    """
+    import time as _time
+
+    client = get_redis()
+    if client is None:
+        local = _local_progress.get(int(client_id))
+        if local and local.get("status") == "running":
+            local["heartbeat_at"] = _time.time()
+        return
+    try:
+        raw = client.get(_progress_key(client_id))
+        if raw is None:
+            return
+        data = json.loads(raw)
+        if data.get("status") != "running":
+            return
+        data["heartbeat_at"] = _time.time()
+        client.set(_progress_key(client_id), json.dumps(data, default=str), ex=_PROGRESS_TTL)
+    except Exception:
+        logger.debug("_touch_heartbeat failed for client=%s", client_id, exc_info=True)
 
 
 # ── Cancellation flag (Redis + in-process fallback) ────────────────────────
@@ -252,9 +290,17 @@ async def _mirror_progress_to_redis(
 
     Runs as a background task for the duration of one crawl. Cancelled by
     ``crawl_website`` once the subprocess finishes (or is torn down). Writes
-    only when the URL list changes to keep Redis traffic minimal. Also writes
     ``pages_crawled`` / ``max_pages`` / ``current_url`` so the UI can render a
     real progress bar and ETA.
+
+    Heartbeat policy: the URL list write happens only when the count changes
+    (keeps Redis traffic minimal), but a *heartbeat-only* refresh happens on
+    every tick. This decoupling matters: the subprocess writes its progress
+    file once per batch (``asyncio.gather``), not once per page, so a healthy
+    crawl can legitimately go 60-150s without new URLs while a fat batch of
+    Knowledge Hub pages is in flight. Without the unconditional heartbeat,
+    the read-side reaper at ``_HEARTBEAT_STALE_SECONDS`` would fire while
+    the subprocess is still doing real work and incorrectly report failure.
     """
     last_count = -1
     try:
@@ -273,6 +319,13 @@ async def _mirror_progress_to_redis(
                     cancellable=True,
                 )
                 last_count = len(urls)
+            else:
+                # Heartbeat-only refresh: the URL list didn't change but the
+                # subprocess is still alive (we're polling its tempfile).
+                # Re-stamping ``heartbeat_at`` keeps ``_reap_if_stale`` from
+                # tripping during slow batches. Cheap — one Redis SET with the
+                # same payload plus a fresh timestamp.
+                _touch_heartbeat(client_id)
     except asyncio.CancelledError:
         # Final flush so the freshest URL list is always visible after the
         # subprocess exits, even if the last mirror tick was skipped.
@@ -405,19 +458,32 @@ class CrawlCancelled(RuntimeError):
 
 
 def _reap_if_stale(client_id: int, data: dict[str, Any]) -> dict[str, Any]:
-    """Synthesise a terminal ``failed`` payload when a ``running`` row is stale.
+    """Synthesise a terminal payload when a non-terminal row's heartbeat is stale.
 
-    A worker that gets SIGKILL'd mid-crawl never runs the orchestrator's
-    ``except`` blocks, so the Redis row stays at ``status='running'`` until
-    its 1-hour TTL fires. We detect this on the read path: any ``running``
-    row whose ``heartbeat_at`` is older than :data:`_HEARTBEAT_STALE_SECONDS`
-    is treated as dead. The terminal state is also written BACK to Redis so
-    every subsequent read is consistent and so the per-client crawl lock,
-    which keys off "is anything running?" upstream of this, gets released.
+    A worker that gets SIGKILL'd (or times out) mid-crawl never runs the
+    orchestrator's ``except`` blocks, so the Redis row stays at
+    ``status='running'`` *or* ``status='cancelling'`` until the 1-hour TTL
+    fires. We detect this on the read path: any non-terminal row whose
+    ``heartbeat_at`` is older than :data:`_HEARTBEAT_STALE_SECONDS` is
+    treated as dead. The terminal state is written BACK to Redis so every
+    subsequent read is consistent and so the per-client crawl lock — which
+    keys off "is anything running?" upstream of this — gets released.
+
+    Reap mapping:
+      * ``running``    → ``failed`` ("worker died")
+      * ``cancelling`` → ``cancelled`` ("cancel honoured")
+
+    The ``cancelling`` case matters because the cancel endpoint writes
+    ``cancelling`` directly to Redis the moment the user clicks Stop. If
+    the orchestrator dies before it can transition to ``cancelled``, the
+    UI would otherwise show "Stopping..." until the Redis key expires
+    (1 hour later). Treating ``cancelling`` as a reapable state collapses
+    that window to ``_HEARTBEAT_STALE_SECONDS``.
     """
     import time as _time
 
-    if data.get("status") != "running":
+    status = data.get("status")
+    if status not in ("running", "cancelling"):
         return data
     heartbeat = data.get("heartbeat_at")
     if heartbeat is None:
@@ -425,37 +491,58 @@ def _reap_if_stale(client_id: int, data: dict[str, Any]) -> dict[str, Any]:
         # ``started_at`` if present so existing in-flight crawls still benefit
         # from the reaper without a redeploy gap.
         heartbeat = data.get("started_at")
-    # Anchorless ``running`` row — only possible from pre-heartbeat code
+    # Anchorless non-terminal row — only possible from pre-heartbeat code
     # or from a writer that crashed before stamping anything. Both mean
     # it isn't live; reap immediately rather than wait for the 1-hour TTL.
     age = float(_HEARTBEAT_STALE_SECONDS + 1) if heartbeat is None else _time.time() - float(heartbeat)
     if age < _HEARTBEAT_STALE_SECONDS:
         return data
 
-    logger.warning(
-        "crawl progress for client %s is stale (heartbeat %ss ago); reporting as failed",
-        client_id,
-        int(age),
-    )
-    set_crawl_progress(
-        client_id,
-        status="failed",
-        urls=data.get("urls") or [],
-        error=("Crawl did not complete — the worker process appears to have died. Please try again."),
-    )
-    # Drop the per-client lock too — the worker that held it is gone.
-    # Without this, the next ``POST /crawl`` would 429 against the live
-    # lock for another hour while the customer wonders what's broken.
+    if status == "cancelling":
+        # The user clicked Stop; the orchestrator never got to confirm it.
+        # Honour the user's intent and surface a clean ``cancelled`` state.
+        logger.warning(
+            "crawl for client %s stuck in cancelling (heartbeat %ss ago); reporting as cancelled",
+            client_id,
+            int(age),
+        )
+        set_crawl_progress(
+            client_id,
+            status="cancelled",
+            urls=data.get("urls") or [],
+        )
+        terminal_status = "cancelled"
+        terminal_error: str | None = None
+    else:
+        logger.warning(
+            "crawl progress for client %s is stale (heartbeat %ss ago); reporting as failed",
+            client_id,
+            int(age),
+        )
+        terminal_error = "Crawl did not complete — the worker process appears to have died. Please try again."
+        set_crawl_progress(
+            client_id,
+            status="failed",
+            urls=data.get("urls") or [],
+            error=terminal_error,
+        )
+        terminal_status = "failed"
+
+    # Drop the per-client lock too — whatever held it is gone. Without this,
+    # the next ``POST /crawl`` would 429 against the live lock for an hour
+    # while the customer wonders what's broken.
     with contextlib.suppress(Exception):
         release_crawl_lock(client_id)
     # Mirror what we just wrote so the caller sees the same shape without
     # a second Redis round-trip.
-    return {
-        "status": "failed",
+    reaped_payload: dict[str, Any] = {
+        "status": terminal_status,
         "urls": data.get("urls") or [],
-        "error": "Crawl did not complete — the worker process appears to have died. Please try again.",
         "reaped": True,
     }
+    if terminal_error is not None:
+        reaped_payload["error"] = terminal_error
+    return reaped_payload
 
 
 def get_crawl_progress(client_id: int) -> dict[str, Any]:

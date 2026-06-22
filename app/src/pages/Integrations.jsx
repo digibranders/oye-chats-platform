@@ -4,6 +4,8 @@ import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
+import useEntitlements from '../hooks/useEntitlements';
 import { getBots, updateBot } from '../services/api';
 import Webhooks from './Webhooks';
 
@@ -581,24 +583,62 @@ function MeetingsSettings() {
 
 // ─── Unified Integrations Page ──────────────────────────────────────────────
 
-const integrationTabs = [
-    { id: 'email', label: 'Email', icon: Mail },
-    { id: 'webhooks', label: 'Webhooks', icon: WebhookIcon },
-    { id: 'meetings', label: 'Meetings', icon: Calendar },
-];
-
 export default function Integrations() {
-    // Support ?tab= query param for deep linking / redirects
+    // Page-level access is gated at the sidebar (Free → locked). This page
+    // is reached by every paid plan, but individual sub-tabs may still be
+    // gated by their own feature flag: Starter ships with
+    // ``webhooks: false`` (Standard+ feature) so the Webhooks tab opens
+    // the upgrade modal when clicked. Email + Meetings are accessible to
+    // every paid plan.
+    const { entitlements: ent } = useEntitlements();
+    const { requestUpgrade } = useUpgradeModal();
+
+    const integrationTabs = [
+        { id: 'email', label: 'Email', icon: Mail },
+        {
+            id: 'webhooks',
+            label: 'Webhooks',
+            icon: WebhookIcon,
+            locked: !ent.hasFeature('webhooks'),
+            intent: 'webhooks_integration',
+        },
+        { id: 'meetings', label: 'Meetings', icon: Calendar },
+    ];
+
+    // Support ?tab= query param for deep linking. Clamp requests for a
+    // locked tab back to Email so the page renders something useful; the
+    // upgrade modal then explains why.
     const params = new URLSearchParams(window.location.search);
-    const initialTab = params.get('tab') || 'email';
-    const [activeTab, setActiveTab] = useState(
-        integrationTabs.some(t => t.id === initialTab) ? initialTab : 'email'
-    );
+    const requested = params.get('tab') || 'email';
+    const requestedDef = integrationTabs.find((t) => t.id === requested);
+    const deepLinkedLocked = requestedDef?.locked === true;
+    const initialTab = !requestedDef || deepLinkedLocked ? 'email' : requested;
+    const [activeTab, setActiveTab] = useState(initialTab);
+
+    // Fire the upgrade modal once if a Starter user deep-linked to
+    // /integrations?tab=webhooks. The setActiveTab clamp above already
+    // put them on Email so this effect is purely a one-time side effect.
+    useEffect(() => {
+        if (deepLinkedLocked && requestedDef?.intent) {
+            requestUpgrade(requestedDef.intent);
+        }
+        // Read only on mount.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleTabChange = (id) => {
+        const target = integrationTabs.find((t) => t.id === id);
+        if (target?.locked) {
+            requestUpgrade(target.intent || 'webhooks_integration');
+            return;
+        }
+        setActiveTab(id);
+    };
 
     return (
         <div className="space-y-6 animate-fade-in">
             <PageHeader title="Integrations" subtitle="Connect email, webhooks, and third-party services" />
-            <Tabs tabs={integrationTabs} activeTab={activeTab} onChange={setActiveTab} />
+            <Tabs tabs={integrationTabs} activeTab={activeTab} onChange={handleTabChange} />
 
             {activeTab === 'email' && <EmailSettings />}
             {activeTab === 'webhooks' && <Webhooks embedded />}

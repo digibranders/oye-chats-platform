@@ -1,8 +1,17 @@
 import { useState, useEffect } from 'react';
-import { MessageSquareText, Plus, Pencil, Trash2, Search, Tag, X } from 'lucide-react';
+import { MessageSquareText, Plus, Pencil, Trash2, Search, Tag, X, Lock } from 'lucide-react';
 import { getCannedResponses, createCannedResponse, updateCannedResponse, deleteCannedResponse } from '../services/api';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
+import useEntitlements from '../hooks/useEntitlements';
+import { cn } from '../lib/utils';
 
 export default function CannedResponses({ embedded = false }) {
+    const { requestUpgrade } = useUpgradeModal();
+    const { entitlements: ent } = useEntitlements();
+    // Quick replies travel with the `live_chat` feature flag because they
+    // only make sense once you have human operators. Free users can see
+    // the surface but every add-action defers to the upgrade modal.
+    const liveChatEnabled = ent.hasFeature('live_chat');
     const [responses, setResponses] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -38,6 +47,10 @@ export default function CannedResponses({ embedded = false }) {
     });
 
     const openCreateModal = () => {
+        if (!liveChatEnabled) {
+            requestUpgrade('add_canned_response');
+            return;
+        }
         setEditingResponse(null);
         setForm({ title: '', content: '', shortcut: '', category: '' });
         setShowModal(true);
@@ -108,9 +121,14 @@ export default function CannedResponses({ embedded = false }) {
                 )}
                 <button
                     onClick={openCreateModal}
-                    className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors"
+                    className={cn(
+                        'flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors',
+                        liveChatEnabled
+                            ? 'bg-primary-600 hover:bg-primary-700 text-white'
+                            : 'bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-sm shadow-primary-500/30 hover:shadow-md hover:shadow-primary-500/40',
+                    )}
                 >
-                    <Plus className="w-4 h-4" />
+                    {liveChatEnabled ? <Plus className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" strokeWidth={2.6} />}
                     Add Response
                 </button>
             </div>

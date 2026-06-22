@@ -5,12 +5,12 @@ import Tabs from '../components/ui/Tabs';
 import PageHeader from '../components/ui/PageHeader';
 import Analytics from './Analytics';
 import Users from './Users';
-import Feedback from './Feedback';
+// import Feedback from './Feedback';
 
 const tabs = [
   { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   { id: 'conversations', label: 'Conversations', icon: MessageCircle },
-  { id: 'feedback', label: 'Feedback', icon: ThumbsUp },
+  // { id: 'feedback', label: 'Feedback', icon: ThumbsUp },
 ];
 
 export default function Insights() {
@@ -25,7 +25,7 @@ export default function Insights() {
 
       {activeTab === 'analytics' && <Analytics embedded />}
       {activeTab === 'conversations' && <Users embedded />}
-      {activeTab === 'feedback' && <Feedback embedded />}
+      {/* {activeTab === 'feedback' && <Feedback embedded />} */}
     </div>
   );
 }

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["documents"])
 
 # Upload limits (bytes)
-_MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB per file
+_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB per file
 _MAX_TOTAL_UPLOAD = 60 * 1024 * 1024  # 60 MB per request
 
 
@@ -203,6 +203,38 @@ def ingest_documents(
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
+    # ── Plan enforcement: cap on total documents per workspace ──
+    # The credit gate further down stops a Free user from spending more
+    # credits than they have; this plan-level check stops them from
+    # uploading more documents than their tier allows (5/15/35/unlimited)
+    # regardless of credit balance. Run BEFORE expensive file reads.
+    from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
+
+    with get_session() as db:
+        entitlements = get_entitlements(client_id, db, include_usage=True)
+        docs_limit = entitlements.limit_for("documents")
+        if docs_limit != UNLIMITED:
+            current_docs = int(entitlements.usage.get("documents", 0))
+            attempted = len(files)
+            if current_docs + attempted > docs_limit:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "limit_reached",
+                        "limit": "documents",
+                        "current": current_docs,
+                        "max": docs_limit,
+                        "attempted": attempted,
+                        "current_plan": entitlements.plan_slug,
+                        "message": (
+                            f"You've reached your plan's document limit "
+                            f"({current_docs}/{docs_limit}). "
+                            f"Delete existing documents or upgrade to add more."
+                        ),
+                        "upgrade_url": "/billing",
+                    },
+                )
+
     supported_extensions = [".pdf", ".docx", ".txt", ".md"]
     saved_paths: list[str] = []  # Track written paths for cleanup on failure
     saved_files: list[str] = []
@@ -221,7 +253,7 @@ def ingest_documents(
         if file_size > _MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"File '{file.filename}' exceeds 15 MB limit ({file_size / (1024 * 1024):.1f} MB).",
+                detail=f"File '{file.filename}' exceeds 10 MB limit ({file_size / (1024 * 1024):.1f} MB).",
             )
         total_bytes += file_size
         if total_bytes > _MAX_TOTAL_UPLOAD:

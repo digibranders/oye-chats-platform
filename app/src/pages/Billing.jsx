@@ -18,6 +18,7 @@ import {
   ListOrdered,
   ArrowUpRight,
   Info,
+  Bot,
 } from 'lucide-react';
 import CreditCoin from '../components/icons/CreditCoin';
 import {
@@ -25,6 +26,8 @@ import {
   getCreditHistory,
   getCurrentSubscription,
   changeOperatorSeats,
+  getBotSeats,
+  changeBotSeats,
   getBillingPortalUrl,
   verifyStripeTopup,
   verifyStripeSubscription,
@@ -37,6 +40,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card'
 import { Button } from '../components/ui/Button';
 import Progress from '../components/ui/Progress';
 import { useToast } from '../context/ToastContext';
+import useEntitlements from '../hooks/useEntitlements';
 import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
@@ -175,6 +179,12 @@ const TABS = [
   { id: 'history', label: 'History', icon: ListOrdered },
 ];
 
+// Free plan loses the "Buy credits" tab because Free users cannot top up
+// (matrix decision — Free is a strict trial tier, must upgrade to keep
+// using). We filter here at module-load time then re-filter inside the
+// component via entitlements; the constant is used for the type contract.
+const TABS_NO_TOPUP = TABS.filter((t) => t.id !== 'topups');
+
 export default function Billing() {
   const { showToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -190,7 +200,17 @@ export default function Billing() {
   const [refreshing, setRefreshing] = useState(false);
   const [topupOpen, setTopupOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  // Entitlements-driven UI: Free users see no topup CTA anywhere on this
+  // page; their only path forward when credits run out is "Upgrade to
+  // Starter". Matches the matrix decision documented in the plan doc.
+  const { entitlements: ent } = useEntitlements();
+  const topupAllowed = ent.topupAllowed !== false; // default-true on missing data
+  const visibleTabs = topupAllowed ? TABS : TABS_NO_TOPUP;
   const [seatBusy, setSeatBusy] = useState(false);
+  // Bot-seat add-on state — fetched once on mount, refreshed after any
+  // bot-seat write or whenever the top-level loadAll runs.
+  const [botSeatState, setBotSeatState] = useState(null);
+  const [botSeatBusy, setBotSeatBusy] = useState(false);
   // Seat-change confirmation modal state. Stores the pending delta so the
   // same modal handles both add (+1) and remove (-1) — surfaces price,
   // payment provider, and resulting seat count BEFORE the backend call.
@@ -208,19 +228,35 @@ export default function Billing() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
+  // Defensive: if someone shares a /billing?tab=topups URL with a Free user,
+  // silently bounce them to the overview rather than rendering the topup
+  // tab they can't use. Triggered whenever entitlements load AFTER the
+  // tab state is hydrated from the URL.
+  useEffect(() => {
+    if (!topupAllowed && activeTab === 'topups') {
+      setActiveTab('overview');
+    }
+  }, [topupAllowed, activeTab]);
+
   async function loadAll({ silent = false } = {}) {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const [balRes, subRes, histRes] = await Promise.all([
+      // Bundle the bot-seat fetch with the rest so silent reloads (after
+      // plan changes, seat updates, topups) refresh it too — without it,
+      // a customer who just upgraded from Free to Starter wouldn't see
+      // the bot-seat card appear until a hard reload.
+      const [balRes, subRes, histRes, botSeatRes] = await Promise.all([
         getCreditBalance(),
         getCurrentSubscription(),
         getCreditHistory({ page: 1, limit: 50 }),
+        getBotSeats().catch(() => null),
       ]);
       setBalance(balRes);
       setSubscription(subRes?.subscription || null);
       setPlan(subRes?.plan || null);
       setHistory(Array.isArray(histRes) ? histRes : []);
+      setBotSeatState(botSeatRes);
     } catch (err) {
       showToast(err?.message || 'Failed to load billing data', 'error');
     } finally {
@@ -332,8 +368,15 @@ export default function Billing() {
   // is in great shape, not in trouble.
   const lowBalance = monthlyGrant > 0 && totalRemaining <= monthlyGrant * 0.2;
 
-  const seatLimit = subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1;
-  const includedSeats = plan?.included_operator_seats ?? 1;
+  // Operator seat counts honour the plan's actual ``included_operator_seats``
+  // (Free = 0, Starter = 1, Standard = 5, ...). For Free plans we force the
+  // count to 0 because the Subscription model defaults
+  // ``operator_quantity`` to 1 (a legacy default that predates the Free
+  // tier shipping with zero seats) — without the clamp the card would
+  // claim "1 seat total" on a plan that includes none.
+  const includedSeats = plan?.included_operator_seats ?? 0;
+  const seatLimit =
+    includedSeats === 0 ? 0 : subscription?.operator_quantity ?? includedSeats;
   // Seat-fee fallback for an admin DB that hasn't picked up the new pricing
   // migration yet. Defaults to the current $5 / mo headline so the row reads
   // "+$5/mo" instead of falling back to a stale figure or a blank label.
@@ -342,7 +385,7 @@ export default function Billing() {
   const usage = balance?.usage || {};
   // Merge per-key so a backend payload that hasn't been redeployed since a
   // new cost was added still renders a sensible default instead of "0 credits".
-  const costs = { ai_chat: 1,document_upload: 2, url_scan: 3,  email_send: 1, ...(balance?.costs || {}) };
+  const costs = { ai_chat: 1, document_upload: 3, url_scan: 5, email_send: 1, ...(balance?.costs || {}) };
 
   // Total credits consumed this period across every bucket (plan, top-up,
   // manual) — sums the same per-reason ledger tally the rows below render
@@ -381,6 +424,31 @@ export default function Billing() {
       await loadAll({ silent: true });
     } finally {
       setSeatBusy(false);
+    }
+  }
+
+  // ── Bot seats ──
+  // Direct add/remove (no confirmation modal — the impact is purely
+  // "your effective bot limit changes by 1"; no destructive action and
+  // no payment redirect is needed for the local counter). Errors surface
+  // via toast since they're typically validation (e.g. "delete a bot
+  // first") rather than provider failures.
+  async function handleBotSeatChange(delta) {
+    if (botSeatBusy) return;
+    setBotSeatBusy(true);
+    try {
+      const result = await changeBotSeats(delta);
+      setBotSeatState(result);
+      showToast(
+        delta > 0
+          ? `Added a bot seat (now ${result.extra_bot_seats} extra, ${result.effective_limit} total).`
+          : `Released a bot seat (now ${result.extra_bot_seats} extra, ${result.effective_limit} total).`,
+        'success',
+      );
+    } catch (err) {
+      showToast(err?.message || 'Failed to update bot seats', 'error');
+    } finally {
+      setBotSeatBusy(false);
     }
   }
 
@@ -476,13 +544,23 @@ export default function Billing() {
           )}
           Refresh
         </Button>
-        <Button onClick={() => setTopupOpen(true)} disabled={loading}>
-          <CreditCoin className="w-4 h-4" />
-          Buy more credits
-        </Button>
+        {topupAllowed ? (
+          <Button onClick={() => setTopupOpen(true)} disabled={loading}>
+            <CreditCoin className="w-4 h-4" />
+            Buy more credits
+          </Button>
+        ) : (
+          // Free: route to plan upgrade flow instead of top up. Same CTA
+          // slot so the page layout doesn't shift; only the label and
+          // handler change.
+          <Button onClick={() => setPlanOpen(true)} disabled={loading}>
+            <Sparkles className="w-4 h-4" />
+            Upgrade to Starter
+          </Button>
+        )}
       </PageHeader>
 
-      <Tabs tabs={TABS} activeTab={activeTab} onChange={setActiveTab} variant="underline" />
+      <Tabs tabs={visibleTabs} activeTab={activeTab} onChange={setActiveTab} variant="underline" />
 
       {/* Scheduled-change banner — surfaces a queued downgrade so the user
           knows what's coming and can back out before cutover. Rendered above
@@ -518,7 +596,8 @@ export default function Billing() {
               usage={usage}
               costs={costs}
               lowBalance={lowBalance}
-              onTopup={() => setTopupOpen(true)}
+              topupAllowed={topupAllowed}
+              onTopup={() => (topupAllowed ? setTopupOpen(true) : setPlanOpen(true))}
             />
           )}
 
@@ -545,6 +624,9 @@ export default function Billing() {
               onBillingPortal={handleBillingPortal}
               onChangePlan={() => setPlanOpen(true)}
               onSyncBilling={handleSyncBilling}
+              botSeatState={botSeatState}
+              botSeatBusy={botSeatBusy}
+              onBotSeatChange={handleBotSeatChange}
             />
           )}
 
@@ -718,6 +800,7 @@ function OverviewTab({
   periodUsed,
   usage,
   costs,
+  topupAllowed = true,
   lowBalance,
   balance,
   onTopup,
@@ -754,7 +837,11 @@ function OverviewTab({
             {lowBalance ? (
               <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                <span>Below 20% of your monthly allowance. Top up to keep your bot running.</span>
+                <span>
+                  {topupAllowed
+                    ? 'Below 20% of your monthly allowance. Top up to keep your bot running.'
+                    : 'Below 20% of your monthly allowance. Upgrade to Starter to keep your bot running.'}
+                </span>
               </div>
             ) : planUsedPct >= 80 && topupRemaining > 0 ? (
               <div className="mt-3 flex items-start gap-2 rounded-md bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
@@ -834,14 +921,25 @@ function OverviewTab({
               <span className="text-sm text-surface-500">credits</span>
             </div>
             <div className="mt-3 text-xs text-surface-500 dark:text-surface-400">
-              {topupRemaining > 0
-                ? `Oldest expires ${fmtDate(balance?.soonest_expiry)}`
-                : 'No top-up credits yet — they roll over for 12 months.'}
+              {!topupAllowed
+                ? 'Free plan — top-ups not available. Upgrade to Starter to keep going past your monthly limit.'
+                : topupRemaining > 0
+                  ? `Oldest expires ${fmtDate(balance?.soonest_expiry)}`
+                  : 'No top-up credits yet — they roll over for 12 months.'}
             </div>
             <div className="mt-4">
               <Button variant="outline" size="sm" onClick={onTopup}>
-                <CreditCoin className="w-3.5 h-3.5" />
-                Top up
+                {topupAllowed ? (
+                  <>
+                    <CreditCoin className="w-3.5 h-3.5" />
+                    Top up
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Upgrade
+                  </>
+                )}
               </Button>
             </div>
           </CardContent>
@@ -1023,6 +1121,9 @@ function SeatsTab({
   onBillingPortal,
   onChangePlan,
   onSyncBilling,
+  botSeatState,
+  botSeatBusy,
+  onBotSeatChange,
 }) {
   return (
     <div className="space-y-6">
@@ -1098,38 +1199,213 @@ function SeatsTab({
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <div className="text-sm text-surface-700 dark:text-surface-200">
-                <strong>{seatLimit}</strong> {seatLimit === 1 ? 'seat' : 'seats'} total ·{' '}
-                {includedSeats} included with your plan
+                <strong>{seatLimit}</strong> {seatLimit === 1 ? 'seat' : 'seats'} total
+                {includedSeats > 0
+                  ? ` · ${includedSeats} included with your plan`
+                  : ' · Free plan does not include operator seats'}
               </div>
               <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
-                Extra seats: {seatPriceLabel} each / month. Live chat is free of credit charges
-                — covered by the seat fee.
+                {includedSeats > 0
+                  ? `Extra seats: ${seatPriceLabel} each / month. Live chat is free of credit charges — covered by the seat fee.`
+                  : 'Upgrade to Starter to unlock live chat and invite operators to handle conversations.'}
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onSeatChange(-1)}
-                disabled={seatBusy || seatLimit <= includedSeats}
-                title={
-                  seatLimit <= includedSeats
-                    ? `You can’t go below the ${includedSeats} included with your plan`
-                    : ''
-                }
-              >
-                <Minus className="w-3.5 h-3.5" />
-                Remove seat
-              </Button>
-              <Button onClick={() => onSeatChange(1)} disabled={seatBusy} size="sm">
-                <Plus className="w-3.5 h-3.5" />
-                Add seat ({seatPriceLabel}/mo)
+              {/* On Free (includedSeats === 0) the Add/Remove buttons are
+                  meaningless — there's nothing to add against and nothing
+                  to remove. Replace with a single Upgrade CTA that opens
+                  the plan-selector, same pattern as the Bot Seats card. */}
+              {includedSeats === 0 ? (
+                <Button onClick={onChangePlan} size="sm">
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                  Upgrade to add seats
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onSeatChange(-1)}
+                    disabled={seatBusy || seatLimit <= includedSeats}
+                    title={
+                      seatLimit <= includedSeats
+                        ? `You can’t go below the ${includedSeats} included with your plan`
+                        : ''
+                    }
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                    Remove seat
+                  </Button>
+                  <Button onClick={() => onSeatChange(1)} disabled={seatBusy} size="sm">
+                    <Plus className="w-3.5 h-3.5" />
+                    Add seat ({seatPriceLabel}/mo)
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Bot-seat add-on — separate card so it visually parallels operator
+          seats. Hidden on plans that don't support purchases (Free shows a
+          locked summary; Enterprise hides entirely because their cap is
+          unlimited and add-ons aren't meaningful). */}
+      <BotSeatsCard
+        state={botSeatState}
+        busy={botSeatBusy}
+        onChange={onBotSeatChange}
+        onChangePlan={onChangePlan}
+      />
+    </div>
+  );
+}
+
+function BotSeatsCard({ state, busy, onChange, onChangePlan }) {
+  // Fall-through render when the API hasn't returned yet — keeps layout
+  // height stable so the page doesn't jump as the card appears.
+  if (!state) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <span className="flex items-center gap-2">
+              <Bot className="w-4 h-4 text-surface-500" /> Bot seats
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-xs text-surface-400 dark:text-surface-500">Loading…</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const {
+    plan_slug: planSlug,
+    included_bots: included,
+    extra_bot_seats: extra,
+    effective_limit: effective,
+    hard_cap: hardCap,
+    active_bots: active,
+    can_purchase: canPurchase,
+    price_usd_cents: usdCents,
+  } = state;
+  const priceLabel = usdCents ? `$${(usdCents / 100).toFixed(0)}/mo` : '';
+  const atHardCap = hardCap > 0 && included + extra >= hardCap;
+  const wouldStrandBots = extra > 0 && active > effective - 1;
+
+  // Free plan presentation — surface why the customer can't buy, with an
+  // explicit upgrade CTA so the inactive UI still drives the right action.
+  if (planSlug === 'free') {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <span className="flex items-center gap-2">
+              <Bot className="w-4 h-4 text-surface-500" /> Bot seats
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div className="text-sm text-surface-700 dark:text-surface-200">
+                <strong>{active}</strong> of <strong>{effective}</strong>{' '}
+                {effective === 1 ? 'bot' : 'bots'} used · Free plan
+              </div>
+              <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                Paid bot seats start on Starter ({priceLabel} each).
+              </div>
+            </div>
+            <div>
+              {/* Trigger the existing plan-selector modal that the Current
+                  Plan card uses. The `<Button>` component renders a plain
+                  <button> regardless of `as`, so a click handler is the
+                  only path that actually does something here. */}
+              <Button onClick={onChangePlan} size="sm">
+                <ArrowUpRight className="w-3.5 h-3.5" />
+                Upgrade to add bots
               </Button>
             </div>
           </div>
         </CardContent>
       </Card>
-    </div>
+    );
+  }
+
+  // Enterprise (or any plan with unlimited cap) — no add-ons available
+  // because the included quota is already unlimited.
+  if (hardCap === -1) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <span className="flex items-center gap-2">
+              <Bot className="w-4 h-4 text-surface-500" /> Bot seats
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-sm text-surface-700 dark:text-surface-200">
+            Unlimited bots on your plan — no seat purchases needed.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <span className="flex items-center gap-2">
+            <Bot className="w-4 h-4 text-surface-500" /> Bot seats
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <div className="text-sm text-surface-700 dark:text-surface-200">
+              <strong>{effective}</strong> {effective === 1 ? 'bot' : 'bots'} available ·{' '}
+              {included} included · {extra} paid extra · {active} active
+            </div>
+            <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
+              Extra bot seats: {priceLabel} each / month. Hard cap on this plan: {hardCap}.
+              {atHardCap && ' Upgrade to add more.'}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onChange(-1)}
+              disabled={busy || extra <= 0 || wouldStrandBots}
+              title={
+                extra <= 0
+                  ? 'No extra seats to release'
+                  : wouldStrandBots
+                    ? 'Delete an active bot before releasing this seat'
+                    : ''
+              }
+            >
+              <Minus className="w-3.5 h-3.5" />
+              Release seat
+            </Button>
+            <Button
+              onClick={() => onChange(1)}
+              disabled={busy || !canPurchase}
+              size="sm"
+              title={atHardCap ? `Hard cap of ${hardCap} bots reached on this plan` : ''}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {busy ? 'Working…' : `Add bot seat (${priceLabel})`}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

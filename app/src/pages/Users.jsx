@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, MapPin, Monitor, X, Loader2, Bot, User, Search, Download, Tag, Smartphone, Globe } from 'lucide-react';
+import { MessageCircle, X, Loader2, Bot, User, Search, Download } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import { getVisitorsData, getChatHistory } from '../services/api';
 import { useBotContext } from '../context/BotContext';
@@ -8,7 +8,6 @@ import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
-import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const TAG_OPTIONS = [
     { id: 'hot-lead', label: 'Hot Lead', color: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-rose-200 dark:border-rose-500/30' },
@@ -16,17 +15,6 @@ const TAG_OPTIONS = [
     { id: 'spam', label: 'Spam', color: 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400 border-surface-200 dark:border-surface-700' },
     { id: 'vip', label: 'VIP', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-amber-200 dark:border-amber-500/30' },
 ];
-
-function getTagConfig(id) {
-    return TAG_OPTIONS.find(t => t.id === id) || { label: id, color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400 border-primary-200 dark:border-primary-500/30' };
-}
-
-function getDeviceIcon(deviceStr) {
-    if (!deviceStr) return <Monitor className="w-3.5 h-3.5" />;
-    const d = deviceStr.toLowerCase();
-    if (d.includes('mobile') || d.includes('iphone') || d.includes('android')) return <Smartphone className="w-3.5 h-3.5" />;
-    return <Monitor className="w-3.5 h-3.5" />;
-}
 
 function buildTimelineData(messages) {
     const counts = {};
@@ -53,7 +41,6 @@ export default function Users({ embedded = false }) {
     const [chatHistory, setChatHistory] = useState([]);
     const [isChatLoading, setIsChatLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [tagFilter, setTagFilter] = useState(null);
     const [tagsBySession, setTagsBySession] = useState(() => {
         try { return JSON.parse(localStorage.getItem('conv_tags') || '{}'); } catch { return {}; }
     });
@@ -105,14 +92,10 @@ export default function Users({ embedded = false }) {
     const filtered = useMemo(() => visitors.filter(v => {
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
-            if (!v.visitor.toLowerCase().includes(q) && !(v.location || '').toLowerCase().includes(q)) return false;
-        }
-        if (tagFilter) {
-            const tags = tagsBySession[v.session_id] || [];
-            if (!tags.includes(tagFilter)) return false;
+            if (!v.visitor.toLowerCase().includes(q)) return false;
         }
         return true;
-    }), [visitors, searchQuery, tagFilter, tagsBySession]);
+    }), [visitors, searchQuery]);
 
     const timelineData = useMemo(() => buildTimelineData(chatHistory), [chatHistory]);
     const selectedVisitor = visitors.find(v => v.session_id === selectedSessionId);
@@ -126,7 +109,7 @@ export default function Users({ embedded = false }) {
         <div className={cn('space-y-6', !embedded && 'animate-fade-in')}>
             {!embedded && <PageHeader title="Conversations" subtitle="See who's chatting and what they're asking" />}
 
-            {/* Search + Tag Filter */}
+            {/* Search */}
             <div className="flex flex-wrap items-center gap-3">
                 <div className="relative max-w-sm flex-1">
                     <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 dark:text-surface-500" />
@@ -136,94 +119,61 @@ export default function Users({ embedded = false }) {
                         className="w-full pl-10 pr-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 text-surface-900 dark:text-surface-100 placeholder:text-surface-400 dark:placeholder:text-surface-500 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all text-sm"
                     />
                 </div>
-                <div className="flex items-center gap-1.5">
-                    <Tag size={13} className="text-surface-400 dark:text-surface-500" />
-                    {TAG_OPTIONS.map(tag => (
-                        <button
-                            key={tag.id}
-                            onClick={() => setTagFilter(tagFilter === tag.id ? null : tag.id)}
-                            className={cn(
-                                'px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all',
-                                tagFilter === tag.id ? tag.color : 'border-surface-200 dark:border-surface-700 text-surface-500 dark:text-surface-400 hover:border-surface-300 dark:hover:border-surface-600'
-                            )}
-                        >
-                            {tag.label}
-                        </button>
-                    ))}
-                </div>
             </div>
 
-            {/* Visitors Table */}
+            {/* Visitors list — compact card layout. We dropped the table
+                shell when the column count fell to three; a stretched
+                three-column table looked sparse on wide screens. The list
+                row groups avatar + name on the left and the chat-count
+                badge + view button on the right with natural spacing, so
+                the layout reads well at any width without dead whitespace. */}
             {isLoading ? (
-                <SkeletonTable rows={5} cols={5} />
+                <div className="space-y-2">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                        <div
+                            key={i}
+                            className="h-14 bg-surface-100 dark:bg-surface-800/60 rounded-xl animate-pulse"
+                        />
+                    ))}
+                </div>
+            ) : filtered.length === 0 ? (
+                <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm py-14 text-center">
+                    <MessageCircle className="w-8 h-8 mx-auto mb-3 text-surface-300 dark:text-surface-600" />
+                    <p className="text-sm text-surface-500 dark:text-surface-400">No visitors found</p>
+                </div>
             ) : (
-                <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-surface-50 dark:bg-surface-800/30 border-b border-surface-200 dark:border-surface-800">
-                                    <th className="py-3.5 px-5 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">User</th>
-                                    <th className="py-3.5 px-5 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Location</th>
-                                    <th className="py-3.5 px-5 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Device</th>
-                                    <th className="py-3.5 px-5 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Tags</th>
-                                    <th className="py-3.5 px-5 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider">Last Active</th>
-                                    <th className="py-3.5 px-5 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider text-center">Chats</th>
-                                    <th className="py-3.5 px-5 text-xs font-semibold text-surface-500 dark:text-surface-400 uppercase tracking-wider text-right">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-surface-100 dark:divide-surface-800">
-                                {filtered.length === 0 ? (
-                                    <tr><td colSpan="7" className="py-12 text-center text-surface-500 dark:text-surface-400 text-sm">No visitors found</td></tr>
-                                ) : filtered.map((visitor) => {
-                                    const vTags = tagsBySession[visitor.session_id] || [];
-                                    return (
-                                        <tr key={visitor.session_id} className="hover:bg-surface-50 dark:hover:bg-surface-800/30 transition-colors group">
-                                            <td className="py-3.5 px-5">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center text-primary-600 dark:text-primary-400 font-bold text-xs">
-                                                        {visitor.visitor.substring(0, 1).toUpperCase()}
-                                                    </div>
-                                                    <span className="font-medium text-sm text-surface-900 dark:text-surface-100 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">{visitor.visitor}</span>
-                                                </div>
-                                            </td>
-                                            <td className="py-3.5 px-5">
-                                                <div className="flex items-center gap-2 text-sm text-surface-500 dark:text-surface-400">
-                                                    <MapPin className="w-3.5 h-3.5 shrink-0" />{visitor.location || 'Unknown'}
-                                                </div>
-                                            </td>
-                                            <td className="py-3.5 px-5">
-                                                <div className="flex items-center gap-2 text-sm text-surface-500 dark:text-surface-400">
-                                                    {getDeviceIcon(visitor.device)}
-                                                    <span className="truncate max-w-[100px]">{visitor.device || 'Unknown'}</span>
-                                                </div>
-                                            </td>
-                                            <td className="py-3.5 px-5">
-                                                <div className="flex flex-wrap gap-1">
-                                                    {vTags.map(tagId => {
-                                                        const tc = getTagConfig(tagId);
-                                                        return (
-                                                            <span key={tagId} className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium border', tc.color)}>
-                                                                {tc.label}
-                                                            </span>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </td>
-                                            <td className="py-3.5 px-5 text-sm text-surface-500 dark:text-surface-400">{formatDate(visitor.last_active_at)}</td>
-                                            <td className="py-3.5 px-5 text-center">
-                                                <span className="inline-flex items-center justify-center min-w-[1.75rem] px-2 py-0.5 rounded-full bg-surface-100 dark:bg-surface-800 text-xs font-bold text-surface-600 dark:text-surface-300">{visitor.chats}</span>
-                                            </td>
-                                            <td className="py-3.5 px-5 text-right">
-                                                <button onClick={() => handleViewChat(visitor.session_id)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 dark:border-surface-700 text-xs font-semibold text-surface-600 dark:text-surface-300 hover:border-primary-400 dark:hover:border-primary-500 hover:text-primary-600 dark:hover:text-primary-400 transition-all bg-white dark:bg-surface-800">
-                                                    <MessageCircle className="w-3.5 h-3.5" /> View
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
+                <div className="space-y-2">
+                    {filtered.map((visitor) => (
+                        <button
+                            key={visitor.session_id}
+                            onClick={() => handleViewChat(visitor.session_id)}
+                            className={cn(
+                                'group w-full flex items-center gap-4 px-4 py-3 rounded-xl',
+                                'bg-white dark:bg-surface-900',
+                                'border border-surface-200 dark:border-surface-800',
+                                'hover:border-primary-300 dark:hover:border-primary-500/40',
+                                'hover:shadow-sm transition-all text-left',
+                            )}
+                        >
+                            <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center text-primary-600 dark:text-primary-400 font-bold text-xs shrink-0">
+                                {visitor.visitor.substring(0, 1).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-surface-900 dark:text-surface-100 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors truncate">
+                                    {visitor.visitor}
+                                </p>
+                                <p className="text-[11px] text-surface-400 dark:text-surface-500 mt-0.5">
+                                    {visitor.chats} {visitor.chats === 1 ? 'message' : 'messages'}
+                                </p>
+                            </div>
+                            <span className="inline-flex items-center justify-center min-w-[1.75rem] h-6 px-2 rounded-full bg-surface-100 dark:bg-surface-800 text-[11px] font-bold text-surface-600 dark:text-surface-300">
+                                {visitor.chats}
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 dark:border-surface-700 text-xs font-semibold text-surface-600 dark:text-surface-300 group-hover:border-primary-400 dark:group-hover:border-primary-500 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-all bg-white dark:bg-surface-800">
+                                <MessageCircle className="w-3.5 h-3.5" /> View
+                            </span>
+                        </button>
+                    ))}
                 </div>
             )}
 
@@ -255,9 +205,6 @@ export default function Users({ embedded = false }) {
                                         </div>
                                         <div>
                                             <h3 className="font-bold text-surface-900 dark:text-surface-100 text-sm">{selectedVisitor?.visitor || 'Chat History'}</h3>
-                                            <p className="text-[11px] text-surface-400 dark:text-surface-500">
-                                                {selectedVisitor?.location || ''}{selectedVisitor?.device ? ` · ${selectedVisitor.device}` : ''}
-                                            </p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1.5">

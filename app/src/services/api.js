@@ -90,6 +90,23 @@ api.interceptors.response.use(
  * @param {string} password 
  * @returns {Promise<Object>} The API response with access_token and name
  */
+/**
+ * Resolved plan entitlements for the authenticated workspace. Returns the
+ * dataclass payload from /auth/me/entitlements with derived helper booleans.
+ * Used by useEntitlements() — components should NOT call this directly.
+ */
+export const getEntitlements = async () => {
+    try {
+        const response = await api.get('/auth/me/entitlements');
+        return response.data;
+    } catch (error) {
+        // Fail open on the client — caller falls back to "Free" defaults
+        // baked into the hook so the UI never crashes if the endpoint is down.
+        console.warn('[OyeChats] getEntitlements failed:', error?.message);
+        throw error;
+    }
+};
+
 export const loginAdmin = async (email, password) => {
     try {
         const response = await api.post('/auth/login', { email, password });
@@ -1506,6 +1523,28 @@ export const changeOperatorSeats = async (delta) => {
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to update operator seats');
+    }
+};
+
+// ─── Bot-seat add-on ─────────────────────────────────────────────────────────
+// Companion to changeOperatorSeats. Backed by POST /subscriptions/bot-seats
+// (mirrors the operator-seat shape — single delta, returns the new state).
+
+export const getBotSeats = async () => {
+    try {
+        const response = await api.get('/subscriptions/bot-seats');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load bot seat status');
+    }
+};
+
+export const changeBotSeats = async (delta) => {
+    try {
+        const response = await api.post('/subscriptions/bot-seats', { delta });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update bot seats');
     }
 };
 

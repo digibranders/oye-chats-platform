@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, MessageSquare, MoonStar, Star, Wrench } from 'lucide-react';
+import { Sparkles, MessageSquare, MoonStar, Star, Wrench, AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter } from 'lucide-react';
 
 const DEFAULT_SUGGESTIONS = ['Our Services', 'About us', 'Contact us'];
 
@@ -162,7 +162,40 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
                 </div>
 
                 <div className="space-y-2">
-                    <label className={FIELD_LABEL}>Quick Action Buttons</label>
+                    <div className="flex items-center justify-between gap-3">
+                        <label className={FIELD_LABEL}>Quick Action Buttons</label>
+                        {/* Layout toggle — horizontal (pill row) vs vertical (stacked).
+                            Changes reflect live in the widget preview the moment the
+                            customer clicks, then persist when they save. */}
+                        <div className="inline-flex rounded-lg border border-surface-200 dark:border-surface-700 overflow-hidden">
+                            {[
+                                { id: 'horizontal', label: 'Horizontal', icon: AlignHorizontalDistributeCenter },
+                                { id: 'vertical',   label: 'Vertical',   icon: AlignVerticalDistributeCenter   },
+                            ].map((option) => {
+                                const LayoutIcon = option.icon;
+                                const current = messages.welcome_suggestions_layout || 'horizontal';
+                                const active = current === option.id;
+                                return (
+                                    <button
+                                        key={option.id}
+                                        type="button"
+                                        aria-pressed={active}
+                                        aria-label={`${option.label} layout`}
+                                        title={`${option.label} layout`}
+                                        onClick={() => handleMessageChange('welcome_suggestions_layout', option.id)}
+                                        className={`flex items-center gap-1.5 px-2.5 h-8 text-[12px] font-medium transition-colors cursor-pointer ${
+                                            active
+                                                ? 'bg-primary-500 text-white'
+                                                : 'bg-white dark:bg-surface-900 text-surface-600 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800'
+                                        }`}
+                                    >
+                                        <LayoutIcon className="w-3.5 h-3.5" />
+                                        {option.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
                     <div className="space-y-2">
                         {suggestions.map((suggestion, index) => (
                             <div key={index} className="flex gap-2">
@@ -256,12 +289,12 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
                     <label className={FIELD_LABEL}>Offline Message</label>
                     <input
                         type="text"
-                        value={messages.offline_message || 'Team is currently unavailable'}
+                        value={messages.offline_message || "We'll be right back! Leave a message and we'll follow up shortly."}
                         onChange={(e) => handleMessageChange('offline_message', e.target.value)}
                         className={FIELD_INPUT}
-                        placeholder="Team is currently unavailable"
+                        placeholder="We'll be right back! Leave a message and we'll follow up shortly."
                     />
-                    <p className={FIELD_HELP}>Header message when bot is offline.</p>
+                    <p className={FIELD_HELP}>Shown when no operators are online. Keep it warm and action-oriented.</p>
                 </div>
             </div>
 

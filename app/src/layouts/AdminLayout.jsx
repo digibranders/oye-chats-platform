@@ -100,7 +100,15 @@ function AdminLayoutInner() {
             operators, or while /auth/me is in flight — see TrialBanner.jsx. */}
         <TrialBanner />
 
-        <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto min-h-0">
+        {/* `scrollbar-gutter: stable` reserves the scrollbar track even
+            when the page isn't scrollable, so switching between tabs
+            whose content height differs (e.g. Avatar → Messages in the
+            Appearance editor) doesn't shift the entire layout by ~15px
+            as the scrollbar appears/disappears. */}
+        <main
+          className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto min-h-0"
+          style={{ scrollbarGutter: 'stable' }}
+        >
           <div className="max-w-7xl mx-auto h-full">
             <AnimatePresence mode="wait">
               <motion.div

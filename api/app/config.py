@@ -69,6 +69,13 @@ R2_KEY_ID = os.getenv("R2_KEY_ID") or os.getenv("B2_KEY_ID")
 R2_APPLICATION_KEY = os.getenv("R2_APPLICATION_KEY") or os.getenv("B2_APPLICATION_KEY")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME") or os.getenv("B2_BUCKET_NAME")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT") or os.getenv("B2_ENDPOINT")
+# Public-facing base URL for objects in the R2 bucket. The S3 endpoint
+# (`R2_ENDPOINT`) is **private** on Cloudflare R2 and rejects anonymous
+# reads with `InvalidArgument/Authorization`. Public reads have to go
+# through a bound custom domain (e.g. ``https://cdn.oyechats.com``) or
+# the bucket's r2.dev URL. Set this in env so the helper that builds
+# share-able file URLs can emit one that actually loads in the browser.
+R2_PUBLIC_BASE_URL = (os.getenv("R2_PUBLIC_BASE_URL") or "").rstrip("/")
 
 # Backwards-compatibility aliases — keep older imports working.
 B2_KEY_ID = R2_KEY_ID

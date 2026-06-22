@@ -11,6 +11,7 @@ import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
 import QualificationCTA from './QualificationCTA';
+import OperatorJoinedToast from './OperatorJoinedToast';
 
 // Lazy-loaded — only fetched when the user actually triggers handoff, lead capture, or booking.
 // Keeps the initial chat chunk lean.
@@ -184,6 +185,30 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [showWelcomeBackBanner, setShowWelcomeBackBanner] = useState(true);
     const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
     const [showProminentHandoff, setShowProminentHandoff] = useState(false);
+    // Auto-dismiss the Live-chat pulse 60s after it activates so it doesn't
+    // hang as a stale "notification" for the rest of the session. The
+    // successful-bot-answer path also dismisses it; this is the time-based
+    // safety net for cases where the visitor stops chatting after the burst.
+    const prominentHandoffTimerRef = useRef(null);
+    useEffect(() => {
+        if (!showProminentHandoff) {
+            if (prominentHandoffTimerRef.current) {
+                clearTimeout(prominentHandoffTimerRef.current);
+                prominentHandoffTimerRef.current = null;
+            }
+            return undefined;
+        }
+        prominentHandoffTimerRef.current = setTimeout(() => {
+            setShowProminentHandoff(false);
+            prominentHandoffTimerRef.current = null;
+        }, 60000);
+        return () => {
+            if (prominentHandoffTimerRef.current) {
+                clearTimeout(prominentHandoffTimerRef.current);
+                prominentHandoffTimerRef.current = null;
+            }
+        };
+    }, [showProminentHandoff]);
     const [activeCTA, setActiveCTA] = useState(null);
     const [showBooking, setShowBooking] = useState(false);
     const [calendlyUrl, setCalendlyUrl] = useState(null);
@@ -570,6 +595,38 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         showLeaveMessageCard,
         scrollToBottom,
     ]);
+
+    // Late-mount catcher: a ResizeObserver re-runs scrollToBottom whenever
+    // the messages content grows AND the visitor was already at the bottom.
+    // Without this, lazy-imported cards (HandoffForm, operator widgets, the
+    // post-chat survey) appear after the auto-scroll above has already fired
+    // — leaving them clipped below the fold. The user just sees "the form"
+    // but can't tap the submit button. The "was at bottom" gate means we
+    // don't yank the view away from someone scrolled up reading history.
+    useEffect(() => {
+        const messagesArea = containerRef.current?.querySelector('[data-messages-area]');
+        if (!messagesArea) return undefined;
+        if (typeof ResizeObserver === 'undefined') return undefined;
+
+        let lastHeight = messagesArea.scrollHeight;
+        const observer = new ResizeObserver(() => {
+            const { scrollTop, scrollHeight, clientHeight } = messagesArea;
+            if (scrollHeight === lastHeight) return;
+            const wasAtBottom = scrollTop + clientHeight >= lastHeight - 48;
+            lastHeight = scrollHeight;
+            if (wasAtBottom) {
+                // Use the smooth scroll path so it matches the deliberate
+                // auto-scrolls elsewhere — late content slides into view
+                // rather than snapping.
+                scrollToBottom();
+            }
+        });
+        observer.observe(messagesArea);
+        // Also observe the inner content wrapper if any direct child carries
+        // the actual height (Tailwind ``flex-1`` / Suspense fallbacks).
+        Array.from(messagesArea.children).forEach((child) => observer.observe(child));
+        return () => observer.disconnect();
+    }, [scrollToBottom]);
 
     // Inject "operator joined" notice when operator first connects.
     // Uses a dedicated `operator_joined` message type (rendered as a richer
@@ -997,6 +1054,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }
                 } else {
                     consecutiveFallbacks.current = 0;
+                    // Successful bot answer → the visitor's frustration just
+                    // got resolved. Drop the persistent Live-chat pulse so it
+                    // doesn't read as a stale "unread" badge for the rest of
+                    // the session. Re-arms automatically on the next
+                    // frustration burst or fallback answer.
+                    setShowProminentHandoff(false);
                 }
                 return prev;
             });
@@ -1027,6 +1090,33 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 timestamp: new Date().toISOString(),
             }];
         });
+        // Targeted late-mount re-scroll: HandoffForm is lazy-imported via
+        // ``React.lazy`` and sits inside ``<Suspense fallback={null}>`` — so
+        // the auto-scroll triggered by the ``messages.length`` change above
+        // lands on the bottom that doesn't yet include the form (Suspense
+        // shows nothing while the chunk loads). Once the lazy chunk resolves
+        // and the form (~250px) mounts, scrollHeight jumps but no further
+        // state change re-runs the scroll effect — leaving the form clipped
+        // and the submit button cut off below the fold (the bug you saw).
+        //
+        // The ResizeObserver above catches the late mount in normal browser
+        // tabs. These extra scrolls cover the case where RO delivery is
+        // throttled (background tab, low-end mobile) AND give the visitor a
+        // visible "the form slides up into view" cue that the lazy module
+        // has finished loading.
+        const messagesArea = containerRef.current?.querySelector('[data-messages-area]');
+        if (messagesArea) {
+            // 60ms: covers the Suspense flush on a warm chunk cache.
+            // 280ms: covers a cold lazy import + initial render.
+            // 600ms: safety net for slow networks / sluggish renderers.
+            const stops = [60, 280, 600];
+            stops.forEach((delay) => {
+                setTimeout(() => {
+                    const area = containerRef.current?.querySelector('[data-messages-area]');
+                    area?.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
+                }, delay);
+            });
+        }
     }, []);
 
     const triggerHandoff = useCallback(() => {
@@ -1052,6 +1142,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // based on backend state, not assumptions. Cleared when the visitor
     // either connects to an operator, falls back to the form, or leaves.
     const [liveChatState, setLiveChatState] = useState(null);
+    // `incomingOperator` is set when the resolver flips from "no operator
+    // available" to AVAILABLE while the visitor is on the offline form. It
+    // drives the OperatorJoinedToast — null = no toast, string = operator
+    // display name (or generic "An agent") to render. Cleared on dismiss
+    // or when the visitor switches to chat.
+    const [incomingOperator, setIncomingOperator] = useState(null);
     const handleHandoffSubmit = async (formData) => {
         if (isSubmittingHandoff) return;
         setIsSubmittingHandoff(true);
@@ -1149,6 +1245,80 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const handleHandoffCancel = () => {
         setMessages(prev => prev.filter(m => m.type !== 'handoff_form'));
         handoffFormInjectedRef.current = false;
+    };
+
+    // ── Offline-form availability polling ────────────────────────────────────
+    //
+    // While the visitor is on the offline form, an operator may come online.
+    // We poll the resolver (every 15s, resolver itself is 5s-cached) and if
+    // the suggested_action flips to "route" or "wait" we surface the
+    // OperatorJoinedToast giving the visitor the choice to switch into a
+    // live conversation without losing what they typed. We don't auto-switch
+    // — silently swapping the form would be hostile UX.
+    //
+    // Only runs when the visitor arrived here from the handoff-fallback path
+    // (liveChatState.fallbackReason is set) — visitors who explicitly chose
+    // "Leave a message" never see the toast.
+    useEffect(() => {
+        if (chatMode !== 'unavailable') {
+            setIncomingOperator(null);
+            return;
+        }
+        if (!liveChatState?.fallbackReason) return;
+        if (offlineSubmitted) return;
+
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const res = await requestHandoff(sessionId, {
+                    name: liveChatState?.capturedName || offlineForm.name,
+                    email: liveChatState?.capturedEmail || offlineForm.email,
+                });
+                if (cancelled) return;
+                const action = res?.suggested_action;
+                if (action === 'route' || action === 'wait') {
+                    const opName = res?.online_operator_name || res?.operator_name || 'An agent';
+                    setIncomingOperator(opName);
+                    setLiveChatState(prev => ({
+                        ...(prev || {}),
+                        suggestedAction: action,
+                        state: res?.state,
+                        queuePosition: res?.queue_position,
+                        etaSeconds: res?.eta_seconds,
+                        queueTimeoutSeconds: res?.queue_timeout_seconds,
+                        onlineOperatorCount: res?.online_operator_count,
+                    }));
+                }
+            } catch {
+                // Silent — next tick will retry. The visitor is still happily
+                // typing their offline message either way.
+            }
+        };
+
+        const interval = setInterval(poll, 15000);
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chatMode, liveChatState?.fallbackReason, offlineSubmitted, sessionId]);
+
+    const handleSwitchToLiveChat = () => {
+        setIncomingOperator(null);
+        setMessages(prev => [
+            ...prev,
+            {
+                id: `sys-connecting-${Date.now()}`,
+                type: 'system',
+                text: 'Connecting you with the support team...',
+                timestamp: new Date().toISOString(),
+            },
+        ]);
+        setChatMode('waiting');
+    };
+
+    const handleDismissOperatorToast = () => {
+        setIncomingOperator(null);
     };
 
     // ── Lead form submit ─────────────────────────────────────────────────────────
@@ -1403,6 +1573,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         );
     };
 
+    // Tick gate: show WhatsApp-style status (sent/delivered/read) on a
+    // visitor's outgoing live message ONLY after the operator has actually
+    // engaged — that is, after at least one operator message exists in
+    // ``liveMessages``. Until that happens, the visitor's mental model is
+    // "I'm still talking to the bot" (or "I'm waiting for someone to join"),
+    // and a green double-tick reads as a false read-receipt from a human
+    // who hasn't shown up yet. Once the operator sends their first
+    // message, ticks light up on the visitor's prior live messages too —
+    // the existing read_receipt handler upgrades their status as usual.
+    const operatorHasEngaged = liveMessages.some((m) => m.sender === 'operator');
+
     // ── Inline live message renderer ─────────────────────────────────────────────
     const renderLiveMessage = (msg) => {
         const userBubbleBg = sanitizeColor(settings.user_bubble_color, '#DBE9FF');
@@ -1464,14 +1645,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             >
                                 <AlertCircle className="w-3 h-3" /> Not sent · Retry
                             </button>
-                        ) : (
+                        ) : operatorHasEngaged ? (
                             <MessageStatus
                                 status={msg.status || 'sending'}
                                 sentAt={msg.sentAt || msg.timestamp}
                                 deliveredAt={msg.deliveredAt}
                                 readAt={msg.readAt}
                             />
-                        )}
+                        ) : null}
                     </div>
                 </div>
             );
@@ -1580,8 +1761,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 Shown in both bot and live modes — badge shows bot identity
                 regardless of mode. Hidden during waiting/unavailable where
                 dedicated state screens own the header, and during
-                initialization/lead form where chrome is suppressed. */}
-            {!isInitializing && !showLeadForm && (chatMode === 'bot' || chatMode === 'live') && (
+                initialization/lead form where chrome is suppressed.
+                ALSO hidden when an operator has joined (chatMode === 'live'):
+                the in-stream "<Operator> joined the chat" pill + per-message
+                author label already communicate identity, and keeping the
+                AI Assistant badge floating above an active human conversation
+                reads as a stale notification ("are you still talking to the
+                bot?"). Restored automatically when the operator leaves and
+                chatMode falls back to 'bot'. */}
+            {!isInitializing && !showLeadForm && chatMode === 'bot' && (
                 <div className="shrink-0 flex justify-center -mb-5 relative z-30" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                     {renderAgentBadge()}
                 </div>
@@ -1927,6 +2115,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
+                {chatMode === 'unavailable' && !isInitializing && incomingOperator && !offlineSubmitted && (
+                    <OperatorJoinedToast
+                        operatorName={incomingOperator}
+                        primaryColor={settings.primary_color}
+                        onSwitchToChat={handleSwitchToLiveChat}
+                        onDismiss={handleDismissOperatorToast}
+                    />
+                )}
+
                 {chatMode === 'unavailable' && !isInitializing && (
                     <div
                         className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
@@ -1978,7 +2175,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     <>
                                         <div className="flex items-center gap-2 mb-1">
                                             <Mail className="w-4 h-4 flex-shrink-0" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
-                                            <p className="text-[13px] font-semibold text-[#16202C]">Our team is currently unavailable</p>
+                                            <p className="text-[13px] font-semibold text-[#16202C]">We&apos;ll be right back!</p>
                                         </div>
                                         <p className="text-[12px] text-gray-500 mb-3">
                                             Leave a message and we&apos;ll get back to you at{' '}
@@ -2158,64 +2355,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* End-chat confirmation modal overlay */}
-                {showEndConfirm && (
-                    <div
-                        className="absolute inset-0 z-50 flex items-center justify-center"
-                        style={{ animation: 'fadeIn 0.2s ease-out' }}
-                    >
-                        {/* Backdrop */}
-                        <div
-                            className="absolute inset-0 bg-black/40"
-                            onClick={() => setShowEndConfirm(false)}
-                            aria-hidden="true"
-                        />
-                        {/* Modal card */}
-                        <div
-                            role="alertdialog"
-                            aria-modal="true"
-                            aria-labelledby="end-chat-title"
-                            aria-describedby="end-chat-desc"
-                            className="relative bg-white rounded-2xl shadow-xl p-5 mx-4 max-w-[280px] w-full text-center"
-                            style={{ animation: 'scaleIn 0.2s ease-out' }}
-                            onKeyDown={(e) => { if (e.key === 'Escape') setShowEndConfirm(false); }}
-                        >
-                            <div
-                                className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center"
-                                style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
-                            >
-                                <LogOut className="w-5 h-5" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
-                            </div>
-                            <p id="end-chat-title" className="text-[14px] font-semibold text-[#16202C] mb-0.5">
-                                End conversation?
-                            </p>
-                            {operatorName && (
-                                <p className="text-[12px] text-gray-500 mb-1">with {operatorName}</p>
-                            )}
-                            <p id="end-chat-desc" className="text-[12px] text-gray-400 mb-4">
-                                You'll be returned to the AI assistant.
-                            </p>
-                            <div className="flex flex-col gap-2">
-                                <button
-                                    onClick={() => {
-                                        if (wsEndChatRef.current) wsEndChatRef.current();
-                                        setShowEndConfirm(false);
-                                    }}
-                                    className="w-full py-2.5 min-h-[44px] rounded-xl bg-red-500 text-white text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-600 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
-                                >
-                                    End chat
-                                </button>
-                                <button
-                                    onClick={() => setShowEndConfirm(false)}
-                                    autoFocus
-                                    className="w-full py-2.5 min-h-[44px] rounded-xl bg-white border border-gray-200 text-gray-600 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
-                                >
-                                    Keep chatting
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                {/* End-chat confirmation modal moved out of the messages area to
+                    the widget root (see below) so its backdrop covers the
+                    entire widget (header + scroll area + input) instead of
+                    just the messages-area viewport. */}
 
                 {/* Welcome-back banner — dismissable, shown just above input after history loads */}
                 {!isInitializing && isReturningUser && showWelcomeBackBanner && (
@@ -2383,6 +2526,71 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 </button>
                             </form>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* ── End-chat confirmation modal ──
+                Lives at the widget-root level (sibling of header / messages /
+                input) so its ``absolute inset-0`` backdrop covers the FULL
+                widget area, not just the messages-area scroll viewport.
+                Previously rendered inside [data-messages-area]: the dim only
+                spanned the visible scroll region, leaving the chat input and
+                lower portions un-dimmed (and undimmed text visible through). */}
+            {showEndConfirm && (
+                <div
+                    className="absolute inset-0 z-[60] flex items-center justify-center"
+                    style={{ animation: 'fadeIn 0.2s ease-out' }}
+                >
+                    {/* Backdrop — covers the whole widget */}
+                    <div
+                        className="absolute inset-0 bg-black/40"
+                        onClick={() => setShowEndConfirm(false)}
+                        aria-hidden="true"
+                    />
+                    {/* Modal card */}
+                    <div
+                        role="alertdialog"
+                        aria-modal="true"
+                        aria-labelledby="end-chat-title"
+                        aria-describedby="end-chat-desc"
+                        className="relative bg-white rounded-2xl shadow-xl p-5 mx-4 max-w-[280px] w-full text-center"
+                        style={{ animation: 'scaleIn 0.2s ease-out' }}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setShowEndConfirm(false); }}
+                    >
+                        <div
+                            className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center"
+                            style={{ backgroundColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}15` }}
+                        >
+                            <LogOut className="w-5 h-5" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                        </div>
+                        <p id="end-chat-title" className="text-[14px] font-semibold text-[#16202C] mb-0.5">
+                            End conversation?
+                        </p>
+                        {operatorName && (
+                            <p className="text-[12px] text-gray-500 mb-1">with {operatorName}</p>
+                        )}
+                        <p id="end-chat-desc" className="text-[12px] text-gray-400 mb-4">
+                            You'll be returned to the AI assistant.
+                        </p>
+                        <div className="flex flex-col gap-2">
+                            <button
+                                onClick={() => {
+                                    if (wsEndChatRef.current) wsEndChatRef.current();
+                                    setShowEndConfirm(false);
+                                }}
+                                className="w-full py-2.5 min-h-[44px] rounded-xl bg-red-500 text-white text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-red-600 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+                            >
+                                End chat
+                            </button>
+                            <button
+                                onClick={() => setShowEndConfirm(false)}
+                                autoFocus
+                                className="w-full py-2.5 min-h-[44px] rounded-xl bg-white border border-gray-200 text-gray-600 text-[13px] font-medium cursor-pointer transition-all duration-200 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+                            >
+                                Keep chatting
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

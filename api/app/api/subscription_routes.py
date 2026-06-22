@@ -1555,6 +1555,68 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
         }
 
 
+# ── Bot-seat add-on ───────────────────────────────────────────────────────
+
+
+class BotSeatChangeRequest(BaseModel):
+    """Body for `POST /subscriptions/bot-seats`.
+
+    `delta=+1` buys one more seat; `delta=-1` releases one. The service
+    layer rejects deltas that would breach the hard cap or strand active
+    bots above the new effective limit.
+    """
+
+    delta: int = Field(..., description="+1 to add, -1 to release. Non-zero.")
+
+
+@router.get("/bot-seats")
+def get_bot_seats(client: Client = Depends(get_current_client)):
+    """Snapshot of the requester's bot-seat situation.
+
+    Powers the Billing page card and the upgrade modal's "X of Y bots
+    used" line. Single round-trip — bundles plan, included quota, paid
+    extras, effective limit, active bot count, and pricing.
+    """
+    from app.services import bot_seat_service
+
+    with get_session() as session:
+        return bot_seat_service.get_state(session, client.id).to_json()
+
+
+@router.post("/bot-seats")
+def change_bot_seats(request: BotSeatChangeRequest, client: Client = Depends(get_current_client)):
+    """Add or release a paid bot seat for the requesting workspace.
+
+    The seat counter is updated synchronously and the entitlements cache
+    is invalidated so the next `/me/entitlements` read reflects the new
+    ceiling. Provider-side billing reconciliation (Stripe item quantity
+    / Razorpay addon) lands at the next renewal — same maturity level as
+    `update_seat_quantity` for operator seats.
+    """
+    from app.services import bot_seat_service
+
+    with get_session() as session:
+        # Reload the Client through this session so the write happens in
+        # the same transaction as the validation read — avoids a race
+        # where two parallel requests both pass the cap check.
+        managed_client = session.get(Client, client.id)
+        if managed_client is None:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        try:
+            state = bot_seat_service.change_bot_seats(session, managed_client, request.delta)
+        except bot_seat_service.BotSeatError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        session.commit()
+        logger.info(
+            "client=%s bot_seats delta=%+d → extra=%d effective=%d",
+            client.id,
+            request.delta,
+            state.extra_bot_seats,
+            state.effective_limit,
+        )
+        return state.to_json()
+
+
 # ── Credits API (companion router) ──
 
 

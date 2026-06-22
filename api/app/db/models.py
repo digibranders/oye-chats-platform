@@ -21,6 +21,12 @@ class Client(Base):
     superadmin_role = Column(String, nullable=True)  # owner | admin | readonly
     suspended_at = Column(DateTime(timezone=True), nullable=True)
     max_bots = Column(Integer, default=100, server_default="100", nullable=False)
+    # Paid bot-seat add-ons purchased on top of the plan's included quota.
+    # Effective bot limit is computed in plan_entitlements_service as
+    # ``min(plan.limits.bots + extra_bot_seats, plan.limits.max_bots_cap)``.
+    # Lives on Client (not Subscription) so a plan change doesn't clobber
+    # paid seats — same pattern as max_bots.
+    extra_bot_seats = Column(Integer, default=0, server_default="0", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Email OTP verification
@@ -183,8 +189,8 @@ class Bot(Base):
     )
     offline_message = Column(
         String,
-        default="Our team is currently unavailable.",
-        server_default="Our team is currently unavailable.",
+        default="We'll be right back! Leave a message and we'll follow up shortly.",
+        server_default="We'll be right back! Leave a message and we'll follow up shortly.",
         nullable=False,
     )
     # Delay (seconds) before handoff form auto-appears after the bot suggests a handoff.
@@ -206,7 +212,7 @@ class Bot(Base):
     widget_messages = Column(
         JSONB,
         nullable=False,
-        server_default='{"welcome_greeting": "Hi There, How can I help you today?", "welcome_suggestions": ["Our Services", "About us", "Contact us"], "input_placeholder": "Write a message...", "live_chat_label": "Live chat", "greeting_message": "Hi! Let us know if you have any questions.", "offline_message": "Team is currently unavailable", "rating_prompt": "How was your experience?", "end_chat_label": "End chat and return to AI"}',
+        server_default='{"welcome_greeting": "Hi There, How can I help you today?", "welcome_suggestions": ["Our Services", "About us", "Contact us"], "input_placeholder": "Write a message...", "live_chat_label": "Live chat", "greeting_message": "Hi! Let us know if you have any questions.", "offline_message": "We\'ll be right back! Leave a message and we\'ll follow up shortly.", "rating_prompt": "How was your experience?", "end_chat_label": "End chat and return to AI"}',
     )
 
     # Widget configuration — timing, thresholds, and advanced settings

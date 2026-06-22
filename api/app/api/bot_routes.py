@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.auth import (
     bot_subscription_status,
@@ -285,7 +285,7 @@ class BotResponse(BaseModel):
     welcome_title: str = "Hi there 👋"
     welcome_subtitle: str = "How can we help you today?"
     waiting_message: str = "Connecting you to support..."
-    offline_message: str = "Our team is currently unavailable."
+    offline_message: str = "We'll be right back! Leave a message and we'll follow up shortly."
     handoff_delay_seconds: int = 0
     calendly_url: str | None = None
     meeting_booking_enabled: bool = False
@@ -333,6 +333,26 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     owner_status = bot_subscription_status(bot.client_id)
     is_offline = owner_status not in ("trialing", "active", "past_due")
 
+    # Plan-feature gate for live chat. Even if the bot has live_chat_enabled
+    # toggled on, we suppress the widget's "Live chat" affordance when the
+    # owner's plan doesn't include the feature. Otherwise visitors would see
+    # a button that — when clicked — routes them to a queue with no possible
+    # operator. The operator side of the platform 403s the toggle endpoint,
+    # so this exposed surface is the last visible artifact to clean up.
+    from app.db.session import get_session as _get_session
+    from app.services.plan_service import get_client_plan, is_feature_enabled
+
+    plan_includes_live_chat = False
+    try:
+        with _get_session() as _s:
+            _plan = get_client_plan(_s, bot.client_id)
+            plan_includes_live_chat = is_feature_enabled(_plan, "live_chat")
+    except Exception:
+        # Fail closed — if we can't resolve the plan, hide live chat. Safer
+        # than rendering a button that will lead to a dead-end visitor flow.
+        plan_includes_live_chat = False
+    effective_live_chat_enabled = bool(bot.live_chat_enabled) and plan_includes_live_chat
+
     return {
         "bot_name": bot.name,
         "bot_logo": logo_url,
@@ -348,7 +368,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "orb_color": bot.orb_color,
         "lead_form_enabled": bot.lead_form_enabled,
         "lead_form_fields": bot.lead_form_fields,
-        "live_chat_enabled": bot.live_chat_enabled,
+        "live_chat_enabled": effective_live_chat_enabled,
         "business_hours": bot.business_hours,
         "feature_flags": bot.feature_flags or {},
         "widget_messages": bot.widget_messages or {},
@@ -358,7 +378,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "welcome_title": bot.welcome_title or "Hi there 👋",
         "welcome_subtitle": bot.welcome_subtitle or "How can we help you today?",
         "waiting_message": bot.waiting_message or "Connecting you to support...",
-        "offline_message": bot.offline_message or "Our team is currently unavailable.",
+        "offline_message": bot.offline_message or "We'll be right back! Leave a message and we'll follow up shortly.",
         "handoff_delay_seconds": bot.handoff_delay_seconds or 0,
         "meeting_booking_enabled": bot.meeting_booking_enabled,
         "meeting_provider": bot.meeting_provider,
@@ -961,7 +981,8 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     welcome_title=b.welcome_title or "Hi there 👋",
                     welcome_subtitle=b.welcome_subtitle or "How can we help you today?",
                     waiting_message=b.waiting_message or "Connecting you to support...",
-                    offline_message=b.offline_message or "Our team is currently unavailable.",
+                    offline_message=b.offline_message
+                    or "We'll be right back! Leave a message and we'll follow up shortly.",
                     handoff_delay_seconds=b.handoff_delay_seconds or 0,
                     calendly_url=b.calendly_url,
                     meeting_booking_enabled=b.meeting_booking_enabled,
@@ -992,27 +1013,41 @@ def create_bot(
     """
     _require_bot_management_access(auth)
     with get_session() as session:
-        # ── Plan enforcement: check bot count limit ──
-        from app.services.plan_service import UNLIMITED, get_client_plan, get_plan_limit
+        # ── Plan enforcement: check effective bot limit ──
+        # Uses ``plan_entitlements_service`` instead of reading
+        # ``plan.limits["bots"]`` directly so paid bot-seat add-ons
+        # (``clients.extra_bot_seats``) are counted toward the customer's
+        # allowance. The effective limit is computed as
+        # ``min(included + extras, hard_cap)``; ``UNLIMITED`` (-1) means no
+        # ceiling (Enterprise).
+        from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
 
-        plan = get_client_plan(session, auth["client_id"])
-        bot_limit = get_plan_limit(plan, "bots")
+        entitlements = get_entitlements(auth["client_id"], session, include_usage=True)
+        bot_limit = entitlements.limit_for("bots")
         if bot_limit != UNLIMITED:
-            current_bots = (
-                session.execute(select(Bot).where(Bot.client_id == auth["client_id"], Bot.is_active.is_(True)))
-                .scalars()
-                .all()
+            current_bot_count = int(
+                session.execute(
+                    select(func.count(Bot.id)).where(
+                        Bot.client_id == auth["client_id"],
+                        Bot.is_active.is_(True),
+                    )
+                ).scalar_one()
+                or 0
             )
-            if len(current_bots) >= bot_limit:
+            if current_bot_count >= bot_limit:
                 raise HTTPException(
                     status_code=429,
                     detail={
                         "error": "plan_limit_exceeded",
                         "metric": "bots",
-                        "used": len(current_bots),
+                        "used": current_bot_count,
                         "limit": bot_limit,
-                        "message": f"You have reached your plan's bot limit ({bot_limit}). "
-                        "Please upgrade your plan to create more bots.",
+                        "current_plan": entitlements.plan_slug,
+                        "can_purchase_seat": entitlements.can_purchase_bot_seat(),
+                        "message": (
+                            f"You have reached your plan's bot limit ({bot_limit}). "
+                            "Add a bot seat or upgrade your plan."
+                        ),
                     },
                 )
 
@@ -1126,7 +1161,7 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             welcome_title=bot.welcome_title or "Hi there 👋",
             welcome_subtitle=bot.welcome_subtitle or "How can we help you today?",
             waiting_message=bot.waiting_message or "Connecting you to support...",
-            offline_message=bot.offline_message or "Our team is currently unavailable.",
+            offline_message=bot.offline_message or "We'll be right back! Leave a message and we'll follow up shortly.",
             handoff_delay_seconds=bot.handoff_delay_seconds or 0,
             calendly_url=bot.calendly_url,
             meeting_booking_enabled=bot.meeting_booking_enabled,

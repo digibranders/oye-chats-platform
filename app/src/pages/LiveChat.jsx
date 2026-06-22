@@ -7,8 +7,10 @@ import {
 import {
     acceptChat, closeOperatorChat, toggleOperatorStatus, getMyOperatorStatus, getChatHistory,
     getCannedResponses, transferChat, getOperators, getDepartments, getSessionDetails, getOperatorQueue,
-    uploadOperatorChatFile,
+    uploadOperatorChatFile, getCurrentSubscription,
 } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+import { Lock, Sparkles } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
@@ -39,6 +41,13 @@ export default function LiveChat({ embedded = false }) {
 
     // Core operator state
     const [isOnline, setIsOnline] = useState(false);
+    // Plan-feature gate for live chat. ``null`` = not yet loaded (treat as
+    // gated so the Go Online button can't be clicked before we know the
+    // answer). ``true`` / ``false`` after the /subscriptions/current fetch.
+    const [liveChatFeatureEnabled, setLiveChatFeatureEnabled] = useState(null);
+    const [currentPlanName, setCurrentPlanName] = useState(null);
+    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+    const navigateRouter = useNavigate();
     const [operatorName, setOperatorName] = useState('');
     const [duplicateTabDetected, setDuplicateTabDetected] = useState(false);
     // operatorId is needed for owner accounts (auth_type='client') to pin REST calls
@@ -208,6 +217,30 @@ export default function LiveChat({ embedded = false }) {
                 }
             }
         });
+    }, []);
+
+    // Load the client's current plan so we can gate Live Chat behind the
+    // plan.features.live_chat flag. The backend also enforces this on the
+    // toggle endpoint — this fetch is purely so we can show a clean upgrade
+    // CTA instead of letting the user click a button that will only error.
+    useEffect(() => {
+        let cancelled = false;
+        getCurrentSubscription()
+            .then((data) => {
+                if (cancelled) return;
+                const features = data?.plan?.features || {};
+                setLiveChatFeatureEnabled(Boolean(features.live_chat));
+                setCurrentPlanName(data?.plan?.name || null);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    // Fail closed: if we can't determine the plan, gate the
+                    // feature so the visitor sees the upgrade prompt rather
+                    // than a confusing silent failure on click.
+                    setLiveChatFeatureEnabled(false);
+                }
+            });
+        return () => { cancelled = true; };
     }, []);
 
     const playNotification = useCallback(() => {
@@ -689,6 +722,17 @@ export default function LiveChat({ embedded = false }) {
     };
 
     const handleToggleStatus = () => {
+        // Plan-feature gate: if the customer's plan doesn't include live chat,
+        // surface the upgrade modal instead of letting them go online. The
+        // backend would 403 the toggle anyway — this short-circuits to a
+        // useful CTA instead of an opaque failure. Only applies when the user
+        // is OFFLINE trying to go ONLINE; an already-online operator (e.g.
+        // grandfathered, plan downgraded mid-session) should still be able to
+        // go offline cleanly via this same button.
+        if (!isOnline && liveChatFeatureEnabled === false) {
+            setShowUpgradeModal(true);
+            return;
+        }
         if (isOnline && activeChats.length > 0) {
             setConfirmModal({
                 title: 'Go Offline',
@@ -1073,19 +1117,48 @@ export default function LiveChat({ embedded = false }) {
 
             {!isOnline ? (
                 <div className="flex flex-col items-center justify-center flex-1 text-center">
-                    <div className="w-16 h-16 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center mb-4">
-                        <Headphones className="w-8 h-8 text-surface-400 dark:text-surface-500" />
-                    </div>
-                    <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">You&apos;re offline</h3>
-                    <p className="text-sm text-surface-500 dark:text-surface-400 max-w-sm mb-4">
-                        Go online to start receiving live chat requests from visitors.
-                    </p>
-                    <button
-                        onClick={handleToggleStatus}
-                        className="px-6 py-2.5 bg-primary-600 dark:bg-primary-500 text-white rounded-xl text-sm font-medium hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
-                    >
-                        Go Online
-                    </button>
+                    {liveChatFeatureEnabled === false ? (
+                        // Plan-gated state. Same vertical center as "You're offline" so
+                        // the layout doesn't shift, but the copy + CTA pivot the visitor
+                        // toward upgrade instead of toggling status.
+                        <>
+                            <div className="w-16 h-16 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center mb-4">
+                                <Lock className="w-8 h-8 text-amber-600 dark:text-amber-400" />
+                            </div>
+                            <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">
+                                Live chat isn&apos;t included in your plan
+                            </h3>
+                            <p className="text-sm text-surface-500 dark:text-surface-400 max-w-sm mb-4">
+                                {currentPlanName
+                                    ? `The ${currentPlanName} plan doesn't include live chat. Upgrade to start taking conversations with your visitors.`
+                                    : "Your current plan doesn't include live chat. Upgrade to start taking conversations with your visitors."}
+                            </p>
+                            <button
+                                onClick={() => navigateRouter('/billing')}
+                                className="inline-flex items-center gap-2 px-6 py-2.5 bg-primary-600 dark:bg-primary-500 text-white rounded-xl text-sm font-medium hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
+                            >
+                                <Sparkles className="w-4 h-4" />
+                                Upgrade to enable
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <div className="w-16 h-16 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center mb-4">
+                                <Headphones className="w-8 h-8 text-surface-400 dark:text-surface-500" />
+                            </div>
+                            <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">You&apos;re offline</h3>
+                            <p className="text-sm text-surface-500 dark:text-surface-400 max-w-sm mb-4">
+                                Go online to start receiving live chat requests from visitors.
+                            </p>
+                            <button
+                                onClick={handleToggleStatus}
+                                disabled={liveChatFeatureEnabled === null}
+                                className="px-6 py-2.5 bg-primary-600 dark:bg-primary-500 text-white rounded-xl text-sm font-medium hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {liveChatFeatureEnabled === null ? 'Checking…' : 'Go Online'}
+                            </button>
+                        </>
+                    )}
                 </div>
             ) : (
                 <div className="flex gap-3 flex-1 min-h-0">
@@ -1727,6 +1800,47 @@ export default function LiveChat({ embedded = false }) {
                                     Send
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Live-chat-plan upgrade modal ──
+                Fired when a customer on a plan without ``features.live_chat``
+                clicks the Online / Go Online button. Surfaces a clean
+                upgrade CTA so the path forward is obvious; backend would
+                403 the toggle either way, so this is purely UX. */}
+            {showUpgradeModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 animate-fade-in" role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title">
+                    <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
+                        <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center mx-auto mb-3">
+                            <Lock className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                        </div>
+                        <h3
+                            id="upgrade-modal-title"
+                            className="text-base font-bold text-surface-900 dark:text-surface-100 mb-1 text-center"
+                        >
+                            Upgrade to use Live Chat
+                        </h3>
+                        <p className="text-sm text-surface-500 dark:text-surface-400 mb-5 text-center">
+                            {currentPlanName
+                                ? `Live chat isn't included in the ${currentPlanName} plan. Upgrade to start taking conversations with your visitors directly.`
+                                : "Live chat isn't included in your current plan. Upgrade to start taking conversations with your visitors directly."}
+                        </p>
+                        <div className="flex flex-col gap-2">
+                            <button
+                                onClick={() => { setShowUpgradeModal(false); navigateRouter('/billing'); }}
+                                className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-xl bg-primary-600 dark:bg-primary-500 text-white hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
+                            >
+                                <Sparkles className="w-4 h-4" />
+                                See upgrade options
+                            </button>
+                            <button
+                                onClick={() => setShowUpgradeModal(false)}
+                                className="w-full py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                            >
+                                Not now
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye } from 'lucide-react';
+import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye, ChevronsUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { useCrawl } from '../context/CrawlContext';
+import useEntitlements from '../hooks/useEntitlements';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import EmptyState from '../components/ui/EmptyState';
@@ -22,6 +23,16 @@ export default function KnowledgeBase() {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const { showToast } = useToast();
   const { crawl, startCrawl, cancelCrawl, isActive: isCrawlActive } = useCrawl();
+  const { entitlements, refresh: refreshEntitlements } = useEntitlements();
+  const docsLimit = entitlements.limitFor('documents');
+  const docsUsed = Number(entitlements.usage?.documents ?? 0);
+  const isUnlimitedDocs = docsLimit === -1;
+  const docsRemaining = isUnlimitedDocs ? Infinity : Math.max(0, docsLimit - docsUsed);
+  const docsPercent = isUnlimitedDocs || docsLimit === 0
+    ? 0
+    : Math.min(100, Math.round((docsUsed / docsLimit) * 100));
+  const docsAtLimit = !isUnlimitedDocs && docsUsed >= docsLimit;
+  const docsNearLimit = !isUnlimitedDocs && !docsAtLimit && docsPercent >= 80;
   // Tab can be deep-linked via ?tab=urls (e.g. from the global crawl
   // indicator's "View details" button). Local state stays the source of
   // truth after mount so clicking tabs doesn't require a URL change.
@@ -177,14 +188,14 @@ export default function KnowledgeBase() {
   const supportedExtensions = ['.pdf', '.docx', '.txt', '.md'];
   const supportedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'text/markdown'];
 
-  const MAX_FILE_SIZE = 15 * 1024 * 1024;
+  const MAX_FILE_SIZE = 10 * 1024 * 1024;
   const filterFiles = (fileList) => {
     const accepted = [];
     for (const file of Array.from(fileList)) {
       const ext = '.' + file.name.split('.').pop().toLowerCase();
       if (!supportedTypes.includes(file.type) && !supportedExtensions.includes(ext)) continue;
       if (file.size > MAX_FILE_SIZE) {
-        showToast(`"${file.name}" exceeds the 15 MB limit.`, 'error');
+        showToast(`"${file.name}" exceeds the 10 MB limit.`, 'error');
         continue;
       }
       accepted.push(file);
@@ -204,9 +215,17 @@ export default function KnowledgeBase() {
       setUploadStatus({ type: 'success', message: `Successfully processed ${result.documents_processed_count || result.files_uploaded?.length} document chunks.` });
       setSelectedFiles([]);
       showToast('success', 'Documents uploaded successfully!');
+      refreshEntitlements();
       if (activeTab === 'list') fetchDocuments();
     } catch (error) {
-      setUploadStatus({ type: 'error', message: error.detail || error.message || 'Failed to upload documents.' });
+      const detail = error?.detail;
+      if (detail && typeof detail === 'object' && detail.error === 'limit_reached') {
+        const msg = detail.message || `You've reached your plan's document limit (${detail.current}/${detail.max}).`;
+        setUploadStatus({ type: 'error', message: `${msg} Upgrade your plan to add more.` });
+        showToast('error', msg);
+      } else {
+        setUploadStatus({ type: 'error', message: detail || error.message || 'Failed to upload documents.' });
+      }
     } finally { setIsUploading(false); }
   };
 
@@ -216,6 +235,7 @@ export default function KnowledgeBase() {
       await deleteDocument(docName, selectedBot?.id);
       setDocuments(prev => prev.filter(d => d.name !== docName));
       showToast('success', 'Document deleted');
+      refreshEntitlements();
     } catch (err) {
       showToast('error', `Failed to delete: ${err?.detail || err}`);
     } finally { setDeletingDoc(null); setConfirmingDelete(null); }
@@ -313,6 +333,7 @@ export default function KnowledgeBase() {
         {activeTab === 'files' && (
           <div className="space-y-5">
             <h2 className="text-base font-semibold text-surface-900 dark:text-white">Upload Knowledge Documents</h2>
+
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={() => setIsDragging(false)}
@@ -328,7 +349,7 @@ export default function KnowledgeBase() {
                 <UploadCloud size={28} />
               </div>
               <h3 className="text-surface-900 dark:text-white font-medium mb-1 text-sm">Drag and drop your documents here</h3>
-              <p className="text-surface-400 text-xs mb-5">PDF, DOCX, TXT, MD (Max 15MB)</p>
+              <p className="text-surface-400 text-xs mb-5">PDF, DOCX, TXT, MD (Max 10MB)</p>
               <input type="file" multiple accept=".pdf,.docx,.txt,.md" className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -337,6 +358,93 @@ export default function KnowledgeBase() {
               >
                 Browse Files
               </button>
+            </div>
+
+            <div
+              className={cn(
+                'rounded-xl border px-4 py-3',
+                docsAtLimit
+                  ? 'border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10'
+                  : docsNearLimit
+                    ? 'border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10'
+                    : 'border-surface-200 dark:border-surface-800 bg-surface-50 dark:bg-surface-800/50',
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div
+                    className={cn(
+                      'p-2 rounded-lg shrink-0',
+                      docsAtLimit
+                        ? 'bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-300'
+                        : docsNearLimit
+                          ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300'
+                          : 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400',
+                    )}
+                  >
+                    <FileText size={14} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-surface-900 dark:text-white truncate">
+                      Documents used
+                    </p>
+                    <p className="text-xs text-surface-500 dark:text-surface-400 truncate">
+                      <span className="font-medium text-surface-700 dark:text-surface-200">
+                        {entitlements.planName || 'Free'}
+                      </span>{' '}
+                      plan
+                      {isUnlimitedDocs
+                        ? ' — unlimited documents'
+                        : ` — ${docsLimit} document${docsLimit === 1 ? '' : 's'} included`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span
+                    className={cn(
+                      'text-sm font-semibold tabular-nums',
+                      docsAtLimit
+                        ? 'text-rose-600 dark:text-rose-300'
+                        : docsNearLimit
+                          ? 'text-amber-600 dark:text-amber-300'
+                          : 'text-surface-900 dark:text-white',
+                    )}
+                  >
+                    {docsUsed}
+                    {' / '}
+                    {isUnlimitedDocs ? '∞' : docsLimit}
+                  </span>
+                  {!isUnlimitedDocs && entitlements.planSlug !== 'enterprise' && (docsAtLimit || docsNearLimit) && (
+                    <a
+                      href="/billing"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition-colors"
+                    >
+                      <ChevronsUp size={14} strokeWidth={2.5} />
+                      Upgrade
+                    </a>
+                  )}
+                </div>
+              </div>
+              {!isUnlimitedDocs && (
+                <div className="mt-3 h-1.5 w-full rounded-full bg-surface-200/70 dark:bg-surface-800 overflow-hidden">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all',
+                      docsAtLimit
+                        ? 'bg-rose-500'
+                        : docsNearLimit
+                          ? 'bg-amber-500'
+                          : 'bg-primary-500',
+                    )}
+                    style={{ width: `${docsPercent}%` }}
+                  />
+                </div>
+              )}
+              {docsAtLimit && (
+                <p className="mt-2 text-xs text-rose-600 dark:text-rose-300">
+                  You&apos;ve reached your plan&apos;s document limit. Delete an existing source or upgrade to add more.
+                </p>
+              )}
             </div>
 
             <AnimatePresence>
@@ -367,11 +475,16 @@ export default function KnowledgeBase() {
                       </motion.div>
                     ))}
                   </div>
+                  {!isUnlimitedDocs && selectedFiles.length > docsRemaining && (
+                    <p className="text-xs text-rose-600 dark:text-rose-300">
+                      You can only add {docsRemaining} more document{docsRemaining === 1 ? '' : 's'} on your {entitlements.planName || 'Free'} plan ({docsUsed}/{docsLimit} used). Remove some files or upgrade.
+                    </p>
+                  )}
                   <div className="flex justify-end pt-2">
                     <button
                       onClick={handleUploadClick}
-                      disabled={isUploading}
-                      className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-70 shadow-sm"
+                      disabled={isUploading || docsAtLimit || (!isUnlimitedDocs && selectedFiles.length > docsRemaining)}
+                      className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                     >
                       {isUploading ? <><Loader2 size={16} className="animate-spin" /> Processing...</> : <><UploadCloud size={16} /> Upload {selectedFiles.length} Files</>}
                     </button>

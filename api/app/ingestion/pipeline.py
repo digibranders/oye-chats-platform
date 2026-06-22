@@ -52,6 +52,76 @@ def calculate_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# ── Dedup-hash normalisation ───────────────────────────────────────────────
+# The dedup hash must be stable across re-crawls that change ONLY volatile
+# boilerplate (copyright year, "Last updated" timestamp, etc.). Without this,
+# every monthly re-crawl re-ingests and re-bills pages whose substantive
+# content didn't change just because the footer copyright ticked over.
+#
+# Conversely, real content edits MUST still flip the hash so genuine updates
+# land in the knowledge base. The normaliser is intentionally narrow: it only
+# touches patterns that are reliably date- or timestamp-shaped, never anything
+# that could plausibly be substantive content.
+
+# Common date formats. All become "<DATE>" before hashing.
+_DEDUP_DATE_PATTERNS = (
+    # ISO 8601: 2026-01-15 (optionally with time)
+    re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?(?:Z|[+\-]\d{2}:?\d{2})?)?\b"),
+    # Slash dates: 15/01/2026, 01/15/2026, 15/01/26
+    re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b"),
+    # Dot dates (common in EU): 15.01.2026
+    re.compile(r"\b\d{1,2}\.\d{1,2}\.\d{4}\b"),
+    # "January 15, 2026" / "Jan 15 2026" / "January 15th, 2026"
+    re.compile(
+        r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b",
+        re.IGNORECASE,
+    ),
+    # "15 January 2026" / "15th January 2026"
+    re.compile(
+        r"\b\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4}\b",
+        re.IGNORECASE,
+    ),
+)
+
+# Whole-line patterns to drop entirely (the line is essentially metadata).
+_DEDUP_TIMESTAMP_LINE_PATTERNS = (
+    # "Last updated: ...", "Last modified ...", "Published on ...", "Posted: ..."
+    re.compile(
+        r"(?im)^[\s>\-*\"'|]*"
+        r"(?:last\s+(?:updated|modified|reviewed)|published(?:\s+on)?|updated(?:\s+on)?|posted(?:\s+on)?|created(?:\s+on)?|copyright|©)"
+        r"\s*[:\-—]?\s*.*$"
+    ),
+    # Bare "(c) 2026" / "© 2026 Company Name" footer lines
+    re.compile(r"(?im)^[\s>\-*\"'|]*(?:©|\(c\))\s*\d{4}.*$"),
+)
+
+
+def _normalize_for_dedup_hash(text: str) -> str:
+    """Strip volatile-boilerplate patterns before computing the dedup hash.
+
+    The *stored* content always preserves the original text — only the hash
+    uses the normalised form. This means:
+      * A re-crawl where only "© 2025" → "© 2026" changed produces the SAME
+        hash → page is skipped → no credits charged. ✓
+      * A re-crawl where a real paragraph changed produces a DIFFERENT hash
+        → page is re-ingested → updated content reaches the KB. ✓
+
+    Conservative on purpose: only patterns that are reliably date-shaped or
+    sit in a clearly-metadata sentence get scrubbed. Numbers embedded in
+    prose ("Q4 2026 revenue grew 12%") are untouched because they could be
+    substantive content.
+    """
+    out = text
+    for pattern in _DEDUP_TIMESTAMP_LINE_PATTERNS:
+        out = pattern.sub("", out)
+    for pattern in _DEDUP_DATE_PATTERNS:
+        out = pattern.sub("<DATE>", out)
+    # Collapse the whitespace we may have left behind so the hash is stable
+    # against minor formatting drift (extra newlines, trailing spaces).
+    out = re.sub(r"\n\s*\n+", "\n\n", out).strip()
+    return out
+
+
 def _ingest_document(
     client_id: int, source_name: str, full_text: str, pages_data: list[dict[str, Any]], bot_id: int | None = None
 ) -> int:
@@ -68,7 +138,10 @@ def _ingest_document(
     #    though their actual unique-content chunks differed.
     cleaned_pages_data = [{"text": clean_text(p["text"]), "metadata": p.get("metadata", {})} for p in pages_data]
     cleaned_full_text = " ".join(p["text"] for p in cleaned_pages_data)
-    file_hash = calculate_hash(cleaned_full_text)
+    # Hash the boilerplate-normalised form so harmless footer-date drift
+    # between re-crawls doesn't trigger re-ingest + re-billing. See
+    # ``_normalize_for_dedup_hash`` for the patterns being stripped.
+    file_hash = calculate_hash(_normalize_for_dedup_hash(cleaned_full_text))
 
     with get_session() as session:
         already_processed = is_document_processed(session, client_id, file_hash, bot_id=bot_id)
@@ -279,8 +352,13 @@ def batch_web_ingestion(
             # the dedup fingerprint matches what's actually stored. Mismatched
             # sources let templated landing pages collide on hash and silently
             # skip the second page.
+            #
+            # Hash the boilerplate-normalised form (see _normalize_for_dedup_hash)
+            # so harmless re-crawl noise like "© 2025" → "© 2026" or a bumped
+            # "Last updated" timestamp doesn't re-bill the customer for content
+            # that didn't actually change.
             cleaned = clean_text(content)
-            file_hash = calculate_hash(cleaned)
+            file_hash = calculate_hash(_normalize_for_dedup_hash(cleaned))
 
             if is_document_processed(session, client_id, file_hash, bot_id=bot_id):
                 logger.info(f"Skipping {url} (already processed)")
