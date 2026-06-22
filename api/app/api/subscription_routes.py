@@ -1617,6 +1617,156 @@ def change_bot_seats(request: BotSeatChangeRequest, client: Client = Depends(get
         return state.to_json()
 
 
+# ── Bot-seat checkout (Razorpay) ──
+
+
+class BotSeatCheckoutRequest(BaseModel):
+    """Body for `POST /subscriptions/bot-seats/checkout`.
+
+    Single field, ``quantity``, default 1. Multiplied by the configured
+    INR price (PricingConfig key ``bot_seat_price_inr_paise``) to form
+    the Razorpay Order amount.
+    """
+
+    quantity: int = Field(default=1, ge=1, description="Number of seats to purchase")
+
+
+@router.post("/bot-seats/checkout")
+def create_bot_seat_checkout(request: BotSeatCheckoutRequest, client: Client = Depends(get_current_client)):
+    """Create a Razorpay Order for a bot-seat purchase.
+
+    Returns the payload the admin frontend needs to open Razorpay
+    Checkout — `order_id`, `key_id`, `amount`, `currency`, plus prefill
+    contact data. The Order is created with `notes.purpose =
+    'bot_seat_addon'` so the captured-payment webhook routes to the
+    bot-seat granter (and not the topup credit granter).
+
+    Plan-level validation runs first (Free can't buy, hard-cap blocks
+    further purchases) so the customer doesn't spend money on a seat
+    the backend would refuse.
+    """
+    from app.services import bot_seat_service, plan_entitlements_service, razorpay_service
+
+    with get_session() as session:
+        plan_entitlements_service.invalidate(client.id)
+        ent = plan_entitlements_service.get_entitlements(client.id, session, include_usage=True)
+
+        if ent.plan_slug == "free":
+            raise HTTPException(
+                status_code=400,
+                detail="Free plans don't include paid bot seats. Upgrade to Starter or Standard to add bots.",
+            )
+
+        pricing = ent.bot_seat_pricing or {}
+        price_paise = int(pricing.get("inr_paise") or 0)
+        if price_paise <= 0:
+            raise HTTPException(status_code=503, detail="Bot-seat pricing isn't configured. Contact support.")
+
+        # Validate that adding `quantity` seats wouldn't breach the hard
+        # cap, so we don't charge for something the backend would refuse.
+        cap = ent.limits.get("max_bots_cap")
+        included = int(ent.limits.get("bots") or 0)
+        current_extra = int(ent.extra_bot_seats or 0)
+        unlimited = bot_seat_service.plan_entitlements_service.UNLIMITED
+        if cap is not None and int(cap) != unlimited and (included + current_extra + request.quantity) > int(cap):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Adding {request.quantity} seat(s) would exceed the {int(cap)}-bot ceiling on the {ent.plan_name} plan.",
+            )
+
+        managed_client = session.get(Client, client.id)
+        if managed_client is None:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        try:
+            payload = razorpay_service.create_bot_seat_order(
+                session,
+                managed_client,
+                quantity=request.quantity,
+                price_paise=price_paise,
+            )
+        except razorpay_service.RazorpayBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        logger.info(
+            "Razorpay bot-seat checkout created for client %s: qty=%d order=%s",
+            client.id,
+            request.quantity,
+            payload.get("order_id"),
+        )
+        return payload
+
+
+class BotSeatVerifyRequest(BaseModel):
+    """Body for `POST /subscriptions/bot-seats/verify` — the Razorpay
+    Checkout success callback.
+
+    Same shape as the topup verify endpoint. The frontend passes through
+    the three fields Razorpay returns from its handler; we verify the
+    HMAC signature, then route into the same idempotent grant function
+    the webhook uses (so dev environments where webhooks can't reach
+    localhost still get their seats granted).
+    """
+
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+@router.post("/bot-seats/verify")
+def verify_bot_seat_payment(body: BotSeatVerifyRequest, client: Client = Depends(get_current_client)):
+    """Verify the Razorpay success callback and grant the seat.
+
+    Webhook delivery is the source of truth in production. This endpoint
+    is the dev/sync fallback: when a customer pays on localhost (no
+    public webhook URL) or just lands on the success page before the
+    webhook arrives, the grant happens here. Idempotency via the Invoice
+    table keys off ``razorpay_payment_id`` so a webhook fired after this
+    won't double-grant.
+    """
+    from app.services import razorpay_service
+
+    try:
+        razorpay_service.verify_bot_seat_signature(
+            razorpay_order_id=body.razorpay_order_id,
+            razorpay_payment_id=body.razorpay_payment_id,
+            razorpay_signature=body.razorpay_signature,
+        )
+    except razorpay_service.SignatureMismatch as exc:
+        raise HTTPException(status_code=400, detail="Signature verification failed.") from exc
+
+    # Fetch the order from Razorpay to recover the notes (purpose,
+    # client_id, quantity). We can't trust the frontend to pass these.
+    rzp = razorpay_service._get_razorpay()
+    try:
+        order = rzp.order.fetch(body.razorpay_order_id)
+        payment = rzp.payment.fetch(body.razorpay_payment_id)
+    except Exception as exc:
+        logger.exception(
+            "Razorpay fetch failed during bot-seat verify (order=%s pay=%s)",
+            body.razorpay_order_id,
+            body.razorpay_payment_id,
+        )
+        raise HTTPException(status_code=502, detail="Could not verify payment with Razorpay.") from exc
+
+    notes = (payment.get("notes") or {}) or (order.get("notes") or {})
+    if notes.get("purpose") != "bot_seat_addon":
+        raise HTTPException(status_code=400, detail="This payment is not a bot-seat purchase.")
+
+    paid_client_id = razorpay_service._client_id_from_notes(notes)
+    if not paid_client_id or paid_client_id != client.id:
+        # Defence against a customer replaying someone else's payment id
+        # to grant themselves seats.
+        raise HTTPException(status_code=403, detail="Payment belongs to a different client.")
+
+    with get_session() as session:
+        result = razorpay_service._grant_bot_seat_from_payment(session, payment, order, notes)
+        session.commit()
+
+    return {"status": "granted", "detail": result}
+
+
 # ── Credits API (companion router) ──
 
 

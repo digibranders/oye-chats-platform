@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Lock, Sparkles, ArrowRight, Check, Crown, X, Loader2, Plus } from 'lucide-react';
 import useEntitlements from '../hooks/useEntitlements';
-import { changeBotSeats } from '../services/api';
+import { createBotSeatCheckout, verifyBotSeatPayment } from '../services/api';
+import { openRazorpayCheckout } from '../lib/razorpay';
 import { cn } from '../lib/utils';
 
 // Format pricing for display. We accept both USD cents and INR paise from
@@ -92,22 +93,38 @@ export default function UpgradeModal({ payload, onClose }) {
         navigate('/billing');
     };
 
+    // Razorpay Checkout flow. Three steps with explicit error states so
+    // the customer always knows where they are in the purchase:
+    //   1. POST /subscriptions/bot-seats/checkout → Razorpay order
+    //   2. Open Razorpay Checkout (Razorpay JS SDK)
+    //   3. POST /subscriptions/bot-seats/verify with the signature
+    // On success: refresh entitlements, show success state, auto-close.
+    // On dismiss: silent reset (customer chose not to pay).
+    // On any other error: surface inline so they can retry or call out.
     const handlePurchaseSeat = async () => {
         setPurchaseState('pending');
         setPurchaseError(null);
         try {
-            await changeBotSeats(1);
-            // Bust the entitlements cache and pull the new state before
-            // closing — otherwise the page that opened the modal still
-            // thinks the customer is at their cap.
+            const order = await createBotSeatCheckout(1);
+            const callback = await openRazorpayCheckout({
+                key: order.key_id,
+                order_id: order.order_id,
+                amount: order.amount,
+                currency: order.currency || 'INR',
+                name: order.name || 'OyeChats bot seat',
+                description: order.description,
+                prefill: order.prefill || {},
+                theme: order.theme || { color: '#6366f1' },
+            });
+            await verifyBotSeatPayment(callback);
             await refresh();
             setPurchaseState('success');
-            // Give the success state ~1.6s of dwell time so the customer
-            // sees what happened, then close so they can re-trigger their
-            // original action (Create Bot, etc.). closeAndReset resets
-            // state inside the call.
             setTimeout(closeAndReset, 1600);
         } catch (err) {
+            if (err?.code === 'dismissed') {
+                setPurchaseState('idle');
+                return;
+            }
             setPurchaseState('idle');
             setPurchaseError(err?.message || 'Could not add bot seat. Try again or contact support.');
         }

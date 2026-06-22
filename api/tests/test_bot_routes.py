@@ -80,7 +80,7 @@ class _ExecuteResult:
 class TestCreateBot:
     def test_creates_bot(self, monkeypatch):
         from app.api import bot_routes
-        from app.services.plan_service import UNLIMITED
+        from app.services.plan_entitlements_service import UNLIMITED, PlanEntitlements
 
         session = MagicMock()
         added = []
@@ -90,9 +90,22 @@ class TestCreateBot:
         app = _build_app(auth_override=_client_auth())
         tc = TestClient(app)
 
-        with (
-            patch("app.services.plan_service.get_client_plan", return_value=None),
-            patch("app.services.plan_service.get_plan_limit", return_value=UNLIMITED),
+        # Mock the entitlements resolver to return an "unlimited bots"
+        # snapshot. bot_routes now goes through plan_entitlements_service
+        # (not the legacy plan_service.get_plan_limit) so the route reads
+        # the effective bot limit + add-on seats from a single source.
+        fake_entitlements = PlanEntitlements(
+            client_id=1,
+            plan_slug="enterprise",
+            plan_name="Enterprise",
+            subscription_status="active",
+            limits={"bots": UNLIMITED, "max_bots_cap": UNLIMITED},
+            features={},
+            usage={"bots": 0},
+        )
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=fake_entitlements,
         ):
             response = tc.post("/bots", json={"name": "My Bot", "website": "https://mysite.com"})
 
@@ -293,34 +306,54 @@ class TestBotAccessControl:
 
     def test_admin_operator_can_create(self, monkeypatch):
         from app.api import bot_routes
-        from app.services.plan_service import UNLIMITED
+        from app.services.plan_entitlements_service import UNLIMITED, PlanEntitlements
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
+        # Same entitlements stub as TestCreateBot.test_creates_bot — the
+        # route reads bots limit via plan_entitlements_service now.
+        fake_entitlements = PlanEntitlements(
+            client_id=1,
+            plan_slug="enterprise",
+            plan_name="Enterprise",
+            subscription_status="active",
+            limits={"bots": UNLIMITED, "max_bots_cap": UNLIMITED},
+            features={},
+            usage={"bots": 0},
+        )
         app = _build_app(auth_override=_operator_auth(role="admin"))
         tc = TestClient(app)
-        with (
-            patch("app.services.plan_service.get_client_plan", return_value=None),
-            patch("app.services.plan_service.get_plan_limit", return_value=UNLIMITED),
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=fake_entitlements,
         ):
             response = tc.post("/bots", json={"name": "Bot"})
         assert response.status_code == 201
 
     def test_owner_operator_can_create(self, monkeypatch):
         from app.api import bot_routes
-        from app.services.plan_service import UNLIMITED
+        from app.services.plan_entitlements_service import UNLIMITED, PlanEntitlements
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
+        fake_entitlements = PlanEntitlements(
+            client_id=1,
+            plan_slug="enterprise",
+            plan_name="Enterprise",
+            subscription_status="active",
+            limits={"bots": UNLIMITED, "max_bots_cap": UNLIMITED},
+            features={},
+            usage={"bots": 0},
+        )
         app = _build_app(auth_override=_operator_auth(role="owner"))
         tc = TestClient(app)
-        with (
-            patch("app.services.plan_service.get_client_plan", return_value=None),
-            patch("app.services.plan_service.get_plan_limit", return_value=UNLIMITED),
+        with patch(
+            "app.services.plan_entitlements_service.get_entitlements",
+            return_value=fake_entitlements,
         ):
             response = tc.post("/bots", json={"name": "Bot"})
         assert response.status_code == 201

@@ -1548,6 +1548,33 @@ export const changeBotSeats = async (delta) => {
     }
 };
 
+// Razorpay Checkout flow for bot seat purchases. Two-step:
+//   1. createBotSeatCheckout(qty) → returns Razorpay Order payload
+//   2. open Razorpay Checkout (via openRazorpayCheckout helper)
+//   3. verifyBotSeatPayment({...success callback...}) → grants seat
+//      idempotently. Mirrors the topup flow.
+export const createBotSeatCheckout = async (quantity = 1) => {
+    try {
+        const response = await api.post('/subscriptions/bot-seats/checkout', { quantity });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start bot seat checkout');
+    }
+};
+
+export const verifyBotSeatPayment = async ({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) => {
+    try {
+        const response = await api.post('/subscriptions/bot-seats/verify', {
+            razorpay_order_id,
+            razorpay_payment_id,
+            razorpay_signature,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to verify bot seat payment');
+    }
+};
+
 
 // ─── Affiliate Program v1 ────────────────────────────────────────────────
 // Money-free referral codes + attribution. Endpoints mirror

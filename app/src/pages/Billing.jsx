@@ -21,6 +21,7 @@ import {
   Bot,
 } from 'lucide-react';
 import CreditCoin from '../components/icons/CreditCoin';
+import { openRazorpayCheckout } from '../lib/razorpay';
 import {
   getCreditBalance,
   getCreditHistory,
@@ -28,6 +29,8 @@ import {
   changeOperatorSeats,
   getBotSeats,
   changeBotSeats,
+  createBotSeatCheckout,
+  verifyBotSeatPayment,
   getBillingPortalUrl,
   verifyStripeTopup,
   verifyStripeSubscription,
@@ -437,15 +440,41 @@ export default function Billing() {
     if (botSeatBusy) return;
     setBotSeatBusy(true);
     try {
-      const result = await changeBotSeats(delta);
-      setBotSeatState(result);
-      showToast(
-        delta > 0
-          ? `Added a bot seat (now ${result.extra_bot_seats} extra, ${result.effective_limit} total).`
-          : `Released a bot seat (now ${result.extra_bot_seats} extra, ${result.effective_limit} total).`,
-        'success',
-      );
+      if (delta > 0) {
+        // Purchase: route through Razorpay Checkout so the customer
+        // actually pays. The verify endpoint grants the seat
+        // idempotently — the webhook is the prod source of truth, this
+        // sync path is the localhost / pre-webhook fallback.
+        const order = await createBotSeatCheckout(delta);
+        const callback = await openRazorpayCheckout({
+          key: order.key_id,
+          order_id: order.order_id,
+          amount: order.amount,
+          currency: order.currency || 'INR',
+          name: order.name || 'OyeChats bot seat',
+          description: order.description,
+          prefill: order.prefill || {},
+          theme: order.theme || { color: '#6366f1' },
+        });
+        await verifyBotSeatPayment(callback);
+        const fresh = await getBotSeats();
+        setBotSeatState(fresh);
+        showToast(
+          `Added a bot seat (now ${fresh.extra_bot_seats} extra, ${fresh.effective_limit} total).`,
+          'success',
+        );
+      } else {
+        // Release: no payment, just decrement (no refund — addons that
+        // already billed stay billed; the customer can re-add next cycle).
+        const result = await changeBotSeats(delta);
+        setBotSeatState(result);
+        showToast(
+          `Released a bot seat (now ${result.extra_bot_seats} extra, ${result.effective_limit} total).`,
+          'success',
+        );
+      }
     } catch (err) {
+      if (err?.code === 'dismissed') return; // customer closed Razorpay modal — silent
       showToast(err?.message || 'Failed to update bot seats', 'error');
     } finally {
       setBotSeatBusy(false);

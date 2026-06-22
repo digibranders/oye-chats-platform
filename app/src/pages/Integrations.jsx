@@ -590,7 +590,7 @@ export default function Integrations() {
     // ``webhooks: false`` (Standard+ feature) so the Webhooks tab opens
     // the upgrade modal when clicked. Email + Meetings are accessible to
     // every paid plan.
-    const { entitlements: ent } = useEntitlements();
+    const { entitlements: ent, loading: entLoading } = useEntitlements();
     const { requestUpgrade } = useUpgradeModal();
 
     const integrationTabs = [
@@ -605,26 +605,36 @@ export default function Integrations() {
         { id: 'meetings', label: 'Meetings', icon: Calendar },
     ];
 
-    // Support ?tab= query param for deep linking. Clamp requests for a
-    // locked tab back to Email so the page renders something useful; the
-    // upgrade modal then explains why.
+    // Support ?tab= query param for deep linking. We can't decide whether
+    // the requested tab is locked until entitlements have actually
+    // resolved — during the first paint `ent` returns the Free fallback
+    // and `webhooks` reads as locked even for Standard customers. Default
+    // to the requested tab optimistically; the post-load effect below
+    // clamps + fires the upgrade modal once if it really IS locked.
     const params = new URLSearchParams(window.location.search);
     const requested = params.get('tab') || 'email';
-    const requestedDef = integrationTabs.find((t) => t.id === requested);
-    const deepLinkedLocked = requestedDef?.locked === true;
-    const initialTab = !requestedDef || deepLinkedLocked ? 'email' : requested;
-    const [activeTab, setActiveTab] = useState(initialTab);
+    const requestedIsKnown = integrationTabs.some((t) => t.id === requested);
+    const [activeTab, setActiveTab] = useState(requestedIsKnown ? requested : 'email');
+    const [deepLinkChecked, setDeepLinkChecked] = useState(false);
 
-    // Fire the upgrade modal once if a Starter user deep-linked to
-    // /integrations?tab=webhooks. The setActiveTab clamp above already
-    // put them on Email so this effect is purely a one-time side effect.
+    // Defer the deep-link decision until entitlements finish loading. On
+    // Standard, by the time this fires `ent.hasFeature('webhooks')` is
+    // true and the clamp is a no-op. On Starter, the tab gets pushed back
+    // to Email and the upgrade modal fires once. We track `deepLinkChecked`
+    // so the clamp runs at most once per mount even if entitlements
+    // refresh later (e.g. after a plan change).
     useEffect(() => {
-        if (deepLinkedLocked && requestedDef?.intent) {
-            requestUpgrade(requestedDef.intent);
+        if (entLoading || deepLinkChecked) return;
+        setDeepLinkChecked(true);
+        const target = integrationTabs.find((t) => t.id === activeTab);
+        if (target?.locked) {
+            setActiveTab('email');
+            if (target.intent) requestUpgrade(target.intent);
         }
-        // Read only on mount.
+        // integrationTabs is rebuilt every render; the meaningful inputs
+        // are entLoading + the locked booleans inside it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [entLoading, deepLinkChecked, activeTab]);
 
     const handleTabChange = (id) => {
         const target = integrationTabs.find((t) => t.id === id);

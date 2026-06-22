@@ -207,6 +207,60 @@ def change_bot_seats(session: Session, client: Client, delta: int) -> BotSeatSta
     client.extra_bot_seats = new_extra
     session.flush()
 
+    # ── Provider billing — only for purchases (delta > 0) ──
+    # Razorpay subs get a subscription addon that the next renewal
+    # invoice will charge. Recurring billing for subsequent cycles is
+    # handled in ``razorpay_service._handle_subscription_charged``,
+    # which re-creates the addon on every successful renewal as long
+    # as ``client.extra_bot_seats > 0``.
+    #
+    # Stripe subs are not yet wired (see TODO in
+    # billing_service.update_seat_quantity at line 780); for now the
+    # local counter bumps without charge. We log loudly so ops can
+    # backfill via the Stripe dashboard until the subscription-item
+    # quantity hookup ships.
+    #
+    # Releases (delta < 0) don't trigger a refund. Razorpay addons,
+    # once created, are billed at the next invoice regardless. To
+    # refund a released seat the customer needs to contact support —
+    # consistent with how every other subscription-line refund works
+    # in this codebase.
+    if delta > 0:
+        from app.services.plan_service import get_client_subscription
+
+        try:
+            sub = get_client_subscription(session, client.id)
+        except Exception:
+            sub = None
+            logger.warning(
+                "bot_seat_service: could not resolve subscription for client=%s — billing not hooked",
+                client.id,
+            )
+
+        if sub is not None:
+            provider = (sub.payment_provider or "").lower()
+            price_paise = int((ent.bot_seat_pricing or {}).get("inr_paise") or 0)
+            if provider == "razorpay":
+                # Lazy import so a Razorpay-keys-missing environment can
+                # still bump the local counter (test envs, Stripe-only
+                # tenants) without the import side effects.
+                from app.services.razorpay_service import add_bot_seat_addon
+
+                add_bot_seat_addon(session, sub, delta, price_paise)
+            elif provider == "stripe":
+                logger.warning(
+                    "bot_seat_service: Stripe billing for bot seats not yet wired — "
+                    "client=%s granted %+d seat(s) without charge",
+                    client.id,
+                    delta,
+                )
+            else:
+                logger.warning(
+                    "bot_seat_service: unknown provider %r on subscription %s — no billing event fired",
+                    provider,
+                    sub.id,
+                )
+
     plan_entitlements_service.invalidate(client.id)
     logger.info(
         "client=%s bot seats %d → %d (delta=%+d, plan=%s)",
