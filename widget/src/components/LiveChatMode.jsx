@@ -173,8 +173,33 @@ const LiveChatMode = ({
                                     if (!history || history.length === 0) return;
                                     // Match file messages stored as markdown: [File: name](url)
                                     const fileRe = /^\[File:\s*(.+?)\]\((.+?)\)$/;
+                                    // Live-chat scope only: history rows include messages
+                                    // the visitor sent to the bot BEFORE the handoff. Those
+                                    // are not "to the operator" — restoring them into
+                                    // liveMessages would (incorrectly) give them delivered/
+                                    // read ticks once the operator reads the conversation.
+                                    //
+                                    // Heuristic: find the timestamp of the earliest
+                                    // operator message in history. That's the live-chat
+                                    // start point. Keep all operator messages, plus only
+                                    // user messages sent AT OR AFTER that timestamp. If
+                                    // there are no operator messages yet, the operator
+                                    // just connected for the first time — restore nothing
+                                    // (every prior user message was bot-mode).
+                                    const earliestOperatorTs = history.reduce((acc, m) => {
+                                        if (m.role !== 'operator') return acc;
+                                        const ts = m.timestamp || m.created_at;
+                                        if (!ts) return acc;
+                                        return (acc === null || ts < acc) ? ts : acc;
+                                    }, null);
                                     const restored = history
-                                        .filter(m => m.role === 'user' || m.role === 'operator')
+                                        .filter(m => {
+                                            if (m.role === 'operator') return true;
+                                            if (m.role !== 'user') return false;
+                                            if (earliestOperatorTs === null) return false;
+                                            const ts = m.timestamp || m.created_at;
+                                            return !!ts && ts >= earliestOperatorTs;
+                                        })
                                         .map((m) => {
                                             const fileMatch = m.content?.match(fileRe);
                                             const isUser = m.role !== 'operator';

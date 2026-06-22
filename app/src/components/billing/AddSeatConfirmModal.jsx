@@ -178,8 +178,8 @@ export default function AddSeatConfirmModal({
                                 <>
                                     <div className="mt-5 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-4 py-3">
                                         <p className="text-sm text-amber-900 dark:text-amber-200">
-                                            You're on the Free plan — extra operator seats need an active paid
-                                            subscription so we can bill them via Razorpay or Stripe.
+                                            You're on the Free plan. Extra operator seats need an active paid
+                                            subscription.
                                         </p>
                                     </div>
                                     <div className="mt-5 flex items-center justify-end gap-2">

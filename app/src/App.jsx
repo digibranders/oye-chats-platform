@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { ToastProvider } from './context/ToastContext';
+import { UpgradeModalProvider } from './context/UpgradeModalContext';
 import { CrawlProvider } from './context/CrawlContext';
 import { getAuthState } from './utils/auth';
 import { getCurrentUser } from './services/api';
@@ -148,6 +149,7 @@ function App() {
     return (
         <ToastProvider>
             <BrowserRouter>
+                <UpgradeModalProvider>
                 <Routes>
                     {/* Public */}
                     <Route path="/login" element={<Login />} />
@@ -254,6 +256,7 @@ function App() {
 
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
+                </UpgradeModalProvider>
             </BrowserRouter>
         </ToastProvider>
     );

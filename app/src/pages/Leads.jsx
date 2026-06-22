@@ -8,6 +8,9 @@ import { useToast } from '../context/ToastContext';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
+import { Lock, Crown, ArrowRight } from 'lucide-react';
+import useEntitlements from '../hooks/useEntitlements';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const STATUS_CONFIG = {
@@ -38,6 +41,12 @@ const hasContactName = (lead) => Boolean(lead?.contact?.name && lead.contact.nam
 export default function Leads() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
+    // URL-walkers shouldn't slip past the sidebar gate. Render a clean
+    // locked-page card when the customer is on Free instead of the empty
+    // dashboard. Backend already blocks lead-dashboard data; this just
+    // makes the surface honest about why.
+    const { entitlements: ent } = useEntitlements();
+    const { requestUpgrade } = useUpgradeModal();
     const [leads, setLeads] = useState([]);
     const [stats, setStats] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -88,6 +97,10 @@ export default function Leads() {
 
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Leads" description="Create a chatbot first to start capturing and qualifying leads." actionLabel="Create Chatbot" actionTo="/chatbot" />;
+    }
+
+    if (ent.isFree) {
+        return <LockedLeadsPage onUpgrade={() => requestUpgrade('view_leads')} />;
     }
 
     const handleViewLead = async (sessionId) => {
@@ -906,6 +919,76 @@ export default function Leads() {
                     </div>
                 )}
             </AnimatePresence>
+        </div>
+    );
+}
+
+/**
+ * LockedLeadsPage — shown when a Free user lands on /leads via URL walk
+ * or a stale deep link. Mirrors the dashboard lock card so the customer
+ * sees the same upsell shape across surfaces. Clicking anywhere fires
+ * the upgrade modal via the supplied onUpgrade handler.
+ */
+function LockedLeadsPage({ onUpgrade }) {
+    return (
+        <div className="flex flex-col gap-6">
+            <PageHeader title="Leads" subtitle="Capture, qualify, and route every visitor" />
+            <button
+                type="button"
+                onClick={onUpgrade}
+                className={cn(
+                    'group relative w-full overflow-hidden rounded-3xl text-left',
+                    'border border-primary-200/60 dark:border-primary-500/20',
+                    'bg-gradient-to-br from-primary-50/80 to-fuchsia-50/40',
+                    'dark:from-primary-500/10 dark:to-fuchsia-500/5',
+                    'px-8 py-10 transition-all hover:from-primary-100/80 hover:to-fuchsia-100/40',
+                    'dark:hover:from-primary-500/15 dark:hover:to-fuchsia-500/10',
+                )}
+            >
+                <div className="flex items-start gap-6">
+                    <div className="relative shrink-0">
+                        <div className="absolute inset-[-10px] rounded-full bg-gradient-to-br from-primary-500/30 to-primary-700/20 blur-lg opacity-70" />
+                        <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-lg shadow-primary-500/30 flex items-center justify-center">
+                            <Crown size={28} strokeWidth={2.2} />
+                        </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary-700 dark:text-primary-300">
+                            <Lock size={10} strokeWidth={2.6} />
+                            Leads dashboard is a paid feature
+                        </p>
+                        <h2 className="mt-2 text-[20px] font-bold text-surface-900 dark:text-surface-50">
+                            Turn every conversation into a tracked lead
+                        </h2>
+                        <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-surface-600 dark:text-surface-400">
+                            Free plans show conversations in <strong>Insights</strong>. Upgrade to unlock the leads
+                            inbox: searchable contacts, BANT qualification, CSV export, and webhook delivery to your CRM.
+                        </p>
+                        <ul className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[13px] text-surface-700 dark:text-surface-300">
+                            <li className="flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-primary-500" />
+                                Searchable lead inbox with status filters
+                            </li>
+                            <li className="flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-primary-500" />
+                                BANT scoring &amp; MQL/SAL/SQL pipeline
+                            </li>
+                            <li className="flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-primary-500" />
+                                CSV export &amp; webhook routing
+                            </li>
+                            <li className="flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-primary-500" />
+                                Lead notes, tags, and audit log
+                            </li>
+                        </ul>
+                        <span className="mt-5 inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 px-4 py-2.5 text-[13.5px] font-semibold text-white shadow-md shadow-primary-500/30 transition-shadow group-hover:shadow-primary-500/50">
+                            See plans &amp; upgrade
+                            <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+                        </span>
+                    </div>
+                </div>
+            </button>
         </div>
     );
 }

@@ -132,7 +132,11 @@ const DEFAULT_CONFIG = {
             { label: 'Urgent need', score: 20 },
             { label: 'Critical / blocking', score: 25 },
         ],
-        cta_enabled: true, cta_prompt: 'What best describes your situation?', label: 'Need',
+        // Default OFF — Need-tier pill questions read as qualification fishing
+        // to modern B2B visitors. Background LLM extraction still scores Need
+        // from conversation text. Customers who want the explicit chip can
+        // toggle it on here. Mirrors the BANT preset in qualification_service.py.
+        cta_enabled: false, cta_prompt: 'What best describes your situation?', label: 'Need',
     },
     timeline: {
         enabled: true, weight: 25,
@@ -143,7 +147,12 @@ const DEFAULT_CONFIG = {
             { label: '1-3 months', score: 20 },
             { label: 'This month', score: 25 },
         ],
-        cta_enabled: true, cta_prompt: 'When are you looking to get started?', label: 'Timeline',
+        // Default OFF — Timeline pill still reads as a qualification chip
+        // to most visitors. Background LLM extraction at ``qualification_service``
+        // still infers timeline from conversation text so the tier signal
+        // is preserved. Customers who want the explicit chip can toggle it
+        // on here. Mirrors the BANT preset in qualification_service.py.
+        cta_enabled: false, cta_prompt: 'When are you looking to get started?', label: 'Timeline',
     },
     authority: {
         enabled: true, weight: 25,

@@ -150,8 +150,23 @@ class TestIngestDocuments:
 
     def test_unsupported_file_type_skipped(self, monkeypatch):
         from app.api import document_routes
+        from app.services import plan_entitlements_service
 
         monkeypatch.setattr(document_routes, "get_session", lambda: _session_ctx(MagicMock()))
+        # Stub entitlements: real plan limits with no usage so the gate passes.
+        monkeypatch.setattr(
+            plan_entitlements_service,
+            "get_entitlements",
+            lambda *a, **kw: plan_entitlements_service.PlanEntitlements(
+                client_id=1,
+                plan_slug="free",
+                plan_name="Free",
+                subscription_status="none",
+                limits={"documents": 5, "credits": 250},
+                features={},
+                usage={"documents": 0},
+            ),
+        )
 
         app = _build_app(auth_override=_client_auth())
         tc = TestClient(app)
@@ -165,8 +180,22 @@ class TestIngestDocuments:
 
     def test_oversized_file_rejected(self, monkeypatch):
         from app.api import document_routes
+        from app.services import plan_entitlements_service
 
         monkeypatch.setattr(document_routes, "get_session", lambda: _session_ctx(MagicMock()))
+        monkeypatch.setattr(
+            plan_entitlements_service,
+            "get_entitlements",
+            lambda *a, **kw: plan_entitlements_service.PlanEntitlements(
+                client_id=1,
+                plan_slug="free",
+                plan_name="Free",
+                subscription_status="none",
+                limits={"documents": 5, "credits": 250},
+                features={},
+                usage={"documents": 0},
+            ),
+        )
 
         app = _build_app(auth_override=_client_auth())
         tc = TestClient(app)

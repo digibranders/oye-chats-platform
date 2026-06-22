@@ -304,13 +304,40 @@ async def fetch_robots_txt(base_url: str) -> RobotFileParser | None:
         return None
 
 
+def _looks_like_sitemap(url: str) -> bool:
+    """Heuristic: does this URL point to a sitemap rather than a content page?
+
+    Triggers sitemap-seed mode when the customer pastes their sitemap URL
+    directly into the crawler (e.g. ``https://example.com/sitemap.xml``).
+    Treats any URL whose path ends in ``.xml`` *or* contains ``/sitemap`` as
+    a sitemap. False positives (e.g. a content page that happens to live at
+    ``/sitemap-howto``) are rare and at worst skip the Chromium color phase
+    on one page — the BFS still proceeds normally.
+    """
+    path = urlparse(url).path.lower()
+    if not path:
+        return False
+    if path.endswith(".xml"):
+        return True
+    return "/sitemap" in path and not path.endswith("/")
+
+
 async def fetch_sitemap_urls(
-    base_url: str, robot_parser: RobotFileParser | None, *, max_sitemaps: int = 10
+    base_url: str,
+    robot_parser: RobotFileParser | None,
+    *,
+    max_sitemaps: int = 10,
+    extra_seeds: list[str] | None = None,
 ) -> list[str]:
     """Discover URLs from sitemap.xml (and robots.txt Sitemap directives).
 
     Handles sitemap index files with a depth limit to prevent unbounded expansion.
     At most *max_sitemaps* sitemap files are fetched.
+
+    ``extra_seeds`` lets the caller force-add sitemap URLs that wouldn't be
+    discovered automatically — used by sitemap-seed mode so a customer-supplied
+    custom sitemap path (e.g. ``/sitemap_pages.xml``) is parsed even when
+    ``robots.txt`` doesn't advertise it and it isn't at the standard location.
     """
     sitemap_queue: list[str] = []
     seen_sitemaps: set[str] = set()
@@ -319,6 +346,12 @@ async def fetch_sitemap_urls(
         if url not in seen_sitemaps and len(seen_sitemaps) < max_sitemaps:
             seen_sitemaps.add(url)
             sitemap_queue.append(url)
+
+    # 0. Caller-supplied sitemap URLs come first so they're never crowded out
+    #    by the auto-probed standard location when ``max_sitemaps`` is tight.
+    if extra_seeds:
+        for s in extra_seeds:
+            enqueue_sitemap(s)
 
     # 1. Check robots.txt for Sitemap directives
     if robot_parser and hasattr(robot_parser, "site_maps") and callable(robot_parser.site_maps):
@@ -671,6 +704,27 @@ async def crawl_single_http(
     return {"url": url, "depth": depth, "html": None, "markdown": None, "error": "max retries exceeded"}
 
 
+async def _crawl_http_with_info(
+    info: dict,
+    http_session: aiohttp.ClientSession,
+    url: str,
+    depth: int,
+    semaphore: asyncio.Semaphore,
+    page_timeout: int,
+    h2t: html2text.HTML2Text,
+) -> tuple[dict, dict]:
+    """Run ``crawl_single_http`` and return ``(info, result)`` together.
+
+    ``asyncio.as_completed`` yields tasks in completion order, not submission
+    order — without bundling the originating ``info`` into the awaited value,
+    the consumer would have to maintain a separate id→info map. This wrapper
+    keeps the call site straightforward: one coroutine in, one tagged result
+    out.
+    """
+    result = await crawl_single_http(http_session, url, depth, semaphore, page_timeout, h2t)
+    return info, result
+
+
 # ---------------------------------------------------------------------------
 # JS color extraction code (injected into Chromium on depth-0 only)
 # ---------------------------------------------------------------------------
@@ -864,13 +918,24 @@ def _is_cancelled(cancel_file: str | None) -> bool:
         return False
 
 
-def _emit_cancelled(results: list[dict], extracted_colors: set[str]) -> None:
+def _emit_cancelled(
+    results: list[dict],
+    extracted_colors: set[str],
+    *,
+    discovered_total: int = 0,
+    queue_remaining: int = 0,
+) -> None:
     """Print the JSON envelope with cancellation flag + partial results.
 
     Lets the parent ``crawler_service.crawl_website`` raise ``CrawlCancelled``
     with the partial payload so any pages already crawled can still be
     ingested — we never throw away crawled work just because the user clicked
     Cancel.
+
+    ``discovered_total`` / ``queue_remaining`` let the orchestrator report
+    how many URLs were found but never crawled, so the UI can show "we found
+    N more URLs that didn't fit your plan's cap" instead of silently dropping
+    them.
     """
     print(json.dumps({"log": f"Crawl cancelled by user after {len(results)} pages"}))
     print("---CRAWLER_JSON_OUTPUT---")
@@ -880,6 +945,8 @@ def _emit_cancelled(results: list[dict], extracted_colors: set[str]) -> None:
                 "results": results,
                 "recommended_colors": list(extracted_colors),
                 "cancelled": True,
+                "discovered_total": discovered_total,
+                "queue_remaining": queue_remaining,
             }
         )
     )
@@ -953,18 +1020,49 @@ async def crawl_recursive(
         )
     )
 
-    # Seed the start URL first (always priority 0, depth 0).
-    # Must be enqueued before sitemap URLs so it isn't silently dropped
-    # when the sitemap contains the root URL (which is common).
-    push_url(start_url, 0)
+    # Sitemap-seed mode: when the customer pastes a sitemap URL as the seed
+    # (e.g. https://example.com/sitemap.xml), don't try to render that XML
+    # document with Chromium. Instead, parse it directly and queue its <loc>
+    # entries as the crawl frontier. Pull in the site's homepage at priority 0
+    # so Phase 1 can still extract brand colors from a real page. Sitemap URLs
+    # arrive at priority 1 (``from_sitemap=True``) so the homepage runs first.
+    sitemap_mode = _looks_like_sitemap(start_url)
+    parsed_start = urlparse(start_url)
+    if sitemap_mode:
+        homepage_url = f"{parsed_start.scheme}://{parsed_start.netloc}/"
+        print(
+            json.dumps(
+                {
+                    "log": (
+                        f"Sitemap-seed mode: {start_url} treated as sitemap. "
+                        f"Using {homepage_url} for brand-color extraction; "
+                        f"content frontier will come from the sitemap."
+                    )
+                }
+            )
+        )
+        push_url(homepage_url, 0)
+    else:
+        # Seed the start URL first (always priority 0, depth 0). Must be
+        # enqueued before sitemap URLs so it isn't silently dropped when the
+        # sitemap contains the root URL (which is common).
+        push_url(start_url, 0)
 
     # ---- Pre-crawl: robots.txt & sitemap ----
     robot_parser = await fetch_robots_txt(start_url)
     if robot_parser:
         print(json.dumps({"log": "robots.txt loaded"}))
 
-    sitemap_urls = await fetch_sitemap_urls(start_url, robot_parser)
+    # In sitemap-seed mode, the customer-supplied URL is the authoritative
+    # sitemap location — feed it through ``extra_seeds`` so the discovery
+    # helper parses it even when robots.txt doesn't advertise it.
+    extra_sitemap_seeds = [start_url] if sitemap_mode else None
+    sitemap_urls = await fetch_sitemap_urls(start_url, robot_parser, extra_seeds=extra_sitemap_seeds)
     sitemap_seeded = 0
+    # In sitemap-seed mode the URLs are explicitly curated by the site owner,
+    # so we trust them as depth-0 entries (deeper than BFS depth-1 discoveries).
+    # This also means the depth-budget never truncates them.
+    sitemap_depth = 0 if sitemap_mode else 1
     for surl in sitemap_urls:
         parsed_surl = urlparse(surl)
         if (
@@ -972,10 +1070,11 @@ async def crawl_recursive(
             and parsed_surl.scheme in ("http", "https")
             and not should_skip_url(surl)
         ):
-            push_url(surl, 1, from_sitemap=True)
+            push_url(surl, sitemap_depth, from_sitemap=True)
             sitemap_seeded += 1
     if sitemap_seeded:
-        print(json.dumps({"log": f"Seeded {sitemap_seeded} URLs from sitemap"}))
+        mode_label = "sitemap-seed mode" if sitemap_mode else "sitemap"
+        print(json.dumps({"log": f"Seeded {sitemap_seeded} URLs from {mode_label}"}))
 
     # ======================================================================
     # Phase 1: Crawl seed URL with Chromium (for JS color extraction)
@@ -1183,7 +1282,7 @@ async def crawl_recursive(
             # pages, then destroy and recreate to free memory.
             while pq and pages_crawled < max_pages:
                 if _is_cancelled(cancel_file):
-                    _emit_cancelled(results, extracted_colors)
+                    _emit_cancelled(results, extracted_colors, discovered_total=len(enqueued), queue_remaining=len(pq))
                     return
                 print(
                     json.dumps(
@@ -1196,7 +1295,9 @@ async def crawl_recursive(
                     session_count = 0
                     while pq and pages_crawled < max_pages and session_count < recycle_every:
                         if _is_cancelled(cancel_file):
-                            _emit_cancelled(results, extracted_colors)
+                            _emit_cancelled(
+                                results, extracted_colors, discovered_total=len(enqueued), queue_remaining=len(pq)
+                            )
                             return
                         _prio, _cnt, current_url, depth = heapq.heappop(pq)
                         norm_url = normalize_url(current_url)
@@ -1257,7 +1358,9 @@ async def crawl_recursive(
             async with aiohttp.ClientSession(headers=http_headers) as http_session:
                 while pq and pages_crawled < max_pages:
                     if _is_cancelled(cancel_file):
-                        _emit_cancelled(results, extracted_colors)
+                        _emit_cancelled(
+                            results, extracted_colors, discovered_total=len(enqueued), queue_remaining=len(pq)
+                        )
                         return
                     # Collect a batch of URLs to crawl
                     batch_tasks: list = []
@@ -1280,10 +1383,21 @@ async def crawl_recursive(
 
                         # Adaptive timeout: shorter for deep pages
                         effective_timeout = page_timeout if depth <= 1 else max(page_timeout - 5, 10)
+                        info = {"url": current_url, "norm_url": norm_url, "depth": depth}
+                        # Wrap each task so as_completed() can hand us back
+                        # (info, result) without a separate index lookup.
                         batch_tasks.append(
-                            crawl_single_http(http_session, current_url, depth, semaphore, effective_timeout, h2t)
+                            _crawl_http_with_info(
+                                info,
+                                http_session,
+                                current_url,
+                                depth,
+                                semaphore,
+                                effective_timeout,
+                                h2t,
+                            )
                         )
-                        batch_info.append({"url": current_url, "norm_url": norm_url, "depth": depth})
+                        batch_info.append(info)
 
                     if not batch_tasks:
                         break
@@ -1295,10 +1409,29 @@ async def crawl_recursive(
                             }
                         )
                     )
-                    batch_results = await asyncio.gather(*batch_tasks)
+                    # Per-page progress emission: consume each task as it
+                    # completes (not after the whole batch via gather). On a
+                    # heavyweight CMS, one slow page used to delay the whole
+                    # batch's progress write by 60-150s; with as_completed
+                    # the temp file (and Redis heartbeat) refresh within
+                    # seconds of every individual page finishing.
+                    #
+                    # Snappy cancel: also check the cancel file on every
+                    # iteration so Cancel is honoured within ~1 page of work,
+                    # not "the whole batch must finish first". The remaining
+                    # in-flight tasks are abandoned to the event-loop teardown
+                    # on return (the subprocess is exiting anyway).
+                    cancel_seen = False
+                    for completed in asyncio.as_completed(batch_tasks):
+                        if _is_cancelled(cancel_file):
+                            cancel_seen = True
+                            break
+                        try:
+                            info, crawl_result = await completed
+                        except Exception as exc:
+                            print(json.dumps({"log": f"Task raised: {exc}"}))
+                            continue
 
-                    # Process results
-                    for info, crawl_result in zip(batch_info, batch_results, strict=False):
                         if crawl_result["error"]:
                             print(json.dumps({"log": f"Error crawling {info['url']}: {crawl_result['error']}"}))
                             continue
@@ -1311,7 +1444,10 @@ async def crawl_recursive(
                         if progress_file:
                             _write_progress(progress_file, results)
 
-                        # Discover new links if not at max depth
+                        # Discover new links if not at max depth — done per-page
+                        # so deeper URLs hit the queue sooner, which also keeps
+                        # the BFS frontier topped up while later batches are
+                        # still running on the current batch's slow pages.
                         if info["depth"] < max_depth and crawl_result["html"]:
                             page_links = extract_links_from_html(crawl_result["html"], info["url"])
                             for href in page_links:
@@ -1320,11 +1456,53 @@ async def crawl_recursive(
                                 if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
                                     push_url(href, info["depth"] + 1)
 
-    print(json.dumps({"log": f"Crawl complete: {len(results)} pages collected"}))
+                    if cancel_seen:
+                        # Cancel was raised mid-batch. Emit what we have and
+                        # exit cleanly — the parent will see ``cancelled=True``
+                        # in the JSON envelope and skip the failed-job path.
+                        _emit_cancelled(
+                            results,
+                            extracted_colors,
+                            discovered_total=len(enqueued),
+                            queue_remaining=len(pq),
+                        )
+                        return
+
+    # Coverage diagnostics: how many URLs did we know about vs. actually
+    # crawl? The orchestrator surfaces these so the UI can show "we found N
+    # more URLs that didn't fit your plan's cap" instead of silently dropping
+    # them. ``enqueued`` is every URL we ever queued (visited + still in pq +
+    # robots-blocked); ``len(pq)`` is the leftover frontier when we stopped.
+    discovered_total = len(enqueued)
+    queue_remaining = len(pq)
+
+    if queue_remaining:
+        print(
+            json.dumps(
+                {
+                    "log": (
+                        f"Crawl complete: {len(results)} pages ingested, "
+                        f"{queue_remaining} URLs discovered but not crawled "
+                        f"(plan page cap or depth limit reached)"
+                    )
+                }
+            )
+        )
+    else:
+        print(json.dumps({"log": f"Crawl complete: {len(results)} pages collected"}))
 
     # Output results
     print("---CRAWLER_JSON_OUTPUT---")
-    print(json.dumps({"results": results, "recommended_colors": list(extracted_colors)}))
+    print(
+        json.dumps(
+            {
+                "results": results,
+                "recommended_colors": list(extracted_colors),
+                "discovered_total": discovered_total,
+                "queue_remaining": queue_remaining,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

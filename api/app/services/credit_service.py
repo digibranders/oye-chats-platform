@@ -72,13 +72,17 @@ _pricing_cache_lock = threading.Lock()
 # the migration seeds these so they should always be present).
 _DEFAULT_PRICING: dict[str, Any] = {
     "credit_cost.ai_chat": 1,
-    "credit_cost.url_scan": 3,
+    # URL crawl per page — bumped from 3 to 5. Each page goes through the
+    # crawler, cleaner, chunker, embedder, and pgvector write; 5 credits
+    # reflects the real cost more honestly and aligns with the tightened
+    # plan limits (Free 30 pages = 150 credits worst case).
+    "credit_cost.url_scan": 5,
     "credit_cost.email_send": 1,
-    # Per-file knowledge base upload. Documents go through OpenAI embedding +
-    # chunking + pgvector storage, so they cost real money to ingest. 2 credits
-    # is the agreed price (Free 5 docs = 10 credits worst case; Standard 35
-    # docs = 70 credits — negligible against the plan allowance).
-    "credit_cost.document_upload": 2,
+    # Per-file knowledge base upload — bumped from 2 to 3. Documents go
+    # through OpenAI embedding + chunking + pgvector storage, so 3 credits
+    # better reflects ingestion cost (Free 5 docs = 15 credits worst case;
+    # Standard 35 docs = 105 credits — still negligible against the plan).
+    "credit_cost.document_upload": 3,
     "seat_price_cents": 1500,
     "topup_expiry_months": 12,
     "low_balance_warn_pct": 20,

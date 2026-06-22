@@ -17,7 +17,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from PIL import Image
 
-from app.config import R2_APPLICATION_KEY, R2_BUCKET_NAME, R2_ENDPOINT, R2_KEY_ID
+from app.config import R2_APPLICATION_KEY, R2_BUCKET_NAME, R2_ENDPOINT, R2_KEY_ID, R2_PUBLIC_BASE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -67,15 +67,24 @@ def _build_public_url(key: str) -> str:
     """
     Build a public URL for the object.
 
-    On Cloudflare R2 we fall through to the path-style S3 URL —
-    `https://{R2_ENDPOINT}/{R2_BUCKET_NAME}/{key}` — which works for buckets
-    exposed via the configured endpoint.
+    Cloudflare R2's S3 endpoint (`{account}.r2.cloudflarestorage.com`) is
+    **private** — anonymous GETs are rejected with `InvalidArgument /
+    Authorization`. Public reads have to go through a bound custom domain
+    (e.g. `cdn.oyechats.com`) or the bucket's `r2.dev` URL. Set
+    `R2_PUBLIC_BASE_URL` to that domain and we use it first.
 
-    The two regex branches below are legacy fallbacks that build Backblaze B2
-    "friendly URLs" when the endpoint matches that provider's pattern. They
-    are dead code on R2 but kept so older buckets keep working if `R2_ENDPOINT`
-    still points at Backblaze.
+    Legacy fallback below builds Backblaze B2 "friendly URLs" when the
+    endpoint matches that provider's pattern — dead code on R2 but kept so
+    older buckets keep working if `R2_ENDPOINT` still points at Backblaze.
+
+    Last-resort fallback returns the S3-style path URL; it only loads if
+    the bucket has been made publicly readable via that endpoint, which on
+    R2 it never is — so callers should treat that fallback as broken and
+    configure `R2_PUBLIC_BASE_URL`.
     """
+    if R2_PUBLIC_BASE_URL:
+        return f"{R2_PUBLIC_BASE_URL}/{key}"
+
     # Legacy: Backblaze B2 "friendly" host extracted from the endpoint host
     match = re.search(r"(\d{3,4})\.backblazeb2\.com", R2_ENDPOINT or "")
     if match:

@@ -123,6 +123,14 @@ async def run_full_crawl(
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])
+        # Coverage diagnostics from the crawler subprocess. ``discovered_total``
+        # is every URL the crawler ever enqueued (visited + still-queued +
+        # robots-blocked); ``queue_remaining`` is what was still pending when
+        # the page-cap / depth-cap stopped us. The UI uses these to show the
+        # customer "we found N more URLs that didn't fit your plan's cap"
+        # instead of silently dropping them.
+        discovered_total = int(crawl_data.get("discovered_total") or 0)
+        queue_remaining = int(crawl_data.get("queue_remaining") or 0)
 
         if not results:
             raise CrawlerError("Failed to retrieve content from URL")
@@ -232,6 +240,12 @@ async def run_full_crawl(
                             client_id,
                         )
 
+        # ``pages_dropped`` is the headline number for the UI: how many URLs
+        # we found but couldn't ingest given the plan caps. Compute it
+        # defensively — never negative, even if the subprocess and the post-
+        # filter disagree by a page or two.
+        pages_dropped = max(0, discovered_total - pages_processed) if discovered_total else queue_remaining
+
         result_payload = {
             "message": "Crawling and ingestion completed successfully",
             "root_url": url,
@@ -242,6 +256,11 @@ async def run_full_crawl(
             "pages_crawled": [p["url"] for p in valid_pages],
             "recommended_colors": recommended_colors,
             "brand_tone": brand_tone,
+            # Coverage visibility — UI uses these to render
+            # "Ingested 200 pages. 347 more were discovered but didn't fit
+            #  your plan's cap. Upgrade or split the crawl by section."
+            "pages_discovered": discovered_total,
+            "pages_dropped": pages_dropped,
         }
         set_crawl_progress(
             client_id,

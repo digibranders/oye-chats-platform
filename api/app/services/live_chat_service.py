@@ -297,6 +297,14 @@ class ConnectionManager:
                 await old_ws.close(code=4001, reason="Session opened in another tab")
 
         await ws.accept(subprotocol=subprotocol)
+        # First-online detection: capture whether this workspace had ZERO online
+        # operators BEFORE this connect. Used to broadcast the "operator_joined"
+        # toast to visitors stuck in the offline-form UI — we only fire on the
+        # zero-to-one transition, not on every reconnect (otherwise visitors
+        # get spammed with toasts when an operator hits refresh).
+        was_workspace_empty = False
+        if client_id is not None:
+            was_workspace_empty = not presence.get_online_operator_ids(client_id)
         self.operator_connections[operator_id] = ws
         self._operator_departments[operator_id] = department_id
         self._operator_names[operator_id] = operator_name
@@ -337,6 +345,66 @@ class ConnectionManager:
 
         # Broadcast updated roster to all operators
         await self.broadcast_operators_update()
+
+        # Visitor-facing "operator_joined" broadcast — only when this operator
+        # was the FIRST to come online for the workspace (i.e. the workspace
+        # transitioned from "all offline" to "1 online"). Skipped on operator
+        # reconnects to avoid spamming visitors with toasts.
+        if client_id is not None and was_workspace_empty:
+            await self._notify_visitors_operator_available(client_id, operator_name)
+
+    async def _notify_visitors_operator_available(self, client_id: int, operator_name: str) -> None:
+        """Broadcast ``operator_joined`` to every visitor currently connected
+        whose session belongs to a bot in this workspace.
+
+        The widget filters on its end — only renders the toast when the
+        visitor is in the offline-form state. Backend sends broadly because
+        the workspace lookup per visitor would add a DB query for every
+        connected widget; the noise cost (visitors elsewhere ignoring the
+        event) is trivial vs the simplicity gained.
+        """
+        if not self.visitor_connections:
+            return
+        try:
+            from app.db.models import Bot, ChatSession
+
+            with get_session() as db:
+                # One query: which session_ids belong to this client's bots?
+                # Filter the in-memory visitor set against that — small (a
+                # handful of visitors) so the post-filter is fast.
+                session_ids = list(self.visitor_connections.keys())
+                if not session_ids:
+                    return
+                matching = (
+                    db.execute(
+                        select(ChatSession.id)
+                        .join(Bot, ChatSession.bot_id == Bot.id)
+                        .where(
+                            ChatSession.id.in_(session_ids),
+                            Bot.client_id == client_id,
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            for sid in matching:
+                await self._send_to_visitor(
+                    sid,
+                    {
+                        "type": "operator_joined",
+                        "operator_name": operator_name,
+                    },
+                )
+            if matching:
+                logger.info(
+                    "Broadcast operator_joined to %d visitor(s) for client=%s",
+                    len(matching),
+                    client_id,
+                )
+        except Exception:
+            # Non-fatal — the visitor's polling fallback will eventually pick
+            # up the state change via the resolver's 5s cache TTL.
+            logger.debug("operator_joined broadcast failed", exc_info=True)
 
     def disconnect_operator(self, operator_id: int):
         """Remove the WebSocket reference but preserve in-memory state.

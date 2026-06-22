@@ -17,7 +17,14 @@ PRESET_FRAMEWORKS = {
                 {"label": "Urgent need", "score": 20},
                 {"label": "Critical / blocking", "score": 25},
             ],
-            "cta_enabled": True,
+            # Need-tier pill questions ("what's your situation?") feel like
+            # qualification fishing to modern B2B visitors — Drift, Intercom Fin,
+            # and HubSpot all default these OFF. Scoring still happens in the
+            # background via post-chat LLM extraction in ``qualification_service``
+            # so leads still get tiered; the visitor just doesn't get an
+            # intrusive pill prompt mid-conversation. Customers who want the
+            # aggressive flow can flip this back to True in the admin UI.
+            "cta_enabled": False,
             "cta_prompt": "What best describes your situation?",
         },
         "timeline": {
@@ -30,7 +37,15 @@ PRESET_FRAMEWORKS = {
                 {"label": "1-3 months", "score": 20},
                 {"label": "This month", "score": 25},
             ],
-            "cta_enabled": True,
+            # Timeline pill defaulted OFF too. The conversational utility ("so
+            # I can tune my answer to your horizon") is real but most visitors
+            # read it as another qualification chip — the background LLM
+            # extraction at ``qualification_service`` still infers timeline
+            # from the conversation text, so the tier signal is preserved
+            # while the visitor gets a cleaner, less interrogated experience.
+            # Customers who specifically want the chip can flip it on per-bot
+            # from the admin Qualification page.
+            "cta_enabled": False,
             "cta_prompt": "When are you looking to get started?",
         },
         "authority": {

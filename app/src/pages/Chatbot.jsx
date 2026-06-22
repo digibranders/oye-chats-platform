@@ -7,6 +7,8 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
+import useEntitlements from '../hooks/useEntitlements';
 import { createBot, deleteBot, crawlWebsite, getBotDemoUrl, getBotPreviewUrl, trackDemoShareClick, updateBot } from '../services/api';
 import { platforms } from '../data/platformIntegrations';
 import PlatformSelector from '../components/PlatformSelector';
@@ -22,6 +24,8 @@ export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading, error: botError } = useBotContext();
     const { showToast } = useToast();
     const { isBotManager } = getAuthState();
+    const { requestUpgrade } = useUpgradeModal();
+    const { entitlements: ent } = useEntitlements();
     const [searchParams, setSearchParams] = useSearchParams();
     const botTab = searchParams.get('tab') || 'bots';
     const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -42,12 +46,35 @@ export default function Chatbot() {
     const [renameValue, setRenameValue] = useState('');
     const renameInputRef = useRef(null);
 
-    // Auto-open create modal when navigated with ?create=true
+    // Open the create flow if the user reached this page via the
+    // ?create=true querystring (clicked "Create new bot" from the sidebar
+    // dropdown or a deep link). The plan-limit gate runs HERE rather than
+    // only on the visible Add button so URL-walkers and deep links hit the
+    // same upgrade upsell as everyone else.
+    const tryOpenCreate = () => {
+        const botLimit = ent.limitFor('bots');
+        if (!ent.withinLimit('bots', bots.length)) {
+            requestUpgrade('add_bot', {
+                current: bots.length,
+                limit: botLimit,
+                planName: ent.planName,
+                canPurchase: ent.canPurchaseBotSeat,
+                hardCap: (ent.limits || {}).max_bots_cap,
+            });
+            return false;
+        }
+        setIsCreateOpen(true);
+        return true;
+    };
+
     useEffect(() => {
         if (searchParams.get('create') === 'true') {
-            setIsCreateOpen(true);
+            tryOpenCreate();
             setSearchParams({}, { replace: true });
         }
+        // tryOpenCreate closes over `bots` / entitlements, which we re-evaluate
+        // every render; the effect's job is purely to react to the URL flag.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, setSearchParams]);
 
     const handleCopy = async (text, field, onCopied) => {
@@ -161,7 +188,7 @@ export default function Chatbot() {
             <PageHeader title="My Bots" subtitle="Manage your chatbot instances">
                 {isBotManager && (
                     <button
-                        onClick={() => setIsCreateOpen(true)}
+                        onClick={tryOpenCreate}
                         className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-md"
                     >
                         <Plus size={16} /> Add Chatbot
@@ -205,7 +232,7 @@ export default function Chatbot() {
                         ? 'Create your first chatbot to get started. Each bot gets its own embed code and knowledge base.'
                         : 'No chatbots are currently available for this workspace.'}
                     actionLabel={isBotManager ? 'Create Chatbot' : undefined}
-                    onAction={isBotManager ? () => setIsCreateOpen(true) : undefined}
+                    onAction={isBotManager ? tryOpenCreate : undefined}
                 />
             ) : (
                 <div className="space-y-3">

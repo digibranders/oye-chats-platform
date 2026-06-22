@@ -29,10 +29,10 @@ bind = os.getenv("GUNICORN_BIND", "127.0.0.1:8000")
 # middleware.py plus margin for streaming/WebSocket handshake).
 timeout = 120
 # Give a recycling worker enough headroom to finish any in-flight crawl
-# (CRAWL_SUBPROCESS_TIMEOUT defaults to 600s) before gunicorn SIGKILLs it.
+# (CRAWL_SUBPROCESS_TIMEOUT defaults to 1600s) before gunicorn SIGKILLs it.
 # Gunicorn spawns the replacement worker immediately, so new traffic is not
 # blocked by the draining worker.
-graceful_timeout = int(os.getenv("GUNICORN_GRACEFUL_TIMEOUT", "650"))
+graceful_timeout = int(os.getenv("GUNICORN_GRACEFUL_TIMEOUT", "1650"))
 keepalive = 5
 
 # ── Worker recycling ────────────────────────────────────────────────────────

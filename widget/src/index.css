@@ -74,11 +74,21 @@
   30% { opacity: 1; }
 }
 
-/* Thinking loader — subtle bounce + fade for the "bot is generating" state */
+/* Thinking loader — subtle bounce + fade for the "bot is generating" state.
+   Kept for backward compatibility; the active loader is the status-word + animated
+   ellipsis indicator below. */
 @keyframes thinkingBounce {
   0%, 60%, 100% { transform: translateY(0);    opacity: 0.4; }
   30%           { transform: translateY(-5px); opacity: 1;   }
 }
+
+/* Status-word indicator — gentle shimmer sweeps across the label so it feels
+   "live" without the choppiness of three bouncing dots. */
+@keyframes oyechatsThinkingShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 
 /* Widget open/close — Scale from launcher (desktop), slide (mobile) */
 

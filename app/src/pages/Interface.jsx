@@ -2,10 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { getAuthState } from '../utils/auth';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
-import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus, Mail, MoreHorizontal, Headphones } from 'lucide-react';
+import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus, Mail, MoreHorizontal, Headphones, Lock } from 'lucide-react';
 import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
+import useEntitlements from '../hooks/useEntitlements';
 import EmptyState from '../components/ui/EmptyState';
 import MessagesTab from './MessagesTab';
 import AdvancedSettingsTab from './AdvancedSettingsTab';
@@ -111,6 +113,14 @@ export default function Interface({ embedded = false }) {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
     const { isBotManager } = getAuthState();
+    const { requestUpgrade } = useUpgradeModal();
+    const { entitlements: ent } = useEntitlements();
+    // Free plans don't include lead capture or live chat. The Live Chat
+    // appearance tab is removed outright; the Leads Form tab stays visible
+    // with a lock badge so the upsell is discoverable from the surface
+    // itself rather than only from the sidebar.
+    const liveChatAllowed = ent.hasFeature('live_chat');
+    const leadFormLocked = ent.isFree;
     const [logo, setLogo] = useState(null); // base64 data URL
     const [isSaving, setIsSaving] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
@@ -138,7 +148,7 @@ export default function Interface({ embedded = false }) {
     const [welcomeTitle, setWelcomeTitle] = useState('Hi there 👋');
     const [welcomeSubtitle, setWelcomeSubtitle] = useState('How can we help you today?');
     const [waitingMessage, setWaitingMessage] = useState('Connecting you to support...');
-    const [offlineMessage, setOfflineMessage] = useState('Our team is currently unavailable.');
+    const [offlineMessage, setOfflineMessage] = useState("We'll be right back! Leave a message and we'll follow up shortly.");
     const [handoffDelaySeconds, setHandoffDelaySeconds] = useState(0);
     const [widgetMessages, setWidgetMessages] = useState({});
     const [widgetConfig, setWidgetConfig] = useState({});
@@ -202,7 +212,7 @@ export default function Interface({ embedded = false }) {
                 setWelcomeTitle(settings.welcome_title || 'Hi there 👋');
                 setWelcomeSubtitle(settings.welcome_subtitle || 'How can we help you today?');
                 setWaitingMessage(settings.waiting_message || 'Connecting you to support...');
-                setOfflineMessage(settings.offline_message || 'Our team is currently unavailable.');
+                setOfflineMessage(settings.offline_message || "We'll be right back! Leave a message and we'll follow up shortly.");
                 setHandoffDelaySeconds(settings.handoff_delay_seconds ?? 0);
                 setWidgetMessages(settings.widget_messages || {});
                 setWidgetConfig(settings.widget_config || {});
@@ -315,11 +325,62 @@ export default function Interface({ embedded = false }) {
         ? getBotPreviewUrl(selectedBot.bot_key, loadedPreviewUrl, { edit: true })
         : null;
 
+    // If the active tab is removed or just became locked (Leads Form,
+    // Live Chat, Advanced Settings all gate on Free), bounce the user
+    // back to General. Plain boolean dependencies — they're the only
+    // inputs that can change tab visibility.
+    useEffect(() => {
+        if ((activeTab === 'Live Chat' && !liveChatAllowed) ||
+            (activeTab === 'Leads Form' && leadFormLocked) ||
+            (activeTab === 'Advanced Settings' && ent.isFree)) {
+            setActiveTab('General');
+        }
+    }, [activeTab, liveChatAllowed, leadFormLocked, ent.isFree]);
+
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
-    const tabs = ['General', 'Avatar', 'Leads Form', 'Live Chat', 'Messages', 'Advanced Settings', 'Custom Brand'];
+    // Tab list is computed per-render so plan upgrades take effect without a
+    // page reload. Free → Leads Form + Live Chat are visible with a lock badge
+    // so the upsell is discoverable from the surface itself. Paid → all tabs
+    // available, no badges.
+    const tabs = [
+        { name: 'General' },
+        { name: 'Avatar' },
+        {
+            name: 'Leads Form',
+            locked: leadFormLocked,
+            intent: 'leads_form',
+        },
+        {
+            name: 'Live Chat',
+            locked: !liveChatAllowed,
+            intent: 'live_chat_appearance',
+        },
+        { name: 'Messages' },
+        {
+            name: 'Advanced Settings',
+            // Advanced knobs (greeting delays, frustration thresholds,
+            // reconnect strategy, etc.) are paid power-user features.
+            // Lock on Free with the same visible-badge-+-modal pattern
+            // as the other paid tabs in this surface.
+            locked: ent.isFree,
+            intent: 'advanced_settings',
+        },
+        { name: 'Custom Brand' },
+    ];
+
+    const handleTabClick = (tab) => {
+        // Locked tabs never become the active section — they open the
+        // upgrade modal so the customer sees a polished upsell rather than
+        // a stripped-down editor or a backend 403 the moment they save.
+        if (tab.locked) {
+            requestUpgrade(tab.intent || 'leads_form');
+            return;
+        }
+        setActiveTab(tab.name);
+    };
 
     const handleFile = (file) => {
         if (!isBotManager) return;
@@ -506,18 +567,33 @@ export default function Interface({ embedded = false }) {
             {/* Tab Navigation Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-surface-200 dark:border-surface-700 w-full">
                 <div className="flex items-center gap-1 bg-surface-100 dark:bg-surface-800 p-1 rounded-xl w-full max-w-4xl overflow-x-auto no-scrollbar">
-                    {tabs.map((tab) => (
-                        <button
-                            key={tab}
-                            onClick={() => setActiveTab(tab)}
-                            className={`flex-1 min-w-max px-3 py-2 text-[12px] rounded-lg transition-all ${activeTab === tab
+                    {tabs.map((tab) => {
+                        const isActive = activeTab === tab.name;
+                        return (
+                            <button
+                                key={tab.name}
+                                onClick={() => handleTabClick(tab)}
+                                aria-disabled={tab.locked ? 'true' : undefined}
+                                title={tab.locked ? 'Available on Starter and above' : undefined}
+                                className={`flex-1 min-w-max px-3 py-2 text-[12px] rounded-lg transition-all inline-flex items-center justify-center gap-1.5 ${isActive && !tab.locked
                                     ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm font-semibold'
-                                    : 'text-surface-500 dark:text-surface-400 font-medium hover:text-surface-700 dark:hover:text-surface-200'
-                                }`}
-                        >
-                            {tab}
-                        </button>
-                    ))}
+                                    : tab.locked
+                                        ? 'text-surface-400 dark:text-surface-500 font-medium hover:text-surface-600 dark:hover:text-surface-300'
+                                        : 'text-surface-500 dark:text-surface-400 font-medium hover:text-surface-700 dark:hover:text-surface-200'
+                                    }`}
+                            >
+                                <span>{tab.name}</span>
+                                {tab.locked && (
+                                    <span
+                                        className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-600 leading-none dark:bg-amber-500/15 dark:text-amber-400"
+                                        aria-hidden="true"
+                                    >
+                                        <Lock size={11} strokeWidth={2.4} className="block" />
+                                    </span>
+                                )}
+                            </button>
+                        );
+                    })}
                 </div>
 
                 <button
@@ -1255,7 +1331,7 @@ export default function Interface({ embedded = false }) {
                                         onChange={(e) => setOfflineMessage(e.target.value)}
                                         maxLength={200}
                                         rows={2}
-                                        placeholder="Our team is currently unavailable."
+                                        placeholder="We'll be right back! Leave a message and we'll follow up shortly."
                                         className="w-full px-3 py-2.5 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 resize-none dark:placeholder:text-surface-500"
                                     />
                                 </div>
@@ -1415,22 +1491,55 @@ export default function Interface({ embedded = false }) {
                                     <h2 className="text-2xl font-bold text-[#16202C]">
                                         {(welcomeTitle || 'Hi there 👋').replace(/\p{Extended_Pictographic}/gu, '').trim() || 'Hi there'}
                                     </h2>
-                                    <p className="text-[15px] text-gray-500 mt-1">
-                                        {welcomeSubtitle || 'How can I help you today?'}
-                                    </p>
-                                    <div className="flex flex-wrap gap-2 mt-5 justify-start">
-                                        {(Array.isArray(widgetMessages.welcome_suggestions) && widgetMessages.welcome_suggestions.length > 0
-                                            ? widgetMessages.welcome_suggestions
-                                            : ['Our Services', 'About us', 'Contact us']
-                                        ).filter(Boolean).map((s) => (
-                                            <span
-                                                key={s}
-                                                className="px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200"
-                                            >
-                                                {s}
-                                            </span>
-                                        ))}
-                                    </div>
+                                    {(() => {
+                                        // Mirror the live widget's WelcomeScreen layout switch so
+                                        // the toggle in MessagesTab updates this preview in real
+                                        // time. Both branches share the same data source
+                                        // (widget_messages.welcome_suggestions) and the same
+                                        // default fallback list.
+                                        const previewLayout =
+                                            widgetMessages?.welcome_suggestions_layout === 'vertical'
+                                                ? 'vertical'
+                                                : 'horizontal';
+                                        const previewIsVertical = previewLayout === 'vertical';
+                                        const previewSuggestions = (
+                                            Array.isArray(widgetMessages.welcome_suggestions) &&
+                                            widgetMessages.welcome_suggestions.length > 0
+                                                ? widgetMessages.welcome_suggestions
+                                                : ['Our Services', 'About us', 'Contact us']
+                                        ).filter(Boolean);
+                                        return (
+                                            <>
+                                                <p
+                                                    className={`text-[15px] text-gray-500 ${
+                                                        previewIsVertical ? 'mt-1 mb-3' : 'mt-1'
+                                                    }`}
+                                                >
+                                                    {welcomeSubtitle || 'How can I help you today?'}
+                                                </p>
+                                                <div
+                                                    className={
+                                                        previewIsVertical
+                                                            ? 'flex flex-col gap-2 mt-2 w-full items-stretch'
+                                                            : 'flex flex-wrap gap-2 mt-5 justify-start'
+                                                    }
+                                                >
+                                                    {previewSuggestions.map((s) => (
+                                                        <span
+                                                            key={s}
+                                                            className={
+                                                                previewIsVertical
+                                                                    ? 'w-full text-left px-4 py-2.5 rounded-xl text-[13px] text-gray-700 bg-gray-50 border border-gray-200'
+                                                                    : 'px-4 py-2 rounded-full text-[13px] text-gray-600 bg-gray-50 border border-gray-200'
+                                                            }
+                                                        >
+                                                            {s}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             )}
 
@@ -1461,7 +1570,7 @@ export default function Interface({ embedded = false }) {
                                     </div>
                                     <div>
                                         <p className="text-[14px] font-semibold text-[#16202C]">
-                                            {offlineMessage || 'Our team is currently unavailable.'}
+                                            {offlineMessage || "We'll be right back! Leave a message and we'll follow up shortly."}
                                         </p>
                                         <p className="text-[12px] text-gray-400 mt-1">Leave a message and we&apos;ll get back to you.</p>
                                     </div>
@@ -1488,7 +1597,7 @@ export default function Interface({ embedded = false }) {
 
                                 {/* Footer — Live chat + Branding */}
                                 <div className="flex items-center justify-between gap-3 mt-3 pt-1 px-1">
-                                    {liveChatEnabled ? (
+                                    {liveChatEnabled && liveChatAllowed ? (
                                         <div className="flex items-center gap-1 text-[11px] text-gray-400">
                                             <Headphones size={12} />
                                             <span>{widgetMessages.live_chat_label || 'Live chat'}</span>

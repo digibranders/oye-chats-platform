@@ -4,6 +4,8 @@ import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
+import useEntitlements from '../hooks/useEntitlements';
 import { getBots, updateBot } from '../services/api';
 import Webhooks from './Webhooks';
 
@@ -581,24 +583,72 @@ function MeetingsSettings() {
 
 // ─── Unified Integrations Page ──────────────────────────────────────────────
 
-const integrationTabs = [
-    { id: 'email', label: 'Email', icon: Mail },
-    { id: 'webhooks', label: 'Webhooks', icon: WebhookIcon },
-    { id: 'meetings', label: 'Meetings', icon: Calendar },
-];
-
 export default function Integrations() {
-    // Support ?tab= query param for deep linking / redirects
+    // Page-level access is gated at the sidebar (Free → locked). This page
+    // is reached by every paid plan, but individual sub-tabs may still be
+    // gated by their own feature flag: Starter ships with
+    // ``webhooks: false`` (Standard+ feature) so the Webhooks tab opens
+    // the upgrade modal when clicked. Email + Meetings are accessible to
+    // every paid plan.
+    const { entitlements: ent, loading: entLoading } = useEntitlements();
+    const { requestUpgrade } = useUpgradeModal();
+
+    const integrationTabs = [
+        { id: 'email', label: 'Email', icon: Mail },
+        {
+            id: 'webhooks',
+            label: 'Webhooks',
+            icon: WebhookIcon,
+            locked: !ent.hasFeature('webhooks'),
+            intent: 'webhooks_integration',
+        },
+        { id: 'meetings', label: 'Meetings', icon: Calendar },
+    ];
+
+    // Support ?tab= query param for deep linking. We can't decide whether
+    // the requested tab is locked until entitlements have actually
+    // resolved — during the first paint `ent` returns the Free fallback
+    // and `webhooks` reads as locked even for Standard customers. Default
+    // to the requested tab optimistically; the post-load effect below
+    // clamps + fires the upgrade modal once if it really IS locked.
     const params = new URLSearchParams(window.location.search);
-    const initialTab = params.get('tab') || 'email';
-    const [activeTab, setActiveTab] = useState(
-        integrationTabs.some(t => t.id === initialTab) ? initialTab : 'email'
-    );
+    const requested = params.get('tab') || 'email';
+    const requestedIsKnown = integrationTabs.some((t) => t.id === requested);
+    const [activeTab, setActiveTab] = useState(requestedIsKnown ? requested : 'email');
+    const [deepLinkChecked, setDeepLinkChecked] = useState(false);
+
+    // Defer the deep-link decision until entitlements finish loading. On
+    // Standard, by the time this fires `ent.hasFeature('webhooks')` is
+    // true and the clamp is a no-op. On Starter, the tab gets pushed back
+    // to Email and the upgrade modal fires once. We track `deepLinkChecked`
+    // so the clamp runs at most once per mount even if entitlements
+    // refresh later (e.g. after a plan change).
+    useEffect(() => {
+        if (entLoading || deepLinkChecked) return;
+        setDeepLinkChecked(true);
+        const target = integrationTabs.find((t) => t.id === activeTab);
+        if (target?.locked) {
+            setActiveTab('email');
+            if (target.intent) requestUpgrade(target.intent);
+        }
+        // integrationTabs is rebuilt every render; the meaningful inputs
+        // are entLoading + the locked booleans inside it.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [entLoading, deepLinkChecked, activeTab]);
+
+    const handleTabChange = (id) => {
+        const target = integrationTabs.find((t) => t.id === id);
+        if (target?.locked) {
+            requestUpgrade(target.intent || 'webhooks_integration');
+            return;
+        }
+        setActiveTab(id);
+    };
 
     return (
         <div className="space-y-6 animate-fade-in">
             <PageHeader title="Integrations" subtitle="Connect email, webhooks, and third-party services" />
-            <Tabs tabs={integrationTabs} activeTab={activeTab} onChange={setActiveTab} />
+            <Tabs tabs={integrationTabs} activeTab={activeTab} onChange={handleTabChange} />
 
             {activeTab === 'email' && <EmailSettings />}
             {activeTab === 'webhooks' && <Webhooks embedded />}
