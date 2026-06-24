@@ -3,6 +3,7 @@ import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Sparkles, Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient } from '../services/api';
+import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { cn } from '../lib/utils';
 
 const features = [
@@ -81,9 +82,7 @@ export default function Register() {
       // prior session on this device so the freshly-registered client sees
       // the trial banner immediately instead of inheriting a "dismissed"
       // flag set by a previous account.
-      import('../utils/trialBanner')
-        .then((m) => m.clearTrialBannerDismissals())
-        .catch(() => {});
+      clearTrialBannerDismissals();
 
       // Navigate to email verification — the guard below also handles the
       // re-render case (setIsLoading(false) fires after navigate).

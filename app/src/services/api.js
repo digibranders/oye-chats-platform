@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { AUTH_STORAGE_KEYS } from '../utils/auth';
+import { clearTrialBannerDismissals } from '../utils/trialBanner';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -73,9 +74,8 @@ api.interceptors.response.use(
             AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
             // Banner dismissals are scoped to the session, not to a user —
             // wipe them on auto-logout so the next account sees a fresh
-            // trial banner. Inline import keeps the bundle graph clean
-            // (the helper lives in utils, not in a component module).
-            import('../utils/trialBanner').then((m) => m.clearTrialBannerDismissals?.());
+            // trial banner.
+            clearTrialBannerDismissals();
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
             }
@@ -970,6 +970,48 @@ export const getOperatorQueue = async () => {
     } catch (error) {
         console.error('API Error fetching queue:', error);
         throw buildApiError(error, 'Failed to load queue');
+    }
+};
+
+export const getQualifiedBotSessions = async (limit = 50) => {
+    try {
+        const response = await api.get(`/operators/qualified-bot-sessions?limit=${limit}`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching qualified bot sessions:', error);
+        throw buildApiError(error, 'Failed to load qualified bot sessions');
+    }
+};
+
+export const takeoverBotSession = async (sessionId, operatorId = null) => {
+    try {
+        const body = operatorId ? { operator_id: operatorId } : {};
+        const response = await api.post(`/operators/takeover/${sessionId}`, body);
+        return response.data;
+    } catch (error) {
+        console.error('API Error taking over bot session:', error);
+        throw buildApiError(error, 'Failed to take over session');
+    }
+};
+
+export const sendConnectRequest = async (sessionId, operatorId = null) => {
+    try {
+        const body = operatorId ? { operator_id: operatorId } : {};
+        const response = await api.post(`/operators/connect-request/${sessionId}`, body);
+        return response.data;
+    } catch (error) {
+        console.error('API Error sending connect request:', error);
+        throw buildApiError(error, 'Failed to send connect request');
+    }
+};
+
+export const cancelConnectRequest = async (sessionId) => {
+    try {
+        const response = await api.post(`/operators/connect-request/${sessionId}/cancel`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error cancelling connect request:', error);
+        throw buildApiError(error, 'Failed to cancel connect request');
     }
 };
 

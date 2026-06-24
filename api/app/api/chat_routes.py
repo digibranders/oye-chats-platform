@@ -913,3 +913,173 @@ def send_chat_transcript(
     )
 
     return {"success": True, "message": f"Transcript sent to {body.recipient_email}"}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Operator → visitor connect-request consent flow
+#
+# Operator initiates via /operators/connect-request/{session_id}; the visitor
+# widget polls the GET endpoint below to discover the pending invite and posts
+# back yes/no. On accept the session transitions to live chat and the operator
+# is assigned. On decline (or expiry) the session keeps chatting with the AI.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class ConnectRequestResponseBody(PydanticBaseModel):
+    accepted: bool
+    request_id: str | None = None  # optional — extra guard against stale popups
+
+
+@router.get("/chat/connect-request/{session_id}")
+def get_pending_connect_request(session_id: str, bot: Bot = Depends(get_current_bot)):
+    """Widget polls this while in bot mode to discover operator-initiated
+    connect invitations. Returns ``{ pending: false }`` when none.
+
+    Auth: ``X-Bot-Key`` (visitor widget). The session must belong to the bot.
+    """
+    with get_session() as session:
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not chat_session:
+            return {"pending": False}
+        if chat_session.bot_id != bot.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.services.live_chat_service import manager as live_manager
+
+    # Widget polls this every 5s while in bot mode — perfect signal for
+    # "visitor is still on the page chatting with the AI". We piggyback the
+    # heartbeat here so we don't need a second endpoint for presence.
+    live_manager.record_bot_session_activity(session_id)
+
+    req = live_manager.get_connect_request(session_id)
+    if not req:
+        return {"pending": False}
+    return {
+        "pending": True,
+        "request_id": req["request_id"],
+        "operator_name": req["operator_name"],
+        "expires_at": req["expires_at"],
+    }
+
+
+@router.post("/chat/connect-request/{session_id}/respond")
+async def respond_to_connect_request(
+    session_id: str,
+    body: ConnectRequestResponseBody,
+    bot: Bot = Depends(get_current_bot),
+):
+    """Visitor accepts or declines an operator's connect-request.
+
+    On accept we atomically promote the session to live chat and assign it to
+    the requesting operator. On decline (or stale ``request_id``) we just
+    consume the pending entry — the bot conversation continues unchanged.
+    """
+    from sqlalchemy import update as sa_update
+
+    from app.db.models import ChatAuditLog, Operator
+    from app.services.live_chat_service import manager as live_manager
+
+    pending = live_manager.get_connect_request(session_id)
+    if not pending:
+        return {"ok": True, "result": "expired"}
+
+    # Optional request_id guard — protects against an old popup the visitor
+    # left open while the operator already cancelled & re-issued.
+    if body.request_id and body.request_id != pending["request_id"]:
+        return {"ok": True, "result": "stale"}
+
+    with get_session() as session:
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not chat_session:
+            live_manager.clear_connect_request(session_id)
+            raise HTTPException(status_code=404, detail="Session not found")
+        if chat_session.bot_id != bot.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        operator_id = pending["operator_id"]
+        operator_name = pending["operator_name"]
+        operator = session.execute(select(Operator).where(Operator.id == operator_id)).scalar_one_or_none()
+        if not operator or operator.client_id != bot.client_id:
+            # Operator was removed mid-flight — clear the request and bail out.
+            live_manager.clear_connect_request(session_id)
+            await live_manager.notify_connect_request_resolved(operator_id, session_id, "expired", visitor_name=None)
+            return {"ok": True, "result": "expired"}
+
+        if not body.accepted:
+            live_manager.clear_connect_request(session_id)
+            lead = get_lead_info_by_session(session, session_id)
+            visitor_name = (lead.name if lead else None) or "Visitor"
+            session.add(
+                ChatAuditLog(
+                    session_id=session_id,
+                    operator_id=operator_id,
+                    action="connect_declined",
+                )
+            )
+            session.commit()
+            await live_manager.notify_connect_request_resolved(
+                operator_id, session_id, "declined", visitor_name=visitor_name
+            )
+            return {"ok": True, "result": "declined"}
+
+        # Accept path — must be a bot session AND still in bot status.
+        if chat_session.status != "bot":
+            live_manager.clear_connect_request(session_id)
+            await live_manager.notify_connect_request_resolved(operator_id, session_id, "expired")
+            return {"ok": True, "result": "expired"}
+
+        claimed = session.execute(
+            sa_update(ChatSession)
+            .where(ChatSession.id == session_id, ChatSession.status == "bot")
+            .values(status="live", assigned_operator_id=operator_id)
+            .returning(ChatSession.id)
+        ).scalar_one_or_none()
+        if not claimed:
+            live_manager.clear_connect_request(session_id)
+            await live_manager.notify_connect_request_resolved(operator_id, session_id, "expired")
+            return {"ok": True, "result": "expired"}
+
+        session.add(
+            ChatAuditLog(
+                session_id=session_id,
+                operator_id=operator_id,
+                action="connect_accepted",
+            )
+        )
+
+        lead = get_lead_info_by_session(session, session_id)
+        visitor_name = (lead.name if lead else None) or "Visitor"
+        department_id = chat_session.department_id
+        session.commit()
+
+    live_manager.clear_connect_request(session_id)
+    live_manager._session_metadata[session_id] = {
+        "name": visitor_name,
+        "reason": "Connect-request accepted by visitor",
+    }
+    if department_id is not None:
+        live_manager._session_departments[session_id] = department_id
+
+    accepted_ok = await live_manager.accept_chat(session_id, operator_id, operator_name)
+    if not accepted_ok:
+        logger.warning(
+            "DB accepted connect-request for %s → operator %s but manager rejected it. "
+            "DB is authoritative — proceeding.",
+            session_id,
+            operator_id,
+        )
+
+    await live_manager.notify_connect_request_resolved(operator_id, session_id, "accepted", visitor_name=visitor_name)
+
+    # Refresh the operator console's qualified-bot list — this session has
+    # been removed from the "still chatting with AI" pool.
+    import asyncio as _asyncio
+
+    _asyncio.create_task(live_manager.broadcast_qualified_bot_changed(bot.client_id, session_id))
+
+    return {
+        "ok": True,
+        "result": "accepted",
+        "operator_name": operator_name,
+        "visitor_name": visitor_name,
+    }

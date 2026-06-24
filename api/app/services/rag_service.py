@@ -1033,11 +1033,14 @@ def _background_bant_extraction(
                     score_col, _text_col = score_field_map[dim]
                     current_score = max(current_score, int(getattr(chat_session, score_col, 0) or 0))
 
-                # Never downgrade scores
-                if new_score <= current_score:
-                    continue
-
-                # Save evidence trail
+                # ── Audit log (always-on) ──────────────────────────────────
+                # Persist the evidence row UNCONDITIONALLY — even when the new
+                # signal can't beat the rolling per-dimension score. Older
+                # behaviour silently dropped redundant signals, which hid the
+                # depth of qualification from operators: a visitor mentioning
+                # NEED six times looked identical to one mentioning it once.
+                # The BANTSignal table is meant to be an append-only event log;
+                # never-downgrade applies to the *score*, not the evidence.
                 bant_signal = BANTSignal(
                     session_id=session_id,
                     message_id=message_id,
@@ -1046,11 +1049,18 @@ def _background_bant_extraction(
                     extracted_value=signal["extracted_value"],
                     confidence=signal["confidence"],
                     score_before=current_score,
-                    score_after=new_score,
+                    score_after=max(new_score, current_score),
                 )
                 session.add(bant_signal)
 
-                # Keep legacy BANT columns in sync for BANT-compatible dimensions
+                # ── Score / text columns (never-downgrade still applies) ──
+                # The rolling per-dimension score is the "best evidence" view,
+                # not a running total. A weak follow-up signal must not drag
+                # down a strong earlier one — so we only touch the columns
+                # when the new signal beats the current high-water mark.
+                if new_score <= current_score:
+                    continue
+
                 if dim in score_field_map:
                     score_col, text_col = score_field_map[dim]
                     setattr(chat_session, score_col, new_score)
@@ -1126,7 +1136,45 @@ def _background_bant_extraction(
                 except Exception as wh_err:
                     logger.warning(f"Webhook dispatch failed (non-blocking): {wh_err}")
 
+            # Snapshot fields needed for the post-commit broadcast — session
+            # closure expires ORM attributes, so capture before commit().
+            bant_marked = sum(
+                1
+                for score_col, text_col in (
+                    ("bant_budget_score", "bant_budget"),
+                    ("bant_authority_score", "bant_authority"),
+                    ("bant_need_score", "bant_need"),
+                    ("bant_timeline_score", "bant_timeline"),
+                )
+                if (getattr(chat_session, score_col, 0) or 0) > 0
+                or ((getattr(chat_session, text_col, "") or "").strip())
+            )
+            broadcast_client_id = bot.client_id if bot else None
+
             session.commit()
+
+        # Notify connected operators that a session now meets the qualified
+        # threshold (≥2 BANT dimensions) so their live console refetches the
+        # list without waiting for the 15s poll. Best-effort — never let a
+        # broadcast failure surface as a BANT extraction error.
+        if broadcast_client_id and bant_marked >= 2:
+            try:
+                import asyncio as _asyncio
+
+                from app.services.live_chat_service import manager as _live_manager
+
+                try:
+                    loop = _asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                coro = _live_manager.broadcast_qualified_bot_changed(broadcast_client_id, session_id)
+                if loop is not None:
+                    loop.create_task(coro)
+                else:
+                    _asyncio.run(coro)
+            except Exception as broadcast_err:  # noqa: BLE001
+                logger.debug("qualified_bot_changed broadcast skipped: %s", broadcast_err)
     except Exception as e:
         logger.warning(f"Background BANT extraction failed (non-breaking): {e}")
 
@@ -1371,6 +1419,39 @@ UNIVERSAL RULES:
 - If the visitor has already volunteered information about a dimension, do NOT ask about it again.
 - The CLOSURE OVERRIDE above always wins. If closure is detected, ALL of these universal rules are suspended in favor of the brief acknowledgment.
 - Priority order: {", ".join(d.upper() for d in conversation_order)}
+
+AUTHORITY ACKNOWLEDGMENT (mandatory when the visitor reveals buying power):
+When the visitor identifies their role, seniority, or decision-making power — e.g. they say things like "I'm the CTO", "I'm a Director", "I'd be the one signing off", "I make the call here", "my team reports to me", "I own the budget", "I'd be approving this", "VP of Engineering", "Head of Platform" — you MUST briefly acknowledge it in your reply BEFORE moving on to product details or the next probe. The acknowledgment validates them as a real buyer and visibly raises the temperature of the conversation. It is not optional.
+
+  ACTION (mandatory shape):
+    Lead your reply with ONE short clause (under 14 words) that:
+      - Names the role-fit ("Directors of Platform are exactly who we work with…",
+        "Great — CTOs are typically our primary buyer…", "Perfect — that's the seniority
+        we usually partner with on rollouts like this…")
+      - Optionally adds a soft committee probe ("…do you also loop in your CISO or
+        compliance lead before signature?")
+    Then continue with the rest of your answer as normal.
+
+  POSITIVE EXAMPLE (copy this shape):
+    visitor: "I'm the Director of Platform Engineering and I'd be signing off on this."
+    you: "Directors of Platform are typically our primary buyer here. For rollouts at
+    your scale we pair you with a Senior Solutions Engineer and an Enterprise CSM…
+    <rest of answer>"
+
+  NEGATIVE EXAMPLE (DO NOT do this — the visitor feels unheard):
+    visitor: "I'm the Director of Platform Engineering and I'd sign off on this."
+    you: "We assign a senior solutions engineer and an enterprise customer success
+    manager to work with organizations of your size."
+    ← The role declaration was ignored entirely. Cold, transactional, costs trust.
+
+  HARD RULES:
+    1. The acknowledgment must come BEFORE the product/process answer, not after.
+    2. Keep it to one clause — do not turn it into flattery or a paragraph.
+    3. Only fire on first declaration. Do not re-acknowledge the same role every turn.
+    4. Never echo the visitor's exact title verbatim in quotes — paraphrase ("Directors
+       of Platform", "Folks at your level") so it doesn't feel parroted.
+    5. If the visitor mentioned role AND a specific concern in the same message, the
+       acknowledgment still leads, then the concern is addressed.
 
 CURRENT QUALIFICATION STATE:
 {state_text}
@@ -1622,6 +1703,20 @@ RULES:
 3. Bold only: **{display_name}**, product/service names, and prices. No other bold.
 4. Tone: like a knowledgeable colleague replying in chat — friendly but direct. Never start with "Great question!", "Absolutely!", "I'd be happy to help!" or "Thank you for asking!". Never say "Based on the information provided". Just answer naturally.
 5. For ON-SCOPE questions: never say "I don't have that information" or "No information is available." You ARE the company — speak with confidence. When specific details are available in the reference information below, state them directly — name clients, list services, quote prices, whatever is there. Only when an on-scope specific is genuinely absent from the reference material should you pivot: share what you do know about the company, and optionally {handoff_offer} Do NOT add a "connect with our team" offer to answers where you already have the information — only offer it when the reference material truly cannot answer the on-scope question. For OFF-SCOPE questions: use the SCOPE refusal — do not pivot, do not offer handoff.
+5a. VERIFIABLE-CLAIM GROUND RULE (overrides the "speak with confidence" half of RULE 5 whenever the two collide). Distinguish two kinds of statements before emitting them:
+
+  (a) VERIFIABLE CLAIMS — anything a visitor could fact-check against a public record, an auditor, a contract, our docs, a third party, or our own security/legal/finance team. Examples (illustrative, NOT exhaustive): certification status (SOC 2, ISO, HIPAA, PCI, FedRAMP, etc.); regulatory compliance posture; named customers; customer counts; financial figures (ARR, headcount, funding); SLA numbers; uptime percentages; performance benchmarks (latency, throughput, "X% reduction"); contract terms; pricing numbers; named partnerships/integrations; existence of specific features; dates; locations; founder/leadership names. When a visitor asks about one of these AND the specific answer is NOT present in the reference material, you MUST:
+    1. Acknowledge the gap honestly in ONE short clause. Acceptable shapes include "Our [team] owns the latest on that.", "I don't have that on hand.", "That detail sits with our [team].". DO NOT use the banned RULE-5 phrases ("I don't have information", "no data available", "not in my knowledge base") — use a human, in-character version.
+    2. Lead with the closest verified facts that ARE in the reference material. NEVER substitute an adjacent capability for the asked-about one ("we offer readiness support" when asked "are you certified", "we have validated cryptography" when asked "are you SOC 2") — those are misrepresentations, not pivots.
+    3. Offer to connect the visitor with the team for the verified answer.
+  Inventing, paraphrasing, or inferring a verifiable claim is forbidden — even when the inference feels safe. "We offer documentation and features to support [X] readiness" when nothing in the reference material says so is a hallucination, not a pivot.
+
+  (b) POSITIONING STATEMENTS — brand voice, mission, philosophy, why-we-built-this, broad capability framing, tone-setting language. Speak with the confidence RULE 5 requires.
+
+  Two self-checks before any sentence that contains a specific noun-phrase claim:
+    (i)  If a procurement officer asked me to prove this exact sentence, could they verify it from public sources, our docs, our contracts, or our security team?
+    (ii) If the visitor screenshots this sentence and forwards it to their legal or compliance team, am I comfortable defending it?
+  If either answer is "no", the sentence is a verifiable claim and must follow path (a) — gap acknowledgment + verified-fact pivot + handoff. Never path (b).
 6. For LIST and COUNT questions ("who are your clients", "what services do you offer", "how many people on your team"): give the COMPLETE list that appears in the reference material — never a partial subset. Use the company's exact branded names where the reference material gives them (e.g. "Performance Marketing & Tracking", not generic "ads"; "Brand Identity & Storytelling", not generic "branding"). Never hedge with "at least N", "30+", or "we have several" when the reference material lists the items by name — count or enumerate them precisely. If the list is genuinely long, summarise with an exact count plus the most prominent names: "we work with 19 brands including X, Y, Z".
 6a. LIST NORMALIZATION: When the reference material contains a list whose items are joined inline with " - " or " — " separators (a sign the source HTML was flattened during crawl — e.g. "Event A — 15 March 2026 - Event B — 21 February 2026 - Event C — 03 December 2025"), DO NOT echo it verbatim. Split on the inline separators and render each item as its own markdown bullet on its own line. Never produce a single bullet that contains multiple distinct items.
 6b. DATE-FILTERED LISTS: For "upcoming", "next", "future", "this year", or "current" questions about dated items (events, webinars, releases, deadlines, offers), compare each item's date against TODAY'S DATE above. Include only items with dates ≥ today; silently drop past-dated items. If every dated item in the reference material is in the past, say so plainly — e.g. "I don't have any upcoming events on file right now — the event list I'm seeing has already passed. Check [our events page](URL) for the latest schedule." Never label a past date as "upcoming".
@@ -1804,11 +1899,18 @@ class _StreamCtaSanitizer:
     _HEADERS = ("[CTA:", "[CTA_Q:")
     _MAX_SENTINEL_LEN = 250  # safety cap; longer than any realistic [CTA_Q:…]
 
-    __slots__ = ("_buf", "_in_sentinel")
+    __slots__ = ("_buf", "_in_sentinel", "_pending_space", "_last_emitted")
 
     def __init__(self) -> None:
         self._buf: str = ""
         self._in_sentinel: bool = False
+        # When a sentinel finishes, defer a single space until the next
+        # non-whitespace emit so ``guidance[CTA_Q:…]Which`` becomes
+        # ``guidance Which`` rather than ``guidanceWhich``. The space is
+        # suppressed if the next character is already whitespace, keeping
+        # paragraph spacing intact.
+        self._pending_space: bool = False
+        self._last_emitted: str = ""
 
     def _is_header_prefix(self, s: str) -> bool:
         """True iff ``s`` is still a viable prefix of any sentinel header."""
@@ -1816,6 +1918,23 @@ class _StreamCtaSanitizer:
 
     def _is_header_complete(self, s: str) -> bool:
         return any(s.startswith(h) for h in self._HEADERS)
+
+    def _emit(self, out: list[str], ch: str) -> None:
+        """Buffer ``ch`` for output, honouring any deferred sentinel-space.
+
+        Inserts a single space when both the preceding emitted character and
+        the new one are word-class (non-whitespace) — the typical "two words
+        jammed together where a marker used to be" pattern. If either side
+        is whitespace, the pending space is simply discarded so we don't
+        introduce double-spacing inside paragraphs.
+        """
+        if self._pending_space:
+            self._pending_space = False
+            if ch and not ch.isspace() and self._last_emitted and not self._last_emitted.isspace():
+                out.append(" ")
+                self._last_emitted = " "
+        out.append(ch)
+        self._last_emitted = ch
 
     def feed(self, chunk: str) -> str:
         """Return the safe-to-yield slice of ``chunk``."""
@@ -1829,10 +1948,13 @@ class _StreamCtaSanitizer:
                 if ch == "]":
                     self._buf = ""
                     self._in_sentinel = False
+                    # Defer a space — see ``_emit`` for the join rule.
+                    self._pending_space = True
                 elif len(self._buf) > self._MAX_SENTINEL_LEN:
                     # LLM forgot the close bracket — give up and flush so we
                     # don't hold half the next paragraph hostage.
-                    out.append(self._buf)
+                    for held in self._buf:
+                        self._emit(out, held)
                     self._buf = ""
                     self._in_sentinel = False
                 continue
@@ -1844,7 +1966,8 @@ class _StreamCtaSanitizer:
                     self._in_sentinel = True
                 elif not self._is_header_prefix(self._buf):
                     # Diverged → flush the buffer as literal, reset.
-                    out.append(self._buf)
+                    for held in self._buf:
+                        self._emit(out, held)
                     self._buf = ""
                 continue
 
@@ -1853,7 +1976,7 @@ class _StreamCtaSanitizer:
                 self._buf = "["
                 continue
 
-            out.append(ch)
+            self._emit(out, ch)
         return "".join(out)
 
     def flush(self) -> str:
@@ -1866,9 +1989,11 @@ class _StreamCtaSanitizer:
         if self._in_sentinel:
             self._buf = ""
             self._in_sentinel = False
+            self._pending_space = False
             return ""
         out = self._buf
         self._buf = ""
+        self._pending_space = False
         return out
 
 
@@ -1879,11 +2004,22 @@ def _scrub_cta_sentinels(text: str) -> str:
     [CTA_Q:…] from the LLM never leaks into the bot bubble. The 300-char
     ceiling on the permissive sweep prevents a runaway match if a closing
     bracket appears far downstream in the answer.
+
+    Sentinels are replaced with a single space (not the empty string) so the
+    LLM emitting them between two words — e.g. ``guidance[CTA_Q:foo]Which``
+    — doesn't leave ``guidanceWhich`` jammed together in the visible reply.
+    The whitespace normaliser below collapses runs back down to one space
+    and trims around newlines so paragraph structure stays intact.
     """
-    clean = _CTA_PATTERN.sub("", text)
-    clean = _CTA_Q_PATTERN.sub("", clean)
-    clean = re.sub(r"\[CTA_Q:[^\]]{0,300}\]", "", clean)
-    return re.sub(r"\n{3,}", "\n\n", clean).rstrip()
+    clean = _CTA_PATTERN.sub(" ", text)
+    clean = _CTA_Q_PATTERN.sub(" ", clean)
+    clean = re.sub(r"\[CTA_Q:[^\]]{0,300}\]", " ", clean)
+    # Whitespace normalisation — must run after sentinel removal so the
+    # injected spaces don't double up where the LLM already put one.
+    clean = re.sub(r"[ \t]+", " ", clean)
+    clean = re.sub(r"[ \t]*\n[ \t]*", "\n", clean)
+    clean = re.sub(r"\n{3,}", "\n\n", clean)
+    return clean.rstrip()
 
 
 def _strip_cta_marker(text: str, bant_config: dict | None = None) -> tuple[str, dict | None, str | None]:

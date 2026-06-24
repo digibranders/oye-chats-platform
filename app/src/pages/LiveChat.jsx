@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Headphones, Send, X, User, Mail, MapPin, Monitor, MessageCircle,
     Loader2, Circle, ArrowRightLeft, ChevronRight, ChevronLeft,
-    Users, Info, Phone, Building2, Clock, Paperclip,
+    Users, Info, Phone, Building2, Clock, Paperclip, Zap, TrendingUp,
 } from 'lucide-react';
 import {
     acceptChat, closeOperatorChat, toggleOperatorStatus, getMyOperatorStatus, getChatHistory,
     getCannedResponses, transferChat, getOperators, getDepartments, getSessionDetails, getOperatorQueue,
     uploadOperatorChatFile, getCurrentSubscription,
+    getQualifiedBotSessions, sendConnectRequest, cancelConnectRequest,
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Sparkles } from 'lucide-react';
@@ -94,6 +95,33 @@ export default function LiveChat({ embedded = false }) {
     // Visitor connection status per session: session_id → 'online' | 'disconnected'
     const [visitorStatus, setVisitorStatus] = useState({});
 
+    // ── "Chatting with AI" qualified sessions ────────────────────────────────
+    // Visitors currently in bot-only mode whose BANT qualification has marked
+    // ≥2 of 4 dimensions. Surfaced so operators can proactively engage warm
+    // leads before they bounce. Refreshed via 15s poll + qualified_bot_changed
+    // WebSocket pings + after any successful takeover.
+    const [qualifiedBotSessions, setQualifiedBotSessions] = useState([]);
+    const [qualifiedLoading, setQualifiedLoading] = useState(false);
+    const [takeoverSessionId, setTakeoverSessionId] = useState(null);
+    const [takeoverError, setTakeoverError] = useState(null);
+    const qualifiedPollIntervalRef = useRef(null);
+    const takeoverErrorTimerRef = useRef(null);
+
+    // Pending connect-request map: session_id → { request_id, expires_at,
+    // status: 'pending' | 'declined' | 'accepted' | 'expired', last_change }.
+    // Operator UX: button cycles Connect → Awaiting response → Declined (auto-resets).
+    const [connectRequests, setConnectRequests] = useState({});
+    const connectRequestTimersRef = useRef({}); // session_id → timeout handle
+
+    // Read-only AI preview: when operator clicks a qualified-bot session we
+    // load its history into a separate "preview" pane (kept apart from the
+    // ``messages`` state used for owned live chats so the two don't collide).
+    const [previewSession, setPreviewSession] = useState(null); // qualified-bot row
+    const [previewMessages, setPreviewMessages] = useState([]);
+    const [previewLoading, setPreviewLoading] = useState(false);
+    const previewPollIntervalRef = useRef(null);
+    const previewSessionIdRef = useRef(null);
+
     // Connection state
     const [reconnectCount, setReconnectCount] = useState(0);
     const [connectionLost, setConnectionLost] = useState(false);
@@ -105,6 +133,9 @@ export default function LiveChat({ embedded = false }) {
     const closeChatErrorTimerRef = useRef(null);
     const sendErrorTimerRef = useRef(null);
     const fileErrorTimerRef = useRef(null);
+    // Holds the latest handleSelectChat so keyboard-shortcut listener can call
+    // it without re-binding the document keydown handler on every render.
+    const handleSelectChatRef = useRef(null);
 
     // Custom confirmation modal (replaces window.confirm)
     const [confirmModal, setConfirmModal] = useState(null); // { title, message, onConfirm }
@@ -295,6 +326,19 @@ export default function LiveChat({ embedded = false }) {
             // silent fallback: WebSocket stream may still be active
         }
     }, [syncQueueState]);
+
+    const fetchQualifiedBotSessions = useCallback(async () => {
+        try {
+            setQualifiedLoading(true);
+            const data = await getQualifiedBotSessions(50);
+            setQualifiedBotSessions(Array.isArray(data?.sessions) ? data.sessions : []);
+        } catch {
+            // Silent — operator already has Active/Waiting columns; failing
+            // this fetch shouldn't block the rest of the dashboard.
+        } finally {
+            setQualifiedLoading(false);
+        }
+    }, []);
 
     const removeSessionFromQueue = useCallback((sessionId) => {
         setQueue(prev => prev.filter(item => item.session_id !== sessionId));
@@ -544,6 +588,59 @@ export default function LiveChat({ embedded = false }) {
                     }
                     break;
 
+                case 'qualified_bot_changed':
+                    // Lightweight ping — refetch the qualified-bot sessions list.
+                    fetchQualifiedBotSessions();
+                    break;
+
+                case 'connect_request_resolved': {
+                    const outcome = data.outcome; // accepted | declined | expired | cancelled
+                    const sid = data.session_id;
+                    if (!sid) break;
+                    if (outcome === 'accepted') {
+                        // The accept_chat broadcast that follows will create the
+                        // active-chat row; here we just close the preview pane
+                        // if the operator was watching this session.
+                        if (previewSessionIdRef.current === sid) {
+                            previewSessionIdRef.current = null;
+                            setPreviewSession(null);
+                            setPreviewMessages([]);
+                            clearInterval(previewPollIntervalRef.current);
+                            previewPollIntervalRef.current = null;
+                        }
+                        clearTimeout(connectRequestTimersRef.current[sid]);
+                        delete connectRequestTimersRef.current[sid];
+                        setConnectRequests(prev => {
+                            if (!(sid in prev)) return prev;
+                            const next = { ...prev };
+                            delete next[sid];
+                            return next;
+                        });
+                    } else {
+                        // declined | expired | cancelled — flash the chip then auto-clear.
+                        setConnectRequests(prev => ({
+                            ...prev,
+                            [sid]: {
+                                ...(prev[sid] || {}),
+                                status: outcome,
+                                visitor_name: data.visitor_name || prev[sid]?.visitor_name || null,
+                                resolved_at: Date.now(),
+                            },
+                        }));
+                        clearTimeout(connectRequestTimersRef.current[sid]);
+                        connectRequestTimersRef.current[sid] = setTimeout(() => {
+                            setConnectRequests(prev => {
+                                if (!(sid in prev)) return prev;
+                                const next = { ...prev };
+                                delete next[sid];
+                                return next;
+                            });
+                            delete connectRequestTimersRef.current[sid];
+                        }, 6000);
+                    }
+                    break;
+                }
+
                 case 'visitor_reconnected':
                     setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
                     if (data.session_id === selectedChatRef.current) {
@@ -600,7 +697,7 @@ export default function LiveChat({ embedded = false }) {
             wsRef.current = null;
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOnline, reconnectCount, removeSessionFromQueue, syncQueueState]);
+    }, [isOnline, reconnectCount, removeSessionFromQueue, syncQueueState, fetchQualifiedBotSessions]);
 
     // Visibility + network change handlers — reconnect immediately when the operator
     // returns to the tab or network is restored, with a reset backoff counter so
@@ -662,6 +759,149 @@ export default function LiveChat({ embedded = false }) {
         if (isOnline) fetchOperatorsList();
     }, [isOnline, fetchOperatorsList]);
 
+    // Qualified bot-sessions polling — 15s steady-state, 8s when WS is down.
+    // The WS push ('qualified_bot_changed') keeps it near-real-time; the poll
+    // is just a safety net for missed events / dropped sockets.
+    useEffect(() => {
+        clearInterval(qualifiedPollIntervalRef.current);
+        if (!isOnline) {
+            setQualifiedBotSessions([]);
+            return undefined;
+        }
+        const pollInterval = connectionLost ? 8000 : 15000;
+        fetchQualifiedBotSessions();
+        qualifiedPollIntervalRef.current = setInterval(fetchQualifiedBotSessions, pollInterval);
+        return () => {
+            clearInterval(qualifiedPollIntervalRef.current);
+            qualifiedPollIntervalRef.current = null;
+        };
+    }, [isOnline, connectionLost, fetchQualifiedBotSessions]);
+
+    const clearConnectRequestState = useCallback((sessionId) => {
+        clearTimeout(connectRequestTimersRef.current[sessionId]);
+        delete connectRequestTimersRef.current[sessionId];
+        setConnectRequests(prev => {
+            if (!(sessionId in prev)) return prev;
+            const next = { ...prev };
+            delete next[sessionId];
+            return next;
+        });
+    }, []);
+
+    const handleSendConnectRequest = useCallback(async (sessionId, visitorName) => {
+        if (!sessionId) return;
+        setTakeoverError(null);
+        setTakeoverSessionId(sessionId);
+        try {
+            const result = await sendConnectRequest(sessionId, operatorIdRef.current);
+            setConnectRequests(prev => ({
+                ...prev,
+                [sessionId]: {
+                    request_id: result?.request_id || null,
+                    operator_name: result?.operator_name || operatorName || 'Operator',
+                    visitor_name: visitorName || null,
+                    expires_at: result?.expires_at || null,
+                    status: 'pending',
+                    sent_at: Date.now(),
+                },
+            }));
+            // Soft timeout safety — if the visitor never responds before the
+            // server-side TTL, flip the chip to 'expired' and clear shortly
+            // after so the operator can re-issue.
+            const ttlMs = result?.expires_at
+                ? Math.max(0, result.expires_at * 1000 - Date.now())
+                : 90_000;
+            clearTimeout(connectRequestTimersRef.current[sessionId]);
+            connectRequestTimersRef.current[sessionId] = setTimeout(() => {
+                setConnectRequests(prev => {
+                    const current = prev[sessionId];
+                    if (!current || current.status !== 'pending') return prev;
+                    return {
+                        ...prev,
+                        [sessionId]: { ...current, status: 'expired', resolved_at: Date.now() },
+                    };
+                });
+                connectRequestTimersRef.current[sessionId] = setTimeout(() => {
+                    clearConnectRequestState(sessionId);
+                }, 6000);
+            }, ttlMs + 2000);
+        } catch (err) {
+            const msg = err?.message || err?.detail || 'Could not send connect request';
+            setTakeoverError(msg);
+            clearTimeout(takeoverErrorTimerRef.current);
+            takeoverErrorTimerRef.current = setTimeout(() => setTakeoverError(null), 6000);
+        } finally {
+            setTakeoverSessionId(null);
+        }
+    }, [operatorName, clearConnectRequestState]);
+
+    const handleCancelConnectRequest = useCallback(async (sessionId) => {
+        if (!sessionId) return;
+        clearConnectRequestState(sessionId);
+        try {
+            await cancelConnectRequest(sessionId);
+        } catch { /* best-effort — server-side TTL will reap regardless */ }
+    }, [clearConnectRequestState]);
+
+    // Read-only AI conversation preview ────────────────────────────────────
+    const stopPreviewPolling = useCallback(() => {
+        clearInterval(previewPollIntervalRef.current);
+        previewPollIntervalRef.current = null;
+    }, []);
+
+    const closePreviewSession = useCallback(() => {
+        previewSessionIdRef.current = null;
+        setPreviewSession(null);
+        setPreviewMessages([]);
+        stopPreviewPolling();
+    }, [stopPreviewPolling]);
+
+    const refreshPreviewMessages = useCallback(async (sessionId) => {
+        if (!sessionId) return;
+        try {
+            const history = await getChatHistory(sessionId);
+            if (previewSessionIdRef.current !== sessionId) return;
+            const parsed = (history || []).map(parseHistoryMessage);
+            setPreviewMessages(parsed);
+        } catch { /* preview is best-effort */ }
+    }, []);
+
+    const openPreviewSession = useCallback(async (qs) => {
+        if (!qs?.session_id) return;
+        // Switching previews — make sure we don't keep polling the old one.
+        if (previewSessionIdRef.current && previewSessionIdRef.current !== qs.session_id) {
+            stopPreviewPolling();
+        }
+        previewSessionIdRef.current = qs.session_id;
+        setPreviewSession(qs);
+        // Drop any owned-chat selection so the center pane shows the preview.
+        setSelectedChat(null);
+        setPreviewLoading(true);
+        try {
+            await refreshPreviewMessages(qs.session_id);
+        } finally {
+            setPreviewLoading(false);
+        }
+        stopPreviewPolling();
+        previewPollIntervalRef.current = setInterval(() => {
+            refreshPreviewMessages(qs.session_id);
+        }, 4000);
+    }, [refreshPreviewMessages, stopPreviewPolling]);
+
+    // Stop preview polling when leaving the page / going offline.
+    useEffect(() => {
+        if (!isOnline) closePreviewSession();
+        return undefined;
+    }, [isOnline, closePreviewSession]);
+
+    // Clear all timers on unmount.
+    useEffect(() => () => {
+        Object.values(connectRequestTimersRef.current).forEach(clearTimeout);
+        connectRequestTimersRef.current = {};
+        clearTimeout(takeoverErrorTimerRef.current);
+        stopPreviewPolling();
+    }, [stopPreviewPolling]);
+
     // Auto-scroll messages
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -679,13 +919,20 @@ export default function LiveChat({ embedded = false }) {
                 const idx = parseInt(e.key, 10) - 1;
                 if (idx < activeChats.length) {
                     e.preventDefault();
-                    handleSelectChat(activeChats[idx]);
+                    handleSelectChatRef.current?.(activeChats[idx]);
                 }
             }
         };
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [showTransferModal, showCannedDropdown, activeChats]);
+
+    // Keep handleSelectChatRef pointing at the latest handleSelectChat closure
+    // so the keyboard-shortcut effect above can call the current version
+    // without re-binding its document listener on every render.
+    useEffect(() => {
+        handleSelectChatRef.current = handleSelectChat;
+    });
 
     // Load canned responses once
     useEffect(() => {
@@ -776,6 +1023,8 @@ export default function LiveChat({ embedded = false }) {
     };
 
     const handleSelectChat = async (sessionId) => {
+        // Selecting an owned chat dismisses any AI-preview pane.
+        if (previewSessionIdRef.current) closePreviewSession();
         setSelectedChat(sessionId);
         setHasMoreMessages(false);
 
@@ -1252,12 +1501,305 @@ export default function LiveChat({ embedded = false }) {
                                     );
                                 })
                             )}
+
+                            {/* ── Chatting with AI (BANT-qualified ≥2) ── */}
+                            <div className="border-t border-surface-200 dark:border-surface-700">
+                                <div className="px-4 py-3 flex items-center justify-between flex-shrink-0">
+                                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">
+                                        Chatting with AI ({qualifiedBotSessions.length})
+                                    </h4>
+                                    {qualifiedLoading && (
+                                        <Loader2 className="w-3 h-3 animate-spin text-surface-400" />
+                                    )}
+                                </div>
+
+                                {takeoverError && (
+                                    <div className="mx-3 mb-2 flex items-start gap-2 px-2 py-1.5 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-lg text-[11px] text-rose-700 dark:text-rose-400">
+                                        <X className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                        <span className="break-words">{takeoverError}</span>
+                                    </div>
+                                )}
+
+                                {qualifiedBotSessions.length === 0 ? (
+                                    <div className="px-4 py-4 text-center text-[11px] text-surface-400 dark:text-surface-500">
+                                        No qualified AI conversations yet
+                                    </div>
+                                ) : (
+                                    qualifiedBotSessions.map(qs => {
+                                        const dims = qs.bant_dimensions || {};
+                                        const dimsCount = qs.bant_dimensions_count || 0;
+                                        const tier = qs.bant_tier || 'unqualified';
+                                        const tierStyles = (
+                                            tier === 'sql' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+                                                : tier === 'mql' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400'
+                                                : 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400'
+                                        );
+                                        const score = qs.bant_score || 0;
+                                        const sending = takeoverSessionId === qs.session_id;
+                                        const cr = connectRequests[qs.session_id];
+                                        const isPreviewed = previewSession?.session_id === qs.session_id;
+                                        return (
+                                            <div
+                                                key={qs.session_id}
+                                                className={`px-4 py-3 border-b border-surface-100 dark:border-surface-700 transition-colors cursor-pointer ${
+                                                    isPreviewed
+                                                        ? 'bg-violet-100/60 dark:bg-violet-500/10 border-l-2 border-l-violet-500'
+                                                        : 'hover:bg-violet-50/40 dark:hover:bg-violet-500/5'
+                                                }`}
+                                                onClick={() => openPreviewSession(qs)}
+                                                role="button"
+                                                tabIndex={0}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        openPreviewSession(qs);
+                                                    }
+                                                }}
+                                            >
+                                                <div className="flex items-start justify-between gap-2 mb-1.5">
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
+                                                                {qs.name || 'Anonymous'}
+                                                            </span>
+                                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider flex-shrink-0 ${tierStyles}`}>
+                                                                {tier === 'sql' ? 'Hot' : tier === 'mql' ? 'Warm' : 'Lead'}
+                                                            </span>
+                                                        </div>
+                                                        {qs.company && (
+                                                            <p className="text-[10px] text-surface-500 dark:text-surface-400 truncate flex items-center gap-1 mt-0.5">
+                                                                <Building2 className="w-2.5 h-2.5" />
+                                                                {qs.company}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-1 text-[10px] font-semibold text-surface-600 dark:text-surface-300 flex-shrink-0">
+                                                        <TrendingUp className="w-3 h-3 text-violet-500" />
+                                                        {score}
+                                                    </div>
+                                                </div>
+
+                                                {/* BANT dimension badges — show recorded signal count
+                                                    when >1 so the operator can spot sustained
+                                                    engagement vs. single mentions. */}
+                                                <div className="flex items-center gap-1 mb-2" aria-label={`BANT dimensions marked: ${dimsCount} of 4`}>
+                                                    {['budget', 'authority', 'need', 'timeline'].map(dim => {
+                                                        const marked = !!dims[dim];
+                                                        const letter = dim.charAt(0).toUpperCase();
+                                                        const signalCount = qs.bant_signal_counts?.[dim] || 0;
+                                                        const showCount = signalCount > 1;
+                                                        const title = `${dim.charAt(0).toUpperCase()}${dim.slice(1)}: ${marked ? 'captured' : 'not captured'}${signalCount ? ` · ${signalCount} signal${signalCount === 1 ? '' : 's'}` : ''}`;
+                                                        return (
+                                                            <span
+                                                                key={dim}
+                                                                title={title}
+                                                                className={`relative inline-flex items-center justify-center rounded text-[10px] font-bold transition-colors ${
+                                                                    showCount ? 'min-w-[24px] px-1 h-5' : 'w-5 h-5'
+                                                                } ${
+                                                                    marked
+                                                                        ? 'bg-violet-600 text-white dark:bg-violet-500'
+                                                                        : 'bg-surface-100 text-surface-400 dark:bg-surface-800 dark:text-surface-600'
+                                                                }`}
+                                                            >
+                                                                {letter}
+                                                                {showCount && (
+                                                                    <span className="ml-0.5 text-[9px] font-bold opacity-90">
+                                                                        {signalCount > 9 ? '9+' : signalCount}
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                        );
+                                                    })}
+                                                    <span className="ml-auto text-[10px] text-surface-400 dark:text-surface-500">
+                                                        {dimsCount}/4
+                                                        {qs.bant_signal_total > 0 && (
+                                                            <span className="ml-1 text-violet-500 dark:text-violet-400" title={`${qs.bant_signal_total} total signals recorded`}>
+                                                                · {qs.bant_signal_total}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                </div>
+
+                                                {qs.last_message_preview && (
+                                                    <p className="text-[11px] text-surface-500 dark:text-surface-400 truncate mb-2">
+                                                        {qs.last_message_preview}
+                                                    </p>
+                                                )}
+
+                                                {cr && cr.status === 'pending' && (
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="flex-1 py-1.5 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[11px] font-medium rounded-lg flex items-center justify-center gap-1.5">
+                                                            <Loader2 className="w-3 h-3 animate-spin" /> Awaiting reply
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); handleCancelConnectRequest(qs.session_id); }}
+                                                            className="px-2 py-1.5 text-[11px] text-surface-500 dark:text-surface-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                                                            aria-label="Cancel connect request"
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {cr && cr.status === 'declined' && (
+                                                    <div className="w-full py-1.5 bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300 text-[11px] font-medium rounded-lg flex items-center justify-center gap-1.5">
+                                                        <X className="w-3 h-3" /> Visitor declined
+                                                    </div>
+                                                )}
+
+                                                {cr && (cr.status === 'expired' || cr.status === 'cancelled') && (
+                                                    <div className="w-full py-1.5 bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 text-[11px] font-medium rounded-lg flex items-center justify-center gap-1.5">
+                                                        <Clock className="w-3 h-3" /> {cr.status === 'expired' ? 'No response' : 'Cancelled'}
+                                                    </div>
+                                                )}
+
+                                                {!cr && (
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleSendConnectRequest(qs.session_id, qs.name); }}
+                                                        disabled={sending}
+                                                        className="w-full py-1.5 bg-violet-600 dark:bg-violet-500 text-white text-[11px] font-medium rounded-lg hover:bg-violet-700 dark:hover:bg-violet-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
+                                                    >
+                                                        {sending ? (
+                                                            <><Loader2 className="w-3 h-3 animate-spin" /> Sending...</>
+                                                        ) : (
+                                                            <><Zap className="w-3 h-3" /> Connect</>
+                                                        )}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
                         </div>
                     </div>
 
                     {/* ── Center: Chat Panel ── */}
                     <div className="flex-1 bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col min-w-0">
-                        {selectedChat ? (
+                        {previewSession && !selectedChat ? (
+                            <>
+                                {/* Preview header */}
+                                <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between flex-shrink-0 bg-violet-50/40 dark:bg-violet-500/5">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                                            <User className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <h4 className="text-sm font-semibold text-surface-900 dark:text-surface-100 truncate">
+                                                    {previewSession.name || 'Anonymous'}
+                                                </h4>
+                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400 flex-shrink-0">
+                                                    Chatting with AI
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                                <div className="flex items-center gap-1">
+                                                    {['budget', 'authority', 'need', 'timeline'].map(dim => {
+                                                        const marked = !!previewSession.bant_dimensions?.[dim];
+                                                        const signalCount = previewSession.bant_signal_counts?.[dim] || 0;
+                                                        const showCount = signalCount > 1;
+                                                        return (
+                                                            <span
+                                                                key={dim}
+                                                                title={`${dim.charAt(0).toUpperCase()}${dim.slice(1)}: ${marked ? 'captured' : 'not captured'}${signalCount ? ` · ${signalCount} signal${signalCount === 1 ? '' : 's'}` : ''}`}
+                                                                className={`inline-flex items-center justify-center rounded text-[9px] font-bold ${
+                                                                    showCount ? 'min-w-[22px] px-1 h-4' : 'w-4 h-4'
+                                                                } ${
+                                                                    marked
+                                                                        ? 'bg-violet-600 text-white dark:bg-violet-500'
+                                                                        : 'bg-surface-100 text-surface-400 dark:bg-surface-800 dark:text-surface-600'
+                                                                }`}
+                                                            >
+                                                                {dim.charAt(0).toUpperCase()}
+                                                                {showCount && (
+                                                                    <span className="ml-0.5 text-[8px] opacity-90">
+                                                                        {signalCount > 9 ? '9+' : signalCount}
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                        );
+                                                    })}
+                                                </div>
+                                                <span className="text-[11px] text-surface-500 dark:text-surface-400">
+                                                    Score {previewSession.bant_score || 0}
+                                                    {previewSession.bant_signal_total > 0 && (
+                                                        <span className="ml-1 text-violet-500 dark:text-violet-400">
+                                                            · {previewSession.bant_signal_total} signals
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                {previewLoading && (
+                                                    <Loader2 className="w-3 h-3 animate-spin text-surface-400" />
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {connectRequests[previewSession.session_id]?.status === 'pending' ? (
+                                            <button
+                                                onClick={() => handleCancelConnectRequest(previewSession.session_id)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors"
+                                            >
+                                                <Loader2 className="w-3 h-3 animate-spin" /> Awaiting reply · Cancel
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => handleSendConnectRequest(previewSession.session_id, previewSession.name)}
+                                                disabled={takeoverSessionId === previewSession.session_id}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-white bg-violet-600 dark:bg-violet-500 rounded-lg hover:bg-violet-700 dark:hover:bg-violet-600 transition-colors disabled:opacity-60"
+                                            >
+                                                {takeoverSessionId === previewSession.session_id ? (
+                                                    <><Loader2 className="w-3 h-3 animate-spin" /> Sending</>
+                                                ) : (
+                                                    <><Zap className="w-3.5 h-3.5" /> Request to connect</>
+                                                )}
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={closePreviewSession}
+                                            aria-label="Close preview"
+                                            className="p-1.5 text-surface-400 hover:text-surface-600 dark:hover:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800 rounded-lg transition-colors"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Preview banner */}
+                                <div className="px-4 py-2 bg-violet-50/40 dark:bg-violet-500/5 border-b border-violet-100 dark:border-violet-500/20 text-[11px] text-violet-700 dark:text-violet-300 flex items-center gap-1.5">
+                                    <Info className="w-3 h-3" />
+                                    Read-only · You'll see new messages as the visitor chats with the AI
+                                </div>
+
+                                {/* Read-only messages */}
+                                <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3" aria-live="polite" aria-label="AI conversation preview" role="log">
+                                    {previewMessages.length === 0 && !previewLoading && (
+                                        <div className="flex flex-col items-center justify-center h-full py-16 text-surface-400 dark:text-surface-500">
+                                            <MessageCircle className="w-8 h-8 mb-2 opacity-40" />
+                                            <p className="text-sm">No messages yet</p>
+                                        </div>
+                                    )}
+                                    {previewMessages.map((msg) => (
+                                        <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                            <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
+                                                msg.role === 'user'
+                                                    ? 'bg-primary-600/10 dark:bg-primary-500/15 text-surface-900 dark:text-surface-100 rounded-br-md border border-primary-200 dark:border-primary-500/20'
+                                                    : msg.role === 'bot'
+                                                    ? 'bg-violet-50 dark:bg-violet-500/10 text-surface-800 dark:text-surface-200 rounded-bl-md border border-violet-100 dark:border-violet-500/20'
+                                                    : 'bg-surface-50 dark:bg-surface-800 text-surface-600 dark:text-surface-400 italic text-xs rounded-bl-md'
+                                            }`}>
+                                                <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-0.5">
+                                                    {msg.role === 'user' ? 'Visitor' : msg.role === 'bot' ? 'AI' : 'System'}
+                                                </div>
+                                                {msg.content}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        ) : selectedChat ? (
                             <>
                                 {/* Chat header */}
                                 <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between flex-shrink-0">

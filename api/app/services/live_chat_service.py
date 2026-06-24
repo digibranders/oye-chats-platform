@@ -60,6 +60,23 @@ class ConnectionManager:
         self._recovered = False
         # Per-session locks for accept_chat to prevent TOCTOU races
         self._accept_locks: dict[str, asyncio.Lock] = {}
+        # session_id → monotonic timestamp of the last bot-mode heartbeat from
+        # the visitor's widget. Populated by the widget's connect-request poll
+        # (fires every 5s while chatting with the AI). Used to drive the
+        # "Chatting with AI" operator console — sessions whose heartbeat
+        # stops within a small window are treated as no longer present.
+        self._bot_session_last_seen: dict[str, float] = {}
+        # session_id → pending connect-request initiated by an operator
+        # {
+        #   "operator_id": int,
+        #   "operator_name": str,
+        #   "request_id": str,         # short uuid, embedded in widget poll
+        #   "expires_at": float,        # monotonic deadline
+        #   "created_at": iso str,
+        # }
+        # Visitor in bot mode polls /chat/connect-request/{session_id} and sees
+        # this; on yes/no the entry is consumed.
+        self._connect_requests: dict[str, dict] = {}
 
     def _ensure_background_tasks(self):
         """Start periodic background tasks (idempotent — safe to call on every connection)."""
@@ -803,6 +820,154 @@ class ConnectionManager:
             "operators": operators_payload,
         }
         for operator_id in list(self.operator_connections.keys()):
+            await self._send_to_operator(operator_id, msg)
+
+    # ── Bot-mode presence (real-time "currently chatting" signal) ────────────
+
+    # How long after the last widget heartbeat we still consider the visitor
+    # to be present. Polling cadence on the widget is 5s, so 20s = 4 missed
+    # polls before we drop them — tight enough to feel real-time, loose
+    # enough to survive a single transient request failure.
+    BOT_PRESENCE_TTL_SECONDS = 20
+
+    def record_bot_session_activity(self, session_id: str) -> None:
+        """Mark a bot-mode session as currently present.
+
+        Called from the widget's connect-request poll. Any subsequent call
+        within ``BOT_PRESENCE_TTL_SECONDS`` keeps the session marked as live;
+        once the polling stops (tab closed, navigation away, browser killed)
+        the entry naturally expires on the next read.
+        """
+        import time
+
+        if not session_id:
+            return
+        self._bot_session_last_seen[session_id] = time.time()
+
+    def is_bot_session_present(self, session_id: str) -> bool:
+        """Return True iff the widget has heartbeated recently enough that we
+        believe the visitor is still on the page chatting with the AI."""
+        import time
+
+        last_seen = self._bot_session_last_seen.get(session_id)
+        if last_seen is None:
+            return False
+        if (time.time() - last_seen) > self.BOT_PRESENCE_TTL_SECONDS:
+            # Lazy eviction — keeps the dict from growing unbounded while
+            # also giving the next read an authoritative "not present".
+            self._bot_session_last_seen.pop(session_id, None)
+            return False
+        return True
+
+    def get_present_bot_session_ids(self) -> set[str]:
+        """Return all session_ids whose heartbeat is still inside the TTL.
+
+        Cheaper than calling :py:meth:`is_bot_session_present` for every row
+        when the qualified-bot endpoint is filtering a list of candidates.
+        """
+        import time
+
+        now = time.time()
+        present: set[str] = set()
+        expired: list[str] = []
+        for sid, last_seen in self._bot_session_last_seen.items():
+            if (now - last_seen) <= self.BOT_PRESENCE_TTL_SECONDS:
+                present.add(sid)
+            else:
+                expired.append(sid)
+        for sid in expired:
+            self._bot_session_last_seen.pop(sid, None)
+        return present
+
+    # ── Connect-request (operator-initiated consent flow) ────────────────────
+
+    CONNECT_REQUEST_TTL_SECONDS = 90
+
+    def create_connect_request(
+        self,
+        session_id: str,
+        operator_id: int,
+        operator_name: str,
+    ) -> dict:
+        """Register a pending connect-request from an operator to a visitor.
+
+        Returns the public payload the widget will poll for. The visitor sees
+        a popup with the operator name and accepts/declines via REST. Existing
+        requests for the same session are overwritten — only one operator may
+        be courting a visitor at a time.
+        """
+        import time
+        import uuid
+
+        request_id = uuid.uuid4().hex[:12]
+        now = time.time()
+        payload = {
+            "request_id": request_id,
+            "operator_id": operator_id,
+            "operator_name": operator_name or "An operator",
+            "expires_at": now + self.CONNECT_REQUEST_TTL_SECONDS,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        self._connect_requests[session_id] = payload
+        return payload
+
+    def get_connect_request(self, session_id: str) -> dict | None:
+        """Return the active connect-request for ``session_id`` or ``None``.
+
+        Expired requests are pruned lazily on read so the widget polls always
+        see fresh state without us having to schedule a per-request timer.
+        """
+        import time
+
+        req = self._connect_requests.get(session_id)
+        if not req:
+            return None
+        if req["expires_at"] < time.time():
+            self._connect_requests.pop(session_id, None)
+            return None
+        return req
+
+    def clear_connect_request(self, session_id: str) -> dict | None:
+        """Remove the pending request (used on accept/decline/expire)."""
+        return self._connect_requests.pop(session_id, None)
+
+    async def notify_connect_request_resolved(
+        self,
+        operator_id: int,
+        session_id: str,
+        outcome: str,
+        visitor_name: str | None = None,
+    ):
+        """Push the visitor's decision back to the initiating operator."""
+        if operator_id not in self.operator_connections:
+            return
+        await self._send_to_operator(
+            operator_id,
+            {
+                "type": "connect_request_resolved",
+                "session_id": session_id,
+                "outcome": outcome,  # accepted | declined | expired | cancelled
+                "visitor_name": visitor_name,
+            },
+        )
+
+    async def broadcast_qualified_bot_changed(
+        self,
+        client_id: int,
+        session_id: str | None = None,
+    ):
+        """Notify every operator of the given client that the qualified-bot
+        sessions list may have changed. Operators refetch ``/qualified-bot-sessions``
+        on receipt — keeps the payload tiny and the truth in one query."""
+        msg = {
+            "type": "qualified_bot_changed",
+            "session_id": session_id,
+        }
+        for operator_id, owner_client_id in list(self._operator_client_ids.items()):
+            if owner_client_id != client_id:
+                continue
+            if operator_id not in self.operator_connections:
+                continue
             await self._send_to_operator(operator_id, msg)
 
     # ── Message routing ──

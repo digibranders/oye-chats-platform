@@ -6,11 +6,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
 from app.core.security import get_password_hash
-from app.db.models import Bot, ChatAuditLog, ChatMessage, ChatSession, Department, Operator
+from app.db.models import BANTSignal, Bot, ChatAuditLog, ChatMessage, ChatSession, Department, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services.email_service import send_handoff_request_email
@@ -1265,3 +1265,473 @@ async def submit_visitor_rating(
             chat_session.visitor_resolved = body.resolved
         session.commit()
     return {"ok": True}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Qualified-bot sessions (visitors currently chatting with AI whose BANT
+# qualification has captured 2 or more dimensions). Surfaced in the live-chat
+# console so operators can proactively engage warm leads before they bounce.
+# ──────────────────────────────────────────────────────────────────────────────
+
+_QUALIFIED_MIN_DIMENSIONS = 2
+
+
+def _bant_dimensions_marked(cs: ChatSession) -> dict[str, bool]:
+    """Return which BANT dimensions are 'marked' for a session.
+
+    A dimension is considered marked when its dedicated score column is >0
+    OR the free-text capture column is non-empty. This mirrors the rules the
+    qualification service uses when writing to the columns and avoids
+    surfacing false positives when only a placeholder string was stored.
+    """
+    return {
+        "budget": bool(cs.bant_budget_score or (cs.bant_budget or "").strip()),
+        "authority": bool(cs.bant_authority_score or (cs.bant_authority or "").strip()),
+        "need": bool(cs.bant_need_score or (cs.bant_need or "").strip()),
+        "timeline": bool(cs.bant_timeline_score or (cs.bant_timeline or "").strip()),
+    }
+
+
+@router.get("/qualified-bot-sessions/debug")
+def debug_qualified_bot_sessions(auth=Depends(get_current_client_or_operator)):
+    """Diagnostic view — returns every session in this workspace alongside the
+    fields the qualifier evaluates so we can see why a row didn't surface.
+
+    Strictly admin-only; not consumed by the UI. Useful when a session you
+    expected to see in "Chatting with AI" is missing — usually because the
+    status moved off ``bot`` or the BANT signals never landed in the
+    expected columns.
+    """
+    client_id = auth["client_id"]
+    rows = []
+    with get_session() as session:
+        all_sessions = session.execute(
+            select(ChatSession, Bot)
+            .join(Bot, ChatSession.bot_id == Bot.id)
+            .where(Bot.client_id == client_id)
+            .order_by(ChatSession.last_active_at.desc().nullslast())
+            .limit(50)
+        ).all()
+        for cs, bot in all_sessions:
+            dims = _bant_dimensions_marked(cs)
+            rows.append(
+                {
+                    "session_id": cs.id,
+                    "bot_name": bot.name,
+                    "status": cs.status,
+                    "assigned_operator_id": cs.assigned_operator_id,
+                    "department_id": cs.department_id,
+                    "bant_scores": {
+                        "budget": cs.bant_budget_score or 0,
+                        "authority": cs.bant_authority_score or 0,
+                        "need": cs.bant_need_score or 0,
+                        "timeline": cs.bant_timeline_score or 0,
+                    },
+                    "bant_text": {
+                        "budget": cs.bant_budget,
+                        "authority": cs.bant_authority,
+                        "need": cs.bant_need,
+                        "timeline": cs.bant_timeline,
+                    },
+                    "dimensions_marked": dims,
+                    "dimensions_marked_count": sum(1 for v in dims.values() if v),
+                    "dimensions_assessed": cs.dimensions_assessed or 0,
+                    "bant_score": cs.bant_score or 0,
+                    "bant_tier": cs.bant_tier,
+                    "qualifies": (
+                        cs.status == "bot"
+                        and (
+                            sum(1 for v in dims.values() if v) >= _QUALIFIED_MIN_DIMENSIONS
+                            or (cs.dimensions_assessed or 0) >= _QUALIFIED_MIN_DIMENSIONS
+                        )
+                    ),
+                    "last_active_at": cs.last_active_at.isoformat() if cs.last_active_at else None,
+                }
+            )
+    return {"sessions": rows, "min_dimensions": _QUALIFIED_MIN_DIMENSIONS}
+
+
+@router.get("/qualified-bot-sessions")
+def get_qualified_bot_sessions(
+    limit: int = Query(50, ge=1, le=200),
+    auth=Depends(get_current_client_or_operator),
+):
+    """List visitors who are **currently** chatting with the AI and whose
+    BANT qualification has captured at least 2 of 4 dimensions.
+
+    "Currently" is enforced by a real-time presence heartbeat — the widget
+    pings the connect-request endpoint every 5s while in bot mode, and the
+    in-memory manager tracks which sessions have a fresh ping. As soon as
+    the visitor closes the tab or navigates away, polling stops and the row
+    auto-drops off the list within seconds. No time-window heuristic, no
+    abandoned tabs ever shown."""
+
+    client_id = auth["client_id"]
+    operator_dept_id = auth["entity"].department_id if auth["type"] == "operator" else None
+
+    # Pull the live presence set first — the widget's poll-driven heartbeat
+    # is what makes this a "right-now" view rather than a historical list.
+    present_session_ids = manager.get_present_bot_session_ids()
+    if not present_session_ids:
+        return {
+            "sessions": [],
+            "count": 0,
+            "min_dimensions": _QUALIFIED_MIN_DIMENSIONS,
+        }
+
+    # Broad SQL prefilter: any presently-chatting bot session with at least
+    # one positive BANT signal. The exact "≥2 dimensions" check runs in
+    # Python below so the rule stays a single source of truth (matches the
+    # badge logic on the Leads page) and is trivially debuggable.
+    any_signal = or_(
+        ChatSession.bant_budget_score > 0,
+        ChatSession.bant_authority_score > 0,
+        ChatSession.bant_need_score > 0,
+        ChatSession.bant_timeline_score > 0,
+        ChatSession.dimensions_assessed > 0,
+    )
+
+    items: list[dict] = []
+    with get_session() as session:
+        rows = session.execute(
+            select(ChatSession, Bot)
+            .join(Bot, ChatSession.bot_id == Bot.id)
+            .where(
+                Bot.client_id == client_id,
+                ChatSession.status == "bot",
+                ChatSession.id.in_(present_session_ids),
+                any_signal,
+            )
+            .order_by(
+                ChatSession.bant_score.desc(),
+                ChatSession.bant_last_updated.desc().nullslast(),
+            )
+            .limit(limit * 4)  # over-fetch so the Python post-filter still hits ``limit``
+        ).all()
+
+        for chat_session, bot in rows:
+            if operator_dept_id and chat_session.department_id and chat_session.department_id != operator_dept_id:
+                continue
+
+            dims = _bant_dimensions_marked(chat_session)
+            dims_count = sum(1 for v in dims.values() if v)
+            # Match if either the BANT-column count or the framework-agnostic
+            # ``dimensions_assessed`` counter clears the threshold.
+            effective_count = max(dims_count, chat_session.dimensions_assessed or 0)
+            if effective_count < _QUALIFIED_MIN_DIMENSIONS:
+                continue
+            if len(items) >= limit:
+                break
+
+            lead = get_lead_info_by_session(session, chat_session.id)
+
+            # Cheap "last user message" preview without loading the full thread.
+            last_msg_row = session.execute(
+                select(ChatMessage.content, ChatMessage.created_at)
+                .where(
+                    ChatMessage.session_id == chat_session.id,
+                    ChatMessage.role.in_(("user", "bot")),
+                )
+                .order_by(ChatMessage.created_at.desc())
+                .limit(1)
+            ).first()
+
+            preview = None
+            last_message_at = None
+            if last_msg_row:
+                preview = (last_msg_row[0] or "")[:120]
+                last_message_at = last_msg_row[1].isoformat() if last_msg_row[1] else None
+
+            items.append(
+                {
+                    "session_id": chat_session.id,
+                    "bot_id": bot.id,
+                    "bot_name": bot.name,
+                    "name": (lead.name if lead else None) or "Anonymous",
+                    "email": lead.email if lead else None,
+                    "phone": lead.phone if lead else None,
+                    "company": lead.company if lead else None,
+                    "location": chat_session.location,
+                    "device": chat_session.device,
+                    "department_id": chat_session.department_id,
+                    "bant_dimensions": dims,
+                    "bant_dimensions_count": dims_count,
+                    "bant_scores": {
+                        "budget": chat_session.bant_budget_score or 0,
+                        "authority": chat_session.bant_authority_score or 0,
+                        "need": chat_session.bant_need_score or 0,
+                        "timeline": chat_session.bant_timeline_score or 0,
+                    },
+                    # Total recorded evidence rows per dimension — populated
+                    # below in a single grouped query so the loop above stays
+                    # O(N) instead of doing one extra query per row.
+                    "bant_signal_counts": {
+                        "budget": 0,
+                        "authority": 0,
+                        "need": 0,
+                        "timeline": 0,
+                    },
+                    "bant_signal_total": 0,
+                    "bant_score": chat_session.bant_score or 0,
+                    "bant_tier": chat_session.bant_tier or "unqualified",
+                    "last_message_preview": preview,
+                    "last_message_at": last_message_at,
+                    "bant_last_updated": (
+                        chat_session.bant_last_updated.isoformat() if chat_session.bant_last_updated else None
+                    ),
+                    "created_at": (chat_session.created_at.isoformat() if chat_session.created_at else None),
+                }
+            )
+
+        # ── One grouped query for evidence counts ───────────────────────────
+        # Counts how many BANTSignal rows the extractor has recorded per
+        # (session, dimension). Operators use this to distinguish a passing
+        # mention from sustained engagement — a session with NEED×6 is hotter
+        # than one with NEED×1 even when their composite scores match.
+        item_session_ids = [it["session_id"] for it in items]
+        if item_session_ids:
+            count_rows = session.execute(
+                select(
+                    BANTSignal.session_id,
+                    BANTSignal.dimension,
+                    func.count(BANTSignal.id),
+                )
+                .where(BANTSignal.session_id.in_(item_session_ids))
+                .group_by(BANTSignal.session_id, BANTSignal.dimension)
+            ).all()
+
+            counts_by_session: dict[str, dict[str, int]] = {}
+            for sid, dim, cnt in count_rows:
+                counts_by_session.setdefault(sid, {})[(dim or "").lower()] = int(cnt or 0)
+
+            for it in items:
+                bucket = counts_by_session.get(it["session_id"], {})
+                if not bucket:
+                    continue
+                signal_counts = it["bant_signal_counts"]
+                for dim_key in ("budget", "authority", "need", "timeline"):
+                    signal_counts[dim_key] = bucket.get(dim_key, 0)
+                it["bant_signal_total"] = sum(bucket.values())
+
+    return {
+        "sessions": items,
+        "count": len(items),
+        "min_dimensions": _QUALIFIED_MIN_DIMENSIONS,
+    }
+
+
+@router.post("/connect-request/{session_id}")
+async def operator_connect_request(
+    session_id: str,
+    request: AcceptChatRequest | None = None,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Operator asks a bot-mode visitor whether they'd like to switch to a
+    live conversation. The visitor sees a Yes/No popup; nothing changes
+    server-side until they accept (then the takeover transition fires).
+
+    Idempotent re-issuing for the same session simply refreshes the popup —
+    e.g. operator clicks Connect twice. The visitor only ever sees the latest
+    operator's name.
+    """
+    with get_session() as session:
+        if auth["type"] == "operator":
+            operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
+        elif request and request.operator_id:
+            operator = session.execute(
+                select(Operator).where(
+                    Operator.id == request.operator_id,
+                    Operator.client_id == auth["client_id"],
+                )
+            ).scalar_one_or_none()
+        else:
+            operator = session.execute(
+                select(Operator).where(Operator.client_id == auth["client_id"], Operator.role == "owner").limit(1)
+            ).scalar_one_or_none()
+            if not operator:
+                operator = session.execute(
+                    select(Operator)
+                    .where(
+                        Operator.client_id == auth["client_id"],
+                        Operator.is_online.is_(True),
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+        if not operator:
+            raise HTTPException(status_code=400, detail="No operator profile found.")
+
+        target = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        owning_bot = session.execute(select(Bot).where(Bot.id == target.bot_id)).scalar_one_or_none()
+        if not owning_bot or owning_bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+        if target.status != "bot":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Session is currently '{target.status}' — connect requests only apply to bot conversations.",
+            )
+
+        operator_id = operator.id
+        operator_name = operator.name
+
+    payload = manager.create_connect_request(session_id, operator_id, operator_name)
+    return {
+        "success": True,
+        "request_id": payload["request_id"],
+        "expires_at": payload["expires_at"],
+        "operator_name": operator_name,
+    }
+
+
+@router.post("/connect-request/{session_id}/cancel")
+async def operator_cancel_connect_request(
+    session_id: str,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Operator cancels a pending connect-request before the visitor responds."""
+    existing = manager.get_connect_request(session_id)
+    if not existing:
+        return {"success": True, "cancelled": False}
+    # Validate ownership — only the workspace that owns the bot may cancel.
+    with get_session() as session:
+        target = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=404, detail="Session not found")
+        owning_bot = session.execute(select(Bot).where(Bot.id == target.bot_id)).scalar_one_or_none()
+        if not owning_bot or owning_bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+    manager.clear_connect_request(session_id)
+    return {"success": True, "cancelled": True}
+
+
+@router.post("/takeover/{session_id}")
+async def takeover_bot_session(
+    session_id: str,
+    request: AcceptChatRequest | None = None,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Proactively take over a session currently being handled by the AI.
+
+    Distinct from ``/accept`` which only claims sessions already in the
+    ``waiting`` queue. Takeover transitions ``status='bot' → 'live'`` atomically
+    so two operators can't take over the same visitor at once.
+    """
+    with get_session() as session:
+        if auth["type"] == "operator":
+            operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
+        elif request and request.operator_id:
+            operator = session.execute(
+                select(Operator).where(
+                    Operator.id == request.operator_id,
+                    Operator.client_id == auth["client_id"],
+                )
+            ).scalar_one_or_none()
+        else:
+            operator = session.execute(
+                select(Operator).where(Operator.client_id == auth["client_id"], Operator.role == "owner").limit(1)
+            ).scalar_one_or_none()
+            if not operator:
+                operator = session.execute(
+                    select(Operator)
+                    .where(
+                        Operator.client_id == auth["client_id"],
+                        Operator.is_online.is_(True),
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+
+        if not operator:
+            raise HTTPException(status_code=400, detail="No operator profile found.")
+
+        if operator.max_concurrent_chats:
+            active_count = session.execute(
+                select(func.count())
+                .select_from(ChatSession)
+                .where(
+                    ChatSession.assigned_operator_id == operator.id,
+                    ChatSession.status == "live",
+                )
+            ).scalar()
+            if active_count >= operator.max_concurrent_chats:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Operator already at max capacity ({operator.max_concurrent_chats} chats).",
+                )
+
+        target = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        owning_bot = session.execute(select(Bot).where(Bot.id == target.bot_id)).scalar_one_or_none()
+        if not owning_bot or owning_bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+        if target.status not in ("bot", "waiting"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Session is already in '{target.status}' state and cannot be taken over.",
+            )
+
+        # Atomic claim — only transition if still in bot/waiting.
+        claimed = session.execute(
+            update(ChatSession)
+            .where(
+                ChatSession.id == session_id,
+                ChatSession.status.in_(("bot", "waiting")),
+            )
+            .values(status="live", assigned_operator_id=operator.id)
+            .returning(ChatSession.id)
+        ).scalar_one_or_none()
+        if not claimed:
+            raise HTTPException(
+                status_code=409,
+                detail="Session changed state before takeover could complete.",
+            )
+
+        session.add(
+            ChatAuditLog(
+                session_id=session_id,
+                operator_id=operator.id,
+                action="takeover",
+            )
+        )
+
+        lead = get_lead_info_by_session(session, session_id)
+        visitor_name = (lead.name if lead else None) or "Anonymous"
+
+        session.commit()
+        operator_id = operator.id
+        operator_name = operator.name
+        department_id = target.department_id
+
+    # Register session metadata in the in-memory manager so subsequent WS
+    # events (read receipts, transfers, close) can resolve visitor info.
+    manager._session_metadata[session_id] = {
+        "name": visitor_name,
+        "reason": "Operator proactively engaged qualified lead",
+    }
+    if department_id is not None:
+        manager._session_departments[session_id] = department_id
+
+    accepted = await manager.accept_chat(session_id, operator_id, operator_name)
+    if not accepted:
+        logger.warning(
+            "Takeover for %s succeeded in DB but manager.accept_chat reported "
+            "a divergent assignee. DB is authoritative — proceeding.",
+            session_id,
+        )
+
+    # Tell every operator in this workspace that this session is no longer a
+    # "qualified bot session" so it disappears from their list in real time.
+    asyncio.create_task(manager.broadcast_qualified_bot_changed(auth["client_id"], session_id))
+
+    return {
+        "success": True,
+        "status": "live",
+        "operator_name": operator_name,
+        "visitor_name": visitor_name,
+    }

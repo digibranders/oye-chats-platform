@@ -1379,10 +1379,10 @@ export default function Interface({ embedded = false }) {
                                         <div className="bg-white dark:bg-surface-900 px-5 py-4 rounded-xl border border-surface-200 dark:border-surface-700 inline-flex items-center gap-3">
                                             <span className="text-[13px] text-surface-500">Email us at:</span>
                                             <a
-                                                href="mailto:developer@oyechats.com"
+                                                href="mailto:support@oyechats.com"
                                                 className="text-[14px] font-bold text-primary-600 hover:underline"
                                             >
-                                                developer@oyechats.com
+                                                support@oyechats.com
                                             </a>
                                         </div>
                                     </div>

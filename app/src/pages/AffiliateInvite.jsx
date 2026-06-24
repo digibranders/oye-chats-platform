@@ -231,8 +231,8 @@ function BadTokenCard({ error }) {
             </div>
             <p className="text-sm text-white/45 text-center">
                 Need a fresh invite? Contact{' '}
-                <a href="mailto:sales@oyechats.com" className="font-semibold text-blue-400 hover:text-blue-300">
-                    sales@oyechats.com
+                <a href="mailto:support@oyechats.com" className="font-semibold text-blue-400 hover:text-blue-300">
+                    support@oyechats.com
                 </a>
                 {' '}or{' '}
                 <Link to="/login" className="font-semibold text-blue-400 hover:text-blue-300">sign in</Link>
@@ -358,8 +358,8 @@ function LoggedInAcceptCard({ invite, status, message, error, onSignOutRetry, on
                 </div>
                 <p className="text-sm text-white/45 text-center">
                     Try again later or contact{' '}
-                    <a href="mailto:sales@oyechats.com" className="font-semibold text-blue-400 hover:text-blue-300">
-                        sales@oyechats.com
+                    <a href="mailto:support@oyechats.com" className="font-semibold text-blue-400 hover:text-blue-300">
+                        support@oyechats.com
                     </a>.
                 </p>
             </div>

@@ -1,50 +1,42 @@
 import React from 'react';
 import BotAvatar from './BotAvatar';
-import { sanitizeColor } from '../services/sanitize';
 
 /**
  * Typing indicator shown while the bot is generating a response.
  *
- * Three dots that bounce in sequence, in the bot's primary color. The
- * staggered animation delays produce a left-to-right wave so the indicator
- * feels alive without ever competing with the bot's actual message for
- * attention.
- *
- * Layout matches a bot message row: [BotAvatar] [Three bouncing dots]
+ * Layout matches a bot message row: [BotAvatar] [pill with three dots]
  *
  * Props:
- *   settings — bot settings (primary_color, bot_logo, avatar_type)
+ *   settings — bot settings (bot_logo, avatar_type)
  */
 
 const TypingIndicator = ({ settings }) => {
-    const primaryColor = sanitizeColor(settings?.primary_color, '#3A0CA3');
-
     const dotStyle = (delay) => ({
-        width: '8px',
-        height: '8px',
+        width: '6px',
+        height: '6px',
         borderRadius: '9999px',
-        backgroundColor: primaryColor,
-        opacity: 0.6,
-        animation: `thinkingBounce 1.2s ease-in-out ${delay}s infinite`,
+        background: '#9ca3af',
+        animation: `typingDot 1.2s ease-in-out ${delay}s infinite`,
     });
 
     return (
         <div
-            className="flex items-start gap-2 w-full"
-            style={{ animation: 'fadeIn 240ms ease-out both' }}
+            className="flex items-end gap-2 w-full"
+            style={{ animation: 'fadeIn 180ms ease-out both' }}
         >
             <div className="flex-shrink-0" aria-hidden="true">
                 <BotAvatar settings={settings || {}} size="xs" />
             </div>
             <div
-                className="flex items-center gap-1.5 pt-2"
                 role="status"
                 aria-live="polite"
-                aria-label="Typing"
+                aria-label="Assistant is typing"
+                className="flex items-center gap-1.5 px-3 py-2.5 rounded-2xl rounded-bl-sm"
+                style={{ background: '#f3f4f6' }}
             >
                 <span style={dotStyle(0)} />
-                <span style={dotStyle(0.2)} />
-                <span style={dotStyle(0.4)} />
+                <span style={dotStyle(0.15)} />
+                <span style={dotStyle(0.3)} />
             </div>
         </div>
     );
