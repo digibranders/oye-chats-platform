@@ -297,6 +297,38 @@ export const requestHandoff = async (sessionId, formData) => {
     }
 };
 
+/**
+ * Poll for a pending operator connect-request while in bot mode. Returns
+ * ``{ pending: false }`` when none is active, otherwise the request payload.
+ */
+export const getPendingConnectRequest = async (sessionId) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/connect-request/${sessionId}`, {
+            headers: getHeaders(),
+        });
+        if (!response.ok) return { pending: false };
+        return await response.json();
+    } catch {
+        return { pending: false };
+    }
+};
+
+/** Visitor accepts (``accepted=true``) or declines an operator connect-request. */
+export const respondToConnectRequest = async (sessionId, accepted, requestId = null) => {
+    try {
+        const response = await fetch(`${API_URL}/chat/connect-request/${sessionId}/respond`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ accepted, request_id: requestId }),
+        });
+        if (!response.ok) throw new Error('Connect-request response failed');
+        return await response.json();
+    } catch (error) {
+        console.warn('[OyeChats] Connect-request response failed:', error);
+        return { ok: false };
+    }
+};
+
 export const cancelHandoff = async (sessionId) => {
     try {
         const response = await fetch(`${API_URL}/operators/cancel-handoff/${sessionId}`, {

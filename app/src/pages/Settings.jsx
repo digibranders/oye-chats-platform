@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
     MessageSquareWarning, Paperclip, Star, Award, AlignLeft, Clock, Mail, Loader2,
     Sparkles, KeyRound, Eye, EyeOff, Check, Sun, Moon, Monitor, Palette,
-    Inbox, X,
+    Inbox, X, Lock,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
@@ -11,6 +11,8 @@ import PageHeader from '../components/ui/PageHeader';
 import { getAuthState } from '../utils/auth';
 import { updateBot, operatorChangePassword } from '../services/api';
 import { useBotContext } from '../context/BotContext';
+import useEntitlements from '../hooks/useEntitlements';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
 
 const THEME_OPTIONS = [
     { id: 'system', label: 'System', description: 'Match your device setting', icon: Monitor },
@@ -26,6 +28,20 @@ const DEFAULT_FLAGS = {
     show_branding: true,
     queue_position: false,
     typing_preview: true,
+    email_transcript: false,
+};
+
+// Flags that the Free plan pins to specific values. The Widget Behavior
+// section is fully locked on Free, so these are the effective values the
+// widget runs with regardless of what's stored on the bot. Mirrored by the
+// backend in `get_bot_settings_public` so the widget actually behaves this
+// way, not just the admin UI.
+const FREE_PLAN_LOCKED_FLAGS = {
+    file_sharing: false,
+    post_chat_rating: false,
+    show_branding: true,
+    queue_position: false,
+    typing_preview: false,
     email_transcript: false,
 };
 
@@ -64,6 +80,14 @@ export default function Settings() {
     const { mode: themeMode, setMode: setThemeMode } = useTheme();
     const { isOperator, operatorRole, isBotManager } = getAuthState();
     const { selectedBot, loading: botsLoading } = useBotContext();
+    const { entitlements } = useEntitlements();
+    const { requestUpgrade } = useUpgradeModal();
+    // Plan-tier gating for the Widget Behavior section.
+    //   Free → whole section locked; show_branding pinned ON.
+    //   Starter → only show_branding pinned ON (branding_removable=false).
+    //   Standard / Enterprise → fully interactive.
+    const widgetBehaviorLocked = entitlements.isFree;
+    const brandingLocked = !entitlements.hasFeature('branding_removable');
     const [feedback, setFeedback] = useState('');
 
     // Operator password change
@@ -286,6 +310,14 @@ export default function Settings() {
     // Only show bot-config sections to client/bot-manager accounts
     const showBotConfig = !isOperator || isBotManager;
 
+    // Free plans display the locked feature-flag values regardless of what's
+    // stored on the bot — the section is fully locked so the stored values
+    // can be stale (e.g. left over from a previous paid tier). The backend
+    // mirrors this override when serving bot settings to the widget.
+    const effectiveFlags = widgetBehaviorLocked
+        ? { ...flags, ...FREE_PLAN_LOCKED_FLAGS }
+        : flags;
+
     return (
         <div className="space-y-6 animate-fade-in max-w-3xl">
             <PageHeader title="Settings" subtitle="Preferences and account" />
@@ -357,6 +389,45 @@ export default function Settings() {
                         Control which features are available to your visitors and operators.
                     </p>
 
+                    {widgetBehaviorLocked && (
+                        <button
+                            type="button"
+                            onClick={() => requestUpgrade('widget_behavior')}
+                            className="w-full mb-5 flex items-start gap-3 p-3.5 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-left hover:bg-amber-100 dark:hover:bg-amber-500/15 transition-colors"
+                        >
+                            <span className="mt-0.5 p-1.5 rounded-lg bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300 flex-shrink-0">
+                                <Lock size={13} />
+                            </span>
+                            <span className="min-w-0">
+                                <span className="block text-sm font-semibold text-amber-800 dark:text-amber-200">
+                                    Widget behavior is locked on the {entitlements.planName || 'Free'} plan
+                                </span>
+                                <span className="block text-xs text-amber-700/80 dark:text-amber-300/80 mt-0.5">
+                                    The OyeChats branding stays on, and the toggles below can&apos;t be changed. Upgrade to unlock file sharing, transcripts, queue position, typing preview, and more.
+                                </span>
+                            </span>
+                        </button>
+                    )}
+                    {!widgetBehaviorLocked && brandingLocked && (
+                        <button
+                            type="button"
+                            onClick={() => requestUpgrade('branding_removable')}
+                            className="w-full mb-5 flex items-start gap-3 p-3.5 rounded-xl border border-sky-200 dark:border-sky-500/30 bg-sky-50 dark:bg-sky-500/10 text-left hover:bg-sky-100 dark:hover:bg-sky-500/15 transition-colors"
+                        >
+                            <span className="mt-0.5 p-1.5 rounded-lg bg-sky-100 dark:bg-sky-500/20 text-sky-600 dark:text-sky-300 flex-shrink-0">
+                                <Lock size={13} />
+                            </span>
+                            <span className="min-w-0">
+                                <span className="block text-sm font-semibold text-sky-800 dark:text-sky-200">
+                                    &quot;Powered by OyeChats&quot; branding is required on the {entitlements.planName || 'Starter'} plan
+                                </span>
+                                <span className="block text-xs text-sky-700/80 dark:text-sky-300/80 mt-0.5">
+                                    Upgrade to Standard or Enterprise to remove the branding badge from your widget.
+                                </span>
+                            </span>
+                        </button>
+                    )}
+
                     {loadingBot ? (
                         <div className="flex items-center gap-2 text-surface-400 dark:text-surface-500 text-sm py-2">
                             <Loader2 size={14} className="animate-spin" />
@@ -368,49 +439,65 @@ export default function Settings() {
                                 icon={<Paperclip size={15} />}
                                 label="File Sharing in Live Chat"
                                 description="Allow visitors and operators to share images and files (max 10 MB) during live human chat sessions."
-                                value={flags.file_sharing}
+                                value={effectiveFlags.file_sharing}
                                 saving={saving.file_sharing}
                                 onChange={(v) => toggleFlag('file_sharing', v)}
+                                locked={widgetBehaviorLocked}
+                                onLockedClick={() => requestUpgrade('widget_behavior')}
                             />
                             <FlagRow
                                 icon={<Star size={15} />}
                                 label="Post-Chat Rating Survey"
                                 description="Show a 1–5 star satisfaction survey to visitors after a live chat session ends."
-                                value={flags.post_chat_rating}
+                                value={effectiveFlags.post_chat_rating}
                                 saving={saving.post_chat_rating}
                                 onChange={(v) => toggleFlag('post_chat_rating', v)}
+                                locked={widgetBehaviorLocked}
+                                onLockedClick={() => requestUpgrade('widget_behavior')}
                             />
                             <FlagRow
                                 icon={<Award size={15} />}
                                 label='Show "Powered by OyeChats" Branding'
-                                description="Display the OyeChats branding badge at the bottom of the chat widget."
-                                value={flags.show_branding}
+                                description={
+                                    brandingLocked
+                                        ? `The OyeChats branding badge stays on for your ${entitlements.planName || 'current'} plan. Upgrade to Standard to remove it.`
+                                        : 'Display the OyeChats branding badge at the bottom of the chat widget.'
+                                }
+                                value={brandingLocked ? true : effectiveFlags.show_branding}
                                 saving={saving.show_branding}
                                 onChange={(v) => toggleFlag('show_branding', v)}
+                                locked={brandingLocked}
+                                onLockedClick={() => requestUpgrade('branding_removable')}
                             />
                             <FlagRow
                                 icon={<AlignLeft size={15} />}
                                 label="Queue Position Indicator"
                                 description="Show visitors their position in the queue while waiting for a live operator."
-                                value={flags.queue_position}
+                                value={effectiveFlags.queue_position}
                                 saving={saving.queue_position}
                                 onChange={(v) => toggleFlag('queue_position', v)}
+                                locked={widgetBehaviorLocked}
+                                onLockedClick={() => requestUpgrade('widget_behavior')}
                             />
                             <FlagRow
                                 icon={<Clock size={15} />}
                                 label="Typing Preview"
                                 description="Let operators see what the visitor is typing before they hit send (and vice versa)."
-                                value={flags.typing_preview}
+                                value={effectiveFlags.typing_preview}
                                 saving={saving.typing_preview}
                                 onChange={(v) => toggleFlag('typing_preview', v)}
+                                locked={widgetBehaviorLocked}
+                                onLockedClick={() => requestUpgrade('widget_behavior')}
                             />
                             <FlagRow
                                 icon={<Mail size={15} />}
                                 label="Email Chat Transcript"
                                 description="Allow visitors to request a copy of their chat conversation by email."
-                                value={flags.email_transcript}
+                                value={effectiveFlags.email_transcript}
                                 saving={saving.email_transcript}
                                 onChange={(v) => toggleFlag('email_transcript', v)}
+                                locked={widgetBehaviorLocked}
+                                onLockedClick={() => requestUpgrade('widget_behavior')}
                             />
                         </div>
                     )}
@@ -991,7 +1078,7 @@ export default function Settings() {
                 </h2>
                 <p className="text-sm text-surface-500 dark:text-surface-400 mb-4">
                     Have a suggestion or found a bug? Let us know at{' '}
-                    <a href="mailto:developer@oyechats.com" className="font-medium text-primary-600 dark:text-primary-400 hover:underline">developer@oyechats.com</a>
+                    <a href="mailto:support@oyechats.com" className="font-medium text-primary-600 dark:text-primary-400 hover:underline">support@oyechats.com</a>
                 </p>
 
                 <form onSubmit={handleSendFeedback} className="space-y-4">
@@ -1022,19 +1109,45 @@ export default function Settings() {
 
 // ─── Flag Toggle Row ──────────────────────────────────────────────────────────
 
-function FlagRow({ icon, label, description, value, saving, onChange }) {
+function FlagRow({ icon, label, description, value, saving, onChange, locked = false, onLockedClick }) {
+    const handleToggle = (next) => {
+        if (locked) {
+            onLockedClick?.();
+            return;
+        }
+        onChange(next);
+    };
     return (
-        <div className="flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0">
+        <div
+            className={cn(
+                'flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0',
+                locked && 'opacity-80',
+            )}
+        >
             <div className="flex items-start gap-3 min-w-0">
                 <span className="mt-0.5 text-surface-400 dark:text-surface-500 flex-shrink-0">{icon}</span>
-                <div>
-                    <p className="text-sm font-medium text-surface-800 dark:text-surface-200">{label}</p>
+                <div className="min-w-0">
+                    <p className="text-sm font-medium text-surface-800 dark:text-surface-200 flex items-center gap-1.5">
+                        {label}
+                        {locked && (
+                            <span
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30"
+                                title="Upgrade to change this"
+                            >
+                                <Lock size={9} /> Locked
+                            </span>
+                        )}
+                    </p>
                     <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">{description}</p>
                 </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
-                {saving && <Loader2 size={13} className="animate-spin text-surface-400 dark:text-surface-500" />}
-                <Toggle checked={value} onChange={onChange} disabled={saving} />
+                {saving && !locked && <Loader2 size={13} className="animate-spin text-surface-400 dark:text-surface-500" />}
+                <Toggle
+                    checked={value}
+                    onChange={handleToggle}
+                    disabled={saving && !locked}
+                />
             </div>
         </div>
     );

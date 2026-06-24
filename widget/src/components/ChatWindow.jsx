@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail } from '../services/api';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
@@ -12,6 +12,7 @@ import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
 import QualificationCTA from './QualificationCTA';
 import OperatorJoinedToast from './OperatorJoinedToast';
+import ConnectRequestPopup from './ConnectRequestPopup';
 
 // Lazy-loaded — only fetched when the user actually triggers handoff, lead capture, or booking.
 // Keeps the initial chat chunk lean.
@@ -33,7 +34,10 @@ const FALLBACK_PATTERNS = /don't have that specific information|I'm not sure abo
 // From there it either rolls forward to `waiting` (operator found) or
 // `unavailable` (timeout — show the compact message-only form).
 const _VALID_TRANSITIONS = {
-    bot: ['waiting', 'unavailable', 'connecting'],
+    // ``bot → live`` covers the operator-initiated connect-request consent
+    // flow: operator clicks Connect in the dashboard, the visitor accepts the
+    // popup, and the session promotes to live chat without ever queueing.
+    bot: ['waiting', 'unavailable', 'connecting', 'live'],
     connecting: ['waiting', 'unavailable', 'bot'],
     waiting: ['live', 'bot', 'unavailable'],
     live: ['bot', 'unavailable'],
@@ -1148,6 +1152,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // display name (or generic "An agent") to render. Cleared on dismiss
     // or when the visitor switches to chat.
     const [incomingOperator, setIncomingOperator] = useState(null);
+
+    // ── Operator connect-request consent flow ────────────────────────────────
+    // While chatting with the AI, an operator may proactively offer to take
+    // over the conversation. We poll every 5s, surface a modal popup with
+    // their name, and let the visitor decide. Declining keeps the AI flow
+    // intact; accepting promotes the session to live chat immediately.
+    const [connectRequest, setConnectRequest] = useState(null); // { request_id, operator_name, expires_at }
+    const [connectRequestSubmitting, setConnectRequestSubmitting] = useState(false);
+    // Track request_ids we've already declined so a slow poll loop can't
+    // re-pop a stale invite that the user has already dismissed.
+    const dismissedConnectRequestsRef = useRef(new Set());
     const handleHandoffSubmit = async (formData) => {
         if (isSubmittingHandoff) return;
         setIsSubmittingHandoff(true);
@@ -1246,6 +1261,120 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setMessages(prev => prev.filter(m => m.type !== 'handoff_form'));
         handoffFormInjectedRef.current = false;
     };
+
+    // ── Operator connect-request polling ─────────────────────────────────────
+    //
+    // While the visitor is in bot mode we poll for a pending operator
+    // invitation every 5 seconds. The endpoint is cheap (single dict lookup
+    // on the API) and the visitor experience is "near real-time" — the popup
+    // appears within a few seconds of the operator clicking Connect.
+    //
+    // We deliberately do NOT poll outside ``chatMode === 'bot'`` so we never
+    // race against active live-chat handoff flows.
+    useEffect(() => {
+        if (!sessionId) return undefined;
+        if (chatMode !== 'bot') {
+            // Leaving bot mode drops any pending request we were displaying.
+            setConnectRequest(null);
+            return undefined;
+        }
+
+        let cancelled = false;
+        const tick = async () => {
+            try {
+                const res = await getPendingConnectRequest(sessionId);
+                if (cancelled) return;
+                if (!res?.pending) {
+                    // Request expired or was cancelled by the operator.
+                    setConnectRequest(prev => (prev ? null : prev));
+                    return;
+                }
+                if (dismissedConnectRequestsRef.current.has(res.request_id)) {
+                    console.debug('[OyeChats] Skipping dismissed connect-request', res.request_id);
+                    return;
+                }
+                console.debug('[OyeChats] Connect-request received from', res.operator_name);
+                setConnectRequest(prev => {
+                    // Don't re-render if the same request is still pending.
+                    if (prev && prev.request_id === res.request_id) return prev;
+                    return {
+                        request_id: res.request_id,
+                        operator_name: res.operator_name,
+                        expires_at: res.expires_at,
+                    };
+                });
+            } catch (err) {
+                console.debug('[OyeChats] Connect-request poll failed', err);
+            }
+        };
+
+        tick();
+        const interval = setInterval(tick, 5000);
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+    }, [chatMode, sessionId]);
+
+    const handleConnectRequestAccept = useCallback(async () => {
+        if (!connectRequest || connectRequestSubmitting) return;
+        setConnectRequestSubmitting(true);
+        try {
+            const res = await respondToConnectRequest(sessionId, true, connectRequest.request_id);
+            if (res?.ok && res.result === 'accepted') {
+                const opName = res.operator_name || connectRequest.operator_name || 'An agent';
+                setOperatorName(opName);
+                setLiveChatState({
+                    suggestedAction: 'accepted',
+                    state: 'AVAILABLE',
+                });
+                setMessages(prev => [
+                    ...prev.filter(m => m.type !== 'handoff_form'),
+                    {
+                        id: `sys-connect-accept-${Date.now()}`,
+                        type: 'system',
+                        text: `${opName} has joined the conversation.`,
+                        timestamp: new Date().toISOString(),
+                    },
+                ]);
+                setChatMode('live');
+            } else if (res?.result === 'expired' || res?.result === 'stale') {
+                // The popup we accepted was already revoked. Clear it.
+                setMessages(prev => [
+                    ...prev,
+                    {
+                        id: `sys-connect-stale-${Date.now()}`,
+                        type: 'system',
+                        text: 'That invitation expired before we could connect you.',
+                        timestamp: new Date().toISOString(),
+                    },
+                ]);
+            }
+        } finally {
+            if (connectRequest?.request_id) {
+                dismissedConnectRequestsRef.current.add(connectRequest.request_id);
+            }
+            setConnectRequest(null);
+            setConnectRequestSubmitting(false);
+        }
+    }, [connectRequest, connectRequestSubmitting, sessionId, setChatMode]);
+
+    const handleConnectRequestDecline = useCallback(async () => {
+        if (!connectRequest || connectRequestSubmitting) return;
+        const requestId = connectRequest.request_id;
+        if (requestId) dismissedConnectRequestsRef.current.add(requestId);
+        setConnectRequest(null);
+        // Fire-and-forget — keeps the AI conversation responsive.
+        respondToConnectRequest(sessionId, false, requestId).catch(() => {});
+    }, [connectRequest, connectRequestSubmitting, sessionId]);
+
+    const handleConnectRequestExpire = useCallback(() => {
+        if (!connectRequest) return;
+        if (connectRequest.request_id) {
+            dismissedConnectRequestsRef.current.add(connectRequest.request_id);
+        }
+        setConnectRequest(null);
+    }, [connectRequest]);
 
     // ── Offline-form availability polling ────────────────────────────────────
     //
@@ -2593,6 +2722,21 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Operator → visitor connect-request popup. Lives at widget-root
+                level (sibling of header/messages/input) so it overlays the
+                entire widget regardless of scroll position or theme. */}
+            {chatMode === 'bot' && connectRequest && (
+                <ConnectRequestPopup
+                    operatorName={connectRequest.operator_name}
+                    expiresAt={connectRequest.expires_at}
+                    submitting={connectRequestSubmitting}
+                    onAccept={handleConnectRequestAccept}
+                    onDecline={handleConnectRequestDecline}
+                    onExpire={handleConnectRequestExpire}
+                    primaryColor={settings.primary_color}
+                />
             )}
         </div>
     );

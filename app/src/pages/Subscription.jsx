@@ -399,7 +399,7 @@ export default function Subscription() {
                       </div>
                     ) : isEnterprise ? (
                       <a
-                        href="mailto:sales@oyechats.com"
+                        href="mailto:support@oyechats.com"
                         className="block w-full py-2 text-center text-[12px] font-semibold border border-surface-300 dark:border-surface-700 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors text-surface-700 dark:text-surface-300"
                       >
                         Contact Sales

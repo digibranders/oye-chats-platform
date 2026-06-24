@@ -3,6 +3,7 @@ import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Sparkles, Loader2, Mail, Lock, Eye, EyeOff, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { loginAdmin, loginOperator } from '../services/api';
+import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { cn } from '../lib/utils';
 
 const features = [
@@ -45,7 +46,6 @@ export default function Login() {
         // Fresh login → clear any banner dismissals carried over from a
         // previous account in this tab. Done before the toast flag so a
         // failed read can't accidentally suppress the new user's banner.
-        const { clearTrialBannerDismissals } = await import('../utils/trialBanner');
         clearTrialBannerDismissals();
         localStorage.setItem('admin_token', data.access_token);
         localStorage.setItem('admin_name', data.name);
@@ -74,7 +74,6 @@ export default function Login() {
 
       if (!loggedIn) {
         const data = await loginAdmin(email, password);
-        const { clearTrialBannerDismissals } = await import('../utils/trialBanner');
         clearTrialBannerDismissals();
         localStorage.setItem('admin_token', data.access_token);
         localStorage.setItem('admin_name', data.name);

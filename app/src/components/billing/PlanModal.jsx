@@ -30,7 +30,7 @@ function isTrustedRedirectUrl(url) {
 
 // Override at build time via VITE_SALES_EMAIL when the sales address ever
 // changes — same env-driven pattern as VITE_API_URL elsewhere in the app.
-const SUPPORT_EMAIL = import.meta.env.VITE_SALES_EMAIL || 'sales@oyechats.com';
+const SUPPORT_EMAIL = import.meta.env.VITE_SALES_EMAIL || 'support@oyechats.com';
 
 // Slug → tier-card metadata. Kept here so the modal can render a fallback
 // icon + ribbon even when the API row hasn't been seeded with one. The

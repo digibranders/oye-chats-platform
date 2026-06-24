@@ -4,6 +4,7 @@ import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, C
 import { AnimatePresence, motion } from 'framer-motion';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { AUTH_STORAGE_KEYS } from '../utils/auth';
+import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import Avatar from '../components/ui/Avatar';
 import { getCurrentUser } from '../services/api';
 
@@ -35,14 +36,8 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   const handleLogout = async () => {
     AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
     // Wipe trial-banner dismissals so the next user to log in on this
-    // tab sees their actual trial state on the first page. Dynamic
-    // import keeps the layout chunk independent of the banner component.
-    try {
-      const { clearTrialBannerDismissals } = await import('../utils/trialBanner');
-      clearTrialBannerDismissals();
-    } catch {
-      // Banner module missing/broken? Logout still works; banner stays.
-    }
+    // tab sees their actual trial state on the first page.
+    clearTrialBannerDismissals();
     navigate('/login');
   };
 

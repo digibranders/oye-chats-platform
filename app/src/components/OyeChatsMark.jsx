@@ -17,7 +17,7 @@ export default function OyeChatsMark({ size = 36, className = '' }) {
                 src="/oye_final.png"
                 alt=""
                 draggable={false}
-                className="absolute left-1/2 top-1/2 pointer-events-none select-none max-w-none"
+                className="absolute left-1/2 top-1/2 pointer-events-none select-none max-w-none invert dark:invert-0"
                 style={{
                     width: size * 3.2,
                     height: size * 3.2,

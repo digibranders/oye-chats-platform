@@ -343,15 +343,37 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     from app.services.plan_service import get_client_plan, is_feature_enabled
 
     plan_includes_live_chat = False
+    plan_slug = "free"
     try:
         with _get_session() as _s:
             _plan = get_client_plan(_s, bot.client_id)
             plan_includes_live_chat = is_feature_enabled(_plan, "live_chat")
+            plan_slug = (_plan.slug or "free").lower()
     except Exception:
-        # Fail closed — if we can't resolve the plan, hide live chat. Safer
-        # than rendering a button that will lead to a dead-end visitor flow.
+        # Fail closed — if we can't resolve the plan, hide live chat AND
+        # apply Free-plan widget-behavior locks. Safer than leaking a paid
+        # feature when the entitlements check fails.
         plan_includes_live_chat = False
+        plan_slug = "free"
     effective_live_chat_enabled = bool(bot.live_chat_enabled) and plan_includes_live_chat
+
+    # Free plan: the Widget Behavior section in Admin → Settings is fully
+    # locked, so the stored feature_flags may be stale (e.g. left over from
+    # a previous paid tier). Override with the Free-plan locked values so
+    # the widget actually behaves the way the locked admin UI advertises.
+    # Mirrored in `platform/app/src/pages/Settings.jsx` (FREE_PLAN_LOCKED_FLAGS).
+    effective_feature_flags = dict(bot.feature_flags or {})
+    if plan_slug == "free":
+        effective_feature_flags.update(
+            {
+                "file_sharing": False,
+                "post_chat_rating": False,
+                "show_branding": True,
+                "queue_position": False,
+                "typing_preview": False,
+                "email_transcript": False,
+            }
+        )
 
     return {
         "bot_name": bot.name,
@@ -370,7 +392,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "lead_form_fields": bot.lead_form_fields,
         "live_chat_enabled": effective_live_chat_enabled,
         "business_hours": bot.business_hours,
-        "feature_flags": bot.feature_flags or {},
+        "feature_flags": effective_feature_flags,
         "widget_messages": bot.widget_messages or {},
         "widget_config": bot.widget_config or {},
         "branding_text": bot.branding_text or "Powered by OyeChats",

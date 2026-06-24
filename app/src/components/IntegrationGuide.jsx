@@ -123,10 +123,10 @@ export default function IntegrationGuide({
         <p className="text-[10px] text-surface-400">
           Need help?{' '}
           <a
-            href="mailto:developer@oyechats.com"
+            href="mailto:support@oyechats.com"
             className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
           >
-            developer@oyechats.com
+            support@oyechats.com
           </a>
         </p>
         <a
