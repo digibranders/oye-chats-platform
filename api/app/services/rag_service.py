@@ -984,6 +984,7 @@ SCORING DISCIPLINE
         return signals
     except Exception as e:
         logger.warning("[bant] extraction failed (non-breaking): %s | question=%r", e, question[:80])
+        return []
 
 
 def extract_bant_from_conversation(
