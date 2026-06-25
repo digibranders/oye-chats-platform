@@ -6,6 +6,8 @@
 // Kept deliberately framework-free so the loader can call into it
 // before React mounts.
 
+import { getSessionKey } from './services/storage-keys.js'
+
 const VALID_EVENTS = new Set([
   'ready',
   'open',
@@ -152,12 +154,12 @@ const createController = () => {
     identify(v) { setVisitor(v) },
     shutdown() {
       setVisitor(null)
-      try { localStorage.removeItem('chat_session_id') } catch { /* ignore */ }
+      try { localStorage.removeItem(getSessionKey()) } catch { /* ignore */ }
       dispatch({ type: 'shutdown' })
     },
     boot(v) {
       setVisitor(v)
-      try { localStorage.removeItem('chat_session_id') } catch { /* ignore */ }
+      try { localStorage.removeItem(getSessionKey()) } catch { /* ignore */ }
       dispatch({ type: 'boot' })
     },
     update(config) {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Sparkles,
   Zap,
@@ -19,18 +19,14 @@ import {
   ArrowUpRight,
   Info,
   Bot,
+  Clock,
 } from 'lucide-react';
 import CreditCoin from '../components/icons/CreditCoin';
-import { openRazorpayCheckout } from '../lib/razorpay';
 import {
   getCreditBalance,
   getCreditHistory,
   getCurrentSubscription,
   changeOperatorSeats,
-  getBotSeats,
-  changeBotSeats,
-  createBotSeatCheckout,
-  verifyBotSeatPayment,
   getBillingPortalUrl,
   verifyStripeTopup,
   verifyStripeSubscription,
@@ -43,6 +39,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card'
 import { Button } from '../components/ui/Button';
 import Progress from '../components/ui/Progress';
 import { useToast } from '../context/ToastContext';
+import { useBotContext } from '../context/BotContext';
 import useEntitlements from '../hooks/useEntitlements';
 import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
@@ -188,8 +185,68 @@ const TABS = [
 // component via entitlements; the constant is used for the type contract.
 const TABS_NO_TOPUP = TABS.filter((t) => t.id !== 'topups');
 
+// Self-contained countdown badge for trialing subscriptions. Owns its own
+// ``now`` tick so ``Date.now()`` never appears in a render expression of
+// the parent — React Compiler flags that as impure. Re-evaluates every
+// 60 seconds; granularity is good enough for a day-level countdown and
+// also flips "1 day left" → "Trial ends today" automatically when the
+// boundary crosses while the user has the page open.
+function TrialCountdownBadge({ trialEndIso }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const endMs = Date.parse(trialEndIso);
+  if (Number.isNaN(endMs)) return null;
+
+  // Ceil so a trial expiring in 14h still reads "1 day left", not "0 days
+  // left" — matches how customers actually count remaining time.
+  const daysLeft = Math.ceil((endMs - now) / 86_400_000);
+
+  let label;
+  if (daysLeft < 0) label = 'Trial ended';
+  else if (daysLeft === 0) label = 'Trial ends today';
+  else if (daysLeft === 1) label = '1 day left in trial';
+  else label = `${daysLeft} days left in trial`;
+
+  const trialEndsAt = new Date(endMs);
+  const tooltip = `Trial ends ${trialEndsAt.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })} at ${trialEndsAt.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
+
+  const urgent = daysLeft <= 3;
+
+  return (
+    <span
+      title={tooltip}
+      className={`text-[11px] font-medium px-1.5 py-0.5 rounded inline-flex items-center gap-1 ${
+        urgent
+          ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400'
+          : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
+      }`}
+    >
+      <Clock className="w-3 h-3" />
+      {label}
+    </span>
+  );
+}
+
 export default function Billing() {
   const { showToast } = useToast();
+  const navigate = useNavigate();
+  // ``selectedBot`` is the bot the user picked in the sidebar — the
+  // Overview tab scopes the visible credit cards to just this bot
+  // (its per-bot ledger, OR the account pool when the bot is a
+  // legacy / Free bot that drains shared credits).
+  const { selectedBot } = useBotContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(() => {
     const t = searchParams.get('tab');
@@ -202,6 +259,10 @@ export default function Billing() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [topupOpen, setTopupOpen] = useState(false);
+  // When the Top up button on a per-bot credit card fires, we stash the
+  // bot here so the TopupModal knows to scope the purchase to that bot's
+  // isolated ledger. ``null`` means an account-pool top-up.
+  const [topupTarget, setTopupTarget] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
   // Entitlements-driven UI: Free users see no topup CTA anywhere on this
   // page; their only path forward when credits run out is "Upgrade to
@@ -210,10 +271,6 @@ export default function Billing() {
   const topupAllowed = ent.topupAllowed !== false; // default-true on missing data
   const visibleTabs = topupAllowed ? TABS : TABS_NO_TOPUP;
   const [seatBusy, setSeatBusy] = useState(false);
-  // Bot-seat add-on state — fetched once on mount, refreshed after any
-  // bot-seat write or whenever the top-level loadAll runs.
-  const [botSeatState, setBotSeatState] = useState(null);
-  const [botSeatBusy, setBotSeatBusy] = useState(false);
   // Seat-change confirmation modal state. Stores the pending delta so the
   // same modal handles both add (+1) and remove (-1) — surfaces price,
   // payment provider, and resulting seat count BEFORE the backend call.
@@ -245,21 +302,15 @@ export default function Billing() {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      // Bundle the bot-seat fetch with the rest so silent reloads (after
-      // plan changes, seat updates, topups) refresh it too — without it,
-      // a customer who just upgraded from Free to Starter wouldn't see
-      // the bot-seat card appear until a hard reload.
-      const [balRes, subRes, histRes, botSeatRes] = await Promise.all([
+      const [balRes, subRes, histRes] = await Promise.all([
         getCreditBalance(),
         getCurrentSubscription(),
         getCreditHistory({ page: 1, limit: 50 }),
-        getBotSeats().catch(() => null),
       ]);
       setBalance(balRes);
       setSubscription(subRes?.subscription || null);
       setPlan(subRes?.plan || null);
       setHistory(Array.isArray(histRes) ? histRes : []);
-      setBotSeatState(botSeatRes);
     } catch (err) {
       showToast(err?.message || 'Failed to load billing data', 'error');
     } finally {
@@ -430,57 +481,6 @@ export default function Billing() {
     }
   }
 
-  // ── Bot seats ──
-  // Direct add/remove (no confirmation modal — the impact is purely
-  // "your effective bot limit changes by 1"; no destructive action and
-  // no payment redirect is needed for the local counter). Errors surface
-  // via toast since they're typically validation (e.g. "delete a bot
-  // first") rather than provider failures.
-  async function handleBotSeatChange(delta) {
-    if (botSeatBusy) return;
-    setBotSeatBusy(true);
-    try {
-      if (delta > 0) {
-        // Purchase: route through Razorpay Checkout so the customer
-        // actually pays. The verify endpoint grants the seat
-        // idempotently — the webhook is the prod source of truth, this
-        // sync path is the localhost / pre-webhook fallback.
-        const order = await createBotSeatCheckout(delta);
-        const callback = await openRazorpayCheckout({
-          key: order.key_id,
-          order_id: order.order_id,
-          amount: order.amount,
-          currency: order.currency || 'INR',
-          name: order.name || 'OyeChats bot seat',
-          description: order.description,
-          prefill: order.prefill || {},
-          theme: order.theme || { color: '#6366f1' },
-        });
-        await verifyBotSeatPayment(callback);
-        const fresh = await getBotSeats();
-        setBotSeatState(fresh);
-        showToast(
-          `Added a bot seat (now ${fresh.extra_bot_seats} extra, ${fresh.effective_limit} total).`,
-          'success',
-        );
-      } else {
-        // Release: no payment, just decrement (no refund — addons that
-        // already billed stay billed; the customer can re-add next cycle).
-        const result = await changeBotSeats(delta);
-        setBotSeatState(result);
-        showToast(
-          `Released a bot seat (now ${result.extra_bot_seats} extra, ${result.effective_limit} total).`,
-          'success',
-        );
-      }
-    } catch (err) {
-      if (err?.code === 'dismissed') return; // customer closed Razorpay modal — silent
-      showToast(err?.message || 'Failed to update bot seats', 'error');
-    } finally {
-      setBotSeatBusy(false);
-    }
-  }
-
   async function handleBillingPortal() {
     setPortalBusy(true);
     try {
@@ -558,7 +558,7 @@ export default function Billing() {
     <div className="space-y-6">
       <PageHeader
         title="Billing"
-        subtitle="Plan, credits, top-ups, and operator seats — all in one place."
+        subtitle="Plan, credits, top-ups, and operator seats all in one place."
       >
         <Button
           variant="secondary"
@@ -626,7 +626,16 @@ export default function Billing() {
               costs={costs}
               lowBalance={lowBalance}
               topupAllowed={topupAllowed}
-              onTopup={() => (topupAllowed ? setTopupOpen(true) : setPlanOpen(true))}
+              selectedBot={selectedBot}
+              onTopup={() => {
+                setTopupTarget(null);
+                if (topupAllowed) setTopupOpen(true);
+                else setPlanOpen(true);
+              }}
+              onTopupBot={(botLedger) => {
+                setTopupTarget(botLedger);
+                setTopupOpen(true);
+              }}
             />
           )}
 
@@ -652,10 +661,8 @@ export default function Billing() {
               onSeatChange={handleSeatChange}
               onBillingPortal={handleBillingPortal}
               onChangePlan={() => setPlanOpen(true)}
+              onCreateBot={() => navigate('/chatbot?create=true')}
               onSyncBilling={handleSyncBilling}
-              botSeatState={botSeatState}
-              botSeatBusy={botSeatBusy}
-              onBotSeatChange={handleBotSeatChange}
             />
           )}
 
@@ -667,7 +674,9 @@ export default function Billing() {
 
       <TopupModal
         open={topupOpen}
-        onClose={() => setTopupOpen(false)}
+        onClose={() => { setTopupOpen(false); setTopupTarget(null); }}
+        botId={topupTarget?.bot_id ?? null}
+        botName={topupTarget?.bot_name ?? null}
         onSuccess={() => {
           setTimeout(() => loadAll({ silent: true }), 1500);
           setTimeout(() => loadAll({ silent: true }), 4500);
@@ -825,19 +834,83 @@ function OverviewTab({
   planRemaining,
   topupRemaining,
   totalRemaining,
-  planUsedPct,
   periodUsed,
   usage,
   costs,
   topupAllowed = true,
   lowBalance,
   balance,
+  selectedBot,
   onTopup,
+  onTopupBot,
 }) {
-  const planBalancePct = Math.max(0, 100 - planUsedPct);
+  // Per-bot ledgers — one entry per bot with its own paid subscription.
+  // The Overview tab is scoped to the bot currently selected in the
+  // sidebar: switching to bot 1 shows bot 1's ledger only, switching to
+  // bot 2 shows bot 2's, and so on. The page never shows two bots'
+  // credits side-by-side anymore.
+  const perBotLedgers = balance?.bots || [];
+  const selectedBotLedger = selectedBot
+    ? perBotLedgers.find((b) => b.bot_id === selectedBot.id)
+    : null;
+  const isBotView = !!selectedBotLedger;
+
+  // ── Display-source switching ──
+  // When the selected bot has its own paid subscription, the 3-card
+  // grid below pulls every number from that bot's isolated ledger.
+  // Otherwise (Free / legacy-pooled bot, or no selection yet) it falls
+  // back to the account-level client-pool numbers passed in as props.
+  // Keeps the JSX single-sourced regardless of which view is active.
+  const dPlanRemaining = isBotView ? Number(selectedBotLedger.plan || 0) : planRemaining;
+  const dMonthlyGrant = isBotView ? Number(selectedBotLedger.monthly_grant || 0) : monthlyGrant;
+  const dTopupRemaining = isBotView ? Number(selectedBotLedger.topup || 0) : topupRemaining;
+  const dUsage = isBotView ? (selectedBotLedger.usage || {}) : (usage || {});
+  // FIX: derive "used this period" from the actual sum of negative
+  // ledger deltas in the scope, not from ``monthlyGrant - planRemaining``.
+  // The old math broke for any scope where no grant landed (e.g. a per-
+  // bot subscription that activated via a legacy code path before
+  // Phase 4.5) — it would show ``10,000 used`` with all per-reason
+  // counters at 0, which is a contradiction. Summing the actual usage
+  // rows is always honest.
+  const dPeriodUsed = isBotView
+    ? Object.values(dUsage).reduce((sum, u) => sum + (u?.credits_used || 0), 0)
+    : periodUsed;
+  const dSoonestExpiry = isBotView ? selectedBotLedger.soonest_expiry : balance?.soonest_expiry;
+  const dResetsAt = isBotView ? selectedBotLedger.resets_at : balance?.resets_at;
+  const dPlanUsedPct = dMonthlyGrant > 0
+    ? Math.min(100, Math.round((Math.max(0, dMonthlyGrant - dPlanRemaining) / dMonthlyGrant) * 100))
+    : 0;
+  const dBalancePct = Math.max(0, 100 - dPlanUsedPct);
+  const dLowBalance = isBotView
+    ? dMonthlyGrant > 0 && dPlanRemaining / dMonthlyGrant < 0.2
+    : lowBalance;
+  // Top-ups always available on a per-bot subscription card (paid sub
+  // → can top up). For the account pool, defer to the entitlement-
+  // driven ``topupAllowed`` flag (Free plan blocks top-ups).
+  const dTopupAllowed = isBotView ? true : topupAllowed;
+  const handleTopupClick = () => {
+    if (isBotView) {
+      onTopupBot?.(selectedBotLedger);
+    } else {
+      onTopup?.();
+    }
+  };
 
   return (
     <div className="space-y-6">
+      {selectedBot && (
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-50">
+            {isBotView ? `${selectedBotLedger.bot_name} credits` : `${selectedBot.name} credits`}
+          </h3>
+          <span className="text-[11px] text-surface-500 dark:text-surface-400">
+            {isBotView
+              ? 'Isolated from your other bots — switch bot in the sidebar to view its credits.'
+              : 'This bot uses your account’s shared credit pool (Free or legacy).'}
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Card 1 — Plan credits */}
         <Card>
@@ -851,32 +924,32 @@ function OverviewTab({
           <CardContent>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold tracking-tight text-surface-900 dark:text-surface-50">
-                {fmtNumber(planRemaining)}
+                {fmtNumber(dPlanRemaining)}
               </span>
-              <span className="text-sm text-surface-500">/ {fmtNumber(monthlyGrant)}</span>
+              <span className="text-sm text-surface-500">/ {fmtNumber(dMonthlyGrant)}</span>
             </div>
-            <Progress value={planUsedPct} className="mt-3" />
+            <Progress value={dPlanUsedPct} className="mt-3" />
             <div className="mt-3 flex items-center justify-between text-xs text-surface-500 dark:text-surface-400">
-              <span>{planBalancePct}% balance</span>
-              <span>Resets {fmtDate(balance?.resets_at)}</span>
+              <span>{dBalancePct}% balance</span>
+              <span>Resets {fmtDate(dResetsAt)}</span>
             </div>
             {/* Two-state footer: amber low-balance warning when *total* runway
                 is thin, emerald reassurance when plan is low but top-ups are
                 covering the gap. Both states are mutually exclusive. */}
-            {lowBalance ? (
+            {dLowBalance ? (
               <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span>
-                  {topupAllowed
+                  {dTopupAllowed
                     ? 'Below 20% of your monthly allowance. Top up to keep your bot running.'
                     : 'Below 20% of your monthly allowance. Upgrade to Starter to keep your bot running.'}
                 </span>
               </div>
-            ) : planUsedPct >= 80 && topupRemaining > 0 ? (
+            ) : dPlanUsedPct >= 80 && dTopupRemaining > 0 ? (
               <div className="mt-3 flex items-start gap-2 rounded-md bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
                 <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span>
-                  Plan low — your {fmtNumber(topupRemaining)} top-up credit{topupRemaining === 1 ? '' : 's'} will be used next, so your bot stays online.
+                  Plan low — your {fmtNumber(dTopupRemaining)} top-up credit{dTopupRemaining === 1 ? '' : 's'} will be used next, so your bot stays online.
                 </span>
               </div>
             ) : null}
@@ -894,14 +967,13 @@ function OverviewTab({
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-surface-900 dark:text-surface-50">
-              {fmtNumber(periodUsed)}
+              {fmtNumber(dPeriodUsed)}
             </div>
             <div className="text-xs text-surface-500 mt-1">credits consumed</div>
             <div className="mt-3 space-y-1.5 text-xs">
-              <UsageRow label="AI chats" credits={usage?.ai_chat?.credits_used || 0} count={usage?.ai_chat?.event_count || 0} />
-              <UsageRow label="Documents uploaded" credits={usage?.document_upload?.credits_used || 0} count={usage?.document_upload?.event_count || 0} />
-              <UsageRow label="URL pages" credits={usage?.url_scan?.credits_used || 0} count={usage?.url_scan?.event_count || 0} />
-              {/* <UsageRow label="Customer emails" credits={usage?.email_send?.credits_used || 0} count={usage?.email_send?.event_count || 0} /> */}
+              <UsageRow label="AI chats" credits={dUsage?.ai_chat?.credits_used || 0} count={dUsage?.ai_chat?.event_count || 0} />
+              <UsageRow label="Documents uploaded" credits={dUsage?.document_upload?.credits_used || 0} count={dUsage?.document_upload?.event_count || 0} />
+              <UsageRow label="URL pages" credits={dUsage?.url_scan?.credits_used || 0} count={dUsage?.url_scan?.event_count || 0} />
             </div>
           </CardContent>
         </Card>
@@ -945,20 +1017,20 @@ function OverviewTab({
           <CardContent>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold tracking-tight text-surface-900 dark:text-surface-50">
-                {fmtNumber(topupRemaining)}
+                {fmtNumber(dTopupRemaining)}
               </span>
               <span className="text-sm text-surface-500">credits</span>
             </div>
             <div className="mt-3 text-xs text-surface-500 dark:text-surface-400">
-              {!topupAllowed
+              {!dTopupAllowed
                 ? 'Free plan — top-ups not available. Upgrade to Starter to keep going past your monthly limit.'
-                : topupRemaining > 0
-                  ? `Oldest expires ${fmtDate(balance?.soonest_expiry)}`
+                : dTopupRemaining > 0
+                  ? `Oldest expires ${fmtDate(dSoonestExpiry)}`
                   : 'No top-up credits yet — they roll over for 12 months.'}
             </div>
             <div className="mt-4">
-              <Button variant="outline" size="sm" onClick={onTopup}>
-                {topupAllowed ? (
+              <Button variant="outline" size="sm" onClick={handleTopupClick}>
+                {dTopupAllowed ? (
                   <>
                     <CreditCoin className="w-3.5 h-3.5" />
                     Top up
@@ -980,15 +1052,26 @@ function OverviewTab({
         <CardContent>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <CreditCard className="w-4 h-4 text-surface-500" />
                 <span className="text-sm font-semibold text-surface-900 dark:text-surface-50">
                   {plan?.name || 'Free'} plan
                 </span>
                 {subscription?.status && (
-                  <span className="text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300">
+                  <span
+                    className={`text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                      subscription.status === 'trialing'
+                        ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
+                        : subscription.status === 'active'
+                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                        : 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300'
+                    }`}
+                  >
                     {subscription.status}
                   </span>
+                )}
+                {subscription?.status === 'trialing' && subscription?.trial_end && (
+                  <TrialCountdownBadge trialEndIso={subscription.trial_end} />
                 )}
               </div>
               <div className="mt-1 text-xs text-surface-500 dark:text-surface-400">
@@ -1048,6 +1131,87 @@ function OverviewTab({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function BotCreditCard({ bot, currency, onTopup }) {
+  const planRemaining = Number(bot.plan || 0);
+  const monthlyGrant = Number(bot.monthly_grant || 0);
+  const usedThisPeriod = Math.max(0, monthlyGrant - planRemaining);
+  const usedPct = monthlyGrant > 0 ? Math.min(100, Math.round((usedThisPeriod / monthlyGrant) * 100)) : 0;
+  const balancePct = Math.max(0, 100 - usedPct);
+  const lowBalance = monthlyGrant > 0 && planRemaining / monthlyGrant < 0.2;
+
+  return (
+    <Card>
+      <CardContent>
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Bot className="w-4 h-4 text-primary-500 shrink-0" />
+              <span className="text-sm font-semibold text-surface-900 dark:text-surface-50 truncate">
+                {bot.bot_name}
+              </span>
+              {bot.subscription_status && (
+                <span
+                  className={cn(
+                    'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded',
+                    bot.subscription_status === 'active'
+                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                      : 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300',
+                  )}
+                >
+                  {bot.subscription_status}
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-surface-500 dark:text-surface-400 mt-0.5">
+              {bot.plan_name || 'No plan'}
+              {bot.billing_cycle ? ` · ${bot.billing_cycle}` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-bold tracking-tight text-surface-900 dark:text-surface-50">
+            {fmtNumber(planRemaining)}
+          </span>
+          <span className="text-xs text-surface-500">/ {fmtNumber(monthlyGrant)} credits</span>
+        </div>
+        <Progress value={usedPct} className="mt-2" />
+        <div className="mt-2 flex items-center justify-between text-[11px] text-surface-500 dark:text-surface-400">
+          <span>{balancePct}% balance</span>
+          <span>Resets {fmtDate(bot.resets_at)}</span>
+        </div>
+
+        {lowBalance && (
+          <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-200">
+            <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+            <span>Below 20% — this bot will pause when it hits zero.</span>
+          </div>
+        )}
+
+        <div className="mt-3 space-y-1 text-[11px]">
+          <UsageRow label="AI chats" credits={bot.usage?.ai_chat?.credits_used || 0} count={bot.usage?.ai_chat?.event_count || 0} />
+          <UsageRow label="Documents" credits={bot.usage?.document_upload?.credits_used || 0} count={bot.usage?.document_upload?.event_count || 0} />
+          <UsageRow label="URL pages" credits={bot.usage?.url_scan?.credits_used || 0} count={bot.usage?.url_scan?.event_count || 0} />
+        </div>
+        {bot.topup > 0 && (
+          <div className="mt-2 text-[11px] text-surface-500 dark:text-surface-400">
+            + {fmtNumber(bot.topup)} top-up credits ({currency})
+          </div>
+        )}
+
+        {onTopup && (
+          <div className="mt-3 pt-3 border-t border-surface-200 dark:border-surface-800">
+            <Button variant="outline" size="sm" onClick={onTopup}>
+              <CreditCoin className="w-3.5 h-3.5" />
+              Top up {bot.bot_name}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1149,10 +1313,8 @@ function SeatsTab({
   onSeatChange,
   onBillingPortal,
   onChangePlan,
+  onCreateBot,
   onSyncBilling,
-  botSeatState,
-  botSeatBusy,
-  onBotSeatChange,
 }) {
   return (
     <div className="space-y-6">
@@ -1276,165 +1438,32 @@ function SeatsTab({
         </CardContent>
       </Card>
 
-      {/* Bot-seat add-on — separate card so it visually parallels operator
-          seats. Hidden on plans that don't support purchases (Free shows a
-          locked summary; Enterprise hides entirely because their cap is
-          unlimited and add-ons aren't meaningful). */}
-      <BotSeatsCard
-        state={botSeatState}
-        busy={botSeatBusy}
-        onChange={onBotSeatChange}
-        onChangePlan={onChangePlan}
-      />
-    </div>
-  );
-}
-
-function BotSeatsCard({ state, busy, onChange, onChangePlan }) {
-  // Fall-through render when the API hasn't returned yet — keeps layout
-  // height stable so the page doesn't jump as the card appears.
-  if (!state) {
-    return (
+      {/* Per-bot billing note — each additional chatbot lives under its
+          own subscription. Compact single-row layout (no CardHeader split)
+          so the title, blurb, and CTA all line up tightly. */}
       <Card>
-        <CardHeader>
-          <CardTitle>
-            <span className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-surface-500" /> Bot seats
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-xs text-surface-400 dark:text-surface-500">Loading…</div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const {
-    plan_slug: planSlug,
-    included_bots: included,
-    extra_bot_seats: extra,
-    effective_limit: effective,
-    hard_cap: hardCap,
-    active_bots: active,
-    can_purchase: canPurchase,
-    price_usd_cents: usdCents,
-  } = state;
-  const priceLabel = usdCents ? `$${(usdCents / 100).toFixed(0)}/mo` : '';
-  const atHardCap = hardCap > 0 && included + extra >= hardCap;
-  const wouldStrandBots = extra > 0 && active > effective - 1;
-
-  // Free plan presentation — surface why the customer can't buy, with an
-  // explicit upgrade CTA so the inactive UI still drives the right action.
-  if (planSlug === 'free') {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <span className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-surface-500" /> Bot seats
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="py-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <div className="text-sm text-surface-700 dark:text-surface-200">
-                <strong>{active}</strong> of <strong>{effective}</strong>{' '}
-                {effective === 1 ? 'bot' : 'bots'} used · Free plan
+            <div className="flex items-start gap-3 min-w-0">
+              <Bot className="w-4 h-4 text-surface-500 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-surface-900 dark:text-surface-50">
+                  Chatbots
+                </div>
+                <div className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                  Each chatbot is its own subscription with isolated credits.
+                  Free includes one bot; subscribe again to add more.
+                </div>
               </div>
-              <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
-                Paid bot seats start on Starter ({priceLabel} each).
-              </div>
             </div>
-            <div>
-              {/* Trigger the existing plan-selector modal that the Current
-                  Plan card uses. The `<Button>` component renders a plain
-                  <button> regardless of `as`, so a click handler is the
-                  only path that actually does something here. */}
-              <Button onClick={onChangePlan} size="sm">
-                <ArrowUpRight className="w-3.5 h-3.5" />
-                Upgrade to add bots
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Enterprise (or any plan with unlimited cap) — no add-ons available
-  // because the included quota is already unlimited.
-  if (hardCap === -1) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <span className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-surface-500" /> Bot seats
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-sm text-surface-700 dark:text-surface-200">
-            Unlimited bots on your plan — no seat purchases needed.
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <span className="flex items-center gap-2">
-            <Bot className="w-4 h-4 text-surface-500" /> Bot seats
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <div className="text-sm text-surface-700 dark:text-surface-200">
-              <strong>{effective}</strong> {effective === 1 ? 'bot' : 'bots'} available ·{' '}
-              {included} included · {extra} paid extra · {active} active
-            </div>
-            <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
-              Extra bot seats: {priceLabel} each / month. Hard cap on this plan: {hardCap}.
-              {atHardCap && ' Upgrade to add more.'}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onChange(-1)}
-              disabled={busy || extra <= 0 || wouldStrandBots}
-              title={
-                extra <= 0
-                  ? 'No extra seats to release'
-                  : wouldStrandBots
-                    ? 'Delete an active bot before releasing this seat'
-                    : ''
-              }
-            >
-              <Minus className="w-3.5 h-3.5" />
-              Release seat
-            </Button>
-            <Button
-              onClick={() => onChange(1)}
-              disabled={busy || !canPurchase}
-              size="sm"
-              title={atHardCap ? `Hard cap of ${hardCap} bots reached on this plan` : ''}
-            >
+            <Button onClick={onCreateBot} size="sm" className="shrink-0">
               <Plus className="w-3.5 h-3.5" />
-              {busy ? 'Working…' : `Add bot seat (${priceLabel})`}
+              Create a bot
             </Button>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

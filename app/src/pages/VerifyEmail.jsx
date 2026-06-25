@@ -4,6 +4,7 @@ import { Sparkles, Loader2, ArrowRight, RotateCcw, Mail } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { verifyEmail, resendVerification } from '../services/api';
 import { cn } from '../lib/utils';
+import { getAuthItem, setAuthItem, removeAuthItem, clearAuthStorage } from '../utils/authStorage';
 
 const RESEND_COOLDOWN = 30;
 const OTP_LENGTH = 6;
@@ -12,7 +13,7 @@ export default function VerifyEmail() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const emailFromUrl = searchParams.get('email') || '';
-  const email = emailFromUrl || localStorage.getItem('admin_pending_email') || '';
+  const email = emailFromUrl || getAuthItem('admin_pending_email') || '';
 
   const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
   const [error, setError] = useState('');
@@ -23,11 +24,11 @@ export default function VerifyEmail() {
   const inputRefs = useRef([]);
 
   useEffect(() => {
-    if (!localStorage.getItem('admin_token')) {
+    if (!getAuthItem('admin_token')) {
       navigate('/login', { replace: true });
       return;
     }
-    if (localStorage.getItem('admin_is_verified') === 'true') {
+    if (getAuthItem('admin_is_verified') === 'true') {
       navigate('/', { replace: true });
       return;
     }
@@ -102,8 +103,8 @@ export default function VerifyEmail() {
     setError('');
     try {
       await verifyEmail(email, code);
-      localStorage.setItem('admin_is_verified', 'true');
-      localStorage.removeItem('admin_pending_email');
+      setAuthItem('admin_is_verified', 'true');
+      removeAuthItem('admin_pending_email');
 
       navigate('/', { replace: true });
     } catch (err) {
@@ -312,7 +313,9 @@ export default function VerifyEmail() {
             Wrong account?{' '}
             <button
               onClick={() => {
-                localStorage.clear();
+                // Only wipe auth keys (not unrelated app state) so a
+                // session-only login is fully cleared from both stores.
+                clearAuthStorage();
                 navigate('/login');
               }}
               className="text-blue-400 hover:text-blue-300 transition-colors"

@@ -270,7 +270,17 @@ def ingest_documents(
     # Charge upfront so a client with insufficient credits can't slip
     # past validation, write 60 MB to disk, and only fail at ingest time.
     # Refund happens below if any file write actually fails.
+    from app.db.models import Bot as _Bot
     from app.services import credit_service
+
+    # Resolve per-bot ledger scope ONCE so deduct + refund agree on which
+    # bucket to charge / repay. Per-bot subscriptions get their own
+    # isolated ledger; legacy-pooled and Free bots drain the client pool.
+    ledger_bot_id: int | None = None
+    if bot_id is not None:
+        with get_session() as db:
+            _bot_for_ledger = db.get(_Bot, bot_id)
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(_bot_for_ledger)
 
     per_doc_cost = 0
     deducted_amount = 0
@@ -285,6 +295,7 @@ def ingest_documents(
                     total_cost,
                     reason="document_upload",
                     reference_id=bot_id,
+                    bot_id=ledger_bot_id,
                 )
                 db.commit()
                 deducted_amount = total_cost
@@ -344,6 +355,7 @@ def ingest_documents(
                     refund_amount,
                     reference_id=bot_id or 0,
                     note=f"document_upload partial failure ({failed_count} files)",
+                    bot_id=ledger_bot_id,
                 )
                 db.commit()
                 deducted_amount -= refund_amount

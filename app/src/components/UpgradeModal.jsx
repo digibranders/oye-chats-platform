@@ -1,21 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, Sparkles, ArrowRight, Check, Crown, X, Loader2, Plus } from 'lucide-react';
+import { Lock, Sparkles, ArrowRight, Check, Crown, X } from 'lucide-react';
 import useEntitlements from '../hooks/useEntitlements';
-import { createBotSeatCheckout, verifyBotSeatPayment } from '../services/api';
-import { openRazorpayCheckout } from '../lib/razorpay';
 import { cn } from '../lib/utils';
-
-// Format pricing for display. We accept both USD cents and INR paise from
-// the entitlements payload and pick by region — for now we fall back to
-// USD unless the user is on an INR-billed subscription. Super admin can
-// retune the numbers without redeploy via PricingConfig.
-function formatSeatPrice(pricing) {
-    if (!pricing || !pricing.usd_cents) return '';
-    const usd = (pricing.usd_cents / 100).toFixed(0);
-    return `$${usd}/mo`;
-}
 
 /**
  * UpgradeModal — the single premium upsell surface used by every gate.
@@ -38,19 +26,8 @@ function formatSeatPrice(pricing) {
  */
 export default function UpgradeModal({ payload, onClose }) {
     const navigate = useNavigate();
-    const { entitlements, refresh } = useEntitlements();
+    const { entitlements } = useEntitlements();
     const dialogRef = useRef(null);
-
-    // Purchase flow state — only active when the intent is `add_bot` AND the
-    // plan supports paid bot-seat add-ons. Three states render distinctly:
-    // idle (the buy button), in-flight (loading spinner on the CTA), and
-    // succeeded (green confirmation + auto-close after 1.6s so the customer
-    // can re-click their original action).
-    const [purchaseState, setPurchaseState] = useState('idle'); // 'idle' | 'pending' | 'success'
-    const [purchaseError, setPurchaseError] = useState(null);
-
-    const purchasable = payload?.intentKey === 'add_bot' && entitlements.canPurchaseBotSeat;
-    const seatPriceLabel = formatSeatPrice(entitlements.botSeatPricing);
 
     // Restore focus to the trigger when the modal closes. Without this,
     // keyboard users dismissing the modal land at the top of <body>, losing
@@ -77,57 +54,9 @@ export default function UpgradeModal({ payload, onClose }) {
         };
     }, [payload]);
 
-    // Wrap onClose so every dismissal path (X button, backdrop click, Esc
-    // via provider, "Maybe later", post-purchase auto-close) goes through
-    // the same reset of the purchase flow. Avoids a useEffect-driven
-    // setState (which the lint rule rightly flags) and keeps the reset
-    // semantically tied to "closing" rather than "payload became null".
-    const closeAndReset = () => {
-        setPurchaseState('idle');
-        setPurchaseError(null);
-        onClose();
-    };
-
     const handleViewPlans = () => {
-        closeAndReset();
+        onClose();
         navigate('/billing');
-    };
-
-    // Razorpay Checkout flow. Three steps with explicit error states so
-    // the customer always knows where they are in the purchase:
-    //   1. POST /subscriptions/bot-seats/checkout → Razorpay order
-    //   2. Open Razorpay Checkout (Razorpay JS SDK)
-    //   3. POST /subscriptions/bot-seats/verify with the signature
-    // On success: refresh entitlements, show success state, auto-close.
-    // On dismiss: silent reset (customer chose not to pay).
-    // On any other error: surface inline so they can retry or call out.
-    const handlePurchaseSeat = async () => {
-        setPurchaseState('pending');
-        setPurchaseError(null);
-        try {
-            const order = await createBotSeatCheckout(1);
-            const callback = await openRazorpayCheckout({
-                key: order.key_id,
-                order_id: order.order_id,
-                amount: order.amount,
-                currency: order.currency || 'INR',
-                name: order.name || 'OyeChats bot seat',
-                description: order.description,
-                prefill: order.prefill || {},
-                theme: order.theme || { color: '#6366f1' },
-            });
-            await verifyBotSeatPayment(callback);
-            await refresh();
-            setPurchaseState('success');
-            setTimeout(closeAndReset, 1600);
-        } catch (err) {
-            if (err?.code === 'dismissed') {
-                setPurchaseState('idle');
-                return;
-            }
-            setPurchaseState('idle');
-            setPurchaseError(err?.message || 'Could not add bot seat. Try again or contact support.');
-        }
     };
 
     return (
@@ -141,7 +70,7 @@ export default function UpgradeModal({ payload, onClose }) {
                     transition={{ duration: 0.18 }}
                     className="fixed inset-0 z-[200] flex items-center justify-center px-4 py-6"
                     onMouseDown={(e) => {
-                        if (e.target === e.currentTarget) closeAndReset();
+                        if (e.target === e.currentTarget) onClose();
                     }}
                 >
                     {/* Frosted backdrop */}
@@ -181,7 +110,7 @@ export default function UpgradeModal({ payload, onClose }) {
                             {/* Close button */}
                             <button
                                 type="button"
-                                onClick={closeAndReset}
+                                onClick={onClose}
                                 className="absolute top-4 right-4 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full bg-surface-100/80 dark:bg-surface-800/80 text-surface-500 dark:text-surface-400 transition-colors hover:bg-surface-200 dark:hover:bg-surface-700 hover:text-surface-900 dark:hover:text-surface-100"
                                 aria-label="Close upgrade dialog"
                             >
@@ -289,118 +218,34 @@ export default function UpgradeModal({ payload, onClose }) {
                                 </div>
                             )}
 
-                            {/* Inline purchase context — only shown for the
-                                add_bot intent on a plan that has a paid seat
-                                add-on available. Surfaces current/cap so the
-                                customer sees exactly what one more seat buys. */}
-                            {purchasable && (
-                                <div className="mx-6 mb-3 rounded-2xl border border-primary-200 bg-primary-50/60 px-4 py-3 dark:border-primary-500/30 dark:bg-primary-500/10">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div>
-                                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-primary-700 dark:text-primary-300">
-                                                Quick add
-                                            </p>
-                                            <p className="mt-0.5 text-[13px] font-medium text-surface-800 dark:text-surface-100">
-                                                Add 1 bot seat for {seatPriceLabel}
-                                            </p>
-                                            <p className="mt-0.5 text-[11.5px] text-surface-500 dark:text-surface-400">
-                                                Billed monthly with your subscription. Cancel any time.
-                                            </p>
-                                        </div>
-                                        <div className="shrink-0 text-right">
-                                            <p className="text-[11px] uppercase tracking-wider text-surface-500 dark:text-surface-400">
-                                                After purchase
-                                            </p>
-                                            <p className="text-[14px] font-bold text-surface-900 dark:text-surface-50">
-                                                {entitlements.extraBotSeats + (entitlements.limits?.bots ?? 0) + 1}
-                                                <span className="text-[11.5px] font-normal text-surface-500 dark:text-surface-400">
-                                                    {' '}/ {entitlements.limits?.max_bots_cap ?? '—'}
-                                                </span>
-                                            </p>
-                                        </div>
-                                    </div>
-                                    {purchaseError && (
-                                        <p className="mt-2 text-[12px] font-medium text-rose-600 dark:text-rose-400">
-                                            {purchaseError}
-                                        </p>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* CTAs */}
+                            {/* CTAs — single path now that bot seats are
+                                gone. "See plans" always routes to /billing
+                                where the user can subscribe (or, for the
+                                add_bot intent, mint a second per-bot sub). */}
                             <div className="flex flex-col-reverse gap-2.5 px-6 pb-6 sm:flex-row">
-                                {purchasable ? (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={handleViewPlans}
-                                            disabled={purchaseState !== 'idle'}
-                                            className="flex-1 rounded-xl px-4 py-2.5 text-[13px] font-medium text-surface-600 transition-colors hover:bg-surface-100 disabled:opacity-50 dark:text-surface-400 dark:hover:bg-surface-800 sm:flex-none"
-                                        >
-                                            See full plans
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handlePurchaseSeat}
-                                            disabled={purchaseState !== 'idle'}
-                                            className={cn(
-                                                'group relative inline-flex flex-1 items-center justify-center gap-2 overflow-hidden rounded-xl px-4 py-2.5',
-                                                'text-[13.5px] font-semibold text-white shadow-lg transition-shadow disabled:opacity-90',
-                                                purchaseState === 'success'
-                                                    ? 'bg-gradient-to-br from-emerald-500 to-emerald-700 shadow-emerald-500/30'
-                                                    : 'bg-gradient-to-br from-primary-500 to-primary-700 shadow-primary-500/30 hover:shadow-primary-500/60',
-                                            )}
-                                        >
-                                            {purchaseState !== 'success' && (
-                                                <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-white/0 via-white/30 to-white/0 transition-transform duration-700 group-hover:translate-x-full" />
-                                            )}
-                                            {purchaseState === 'pending' ? (
-                                                <>
-                                                    <Loader2 size={14} className="relative z-10 animate-spin" />
-                                                    <span className="relative z-10">Adding seat…</span>
-                                                </>
-                                            ) : purchaseState === 'success' ? (
-                                                <>
-                                                    <Check size={14} className="relative z-10" strokeWidth={2.8} />
-                                                    <span className="relative z-10">Seat added — you can create a bot</span>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Plus size={14} className="relative z-10" />
-                                                    <span className="relative z-10">
-                                                        Add a bot — {seatPriceLabel}
-                                                    </span>
-                                                </>
-                                            )}
-                                        </button>
-                                    </>
-                                ) : (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={closeAndReset}
-                                            className="flex-1 rounded-xl px-4 py-2.5 text-[13px] font-medium text-surface-600 transition-colors hover:bg-surface-100 dark:text-surface-400 dark:hover:bg-surface-800 sm:flex-none"
-                                        >
-                                            Maybe later
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleViewPlans}
-                                            className={cn(
-                                                'group relative inline-flex flex-1 items-center justify-center gap-2 overflow-hidden rounded-xl px-4 py-2.5',
-                                                'bg-gradient-to-br from-primary-500 to-primary-700 text-[13.5px] font-semibold text-white',
-                                                'shadow-lg shadow-primary-500/30 transition-shadow hover:shadow-primary-500/60',
-                                            )}
-                                        >
-                                            <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-white/0 via-white/30 to-white/0 transition-transform duration-700 group-hover:translate-x-full" />
-                                            <span className="relative z-10">See plans &amp; upgrade</span>
-                                            <ArrowRight
-                                                size={14}
-                                                className="relative z-10 transition-transform group-hover:translate-x-0.5"
-                                            />
-                                        </button>
-                                    </>
-                                )}
+                                <button
+                                    type="button"
+                                    onClick={onClose}
+                                    className="flex-1 rounded-xl px-4 py-2.5 text-[13px] font-medium text-surface-600 transition-colors hover:bg-surface-100 dark:text-surface-400 dark:hover:bg-surface-800 sm:flex-none"
+                                >
+                                    Maybe later
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleViewPlans}
+                                    className={cn(
+                                        'group relative inline-flex flex-1 items-center justify-center gap-2 overflow-hidden rounded-xl px-4 py-2.5',
+                                        'bg-gradient-to-br from-primary-500 to-primary-700 text-[13.5px] font-semibold text-white',
+                                        'shadow-lg shadow-primary-500/30 transition-shadow hover:shadow-primary-500/60',
+                                    )}
+                                >
+                                    <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-white/0 via-white/30 to-white/0 transition-transform duration-700 group-hover:translate-x-full" />
+                                    <span className="relative z-10">See plans &amp; upgrade</span>
+                                    <ArrowRight
+                                        size={14}
+                                        className="relative z-10 transition-transform group-hover:translate-x-0.5"
+                                    />
+                                </button>
                             </div>
                         </div>
                     </motion.div>

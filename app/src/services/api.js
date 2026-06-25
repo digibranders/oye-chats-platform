@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { AUTH_STORAGE_KEYS } from '../utils/auth';
+import { getAuthItem, clearAuthStorage } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
@@ -41,11 +41,13 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
     return apiError;
 };
 
-// Request interceptor: inject API key (supports both Client and Operator auth)
+// Request interceptor: inject API key (supports both Client and Operator auth).
+// Reads via authStorage so session-only logins ("Remember me" off) land in
+// sessionStorage and still attach correctly here.
 api.interceptors.request.use(
     (config) => {
-        const token = localStorage.getItem('admin_token');
-        const authType = localStorage.getItem('auth_type'); // 'client' or 'operator'
+        const token = getAuthItem('admin_token');
+        const authType = getAuthItem('auth_type'); // 'client' or 'operator'
         if (token) {
             if (authType === 'operator') {
                 config.headers['X-Operator-Key'] = token;
@@ -63,7 +65,7 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         const status = error.response?.status;
-        const authType = localStorage.getItem('auth_type');
+        const authType = getAuthItem('auth_type');
         const detail = (error.response?.data?.detail || '').toString().toLowerCase();
         const requestUrl = (error.config?.url || '').toString();
 
@@ -71,7 +73,10 @@ api.interceptors.response.use(
         const isOperatorOnClientOnlyEndpoint = authType === 'operator' && detail.includes('api key');
 
         if (status === 401 && !isLoginAttempt && !isOperatorOnClientOnlyEndpoint) {
-            AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+            // Clear from BOTH stores so a session-only login that auto-
+            // logs-out doesn't leave a stale localStorage shadow (or
+            // vice versa).
+            clearAuthStorage();
             // Banner dismissals are scoped to the session, not to a user —
             // wipe them on auto-logout so the next account sees a fresh
             // trial banner.
@@ -1296,6 +1301,52 @@ export const getSubscriptionPlans = async () => {
     }
 };
 
+// ─── Per-bot checkout ────────────────────────────────────────────────────────
+// Mints a Razorpay subscription that funds exactly one new bot. The bot row
+// is created server-side only after payment captures (via the activation
+// webhook, or synchronously via verifyBotCheckout when the webhook can't
+// reach localhost).
+
+export const createBotCheckout = async ({
+    name,
+    website,
+    plan_slug,
+    billing_cycle = 'monthly',
+    allowed_domains,
+    domain_check_enabled,
+}) => {
+    try {
+        const response = await api.post('/bots/checkout', {
+            name,
+            website: website || null,
+            plan_slug,
+            billing_cycle,
+            allowed_domains,
+            domain_check_enabled,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to start bot checkout');
+    }
+};
+
+export const verifyBotCheckout = async ({
+    razorpay_payment_id,
+    razorpay_subscription_id,
+    razorpay_signature,
+}) => {
+    try {
+        const response = await api.post('/bots/checkout/verify', {
+            razorpay_payment_id,
+            razorpay_subscription_id,
+            razorpay_signature,
+        });
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to verify bot checkout');
+    }
+};
+
 export const getCurrentSubscription = async () => {
     try {
         const response = await api.get('/subscriptions/current');
@@ -1441,9 +1492,9 @@ export const getTopupPacks = async () => {
  * The caller passes `amount` in the configured currency's major unit (rupees
  * for INR, dollars for USD). `pack_usd` is accepted as a legacy alias.
  */
-export const initiateTopup = async (amount, { provider } = {}) => {
+export const initiateTopup = async (amount, { provider, botId } = {}) => {
     try {
-        const response = await api.post('/credits/topup', { amount, provider });
+        const response = await api.post('/credits/topup', { amount, provider, bot_id: botId ?? null });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to start top-up checkout');
@@ -1568,54 +1619,6 @@ export const changeOperatorSeats = async (delta) => {
     }
 };
 
-// ─── Bot-seat add-on ─────────────────────────────────────────────────────────
-// Companion to changeOperatorSeats. Backed by POST /subscriptions/bot-seats
-// (mirrors the operator-seat shape — single delta, returns the new state).
-
-export const getBotSeats = async () => {
-    try {
-        const response = await api.get('/subscriptions/bot-seats');
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to load bot seat status');
-    }
-};
-
-export const changeBotSeats = async (delta) => {
-    try {
-        const response = await api.post('/subscriptions/bot-seats', { delta });
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to update bot seats');
-    }
-};
-
-// Razorpay Checkout flow for bot seat purchases. Two-step:
-//   1. createBotSeatCheckout(qty) → returns Razorpay Order payload
-//   2. open Razorpay Checkout (via openRazorpayCheckout helper)
-//   3. verifyBotSeatPayment({...success callback...}) → grants seat
-//      idempotently. Mirrors the topup flow.
-export const createBotSeatCheckout = async (quantity = 1) => {
-    try {
-        const response = await api.post('/subscriptions/bot-seats/checkout', { quantity });
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to start bot seat checkout');
-    }
-};
-
-export const verifyBotSeatPayment = async ({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) => {
-    try {
-        const response = await api.post('/subscriptions/bot-seats/verify', {
-            razorpay_order_id,
-            razorpay_payment_id,
-            razorpay_signature,
-        });
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to verify bot seat payment');
-    }
-};
 
 
 // ─── Affiliate Program v1 ────────────────────────────────────────────────

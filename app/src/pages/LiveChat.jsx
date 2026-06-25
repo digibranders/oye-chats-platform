@@ -12,6 +12,7 @@ import {
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Sparkles } from 'lucide-react';
+import { getAuthItem } from '../utils/authStorage';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
@@ -350,8 +351,8 @@ export default function LiveChat({ embedded = false }) {
     // WebSocket: connect when online, heartbeat, auto-reconnect with exponential backoff
     // NOTE: selectedChat intentionally NOT in deps — use selectedChatRef to prevent reconnect on every chat click
     useEffect(() => {
-        const apiKey = localStorage.getItem('admin_token');
-        const authType = localStorage.getItem('auth_type');
+        const apiKey = getAuthItem('admin_token');
+        const authType = getAuthItem('auth_type');
         if (!apiKey || !isOnline) return;
 
         clearTimeout(reconnectTimerRef.current);
@@ -507,7 +508,15 @@ export default function LiveChat({ embedded = false }) {
 
                 case 'chat_accepted': {
                     setActiveChats(prev => [...new Set([...prev, data.session_id])]);
-                    const chatNameEntry = { name: data.visitor_name || 'Anonymous', reason: data.reason || null };
+                    // ``bot_name`` is the bot the visitor was chatting
+                    // with — surfaced to the operator UI so they know
+                    // which product/intent the conversation came from.
+                    const chatNameEntry = {
+                        name: data.visitor_name || 'Anonymous',
+                        reason: data.reason || null,
+                        botName: data.bot_name || null,
+                        botId: data.bot_id || null,
+                    };
                     chatNamesRef.current = { ...chatNamesRef.current, [data.session_id]: chatNameEntry };
                     setChatNames(prev => ({ ...prev, [data.session_id]: chatNameEntry }));
                     setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
@@ -551,7 +560,12 @@ export default function LiveChat({ embedded = false }) {
                         setChatNames(prev => {
                             const next = { ...prev };
                             data.chats.forEach(c => {
-                                next[c.session_id] = { name: c.visitor_name || 'Anonymous', reason: c.reason || null };
+                                next[c.session_id] = {
+                                    name: c.visitor_name || 'Anonymous',
+                                    reason: c.reason || null,
+                                    botName: c.bot_name || null,
+                                    botId: c.bot_id || null,
+                                };
                             });
                             return next;
                         });
@@ -1430,6 +1444,11 @@ export default function LiveChat({ embedded = false }) {
                                             </span>
                                             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
                                         </div>
+                                        {item.bot_name && (
+                                            <span className="inline-block mb-1.5 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">
+                                                {item.bot_name}
+                                            </span>
+                                        )}
                                         {item.reason && (
                                             <p className="text-[11px] text-surface-500 dark:text-surface-400 truncate mb-2">{item.reason}</p>
                                         )}
@@ -1462,6 +1481,7 @@ export default function LiveChat({ embedded = false }) {
                                 activeChats.map(sid => {
                                     const unread = unreadCounts[sid] || 0;
                                     const name = chatNames[sid]?.name || 'Visitor';
+                                    const botName = chatNames[sid]?.botName;
                                     const vStatus = visitorStatus[sid] || 'online';
                                     return (
                                         <button
@@ -1478,6 +1498,11 @@ export default function LiveChat({ embedded = false }) {
                                                     <span className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate block">
                                                         {name}
                                                     </span>
+                                                    {botName && (
+                                                        <span className="inline-block mt-0.5 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">
+                                                            {botName}
+                                                        </span>
+                                                    )}
                                                     {vStatus === 'disconnected' && (
                                                         <span className="text-[10px] text-amber-600 dark:text-amber-400 block">Disconnected</span>
                                                     )}
@@ -1521,7 +1546,7 @@ export default function LiveChat({ embedded = false }) {
                                 )}
 
                                 {qualifiedBotSessions.length === 0 ? (
-                                    <div className="px-4 py-4 text-center text-[11px] text-surface-400 dark:text-surface-500">
+                                    <div className="px-4 py-8 text-center text-sm text-surface-400 dark:text-surface-500">
                                         No qualified AI conversations yet
                                     </div>
                                 ) : (

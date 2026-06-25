@@ -240,7 +240,7 @@ export default function Analytics({ embedded = false }) {
                         </div>
                     ) : (
                         <ResponsiveContainer width="100%" height={300}>
-                            <BarChart data={filteredData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                            <BarChart data={filteredData} margin={{ top: 16, right: 5, left: -15, bottom: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" strokeOpacity={0.4} />
                                 <XAxis dataKey="displayDate" tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} dy={8} />
                                 <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: '#a1a1aa', fontSize: 11 }} width={35} />
@@ -423,7 +423,7 @@ export default function Analytics({ embedded = false }) {
                     </div>
                 ) : (
                     <ResponsiveContainer width="100%" height={300}>
-                        <AreaChart data={filteredData} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+                        <AreaChart data={filteredData} margin={{ top: 16, right: 5, left: -15, bottom: 0 }}>
                             <defs>
                                 <linearGradient id="colorMessages" x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15} />

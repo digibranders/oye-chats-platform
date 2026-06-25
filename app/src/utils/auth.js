@@ -50,40 +50,28 @@
     }
 })();
 
+import { getAuthItem } from './authStorage';
+
 export function getAuthState() {
-    const isOperator = localStorage.getItem('auth_type') === 'operator';
-    const operatorRole = localStorage.getItem('operator_role') || '';
+    // Read via authStorage helper so session-only logins ("Remember me"
+    // unchecked) resolve correctly — those land in sessionStorage instead
+    // of localStorage.
+    const isOperator = getAuthItem('auth_type') === 'operator';
+    const operatorRole = getAuthItem('operator_role') || '';
     return {
         isOperator,
         operatorRole,
         /** True for clients (owners) and for operators with role "owner" or "admin". */
         isBotManager: !isOperator || ['owner', 'admin'].includes(operatorRole),
-        operatorId: localStorage.getItem('operator_id'),
-        clientId: localStorage.getItem('admin_client_id'),
-        companyWebsite: localStorage.getItem('company_website'),
+        operatorId: getAuthItem('operator_id'),
+        clientId: getAuthItem('admin_client_id'),
+        companyWebsite: getAuthItem('company_website'),
     };
 }
 
 /**
- * Returns the set of localStorage keys that must be cleared on logout.
- * Keeps the logout logic and the key list in one place.
+ * Re-export for callers that previously imported from this module.
+ * Canonical home is now ``./authStorage`` (which also exposes the
+ * helper that clears both localStorage + sessionStorage on logout).
  */
-export const AUTH_STORAGE_KEYS = [
-    'admin_token',
-    'admin_name',
-    'admin_client_id',
-    'admin_is_verified',
-    'admin_pending_email',
-    'auth_type',
-    'operator_role',
-    'operator_id',
-    // Legacy keys from before the agent → operator rename — cleared on logout
-    // in case the migration shim above ran but the user logs out on an old session.
-    'agent_role',
-    'agent_id',
-    'is_superadmin',
-    'company_name',
-    'company_website',
-    'onboarding_complete',
-    'selected_bot_id',
-];
+export { AUTH_STORAGE_KEYS } from './authStorage';

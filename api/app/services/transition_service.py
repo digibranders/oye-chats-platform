@@ -3,10 +3,11 @@
 This module is the single source of truth for everything paid→paid
 subscription transitions need:
 
-  * Proration math for unused current-period time (``compute_unused_proration``).
+  * Remaining-credit lookup for upgrade rollover (``remaining_plan_credits``).
   * Razorpay-specific paid→paid upgrade flow (``execute_paid_upgrade``):
-    cancel old mandate immediately, open new sub, stash proration credit
-    so the activation webhook can apply it once payment clears.
+    cancel old mandate immediately, open new sub, stash the customer's
+    unused plan credits so the activation webhook can re-grant them as a
+    top-up once payment clears.
   * Razorpay-specific paid→paid downgrade flow (``schedule_paid_downgrade``):
     queue the new plan to take effect at the current period's end. The old
     mandate is cancelled at-period-end on the gateway so Razorpay stops
@@ -19,19 +20,20 @@ subscription transitions need:
     plan allows; the route turns this into a 409 with the seat-picker
     payload the frontend renders.
 
-The proration model is "unused-fraction × old plan monthly price". It is
-deliberately the same regardless of monthly vs. annual cycle — for annual
-subs we still credit *unused months* via the same fraction, then convert
-back to monthly equivalents in the ledger. This keeps the customer-visible
-math identical across cycles, at the cost of a fraction of a percent of
-precision that the ledger absorbs.
+Rollover model: unused **plan_grant** credits from the old subscription
+are carried into the new subscription as a ``topup`` grant (12-month
+expiry, same as a normal top-up). We snapshot the unused count *before*
+cancelling the old mandate, then the activation webhook re-grants that
+amount after the new plan's allowance is provisioned. This means the
+customer never loses message credits they've already paid for, regardless
+of how many days are left in the old billing cycle.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -43,30 +45,19 @@ from app.services import credit_service
 logger = logging.getLogger("oyechats.transitions")
 
 
-# ── Proration ─────────────────────────────────────────────────────────────────
+# ── Rollover ──────────────────────────────────────────────────────────────────
 
 
-def compute_unused_proration(sub: Subscription) -> int:
-    """Refund value (in plan-currency cents) for unused current-cycle time.
+def remaining_plan_credits(session: Session, client_id: int) -> int:
+    """Unused ``plan_grant`` credits the client still owns on the current cycle.
 
-    Returns 0 when the subscription has no period anchors set, when the
-    period is already over (defensive — the cron should have rolled it),
-    or when the period started in the future (clock skew tolerance).
+    Reads the live FIFO breakdown so the number reflects every chat that
+    has already burned credits this month. Top-up credits are excluded —
+    they're never cleared at renewal and carry over to the new
+    subscription on their own.
     """
-    if sub is None or sub.plan is None:
-        return 0
-    if not sub.current_period_start or not sub.current_period_end:
-        return 0
-
-    now = datetime.now(UTC)
-    total = (sub.current_period_end - sub.current_period_start).total_seconds()
-    if total <= 0:
-        return 0
-    used = max(0.0, (now - sub.current_period_start).total_seconds())
-    unused_frac = max(0.0, 1.0 - (used / total))
-
-    monthly_price = int(sub.plan.monthly_price_cents or 0)
-    return int(round(monthly_price * unused_frac))
+    breakdown = credit_service.get_balance_breakdown(session, client_id)
+    return int(breakdown.get("plan", 0) or 0)
 
 
 # ── Seat overflow ─────────────────────────────────────────────────────────────
@@ -118,17 +109,27 @@ def execute_paid_upgrade(
 ) -> dict[str, Any]:
     """Cancel the current Razorpay mandate, open a checkout sheet for the new plan.
 
-    Stashes the proration credit on the OLD sub's row so the activation
-    webhook can apply it after payment clears — keeping the route handler
-    free of cross-step state. Returns the Razorpay checkout payload the
-    frontend hands to ``new Razorpay({...})``.
+    Snapshots the customer's unused plan credits on the OLD sub's row so
+    the activation webhook can re-grant them as a top-up after payment
+    clears — keeping the route handler free of cross-step state. Returns
+    the Razorpay checkout payload the frontend hands to
+    ``new Razorpay({...})``.
+
+    NOTE on ``upgrade_credit_pending_cents``: the column name is historical
+    (the original implementation stored a currency proration in cents).
+    It now stores an integer **credit count**. We kept the column name to
+    avoid an Alembic migration just for the rename; semantics are
+    documented here and at the call sites.
 
     Raises:
         RazorpayBillingError: gateway-side cancellation or creation failed.
     """
     from app.services import razorpay_service
 
-    proration_cents = compute_unused_proration(sub)
+    # Snapshot unused plan credits BEFORE we cancel anything — the activation
+    # webhook will call ``reset_monthly_plan_credits`` before granting the
+    # new plan's allowance, so reading the breakdown later would return 0.
+    rollover_credits = remaining_plan_credits(session, client.id)
 
     # Cancel immediately — the customer is paying for the new tier in the
     # very next step, so we don't want the old mandate's autopay to fire
@@ -136,7 +137,7 @@ def execute_paid_upgrade(
     # leaves the old mandate intact (safer than the reverse ordering).
     razorpay_service.cancel_subscription(sub, at_period_end=False)
 
-    sub.upgrade_credit_pending_cents = proration_cents
+    sub.upgrade_credit_pending_cents = rollover_credits
     sub.cancel_reason = sub.cancel_reason or "auto_upgrade"
     session.flush()
 
@@ -147,15 +148,15 @@ def execute_paid_upgrade(
         billing_cycle,
         extra_notes={"prev_razorpay_subscription_id": sub.razorpay_subscription_id or ""},
     )
-    payload.setdefault("proration_credit_cents", proration_cents)
+    payload.setdefault("rollover_credits", rollover_credits)
     payload["prev_razorpay_subscription_id"] = sub.razorpay_subscription_id
 
     logger.info(
-        "Upgrade queued: client=%s %s → %s, proration=%d cents",
+        "Upgrade queued: client=%s %s → %s, rollover=%d credits",
         client.id,
         sub.plan.slug if sub.plan else "?",
         new_plan.slug,
-        proration_cents,
+        rollover_credits,
     )
     return payload
 
@@ -305,12 +306,14 @@ def apply_pending_proration(
     new_sub: Subscription,
     prev_razorpay_subscription_id: str | None,
 ) -> int:
-    """If the new subscription replaced an old one with a pending proration, redeem it.
+    """Re-grant the old plan's unused credits onto the new sub as a top-up.
 
     Looks up the old local row by ``prev_razorpay_subscription_id``,
-    reads its ``upgrade_credit_pending_cents``, writes a credit-ledger
-    ``topup`` for that amount, then zeros the column so re-runs of the
-    activation webhook don't double-credit.
+    reads the rollover credit count stashed in
+    ``upgrade_credit_pending_cents`` (column name is legacy — it stores a
+    credit count, not cents), writes a credit-ledger ``topup`` for that
+    amount, then zeros the column so re-runs of the activation webhook
+    don't double-credit.
 
     Returns the credit amount applied (0 when there was nothing pending).
     """
@@ -331,11 +334,11 @@ def apply_pending_proration(
         session,
         new_sub.client_id,
         amount=credit_amount,
-        note=f"Upgrade credit (unused {old_sub.plan.slug if old_sub.plan else 'previous plan'} time)",
+        note=f"Upgrade rollover (unused {old_sub.plan.slug if old_sub.plan else 'previous plan'} credits)",
     )
 
     logger.info(
-        "Applied upgrade-proration credit: client=%s amount=%d",
+        "Applied upgrade rollover credits: client=%s amount=%d",
         new_sub.client_id,
         credit_amount,
     )

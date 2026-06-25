@@ -10,11 +10,21 @@ import { getEntitlements } from '../services/api';
  *
  *   const ent = useEntitlements();
  *   ent.hasFeature('live_chat')      → boolean
- *   ent.withinLimit('bots', 1)        → boolean
+ *   ent.withinLimit('documents', 3)   → boolean
  *   ent.limits.documents              → number (-1 means unlimited)
  *   ent.usage.documents               → current count for display
  *   ent.planSlug                      → 'free' | 'starter' | ...
  *   ent.isFree                        → convenience boolean
+ *
+ * ## Per-bot billing model
+ *
+ * Bot creation is no longer governed by a per-plan ``bots`` ceiling. Free
+ * accounts get exactly one bot; paid accounts can hold an unlimited number
+ * of bots, each as its own subscription. The dashboard's "Add Bot"
+ * affordance gates with the simple rule "free + already has a bot → open
+ * upgrade modal" — the canonical decision happens server-side via
+ * ``can_client_add_new_bot`` (which returns 402 with
+ * ``detail.must_subscribe`` when the client should be paywalled).
  *
  * ## Caching
  *
@@ -37,10 +47,6 @@ const FREE_FALLBACK = {
     limits: {
         credits: 250,
         bots: 1,
-        // max_bots_cap = 1 on Free: there are no purchasable bot seats on
-        // this tier. Paid plans (Starter=3, Standard=5) override this in
-        // the backend response.
-        max_bots_cap: 1,
         operators: 0,
         // Leads dashboard is feature-locked on Free (sidebar gate); the
         // numeric quota is UNLIMITED so lead storage continues to work
@@ -64,10 +70,6 @@ const FREE_FALLBACK = {
     is_free: true,
     is_enterprise: false,
     topup_allowed: false,
-    // Paid bot-seat add-on state. Always present so callers don't have
-    // to special-case missing keys when the fallback path runs.
-    extra_bot_seats: 0,
-    bot_seat_pricing: {},
 };
 
 const UNLIMITED = -1;
@@ -99,8 +101,7 @@ function _notifySubscribers() {
  * Bust the entitlements cache so the next hook call refetches.
  * Call this after any action that changes the plan (subscription upgrade,
  * topup purchase, manual super-admin update). Every mounted hook instance
- * is notified and re-loads — so a paid seat add-on bought in the modal
- * lifts the bot limit in the Chatbot page without a manual reload.
+ * is notified and re-loads in lockstep.
  */
 export function entitlementsRefresh() {
     _cache = null;
@@ -134,23 +135,6 @@ async function fetchEntitlements() {
  */
 function decorate(raw) {
     const data = raw || FREE_FALLBACK;
-    const extraSeats = Number(data.extra_bot_seats || 0);
-    const pricing = data.bot_seat_pricing || {};
-
-    // Effective bot limit mirrors the backend's
-    // plan_entitlements_service._effective_bot_limit so the UI matches the
-    // enforcement layer exactly. Returns -1 (UNLIMITED) when either the
-    // included quota or the hard cap is unlimited (Enterprise).
-    const computeEffectiveBotLimit = () => {
-        const included = (data.limits || {}).bots;
-        const cap = (data.limits || {}).max_bots_cap;
-        if (typeof included !== 'number') return 0;
-        if (included === UNLIMITED) return UNLIMITED;
-        if (cap === undefined || cap === null) return included;
-        if (typeof cap !== 'number') return included;
-        if (cap === UNLIMITED) return UNLIMITED;
-        return Math.min(included + Math.max(0, extraSeats), cap);
-    };
 
     return {
         ...data,
@@ -159,42 +143,18 @@ function decorate(raw) {
         isFree: data.plan_slug === 'free' || data.is_free,
         isEnterprise: data.plan_slug === 'enterprise' || data.is_enterprise,
         topupAllowed: data.topup_allowed,
-        extraBotSeats: extraSeats,
-        botSeatPricing: pricing,
-        // True when the client has a paid plan that hasn't yet reached the
-        // hard bot cap. Drives the "Add a bot — $5/mo" CTA in the upgrade
-        // modal: when false, the modal falls back to "Upgrade your plan".
-        canPurchaseBotSeat: (() => {
-            if (!pricing || !pricing.usd_cents) return false;
-            const included = (data.limits || {}).bots;
-            const cap = (data.limits || {}).max_bots_cap;
-            if (included === UNLIMITED || cap === UNLIMITED) return false;
-            if (typeof included !== 'number' || typeof cap !== 'number') return false;
-            return included + Math.max(0, extraSeats) < cap;
-        })(),
         hasFeature: (name) => Boolean((data.features || {})[name]),
         limitFor: (name) => {
-            if (name === 'bots') return computeEffectiveBotLimit();
             const value = (data.limits || {})[name];
             return typeof value === 'number' ? value : 0;
         },
         withinLimit: (name, current) => {
-            if (name === 'bots') {
-                const eff = computeEffectiveBotLimit();
-                if (eff === UNLIMITED) return true;
-                return current < eff;
-            }
             const value = (data.limits || {})[name];
             if (value === UNLIMITED) return true;
             if (typeof value !== 'number') return false;
             return current < value;
         },
         remaining: (name, current) => {
-            if (name === 'bots') {
-                const eff = computeEffectiveBotLimit();
-                if (eff === UNLIMITED) return Infinity;
-                return Math.max(0, eff - current);
-            }
             const value = (data.limits || {})[name];
             if (value === UNLIMITED) return Infinity;
             if (typeof value !== 'number') return 0;

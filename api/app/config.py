@@ -1,5 +1,6 @@
 import logging
 import os
+import secrets as _secrets
 
 from dotenv import load_dotenv
 
@@ -196,6 +197,42 @@ DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "83"))
 
 # Frontend URL for checkout redirects (Stripe success/cancel, Razorpay return).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google OAuth — "Sign in with Google" for the admin dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+# Credentials issued by Google Cloud Console → APIs & Services → Credentials.
+# All three values are required to enable the OAuth login flow; if any is
+# missing the routes return 503 ``oauth_unavailable`` so the frontend can
+# downgrade gracefully (hide the button) without breaking other auth paths.
+#
+# ``GOOGLE_REDIRECT_URI`` MUST be registered as an Authorized redirect URI in
+# the same OAuth client in Google Cloud Console — Google rejects the
+# token-exchange step otherwise. For local dev:
+#     http://localhost:8000/auth/google/callback
+# For production:
+#     https://api.oyechats.com/auth/google/callback
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+GOOGLE_OAUTH_ENABLED = bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
+
+# Where the OAuth callback redirects the browser after issuing the api_key.
+# The frontend reads the api_key from the URL fragment, persists it, and
+# routes the user into the dashboard. Defaults to FRONTEND_URL so a single
+# env var configures both Stripe and OAuth in dev.
+OAUTH_SUCCESS_REDIRECT_URL = os.getenv("OAUTH_SUCCESS_REDIRECT_URL", f"{FRONTEND_URL}/auth/callback")
+
+# HMAC key for signing the short-lived OAuth ``state`` cookie. Falls back to
+# the SECRET_KEY env var if set, otherwise to a process-local random value
+# (which means OAuth attempts in flight across a process restart will fail —
+# acceptable since the state cookie lives for <10 minutes).
+OAUTH_STATE_SECRET = os.getenv("OAUTH_STATE_SECRET") or os.getenv("SECRET_KEY") or _secrets.token_urlsafe(48)
+
+if GOOGLE_OAUTH_ENABLED:
+    logger.info("Google OAuth enabled (redirect=%s)", GOOGLE_OAUTH_REDIRECT_URI)
+else:
+    logger.info("Google OAuth disabled (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable)")
 
 if STRIPE_ENABLED:
     logger.info("Stripe billing enabled")

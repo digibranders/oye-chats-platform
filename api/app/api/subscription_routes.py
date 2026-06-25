@@ -880,12 +880,14 @@ def change_plan(
             )
             return {"status": "downgraded", "message": msg}
 
-        # ── Branch 2a: paid → paid via Razorpay → upgrade-now, prorated ──
+        # ── Branch 2a: paid → paid via Razorpay → upgrade-now, credit rollover ──
         # Razorpay can't modify a subscription's plan in place — we must
         # cancel the current mandate and open a fresh one. Upgrades take
         # effect immediately because the customer wants the new features
-        # now; we credit unused current-period time back via
-        # ``upgrade_credit_pending_cents`` so they aren't double-billed.
+        # now; we roll the customer's unused plan credits into the new
+        # subscription as a top-up grant (stashed in
+        # ``upgrade_credit_pending_cents`` for the activation webhook to
+        # redeem) so message credits they've already paid for aren't lost.
         if (
             sub is not None
             and sub.razorpay_subscription_id
@@ -1555,218 +1557,6 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
         }
 
 
-# ── Bot-seat add-on ───────────────────────────────────────────────────────
-
-
-class BotSeatChangeRequest(BaseModel):
-    """Body for `POST /subscriptions/bot-seats`.
-
-    `delta=+1` buys one more seat; `delta=-1` releases one. The service
-    layer rejects deltas that would breach the hard cap or strand active
-    bots above the new effective limit.
-    """
-
-    delta: int = Field(..., description="+1 to add, -1 to release. Non-zero.")
-
-
-@router.get("/bot-seats")
-def get_bot_seats(client: Client = Depends(get_current_client)):
-    """Snapshot of the requester's bot-seat situation.
-
-    Powers the Billing page card and the upgrade modal's "X of Y bots
-    used" line. Single round-trip — bundles plan, included quota, paid
-    extras, effective limit, active bot count, and pricing.
-    """
-    from app.services import bot_seat_service
-
-    with get_session() as session:
-        return bot_seat_service.get_state(session, client.id).to_json()
-
-
-@router.post("/bot-seats")
-def change_bot_seats(request: BotSeatChangeRequest, client: Client = Depends(get_current_client)):
-    """Add or release a paid bot seat for the requesting workspace.
-
-    The seat counter is updated synchronously and the entitlements cache
-    is invalidated so the next `/me/entitlements` read reflects the new
-    ceiling. Provider-side billing reconciliation (Stripe item quantity
-    / Razorpay addon) lands at the next renewal — same maturity level as
-    `update_seat_quantity` for operator seats.
-    """
-    from app.services import bot_seat_service
-
-    with get_session() as session:
-        # Reload the Client through this session so the write happens in
-        # the same transaction as the validation read — avoids a race
-        # where two parallel requests both pass the cap check.
-        managed_client = session.get(Client, client.id)
-        if managed_client is None:
-            raise HTTPException(status_code=404, detail="Client not found.")
-        try:
-            state = bot_seat_service.change_bot_seats(session, managed_client, request.delta)
-        except bot_seat_service.BotSeatError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        session.commit()
-        logger.info(
-            "client=%s bot_seats delta=%+d → extra=%d effective=%d",
-            client.id,
-            request.delta,
-            state.extra_bot_seats,
-            state.effective_limit,
-        )
-        return state.to_json()
-
-
-# ── Bot-seat checkout (Razorpay) ──
-
-
-class BotSeatCheckoutRequest(BaseModel):
-    """Body for `POST /subscriptions/bot-seats/checkout`.
-
-    Single field, ``quantity``, default 1. Multiplied by the configured
-    INR price (PricingConfig key ``bot_seat_price_inr_paise``) to form
-    the Razorpay Order amount.
-    """
-
-    quantity: int = Field(default=1, ge=1, description="Number of seats to purchase")
-
-
-@router.post("/bot-seats/checkout")
-def create_bot_seat_checkout(request: BotSeatCheckoutRequest, client: Client = Depends(get_current_client)):
-    """Create a Razorpay Order for a bot-seat purchase.
-
-    Returns the payload the admin frontend needs to open Razorpay
-    Checkout — `order_id`, `key_id`, `amount`, `currency`, plus prefill
-    contact data. The Order is created with `notes.purpose =
-    'bot_seat_addon'` so the captured-payment webhook routes to the
-    bot-seat granter (and not the topup credit granter).
-
-    Plan-level validation runs first (Free can't buy, hard-cap blocks
-    further purchases) so the customer doesn't spend money on a seat
-    the backend would refuse.
-    """
-    from app.services import bot_seat_service, plan_entitlements_service, razorpay_service
-
-    with get_session() as session:
-        plan_entitlements_service.invalidate(client.id)
-        ent = plan_entitlements_service.get_entitlements(client.id, session, include_usage=True)
-
-        if ent.plan_slug == "free":
-            raise HTTPException(
-                status_code=400,
-                detail="Free plans don't include paid bot seats. Upgrade to Starter or Standard to add bots.",
-            )
-
-        pricing = ent.bot_seat_pricing or {}
-        price_paise = int(pricing.get("inr_paise") or 0)
-        if price_paise <= 0:
-            raise HTTPException(status_code=503, detail="Bot-seat pricing isn't configured. Contact support.")
-
-        # Validate that adding `quantity` seats wouldn't breach the hard
-        # cap, so we don't charge for something the backend would refuse.
-        cap = ent.limits.get("max_bots_cap")
-        included = int(ent.limits.get("bots") or 0)
-        current_extra = int(ent.extra_bot_seats or 0)
-        unlimited = bot_seat_service.plan_entitlements_service.UNLIMITED
-        if cap is not None and int(cap) != unlimited and (included + current_extra + request.quantity) > int(cap):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Adding {request.quantity} seat(s) would exceed the {int(cap)}-bot ceiling on the {ent.plan_name} plan.",
-            )
-
-        managed_client = session.get(Client, client.id)
-        if managed_client is None:
-            raise HTTPException(status_code=404, detail="Client not found.")
-        try:
-            payload = razorpay_service.create_bot_seat_order(
-                session,
-                managed_client,
-                quantity=request.quantity,
-                price_paise=price_paise,
-            )
-        except razorpay_service.RazorpayBillingError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        logger.info(
-            "Razorpay bot-seat checkout created for client %s: qty=%d order=%s",
-            client.id,
-            request.quantity,
-            payload.get("order_id"),
-        )
-        return payload
-
-
-class BotSeatVerifyRequest(BaseModel):
-    """Body for `POST /subscriptions/bot-seats/verify` — the Razorpay
-    Checkout success callback.
-
-    Same shape as the topup verify endpoint. The frontend passes through
-    the three fields Razorpay returns from its handler; we verify the
-    HMAC signature, then route into the same idempotent grant function
-    the webhook uses (so dev environments where webhooks can't reach
-    localhost still get their seats granted).
-    """
-
-    razorpay_order_id: str
-    razorpay_payment_id: str
-    razorpay_signature: str
-
-
-@router.post("/bot-seats/verify")
-def verify_bot_seat_payment(body: BotSeatVerifyRequest, client: Client = Depends(get_current_client)):
-    """Verify the Razorpay success callback and grant the seat.
-
-    Webhook delivery is the source of truth in production. This endpoint
-    is the dev/sync fallback: when a customer pays on localhost (no
-    public webhook URL) or just lands on the success page before the
-    webhook arrives, the grant happens here. Idempotency via the Invoice
-    table keys off ``razorpay_payment_id`` so a webhook fired after this
-    won't double-grant.
-    """
-    from app.services import razorpay_service
-
-    try:
-        razorpay_service.verify_bot_seat_signature(
-            razorpay_order_id=body.razorpay_order_id,
-            razorpay_payment_id=body.razorpay_payment_id,
-            razorpay_signature=body.razorpay_signature,
-        )
-    except razorpay_service.SignatureMismatch as exc:
-        raise HTTPException(status_code=400, detail="Signature verification failed.") from exc
-
-    # Fetch the order from Razorpay to recover the notes (purpose,
-    # client_id, quantity). We can't trust the frontend to pass these.
-    rzp = razorpay_service._get_razorpay()
-    try:
-        order = rzp.order.fetch(body.razorpay_order_id)
-        payment = rzp.payment.fetch(body.razorpay_payment_id)
-    except Exception as exc:
-        logger.exception(
-            "Razorpay fetch failed during bot-seat verify (order=%s pay=%s)",
-            body.razorpay_order_id,
-            body.razorpay_payment_id,
-        )
-        raise HTTPException(status_code=502, detail="Could not verify payment with Razorpay.") from exc
-
-    notes = (payment.get("notes") or {}) or (order.get("notes") or {})
-    if notes.get("purpose") != "bot_seat_addon":
-        raise HTTPException(status_code=400, detail="This payment is not a bot-seat purchase.")
-
-    paid_client_id = razorpay_service._client_id_from_notes(notes)
-    if not paid_client_id or paid_client_id != client.id:
-        # Defence against a customer replaying someone else's payment id
-        # to grant themselves seats.
-        raise HTTPException(status_code=403, detail="Payment belongs to a different client.")
-
-    with get_session() as session:
-        result = razorpay_service._grant_bot_seat_from_payment(session, payment, order, notes)
-        session.commit()
-
-    return {"status": "granted", "detail": result}
-
-
 # ── Credits API (companion router) ──
 
 
@@ -1785,55 +1575,108 @@ def get_credit_balance(client: Client = Depends(get_current_client)):
     """
     from sqlalchemy import func
 
-    from app.db.models import CreditLedger
+    from app.db.models import Bot, CreditLedger
 
-    with get_session() as session:
-        breakdown = credit_service.get_balance_breakdown(session, client.id)
-        sub = get_client_subscription(session, client.id)
-        plan = get_client_plan(session, client.id)
-        pricing = credit_service.get_pricing(session)
-
-        # Find the most recent positive plan_grant to anchor "this period".
-        # Falls back to the client's first ledger entry if none.
-        period_start_row = (
+    def _scope_period_and_usage(session, client_id: int, bot_id: int | None):
+        """Pull period anchor + per-reason usage for one ledger scope."""
+        scope = (
+            CreditLedger.client_id == client_id,
+            CreditLedger.bot_id.is_(None) if bot_id is None else CreditLedger.bot_id == bot_id,
+        )
+        period_start = (
             session.execute(
                 select(CreditLedger.created_at)
-                .where(
-                    CreditLedger.client_id == client.id,
-                    CreditLedger.reason == "plan_grant",
-                    CreditLedger.delta > 0,
-                )
+                .where(*scope, CreditLedger.reason == "plan_grant", CreditLedger.delta > 0)
                 .order_by(CreditLedger.created_at.desc())
                 .limit(1)
             )
             .scalars()
             .first()
         )
-        period_start = period_start_row
-
-        # Sum negative deltas (consumption) per reason since period_start.
         usage_q = select(
             CreditLedger.reason,
             func.coalesce(func.sum(-CreditLedger.delta), 0).label("credits_used"),
             func.count(CreditLedger.id).label("event_count"),
         ).where(
-            CreditLedger.client_id == client.id,
+            *scope,
             CreditLedger.delta < 0,
-            CreditLedger.reason.in_(("ai_chat", "url_scan", "email_send")),
+            CreditLedger.reason.in_(("ai_chat", "url_scan", "email_send", "document_upload")),
         )
         if period_start is not None:
             usage_q = usage_q.where(CreditLedger.created_at >= period_start)
         usage_q = usage_q.group_by(CreditLedger.reason)
-        usage_rows = session.execute(usage_q).all()
         usage_by_reason = {
             row.reason: {"credits_used": int(row.credits_used), "event_count": int(row.event_count)}
-            for row in usage_rows
+            for row in session.execute(usage_q).all()
         }
+        return period_start, {
+            "ai_chat": usage_by_reason.get("ai_chat", {"credits_used": 0, "event_count": 0}),
+            "url_scan": usage_by_reason.get("url_scan", {"credits_used": 0, "event_count": 0}),
+            "email_send": usage_by_reason.get("email_send", {"credits_used": 0, "event_count": 0}),
+            "document_upload": usage_by_reason.get("document_upload", {"credits_used": 0, "event_count": 0}),
+        }
+
+    with get_session() as session:
+        # Account-level pool (legacy + Free bot drain from here).
+        breakdown = credit_service.get_balance_breakdown(session, client.id)
+        sub = get_client_subscription(session, client.id)
+        plan = get_client_plan(session, client.id)
+        pricing = credit_service.get_pricing(session)
+
+        period_start, usage_dict = _scope_period_and_usage(session, client.id, None)
+
+        # Per-bot ledgers — one entry per bot that has its own paid
+        # subscription. Frontend renders one card per entry so the
+        # customer sees an isolated balance + usage panel for each bot.
+        bot_rows = (
+            session.execute(select(Bot).where(Bot.client_id == client.id, Bot.is_active.is_(True)).order_by(Bot.id))
+            .scalars()
+            .all()
+        )
+        bot_ledgers: list[dict] = []
+        for bot in bot_rows:
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(bot)
+            if ledger_bot_id is None:
+                continue  # legacy / Free bot — its usage rolls up to the account pool
+            bot_plan = bot.plan if bot.plan_id else None
+            bot_breakdown = credit_service.get_balance_breakdown(session, client.id, bot_id=ledger_bot_id)
+            bot_period_start, bot_usage = _scope_period_and_usage(session, client.id, ledger_bot_id)
+            bot_sub = bot.subscription
+            bot_ledgers.append(
+                {
+                    "bot_id": bot.id,
+                    "bot_name": bot.name,
+                    "bot_key": bot.bot_key,
+                    "plan_slug": bot_plan.slug if bot_plan else None,
+                    "plan_name": bot_plan.name if bot_plan else None,
+                    "monthly_grant": int(bot_plan.credits_per_month or 0) if bot_plan else 0,
+                    "billing_cycle": bot_sub.billing_cycle if bot_sub else None,
+                    "subscription_status": bot_sub.status if bot_sub else None,
+                    "plan": bot_breakdown["plan"],
+                    "topup": bot_breakdown["topup"],
+                    "total": bot_breakdown["total"],
+                    "soonest_expiry": bot_breakdown["soonest_expiry"].isoformat()
+                    if bot_breakdown["soonest_expiry"]
+                    else None,
+                    "period_start": bot_period_start.isoformat() if bot_period_start else None,
+                    "resets_at": effective_resets_at(bot_sub).isoformat()
+                    if bot_sub and effective_resets_at(bot_sub)
+                    else None,
+                    "usage": bot_usage,
+                }
+            )
+
+        # Count of bots that still drain from the account pool — drives
+        # whether the UI shows the "Account credits" card. When zero (a
+        # paid-only account whose only bot has its own subscription) the
+        # account pool is hidden entirely.
+        account_pool_bot_count = sum(1 for bot in bot_rows if credit_service.resolve_bot_ledger_bot_id(bot) is None)
 
         costs = {
             "ai_chat": int(pricing.get("credit_cost.ai_chat", 1) or 0),
             "url_scan": int(pricing.get("credit_cost.url_scan", 3) or 0),
             "email_send": int(pricing.get("credit_cost.email_send", 1) or 0),
+            "document_upload": int(pricing.get("credit_cost.document_upload", 3) or 0),
         }
 
         currency_code = (plan.currency if plan else None) or pricing.get("billing.currency", "INR")
@@ -1853,13 +1696,17 @@ def get_credit_balance(client: Client = Depends(get_current_client)):
             "resets_at": next_reset.isoformat() if next_reset else None,
             "period_start": period_start.isoformat() if period_start else None,
             "costs": costs,
-            "usage": {
-                "ai_chat": usage_by_reason.get("ai_chat", {"credits_used": 0, "event_count": 0}),
-                "url_scan": usage_by_reason.get("url_scan", {"credits_used": 0, "event_count": 0}),
-                "email_send": usage_by_reason.get("email_send", {"credits_used": 0, "event_count": 0}),
-            },
+            "usage": usage_dict,
             "currency": currency_code,
             "currency_symbol": currency_symbol,
+            # ── Per-bot ledger breakdown ──
+            # ``bots`` is one entry per bot with its own paid
+            # subscription. The account-level fields above describe the
+            # client pool (legacy + Free bots). When ``bots`` is non-empty
+            # the Billing page renders one card per bot in addition to
+            # (or instead of) the account card.
+            "bots": bot_ledgers,
+            "account_pool_bot_count": account_pool_bot_count,
         }
 
 
@@ -1905,11 +1752,18 @@ class TopupRequest(BaseModel):
     configured packs in ``pricing_config.topup_packs``. ``pack_usd`` is kept
     as a backward-compat alias for older admin builds — at least one of the
     two must be provided.
+
+    ``bot_id`` scopes the purchase to a specific per-bot ledger. Omit
+    (or pass null) to top up the account-level client pool — that's the
+    correct shape for Free / legacy-pooled bots whose usage drains
+    shared credits. Per-bot subscriptions must always pass their bot_id
+    so the credits land in the right isolated bucket.
     """
 
     amount: int | None = None  # rupees (Razorpay) or dollars (Stripe)
     pack_usd: int | None = None  # legacy alias
     provider: str | None = None  # "razorpay" | "stripe"
+    bot_id: int | None = None
 
 
 def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
@@ -1999,11 +1853,24 @@ def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_c
         # /affiliate/apply-referral (unchanged); we just don't honour the
         # discount on the top-up checkout amount.
 
+        # Validate per-bot top-up target — the bot must belong to this
+        # client AND have its own paid subscription (per-bot ledger).
+        # Topping up a legacy/Free bot via bot_id is silently coerced to
+        # an account-pool top-up because those bots drain the pool anyway.
+        target_bot_id: int | None = None
+        if request.bot_id is not None:
+            from app.db.models import Bot
+
+            bot = session.get(Bot, int(request.bot_id))
+            if bot is None or bot.client_id != client.id:
+                raise HTTPException(status_code=404, detail="Bot not found.")
+            target_bot_id = credit_service.resolve_bot_ledger_bot_id(bot)
+
         if provider == "razorpay":
             from app.services import razorpay_service
 
             try:
-                result = razorpay_service.create_topup_order(session, client, pack)
+                result = razorpay_service.create_topup_order(session, client, pack, bot_id=target_bot_id)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except razorpay_service.RazorpayBillingError as exc:

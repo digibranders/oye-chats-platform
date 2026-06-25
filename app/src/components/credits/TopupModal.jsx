@@ -53,7 +53,7 @@ function pricePerKCredits(amount, credits) {
  * one-off credit packs. Customers can still buy top-ups freely; the prices
  * shown are exactly what Stripe charges.
  */
-export default function TopupModal({ open, onClose, onSuccess }) {
+export default function TopupModal({ open, onClose, onSuccess, botId = null, botName = null }) {
   const { showToast } = useToast();
   const [packs, setPacks] = useState([]);
   const [loadingPacks, setLoadingPacks] = useState(false);
@@ -99,7 +99,10 @@ export default function TopupModal({ open, onClose, onSuccess }) {
     }
     setSubmittingPack(amount);
     try {
-      const result = await initiateTopup(amount);
+      // ``botId`` scopes the top-up to a per-bot ledger so the credits
+      // land in that bot's isolated bucket instead of the client pool.
+      // Account-pool tops-ups leave it null.
+      const result = await initiateTopup(amount, { botId });
       const provider = String(result?.provider || '').toLowerCase();
 
       if (provider === 'razorpay') {
@@ -155,12 +158,13 @@ export default function TopupModal({ open, onClose, onSuccess }) {
         <DialogTitle>
           <span className="flex items-center gap-2">
             <CreditCoin className="w-5 h-5 text-primary-500" />
-            Top up credits
+            {botName ? `Top up ${botName}` : 'Top up credits'}
           </span>
         </DialogTitle>
         <DialogDescription>
-          Top-up credits don&apos;t expire for 12 months and roll over month-to-month. Larger
-          packs include bonus credits.
+          {botName
+            ? `Credits land in ${botName}'s isolated balance — they won't be used by any other bot. Top-ups roll over for 12 months. Larger packs include bonus credits.`
+            : "Top-up credits don't expire for 12 months and roll over month-to-month. Larger packs include bonus credits."}
         </DialogDescription>
       </DialogHeader>
 

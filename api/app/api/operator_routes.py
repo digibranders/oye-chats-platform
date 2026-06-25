@@ -678,6 +678,8 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             request.department_id,
             visitor_name=visitor_name,
             reason=request.reason,
+            bot_id=bot.id,
+            bot_name=bot.name,
         )
     )
 
@@ -1031,7 +1033,15 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
                     {"type": "chat_transferred", "session_id": session_id, "transferred_to": dept_name},
                 )
             )
-        asyncio.create_task(manager.request_handoff(session_id, timeout, request.target_department_id))
+        asyncio.create_task(
+            manager.request_handoff(
+                session_id,
+                timeout,
+                request.target_department_id,
+                bot_id=bot.id,
+                bot_name=bot.name,
+            )
+        )
 
         return {"success": True, "transferred_to_department": dept_name}
 

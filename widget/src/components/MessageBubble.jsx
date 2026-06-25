@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react';
 import BotAvatar from './BotAvatar';
 import { sanitizeColor } from '../services/sanitize';
 
@@ -174,16 +175,109 @@ const SafeLink = ({ href, children, ...props }) => {
     );
 };
 
+// Strip markdown syntax for clipboard copy so the visitor gets plain text
+// rather than raw asterisks/backticks/brackets pasted into their notes.
+// Conservative: only touches the patterns the bot actually emits.
+const _markdownToPlainText = (text) => {
+    if (!text) return '';
+    return text
+        // Markdown links → just the visible label
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        // Bold / italic markers
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/__([^_]+)__/g, '$1')
+        .replace(/_([^_]+)_/g, '$1')
+        // Inline code / code fences
+        .replace(/```[a-z]*\n?/gi, '')
+        .replace(/```/g, '')
+        .replace(/`([^`]+)`/g, '$1')
+        // Bullet markers at line start → keep the text, drop the marker
+        .replace(/^[ \t]*[-*+][ \t]+/gm, '')
+        .replace(/^[ \t]*\d+[.)][ \t]+/gm, '')
+        .trim();
+};
+
+const MessageActionButton = ({ children, label, onClick, active = false, success = false, disabled = false }) => (
+    <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        title={label}
+        className={`inline-flex items-center justify-center w-7 h-7 rounded-md transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed ${
+            success
+                ? 'text-emerald-600 bg-emerald-50'
+                : active
+                ? 'text-blue-600 bg-blue-50'
+                : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+        }`}
+    >
+        {children}
+    </button>
+);
+
 const MessageBubble = ({
     msg,
     currentTheme,
     streamingId,
     settings,
+    onFeedback,
 }) => {
+    // Hover-revealed action toolbar state — local to each bot message so the
+    // copied-confirmation flash on one reply doesn't bleed into siblings.
+    const [copied, setCopied] = useState(false);
+    const copyTimerRef = useRef(null);
+
+    useEffect(() => () => clearTimeout(copyTimerRef.current), []);
+
+    const handleCopy = useCallback(async () => {
+        const plain = _markdownToPlainText(msg.text);
+        if (!plain) return;
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(plain);
+            } else {
+                // Fallback for non-secure-context environments (older Safari).
+                const ta = document.createElement('textarea');
+                ta.value = plain;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            setCopied(true);
+            clearTimeout(copyTimerRef.current);
+            copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+        } catch (err) {
+            console.warn('[OyeChats] Copy failed:', err);
+        }
+    }, [msg.text]);
+
+    const handleFeedback = useCallback(
+        (value) => {
+            if (!onFeedback) return;
+            // Toggle off when the user clicks the already-active reaction —
+            // matches the ChatGPT pattern of "undo my thumbs up".
+            const next = msg.feedback === value ? null : value;
+            onFeedback(msg.id, next);
+        },
+        [onFeedback, msg.id, msg.feedback]
+    );
+
     if (msg.sender === 'bot') {
+        // Show the toolbar only on a finished, persisted reply. While the
+        // stream is in flight ``msg.id`` is a local placeholder counter that
+        // the feedback endpoint can't resolve to a real ChatMessage row.
+        const isStreaming = streamingId === msg.id;
+        const hasPersistedId = !!msg.id && !isStreaming && !!msg.text?.trim();
+        const showActions = hasPersistedId && !!onFeedback;
         // AI message — avatar + plain text, NO bubble
         return (
-            <div className="flex items-start gap-2 w-full">
+            <div className="group flex items-start gap-2 w-full">
                 <div className="flex-shrink-0 mt-1">
                     <BotAvatar settings={settings || {}} size="xs" />
                 </div>
@@ -197,11 +291,41 @@ const MessageBubble = ({
                             >
                                 {formatBotMarkdown(msg.text)}
                             </ReactMarkdown>
-                            {streamingId === msg.id && (
+                            {isStreaming && (
                                 <span className="inline-block animate-pulse text-gray-400">▌</span>
                             )}
                         </div>
                     </div>
+                    {showActions && (
+                        <div
+                            className="flex items-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
+                            aria-label="Message actions"
+                        >
+                            <MessageActionButton
+                                label={copied ? 'Copied' : 'Copy message'}
+                                onClick={handleCopy}
+                                success={copied}
+                            >
+                                {copied
+                                    ? <Check className="w-3.5 h-3.5" strokeWidth={2} />
+                                    : <Copy className="w-3.5 h-3.5" strokeWidth={2} />}
+                            </MessageActionButton>
+                            <MessageActionButton
+                                label={msg.feedback === 1 ? 'Remove thumbs up' : 'Helpful'}
+                                onClick={() => handleFeedback(1)}
+                                active={msg.feedback === 1}
+                            >
+                                <ThumbsUp className="w-3.5 h-3.5" strokeWidth={2} />
+                            </MessageActionButton>
+                            <MessageActionButton
+                                label={msg.feedback === -1 ? 'Remove thumbs down' : 'Not helpful'}
+                                onClick={() => handleFeedback(-1)}
+                                active={msg.feedback === -1}
+                            >
+                                <ThumbsDown className="w-3.5 h-3.5" strokeWidth={2} />
+                            </MessageActionButton>
+                        </div>
+                    )}
                 </div>
             </div>
         );

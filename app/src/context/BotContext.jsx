@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getBots } from '../services/api';
+import { getAuthItem } from '../utils/authStorage';
 
 const BotContext = createContext(null);
 
@@ -47,7 +48,7 @@ export function BotProvider({ children }) {
     }, []);
 
     useEffect(() => {
-        const token = localStorage.getItem('admin_token');
+        const token = getAuthItem('admin_token');
         if (token) {
             refreshBots();
         } else {

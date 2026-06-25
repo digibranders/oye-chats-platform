@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Sparkles, Loader2, Mail, Lock, Eye, EyeOff, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
+import { Loader2, Mail, Lock, Eye, EyeOff, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { loginAdmin, loginOperator } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
+import { setAuthBundle, getAuthItem } from '../utils/authStorage';
 import { cn } from '../lib/utils';
+import GoogleAuthButton from '../components/GoogleAuthButton';
 
 const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
@@ -47,19 +49,26 @@ export default function Login() {
         // previous account in this tab. Done before the toast flag so a
         // failed read can't accidentally suppress the new user's banner.
         clearTrialBannerDismissals();
-        localStorage.setItem('admin_token', data.access_token);
-        localStorage.setItem('admin_name', data.name);
-        localStorage.setItem('admin_client_id', data.client_id.toString());
-        localStorage.setItem('auth_type', 'operator');
-        localStorage.setItem('operator_role', data.role);
-        localStorage.setItem('operator_id', data.operator_id.toString());
-        localStorage.setItem('is_superadmin', 'false');
-        localStorage.setItem('company_name', data.company_name || '');
-        localStorage.setItem('company_website', data.website || '');
-        localStorage.setItem('onboarding_complete', 'true');
-        if (data.default_bot_id) {
-          localStorage.setItem('selected_bot_id', data.default_bot_id.toString());
-        }
+        // ``rememberMe`` drives where the auth bundle lands: localStorage
+        // (persists across browser restarts) when checked, sessionStorage
+        // (cleared on tab close) when not. All keys go to the SAME store
+        // so the user-info bundle stays consistent with the token.
+        setAuthBundle(
+          {
+            admin_token: data.access_token,
+            admin_name: data.name,
+            admin_client_id: data.client_id,
+            auth_type: 'operator',
+            operator_role: data.role,
+            operator_id: data.operator_id,
+            is_superadmin: 'false',
+            company_name: data.company_name || '',
+            company_website: data.website || '',
+            onboarding_complete: 'true',
+            selected_bot_id: data.default_bot_id ?? undefined,
+          },
+          rememberMe,
+        );
         sessionStorage.setItem('login_toast', '1');
         loggedIn = true;
         // Operators are never affiliates by design — backend always
@@ -75,14 +84,19 @@ export default function Login() {
       if (!loggedIn) {
         const data = await loginAdmin(email, password);
         clearTrialBannerDismissals();
-        localStorage.setItem('admin_token', data.access_token);
-        localStorage.setItem('admin_name', data.name);
-        localStorage.setItem('admin_client_id', data.client_id.toString());
-        localStorage.setItem('admin_is_verified', data.is_verified ? 'true' : 'false');
-        localStorage.setItem('auth_type', 'client');
-        localStorage.setItem('is_superadmin', data.is_superadmin ? 'true' : 'false');
-        localStorage.setItem('company_name', data.company_name || '');
-        localStorage.setItem('company_website', data.website || '');
+        setAuthBundle(
+          {
+            admin_token: data.access_token,
+            admin_name: data.name,
+            admin_client_id: data.client_id,
+            admin_is_verified: data.is_verified ? 'true' : 'false',
+            auth_type: 'client',
+            is_superadmin: data.is_superadmin ? 'true' : 'false',
+            company_name: data.company_name || '',
+            company_website: data.website || '',
+          },
+          rememberMe,
+        );
         sessionStorage.setItem('login_toast', '1');
 
         if (!data.is_verified) {
@@ -103,9 +117,9 @@ export default function Login() {
     }
   };
 
-  if (localStorage.getItem('admin_token')) {
-    if (localStorage.getItem('admin_is_verified') === 'false') {
-      const pending = localStorage.getItem('admin_pending_email') || '';
+  if (getAuthItem('admin_token')) {
+    if (getAuthItem('admin_is_verified') === 'false') {
+      const pending = getAuthItem('admin_pending_email') || '';
       return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
     }
     const isSuper = localStorage.getItem('is_superadmin') === 'true';
@@ -139,11 +153,9 @@ export default function Login() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="relative z-10 flex items-center gap-3"
+          className="relative z-10 flex items-center gap-1"
         >
-          <div className="w-10 h-10 rounded-xl bg-blue-600/80 backdrop-blur-md border border-blue-400/30 flex items-center justify-center shadow-lg shadow-blue-500/30">
-            <Sparkles size={20} className="text-white" />
-          </div>
+          <img src="/logo-icon.png" alt="OyeChats" className="h-12 w-auto object-contain" />
           <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
         </motion.div>
 
@@ -220,10 +232,8 @@ export default function Login() {
           className="w-full max-w-[400px]"
         >
           {/* Mobile logo */}
-          <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
-              <Sparkles size={18} />
-            </div>
+          <div className="flex items-center gap-1 mb-10 lg:hidden">
+            <img src="/logo-icon.png" alt="OyeChats" className="h-11 w-auto object-contain" />
             <span className="text-lg font-bold text-white">OyeChats</span>
           </div>
 
@@ -246,6 +256,24 @@ export default function Login() {
               {error}
             </motion.div>
           )}
+
+          {/* Google OAuth — same backend endpoint as the signup page. The
+              button hides itself if /auth/google/status returns enabled=false,
+              so misconfigured envs degrade gracefully. */}
+          <div className="mb-5">
+            <GoogleAuthButton
+              label="Sign in with Google"
+              mode="login"
+              next={affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/'}
+              tabIndex={0}
+            />
+          </div>
+
+          <div className="flex items-center gap-3 mb-5">
+            <div className="flex-1 h-px bg-white/10" />
+            <span className="text-xs text-white/40 uppercase tracking-wider">or</span>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>

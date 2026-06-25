@@ -336,6 +336,7 @@ def batch_web_ingestion(
     # Local import: credit_service depends on db.models which already imports
     # heavily — keep this lazy so importing pipeline.py stays cheap and there
     # is no risk of a circular import via app.services.
+    from app.db.models import Bot
     from app.services import credit_service
 
     all_chunk_contents: list[str] = []
@@ -344,6 +345,17 @@ def batch_web_ingestion(
     current_time = datetime.utcnow().isoformat()
 
     with get_session() as session:
+        # Resolve the bot's ledger scope once so every page in the batch
+        # charges the same bucket. Per-bot subscriptions drain their
+        # isolated ledger; legacy / Free bots drain the client pool
+        # (bot_id=None). Done inside the same session as ingestion so
+        # tests that mock ``get_session`` with a single-use context
+        # manager keep working.
+        ledger_bot_id: int | None = None
+        if bot_id is not None and cost_per_page > 0:
+            _bot_for_ledger = session.get(Bot, bot_id)
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(_bot_for_ledger)
+
         for page in pages:
             url = page["url"]
             content = page["content"]
@@ -453,6 +465,7 @@ def batch_web_ingestion(
                         cost_per_page,
                         reason=deduct_reason,
                         reference_id=deduct_reference_id,
+                        bot_id=ledger_bot_id,
                     )
                 session.commit()
                 total += count

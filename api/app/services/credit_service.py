@@ -35,7 +35,41 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.dates import add_months
-from app.db.models import CreditLedger, PricingConfig, Subscription
+from app.db.models import Bot, CreditLedger, PricingConfig, Subscription
+
+# ── Per-bot ledger scoping ────────────────────────────────────────────────────
+#
+# Every public read/write below takes an optional ``bot_id`` argument:
+#
+#   * ``bot_id=None`` (default)  → operates on the **client pool** —
+#     ledger rows whose ``bot_id IS NULL``. This is the legacy /
+#     account-level shape used by grandfathered (``is_legacy_pooled=True``)
+#     bots and the Free single bot.
+#   * ``bot_id=<int>``           → operates on an **isolated per-bot ledger**.
+#     Used by every bot that has its own paid subscription
+#     (``bot.is_legacy_pooled=False`` AND ``bot.subscription_id IS NOT NULL``).
+#
+# ``resolve_bot_ledger_bot_id`` is the single helper that maps a Bot row to
+# the right scope. Call it at the boundary (chat / ingestion / email
+# routes) and thread the result through the credit_service calls.
+
+
+def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
+    """Decide which ledger bucket a bot's usage should drain.
+
+    Returns the bot's id (per-bot ledger) when the bot has its own paid
+    subscription and isn't grandfathered into the pool. Returns ``None``
+    (client pool) for legacy-pooled bots and the single Free bot — both
+    keep the pre-per-bot-billing behaviour.
+    """
+    if bot is None:
+        return None
+    if getattr(bot, "is_legacy_pooled", False):
+        return None
+    if getattr(bot, "subscription_id", None) is None:
+        return None
+    return getattr(bot, "id", None)
+
 
 logger = logging.getLogger(__name__)
 
@@ -173,12 +207,22 @@ def is_kill_switch_active(session: Session) -> bool:
 # ── Balance queries ───────────────────────────────────────────────────────────
 
 
-def get_balance(session: Session, client_id: int) -> int:
-    """Return the client's current total balance (sum of all ledger deltas)."""
+def _scope_clause(client_id: int, bot_id: int | None):
+    """Build the WHERE filter that selects a single (client, bot) ledger.
+
+    ``bot_id=None`` selects the client pool (rows where ``bot_id IS NULL``),
+    preserving the pre-per-bot-billing behaviour. ``bot_id=<int>`` selects
+    a single bot's isolated ledger.
+    """
+    if bot_id is None:
+        return (CreditLedger.client_id == client_id, CreditLedger.bot_id.is_(None))
+    return (CreditLedger.client_id == client_id, CreditLedger.bot_id == int(bot_id))
+
+
+def get_balance(session: Session, client_id: int, bot_id: int | None = None) -> int:
+    """Return the current balance for the given ledger scope."""
     return int(
-        session.scalar(
-            select(func.coalesce(func.sum(CreditLedger.delta), 0)).where(CreditLedger.client_id == client_id)
-        )
+        session.scalar(select(func.coalesce(func.sum(CreditLedger.delta), 0)).where(*_scope_clause(client_id, bot_id)))
         or 0
     )
 
@@ -187,6 +231,8 @@ def _consumed_against(session: Session, grant_id: int) -> int:
     """How many credits have been consumed against a given grant.
 
     Sums the absolute value of negative deltas whose ``grant_id`` matches.
+    Scoped purely by ``grant_id`` (grants and their deductions always share
+    the same client/bot scope by construction).
     """
     consumed = session.scalar(
         select(func.coalesce(func.sum(-CreditLedger.delta), 0)).where(
@@ -197,8 +243,14 @@ def _consumed_against(session: Session, grant_id: int) -> int:
     return int(consumed or 0)
 
 
-def _grants_for(session: Session, client_id: int, *, only_unexpired: bool = True) -> list[CreditLedger]:
-    """Return positive grant rows for a client in FIFO consumption order.
+def _grants_for(
+    session: Session,
+    client_id: int,
+    *,
+    bot_id: int | None = None,
+    only_unexpired: bool = True,
+) -> list[CreditLedger]:
+    """Return positive grant rows for a (client, bot) scope in FIFO order.
 
     Order:
       1. ``plan_grant`` first (use-it-or-lose-it; consume before top-ups).
@@ -206,7 +258,7 @@ def _grants_for(session: Session, client_id: int, *, only_unexpired: bool = True
       3. ``manual_adjust`` last (treated as topup-like but with no expiry).
     """
     stmt = select(CreditLedger).where(
-        CreditLedger.client_id == client_id,
+        *_scope_clause(client_id, bot_id),
         CreditLedger.delta > 0,
         CreditLedger.reason.in_(("plan_grant", "topup", "manual_adjust")),
     )
@@ -221,18 +273,13 @@ def _grants_for(session: Session, client_id: int, *, only_unexpired: bool = True
     return list(session.execute(stmt).scalars().all())
 
 
-def get_balance_breakdown(session: Session, client_id: int) -> dict[str, Any]:
-    """Return ``{plan, topup, total, soonest_expiry}``.
-
-    ``plan`` and ``topup`` are integer counts of remaining unredeemed credits
-    in each bucket. ``soonest_expiry`` is the earliest ``expires_at`` across
-    top-up grants that still have a positive remaining balance.
-    """
+def get_balance_breakdown(session: Session, client_id: int, bot_id: int | None = None) -> dict[str, Any]:
+    """Return ``{plan, topup, total, soonest_expiry}`` for one ledger scope."""
     plan_remaining = 0
     topup_remaining = 0
     soonest: datetime | None = None
 
-    for grant in _grants_for(session, client_id):
+    for grant in _grants_for(session, client_id, bot_id=bot_id):
         consumed = _consumed_against(session, grant.id)
         remaining = grant.delta - consumed
         if remaining <= 0:
@@ -255,13 +302,20 @@ def get_balance_breakdown(session: Session, client_id: int) -> dict[str, Any]:
 # ── Atomicity helper ──────────────────────────────────────────────────────────
 
 
-def _acquire_client_lock(session: Session, client_id: int) -> None:
-    """Take a transaction-scoped PG advisory lock keyed on client_id.
+def _acquire_client_lock(session: Session, client_id: int, bot_id: int | None = None) -> None:
+    """Take a transaction-scoped PG advisory lock keyed on (client_id, bot_id).
 
-    Released automatically at COMMIT/ROLLBACK. Prevents concurrent chat
-    requests from racing the balance check.
+    Released automatically at COMMIT/ROLLBACK. Prevents concurrent
+    requests from racing the balance check. Per-bot ledgers get their
+    own lock so two bots under the same client don't serialise against
+    each other. Uses the two-arg ``pg_advisory_xact_lock(int, int)``
+    form for that; legacy / client-pool callers pass ``bot_id=0`` so
+    every client-pool operation still serialises on the same lock.
     """
-    session.execute(text("SELECT pg_advisory_xact_lock(:cid)"), {"cid": int(client_id)})
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:cid, :bid)"),
+        {"cid": int(client_id), "bid": int(bot_id or 0)},
+    )
 
 
 # ── Mutations ─────────────────────────────────────────────────────────────────
@@ -273,28 +327,29 @@ def check_and_deduct(
     amount: int,
     reason: str,
     reference_id: int | None = None,
+    bot_id: int | None = None,
 ) -> int:
-    """Atomically deduct ``amount`` credits, allocating FIFO across grants.
+    """Atomically deduct ``amount`` credits, allocating FIFO within one scope.
 
     Writes one ledger row per grant chunk consumed (almost always exactly one).
-    Returns the new balance. Raises :class:`InsufficientCredits` if the client
+    Returns the new balance. Raises :class:`InsufficientCredits` if the scope
     does not have enough credits, or :class:`KillSwitchActive` if global
     deductions are paused.
     """
     if amount <= 0:
-        return get_balance(session, client_id)
+        return get_balance(session, client_id, bot_id)
 
     if is_kill_switch_active(session):
         raise KillSwitchActive("Credit deductions are temporarily halted")
 
-    _acquire_client_lock(session, client_id)
+    _acquire_client_lock(session, client_id, bot_id)
 
-    available = get_balance(session, client_id)
+    available = get_balance(session, client_id, bot_id)
     if available < amount:
         raise InsufficientCredits(required=amount, available=available)
 
     remaining = amount
-    for grant in _grants_for(session, client_id):
+    for grant in _grants_for(session, client_id, bot_id=bot_id):
         if remaining == 0:
             break
         avail = grant.delta - _consumed_against(session, grant.id)
@@ -304,6 +359,7 @@ def check_and_deduct(
         session.add(
             CreditLedger(
                 client_id=client_id,
+                bot_id=bot_id,
                 delta=-take,
                 reason=reason,
                 reference_id=reference_id,
@@ -315,8 +371,9 @@ def check_and_deduct(
     if remaining > 0:
         # Should never happen — balance check would have failed first.
         logger.error(
-            "credit_service: short allocation for client %s (need %d, short %d)",
+            "credit_service: short allocation for client %s bot %s (need %d, short %d)",
             client_id,
+            bot_id,
             amount,
             remaining,
         )
@@ -332,6 +389,7 @@ def refund(
     amount: int,
     reference_id: int,
     note: str | None = None,
+    bot_id: int | None = None,
 ) -> int:
     """Reverse a previous deduction (e.g., per-page crawl failure).
 
@@ -339,11 +397,12 @@ def refund(
     refunded credits behave like a fresh manual adjustment for FIFO purposes.
     """
     if amount <= 0:
-        return get_balance(session, client_id)
-    _acquire_client_lock(session, client_id)
+        return get_balance(session, client_id, bot_id)
+    _acquire_client_lock(session, client_id, bot_id)
     session.add(
         CreditLedger(
             client_id=client_id,
+            bot_id=bot_id,
             delta=int(amount),
             reason="refund",
             reference_id=reference_id,
@@ -351,16 +410,23 @@ def refund(
         )
     )
     session.flush()
-    return get_balance(session, client_id)
+    return get_balance(session, client_id, bot_id)
 
 
-def grant_plan_credits(session: Session, client_id: int, amount: int, note: str | None = None) -> CreditLedger:
+def grant_plan_credits(
+    session: Session,
+    client_id: int,
+    amount: int,
+    note: str | None = None,
+    bot_id: int | None = None,
+) -> CreditLedger:
     """Grant plan credits (subscription renewal). Never expire individually."""
     if amount <= 0:
         raise ValueError("grant_plan_credits requires positive amount")
-    _acquire_client_lock(session, client_id)
+    _acquire_client_lock(session, client_id, bot_id)
     entry = CreditLedger(
         client_id=client_id,
+        bot_id=bot_id,
         delta=int(amount),
         reason="plan_grant",
         expires_at=None,
@@ -371,21 +437,31 @@ def grant_plan_credits(session: Session, client_id: int, amount: int, note: str 
     return entry
 
 
-def grant_topup(session: Session, client_id: int, amount: int, note: str | None = None) -> CreditLedger:
+def grant_topup(
+    session: Session,
+    client_id: int,
+    amount: int,
+    note: str | None = None,
+    bot_id: int | None = None,
+) -> CreditLedger:
     """Grant top-up credits with an N-calendar-month expiry from now.
 
     Uses calendar-month arithmetic (``add_months``) not 30-day approximations,
     so a top-up bought on Jun 10 expires on Jun 10 the next year — not Jun 5
     (which the old ``months * 30`` day count would produce, losing 5 days).
+
+    Per-bot top-ups land in that bot's isolated ledger when ``bot_id`` is
+    set; account-level top-ups (``bot_id=None``) land in the client pool.
     """
     if amount <= 0:
         raise ValueError("grant_topup requires positive amount")
     pricing = get_pricing(session)
     months = int(pricing.get("topup_expiry_months", 12))
     expires_at = add_months(datetime.now(UTC), months)
-    _acquire_client_lock(session, client_id)
+    _acquire_client_lock(session, client_id, bot_id)
     entry = CreditLedger(
         client_id=client_id,
+        bot_id=bot_id,
         delta=int(amount),
         reason="topup",
         expires_at=expires_at,
@@ -422,8 +498,8 @@ def grant_manual(
     return entry
 
 
-def reset_monthly_plan_credits(session: Session, client_id: int) -> int:
-    """Zero out unused plan credits at subscription renewal.
+def reset_monthly_plan_credits(session: Session, client_id: int, bot_id: int | None = None) -> int:
+    """Zero out unused plan credits at subscription renewal (within one scope).
 
     Returns the number of credits expired (informational; >= 0).
 
@@ -436,9 +512,9 @@ def reset_monthly_plan_credits(session: Session, client_id: int) -> int:
     unused credits to be silently rolled into the new month's bucket. That
     bug was the source of the "614 / 500" overflow we saw.
     """
-    _acquire_client_lock(session, client_id)
+    _acquire_client_lock(session, client_id, bot_id)
     leftover_total = 0
-    for grant in _grants_for(session, client_id):
+    for grant in _grants_for(session, client_id, bot_id=bot_id):
         if grant.reason != "plan_grant":
             continue  # don't expire top-ups or manual adjusts here
         consumed = _consumed_against(session, grant.id)
@@ -448,6 +524,7 @@ def reset_monthly_plan_credits(session: Session, client_id: int) -> int:
         session.add(
             CreditLedger(
                 client_id=client_id,
+                bot_id=bot_id,
                 delta=-remaining,
                 reason="plan_grant",
                 grant_id=grant.id,
@@ -523,6 +600,10 @@ def grant_for_subscription(session: Session, subscription: Subscription) -> Cred
     Used on initial signup and by the cron-fallback monthly grant. Idempotency
     at the call site (webhook handler / cron) is responsible for not granting
     twice in the same period.
+
+    Per-bot subscriptions (``subscription.bot_id IS NOT NULL``) land in the
+    bot's isolated ledger; legacy / account-level subscriptions land in the
+    client pool exactly as before.
     """
     plan = subscription.plan
     if plan is None or int(plan.credits_per_month or 0) <= 0:
@@ -532,6 +613,7 @@ def grant_for_subscription(session: Session, subscription: Subscription) -> Cred
         subscription.client_id,
         int(plan.credits_per_month),
         note=f"{plan.name} monthly grant",
+        bot_id=subscription.bot_id,
     )
 
 

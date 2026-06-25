@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Mail, Webhook as WebhookIcon, Calendar, Loader2, Info, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
@@ -6,7 +6,8 @@ import Tabs from '../components/ui/Tabs';
 import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import useEntitlements from '../hooks/useEntitlements';
-import { getBots, updateBot } from '../services/api';
+import { useBotContext } from '../context/BotContext';
+import { updateBot } from '../services/api';
 import Webhooks from './Webhooks';
 
 // ─── Toggle ─────────────────────────────────────────────────────────────────
@@ -148,8 +149,12 @@ function EmailChipInput({ emails, onChange, placeholder = 'Type email and press 
 
 function EmailSettings() {
     const { showToast } = useToast();
-    const [bot, setBot] = useState(null);
-    const [loading, setLoading] = useState(true);
+    // BUG FIX: this page used to load + save settings for ``bots[0]`` —
+    // always the first bot regardless of the sidebar selection. That
+    // meant editing email settings while bot 2 was selected silently
+    // wrote them to bot 1. Now we read/write the sidebar-selected bot
+    // and re-render whenever the user switches bots.
+    const { selectedBot, refreshBots, loading: botsLoading } = useBotContext();
     const [saving, setSaving] = useState(false);
 
     // Form state — reply-to is a single email (stored as array for chip input); recipients are arrays
@@ -168,42 +173,30 @@ function EmailSettings() {
     const [emailVisitorConfirmation, setEmailVisitorConfirmation] = useState(true);
     const [emailTranscript, setEmailTranscript] = useState(false);
 
-    const fetchBot = useCallback(async () => {
-        setLoading(true);
-        try {
-            const bots = await getBots();
-            if (bots?.length > 0) {
-                const b = bots[0];
-                setBot(b);
-                setReplyToEmail(b.reply_to_email ? [b.reply_to_email] : []);
-                setEmailOnQualified(b.email_on_qualified ?? true);
-                setEmailOnHandoff(b.email_on_handoff ?? true);
-                setEmailOnOffline(b.email_on_offline ?? true);
-                setEmailVisitorConfirmation(b.email_visitor_confirmation ?? true);
-                setEmailTranscript(b.feature_flags?.email_transcript ?? false);
+    // Hydrate form state from the currently-selected bot. Re-runs every
+    // time the user switches bots in the sidebar so the form always
+    // reflects the visible bot's settings.
+    useEffect(() => {
+        if (!selectedBot) return;
+        setReplyToEmail(selectedBot.reply_to_email ? [selectedBot.reply_to_email] : []);
+        setEmailOnQualified(selectedBot.email_on_qualified ?? true);
+        setEmailOnHandoff(selectedBot.email_on_handoff ?? true);
+        setEmailOnOffline(selectedBot.email_on_offline ?? true);
+        setEmailVisitorConfirmation(selectedBot.email_visitor_confirmation ?? true);
+        setEmailTranscript(selectedBot.feature_flags?.email_transcript ?? false);
 
-                // Parse notification_emails JSONB → arrays
-                const ne = b.notification_emails || {};
-                setDefaultRecipients(ne.default || []);
-                setQualifiedLeadRecipients(ne.qualified_lead || []);
-                setHandoffRecipients(ne.handoff_request || []);
-                setOfflineRecipients(ne.offline_message || []);
-
-                if (ne.qualified_lead?.length || ne.handoff_request?.length || ne.offline_message?.length) {
-                    setShowPerEvent(true);
-                }
-            }
-        } catch {
-            showToast('error', 'Failed to load email settings');
-        } finally {
-            setLoading(false);
-        }
-    }, [showToast]);
-
-    useEffect(() => { fetchBot(); }, [fetchBot]);
+        const ne = selectedBot.notification_emails || {};
+        setDefaultRecipients(ne.default || []);
+        setQualifiedLeadRecipients(ne.qualified_lead || []);
+        setHandoffRecipients(ne.handoff_request || []);
+        setOfflineRecipients(ne.offline_message || []);
+        setShowPerEvent(
+            !!(ne.qualified_lead?.length || ne.handoff_request?.length || ne.offline_message?.length),
+        );
+    }, [selectedBot]);
 
     const handleSave = async () => {
-        if (!bot) return;
+        if (!selectedBot) return;
         setSaving(true);
         try {
             const notificationEmails = { default: defaultRecipients };
@@ -211,7 +204,7 @@ function EmailSettings() {
             if (handoffRecipients.length) notificationEmails.handoff_request = handoffRecipients;
             if (offlineRecipients.length) notificationEmails.offline_message = offlineRecipients;
 
-            await updateBot(bot.id, {
+            await updateBot(selectedBot.id, {
                 reply_to_email: replyToEmail[0] || null,
                 notification_emails: notificationEmails,
                 email_on_qualified: emailOnQualified,
@@ -221,9 +214,11 @@ function EmailSettings() {
                 feature_flags: { email_transcript: emailTranscript },
             });
 
-            showToast('success', 'Email settings saved');
+            showToast('success', `Email settings saved for ${selectedBot.name}`);
             setJustSaved(true);
-            await fetchBot();
+            // Refresh BotContext so the new field values propagate to the
+            // sidebar + sibling pages without a full reload.
+            await refreshBots();
             setTimeout(() => setJustSaved(false), 3000);
         } catch {
             showToast('error', 'Failed to save email settings');
@@ -232,6 +227,9 @@ function EmailSettings() {
         }
     };
 
+    const bot = selectedBot;
+    const loading = botsLoading || !selectedBot;
+
     if (loading) {
         return (
             <div className="flex items-center justify-center py-20">
@@ -239,6 +237,7 @@ function EmailSettings() {
             </div>
         );
     }
+    void bot; // ``bot`` is consumed by the JSX below ({bot?.name})
 
     return (
         <div className="space-y-6 max-w-3xl">
@@ -405,8 +404,10 @@ function EmailSettings() {
 
 function MeetingsSettings() {
     const { showToast } = useToast();
-    const [bot, setBot] = useState(null);
-    const [loading, setLoading] = useState(true);
+    // BUG FIX: same as EmailSettings — used to hardcode ``bots[0]``,
+    // saving every customer's meeting URL into bot 1 regardless of
+    // which bot was selected in the sidebar.
+    const { selectedBot, refreshBots, loading: botsLoading } = useBotContext();
     const [saving, setSaving] = useState(false);
     const [meetingBookingEnabled, setMeetingBookingEnabled] = useState(false);
     const [meetingProvider, setMeetingProvider] = useState('calendly');
@@ -414,42 +415,29 @@ function MeetingsSettings() {
     const [zcalUrl, setZcalUrl] = useState('');
     const [justSaved, setJustSaved] = useState(false);
 
-    const fetchBot = useCallback(async () => {
-        setLoading(true);
-        try {
-            const bots = await getBots();
-            if (bots?.length > 0) {
-                const b = bots[0];
-                setBot(b);
-                setMeetingBookingEnabled(!!b.meeting_booking_enabled);
-                setMeetingProvider(b.meeting_provider || 'calendly');
-                setCalendlyUrl(b.calendly_url || '');
-                setZcalUrl(b.zcal_url || '');
-            }
-        } catch {
-            showToast('error', 'Failed to load meeting settings');
-        } finally {
-            setLoading(false);
-        }
-    }, [showToast]);
-
-    useEffect(() => { fetchBot(); }, [fetchBot]);
+    useEffect(() => {
+        if (!selectedBot) return;
+        setMeetingBookingEnabled(!!selectedBot.meeting_booking_enabled);
+        setMeetingProvider(selectedBot.meeting_provider || 'calendly');
+        setCalendlyUrl(selectedBot.calendly_url || '');
+        setZcalUrl(selectedBot.zcal_url || '');
+    }, [selectedBot]);
 
     const activeUrl = meetingProvider === 'zcal' ? zcalUrl : calendlyUrl;
 
     const handleSave = async () => {
-        if (!bot) return;
+        if (!selectedBot) return;
         setSaving(true);
         try {
-            await updateBot(bot.id, {
+            await updateBot(selectedBot.id, {
                 meeting_booking_enabled: meetingBookingEnabled,
                 meeting_provider: meetingBookingEnabled ? meetingProvider : null,
                 calendly_url: calendlyUrl || null,
                 zcal_url: zcalUrl || null,
             });
-            showToast('success', 'Meeting settings saved');
+            showToast('success', `Meeting settings saved for ${selectedBot.name}`);
             setJustSaved(true);
-            await fetchBot();
+            await refreshBots();
             setTimeout(() => setJustSaved(false), 3000);
         } catch (error) {
             showToast('error', error.message || 'Failed to save meeting settings');
@@ -457,6 +445,8 @@ function MeetingsSettings() {
             setSaving(false);
         }
     };
+
+    const loading = botsLoading || !selectedBot;
 
     const inputClass = "w-full px-3.5 py-2.5 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl text-sm text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500";
 

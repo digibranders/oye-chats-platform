@@ -2,12 +2,32 @@
 
 This service answers every gate question across the platform:
 * Does this client have ``live_chat``? → ``has_feature(client_id, "live_chat")``
-* Has this client hit their bot limit? → ``within_limit(client_id, "bots", current_count)``
 * What's their plan slug for the UI? → ``get_entitlements(client_id).plan_slug``
+* Can they add another bot? → ``can_client_add_new_bot(client_id)``
 
 Both the backend FastAPI dependencies (``require_feature`` / ``enforce_limit``
 in ``app/api/auth.py``) and the frontend ``/me/entitlements`` endpoint read
 from this module. Behavior cannot diverge between them.
+
+## Per-bot billing model (migration f8b2c4d6e1a3)
+
+The plan now attaches to the **Bot**, not the Client. A single client can
+hold many active subscriptions, one per paid bot, each with its own
+credit allowance. Account-level entitlements still resolve via this
+module — features (live_chat, BANT, webhooks) remain per-account because
+they describe the **dashboard** the customer logs into, not any single
+bot. Limits that *do* vary per bot (credit allowance, future per-bot
+flags) should resolve through :func:`get_bot_entitlements` instead.
+
+Two helpers govern bot creation:
+
+* :func:`can_client_add_new_bot` — gate for ``POST /bots``. A client may
+  create their first bot for free; subsequent bots require an active
+  paid subscription somewhere in the account so the checkout step has a
+  funded counterpart.
+* Legacy-pooled bots (``bot.is_legacy_pooled = true``) are
+  grandfathered: their credit deductions still drain the client-level
+  ledger, so they don't enter the per-bot gating logic at all.
 
 ## Resolution order
 
@@ -49,11 +69,11 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.cache import PREFIX, get_redis
-from app.db.models import Client, Plan
+from app.db.models import Bot, Plan
 from app.services.plan_service import get_client_subscription
 
 logger = logging.getLogger(__name__)
@@ -73,10 +93,6 @@ UNLIMITED = -1
 _FREE_FALLBACK_LIMITS: dict[str, Any] = {
     "credits": 250,
     "bots": 1,
-    # ``max_bots_cap`` mirrors the canonical free-plan ceiling: Free users
-    # can never exceed the included quota — there are no purchasable bot
-    # add-ons on this tier. Paid plans set this higher in their JSONB.
-    "max_bots_cap": 1,
     "operators": 0,
     # Leads dashboard is feature-locked on Free (sidebar gate); the
     # numeric quota is therefore set to UNLIMITED so lead storage from
@@ -119,14 +135,6 @@ class PlanEntitlements:
     # ``get_entitlements``. Empty otherwise to avoid the extra query on hot
     # paths that only need limit/feature checks.
     usage: dict[str, int] = field(default_factory=dict)
-    # Paid bot-seat add-ons the client has purchased on top of their plan's
-    # included quota. Always populated (defaults to 0) so callers don't have
-    # to special-case absent data.
-    extra_bot_seats: int = 0
-    # Region-aware bot-seat pricing surfaced from PricingConfig. Empty dict
-    # when add-ons aren't purchasable (Free / Enterprise) — the UI hides
-    # the "buy a seat" CTA in that case.
-    bot_seat_pricing: dict[str, Any] = field(default_factory=dict)
 
     def to_json_dict(self) -> dict[str, Any]:
         """Plain dict for JSON serialization to the frontend."""
@@ -153,14 +161,12 @@ class PlanEntitlements:
     def limit_for(self, limit_name: str) -> int:
         """Return the configured limit. ``UNLIMITED`` (-1) means no cap.
 
-        For ``bots`` this returns the **effective** limit, which is the
-        plan's included quota plus any paid add-on seats, capped at the
-        plan's hard ceiling. Every other limit returns its raw JSONB
-        value. This keeps callers ``within_limit("bots", n)`` agnostic to
-        the existence of add-ons.
+        Every limit returns its raw JSONB value. ``bots`` is the plan's
+        included quota and is meaningful only for legacy / single-bot
+        accounting; new "can I add another bot?" checks live in
+        :func:`can_client_add_new_bot`, which understands the per-bot
+        billing model.
         """
-        if limit_name == "bots":
-            return self._effective_bot_limit()
         raw = self.limits.get(limit_name)
         if raw is None:
             return 0  # Conservative: unknown limit = nothing allowed
@@ -168,36 +174,6 @@ class PlanEntitlements:
             return int(raw)
         except (TypeError, ValueError):
             return 0
-
-    def _effective_bot_limit(self) -> int:
-        """Effective bot limit = included + paid add-ons, capped at hard ceiling.
-
-        Special cases:
-        * If either the included quota or the hard cap is ``UNLIMITED``,
-          the effective limit is ``UNLIMITED`` — Enterprise stays
-          unbounded regardless of seat purchases.
-        * If ``max_bots_cap`` is missing from the plan JSONB (a plan row
-          older than the bot-seat-addon migration), we fall back to the
-          included quota — adding add-ons on a plan with no declared
-          ceiling is a no-op rather than an unbounded grant.
-        """
-        included = self.limits.get("bots")
-        cap = self.limits.get("max_bots_cap")
-        try:
-            included_int = int(included) if included is not None else 0
-        except (TypeError, ValueError):
-            included_int = 0
-        if included_int == UNLIMITED:
-            return UNLIMITED
-        if cap is None:
-            return included_int  # Plan predates the cap concept.
-        try:
-            cap_int = int(cap)
-        except (TypeError, ValueError):
-            return included_int
-        if cap_int == UNLIMITED:
-            return UNLIMITED
-        return min(included_int + max(0, self.extra_bot_seats), cap_int)
 
     def within_limit(self, limit_name: str, current_value: int) -> bool:
         """True if ``current_value`` is below the configured limit.
@@ -221,27 +197,6 @@ class PlanEntitlements:
         if limit == UNLIMITED:
             return 10**9
         return max(0, limit - current_value)
-
-    def can_purchase_bot_seat(self) -> bool:
-        """True if the client may buy another bot seat.
-
-        Three independent guards: there must be a price configured, the
-        plan must have a hard cap that isn't already exhausted by
-        ``bots + extra_bot_seats``, and the included quota must not be
-        already unlimited (Enterprise needs no add-ons).
-        """
-        if not self.bot_seat_pricing:
-            return False
-        included = self.limits.get("bots")
-        cap = self.limits.get("max_bots_cap")
-        if included == UNLIMITED or cap == UNLIMITED:
-            return False
-        try:
-            included_int = int(included) if included is not None else 0
-            cap_int = int(cap) if cap is not None else 0
-        except (TypeError, ValueError):
-            return False
-        return (included_int + max(0, self.extra_bot_seats)) < cap_int
 
 
 # ── Cache helpers ──────────────────────────────────────────────────────────
@@ -356,13 +311,6 @@ def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> Pla
     if plan is None:
         plan = db_session.execute(select(Plan).where(Plan.slug == "free")).scalar_one_or_none()
 
-    # Bot-seat add-on inputs — always loaded, even on the catastrophic
-    # fallback path. We read from Client lazily; a missing column or a
-    # client row that vanished mid-request both degrade to 0 add-ons,
-    # which is the safe default (no extra capacity granted).
-    extra_seats = _load_extra_bot_seats(client_id, db_session)
-    bot_pricing = _load_bot_seat_pricing(db_session)
-
     if plan is None:
         # Catastrophic: even the Free plan row is gone. Use the hardcoded
         # fallback so the application doesn't crash and the client still
@@ -378,8 +326,6 @@ def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> Pla
             subscription_status="none",
             limits=dict(_FREE_FALLBACK_LIMITS),
             features=dict(_FREE_FALLBACK_FEATURES),
-            extra_bot_seats=extra_seats,
-            bot_seat_pricing=bot_pricing,
         )
         if include_usage:
             result.usage = _build_usage(client_id, db_session, result.limits)
@@ -397,8 +343,6 @@ def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> Pla
         subscription_status=sub_status,
         limits=limits,
         features=features,
-        extra_bot_seats=extra_seats,
-        bot_seat_pricing=bot_pricing,
     )
 
     if include_usage:
@@ -407,48 +351,75 @@ def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> Pla
     return result
 
 
-# ── Bot-seat add-on helpers ────────────────────────────────────────────────
+# ── Per-bot creation gate ──────────────────────────────────────────────────
 
 
-def _load_extra_bot_seats(client_id: int, db_session: Session) -> int:
-    """Read ``clients.extra_bot_seats`` defensively. Missing row → 0."""
-    try:
-        client = db_session.get(Client, client_id)
-        if client is None:
-            return 0
-        return int(getattr(client, "extra_bot_seats", 0) or 0)
-    except Exception:
-        logger.debug(
-            "entitlements: extra_bot_seats load failed for client=%s",
-            client_id,
-            exc_info=True,
-        )
-        return 0
+@dataclass
+class AddBotDecision:
+    """Outcome of :func:`can_client_add_new_bot`.
 
-
-def _load_bot_seat_pricing(db_session: Session) -> dict[str, Any]:
-    """Surface the bot-seat price knobs from PricingConfig.
-
-    Returns ``{"usd_cents": int, "inr_paise": int}`` when both are set.
-    Returns an empty dict if either is missing — the entitlements helper
-    ``can_purchase_bot_seat`` treats that as "add-ons disabled" so the
-    upgrade modal won't show the purchase CTA in a misconfigured env.
+    The frontend opens an "Add Bot" paywall modal when ``allowed`` is
+    ``False`` and ``must_subscribe`` is ``True``. Other failure reasons
+    map to plain error toasts.
     """
-    try:
-        from app.services.credit_service import get_pricing
 
-        pricing = get_pricing(db_session)
-        usd = pricing.get("bot_seat_price_usd_cents")
-        inr = pricing.get("bot_seat_price_inr_paise")
-        if usd is None or inr is None:
-            return {}
+    allowed: bool
+    reason: str  # machine-readable: "ok" | "upgrade_required"
+    must_subscribe: bool  # True iff the user can resolve this by subscribing
+    active_bot_count: int
+
+    def to_json(self) -> dict[str, Any]:
         return {
-            "usd_cents": int(usd),
-            "inr_paise": int(inr),
+            "allowed": self.allowed,
+            "reason": self.reason,
+            "must_subscribe": self.must_subscribe,
+            "active_bot_count": self.active_bot_count,
         }
-    except Exception:
-        logger.debug("entitlements: bot seat pricing load failed", exc_info=True)
-        return {}
+
+
+def can_client_add_new_bot(client_id: int, db_session: Session) -> AddBotDecision:
+    """Decide whether ``POST /bots`` should accept another bot for this client.
+
+    Per-bot billing rule: **every bot needs its own subscription** (the
+    Free tier funds the first bot for free; every bot beyond that needs
+    a fresh paid subscription). So:
+
+    1. 0 active bots → allowed (becomes the Free bot, or the first paid
+       bot for an account that's about to subscribe).
+    2. ≥1 active bot → blocked with ``must_subscribe=True``. The
+       dashboard pops the upgrade modal so the customer can mint another
+       subscription. Holding a paid subscription does **not** grant a
+       free second bot — each bot's subscription funds exactly one bot.
+
+    This rule applies uniformly across Free, Starter, Standard, and
+    Enterprise. Enterprise customers who want unlimited bots under one
+    master subscription are handled outside this gate (super-admin sets
+    ``is_legacy_pooled=true`` on each Enterprise-account bot at
+    provisioning time so they share the master subscription's credits).
+    """
+    active_bots = int(
+        db_session.execute(
+            select(func.count(Bot.id)).where(
+                Bot.client_id == client_id,
+                Bot.is_active.is_(True),
+            )
+        ).scalar_one()
+        or 0
+    )
+    if active_bots == 0:
+        return AddBotDecision(
+            allowed=True,
+            reason="ok",
+            must_subscribe=False,
+            active_bot_count=0,
+        )
+
+    return AddBotDecision(
+        allowed=False,
+        reason="upgrade_required",
+        must_subscribe=True,
+        active_bot_count=active_bots,
+    )
 
 
 # ── Usage population ───────────────────────────────────────────────────────
@@ -467,9 +438,9 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
     * ``page_scraping``  — pages crawled this billing period
     * ``leads``          — lead_info rows created this period
     """
-    from sqlalchemy import distinct, func
+    from sqlalchemy import distinct
 
-    from app.db.models import Bot, Document, LeadInfo, Operator
+    from app.db.models import Document, LeadInfo, Operator
 
     usage: dict[str, int] = {
         "bots": 0,

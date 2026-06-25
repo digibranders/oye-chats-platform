@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
-import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest } from '../services/api';
+import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback } from '../services/api';
 import { getController } from '../widget-controller.js';
 import { themeConfigs } from './themeConfigs';
 import BotAvatar from './BotAvatar';
 import MessageBubble from './MessageBubble';
 import MessageStatus from './MessageStatus';
 import { sanitizeColor, sanitizeImageUrl, sanitizeFileUrl } from '../services/sanitize';
+import { getSessionKey, getLeadCapturedKey, isLeadCaptureFresh, markLeadCaptured } from '../services/storage-keys';
 import TypingIndicator from './TypingIndicator';
 import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
@@ -167,7 +168,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // the tap reads as "nothing happened" on touch devices.
     const [scrollBtnPulse, setScrollBtnPulse] = useState(false);
     const [sessionId, setSessionId] = useState(() => {
-        try { return localStorage.getItem('chat_session_id'); } catch { return null; }
+        try { return localStorage.getItem(getSessionKey()); } catch { return null; }
     });
     const [showWelcome, setShowWelcome] = useState(isOnline);
     const [welcomeExiting, setWelcomeExiting] = useState(false);
@@ -490,9 +491,18 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             }
 
             const resolvedSettings = initialSettings || settings;
-            const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
-            const leadCapturedKey = `oyechats_lead_captured_${botKey}`;
-            if (resolvedSettings?.lead_form_enabled && !localStorage.getItem(leadCapturedKey) && !sessionId) {
+            // Lead form shows whenever it's enabled AND we don't have a fresh
+            // capture for THIS bot. We intentionally do NOT gate on sessionId:
+            // (1) sessionId can be stale from prior testing, which would
+            //     silently suppress the form even on the first real visit;
+            // (2) admins who flip the toggle on AFTER a session started must
+            //     still be able to capture that visitor on their next reload.
+            // The TTL (30d) re-prompts long-returning visitors so leads stay
+            // fresh; submission within the window flips the gate immediately.
+            const capturedRaw = (() => {
+                try { return localStorage.getItem(getLeadCapturedKey()); } catch { return null; }
+            })();
+            if (resolvedSettings?.lead_form_enabled && !isLeadCaptureFresh(capturedRaw)) {
                 setShowLeadForm(true);
                 setShowWelcome(false);
                 setIsInitializing(false);
@@ -508,7 +518,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             text: m.content,
                             sender: m.role === 'user' ? 'user' : 'bot',
                             timestamp: m.timestamp,
-                            feedback: null,
+                            feedback: typeof m.feedback === 'number' ? m.feedback : null,
                             ...(m.role === 'system' ? { type: 'system' } : {}),
                         }));
                         setMessages(mapped);
@@ -573,7 +583,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         pageContextRef.current = collectPageContext();
 
         const handleUnload = () => {
-            const sid = sessionId || localStorage.getItem('chat_session_id');
+            const sid = sessionId || localStorage.getItem(getSessionKey());
             if (sid && pageContextRef.current) {
                 sendTimeOnPage(sid, pageContextRef.current._load_time);
             }
@@ -833,10 +843,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // ── New chat ─────────────────────────────────────────────────────────────────
     const handleNewChat = () => {
         setIsInitializing(true);
-        localStorage.removeItem('chat_session_id');
+        localStorage.removeItem(getSessionKey());
         const newSession = `session_${crypto.randomUUID()}`;
         setSessionId(newSession);
-        localStorage.setItem('chat_session_id', newSession);
+        localStorage.setItem(getSessionKey(), newSession);
         setShowWelcome(true);
         handoffTriggeredRef.current = false;
         handoffFormInjectedRef.current = false;
@@ -912,7 +922,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 onMetadata: (metadata) => {
                     if (metadata.session_id && metadata.session_id !== sessionId) {
                         setSessionId(metadata.session_id);
-                        localStorage.setItem('chat_session_id', metadata.session_id);
+                        localStorage.setItem(getSessionKey(), metadata.session_id);
                     }
                     // Send behavioral signals once per conversation
                     const resolvedSid = metadata.session_id || sessionId;
@@ -1127,7 +1137,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         if (!sessionId) {
             const newSession = `session_${crypto.randomUUID()}`;
             setSessionId(newSession);
-            localStorage.setItem('chat_session_id', newSession);
+            localStorage.setItem(getSessionKey(), newSession);
         }
         if (handoffFormInjectedRef.current) return;
         handoffFormInjectedRef.current = true;
@@ -1376,6 +1386,28 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         setConnectRequest(null);
     }, [connectRequest]);
 
+    // ── Bot message feedback (thumbs up/down) ───────────────────────────────
+    // Optimistic update — flip the local state first so the UI feels instant,
+    // then sync to the server. If the server call fails we revert so the
+    // visitor doesn't think their reaction was recorded when it wasn't.
+    const handleBotMessageFeedback = useCallback(async (messageId, nextValue) => {
+        if (messageId == null) return;
+        let previousValue = null;
+        setMessages(prev => prev.map(m => {
+            if (m.id !== messageId) return m;
+            previousValue = m.feedback ?? null;
+            return { ...m, feedback: nextValue };
+        }));
+        try {
+            await submitFeedback(messageId, nextValue);
+        } catch {
+            // Network/server failure — revert the optimistic update.
+            setMessages(prev => prev.map(m =>
+                m.id === messageId ? { ...m, feedback: previousValue } : m
+            ));
+        }
+    }, []);
+
     // ── Offline-form availability polling ────────────────────────────────────
     //
     // While the visitor is on the offline form, an operator may come online.
@@ -1455,11 +1487,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const newSessionId = sessionId || `session_${crypto.randomUUID()}`;
         if (!sessionId) {
             setSessionId(newSessionId);
-            localStorage.setItem('chat_session_id', newSessionId);
+            localStorage.setItem(getSessionKey(), newSessionId);
         }
         await submitLeadCapture(newSessionId, formData);
-        const botKey = window.OYECHATS_BOT_KEY || window.OYECHATS_API_KEY || 'default';
-        localStorage.setItem(`oyechats_lead_captured_${botKey}`, 'true');
+        markLeadCaptured();
         setShowLeadForm(false);
         setShowWelcome(true);
     };
@@ -1936,16 +1967,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
-                {/* Lead capture form overlay — shown before any conversation begins */}
+                {/* Pre-chat lead form — sits inside the messages area so the
+                    parent ChatWindow's header (bot avatar, name, close button)
+                    stays visible above it. Do NOT pass currentTheme/onClose
+                    here — the form renders content only, not its own chrome. */}
                 {showLeadForm && (
                     <div className="absolute inset-0 z-20 pointer-events-auto">
                         <Suspense fallback={null}>
                             <LeadCaptureForm
                                 settings={settings}
-                                currentTheme={currentTheme}
-                                onClose={onClose}
                                 onSubmit={handleLeadFormSubmit}
-                                isAnimating={isAnimating}
                             />
                         </Suspense>
                     </div>
@@ -2027,6 +2058,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     currentTheme={currentTheme}
                                     settings={settings}
                                     streamingId={streamingId}
+                                    onFeedback={handleBotMessageFeedback}
                                 />
                             );
                         }

@@ -27,6 +27,7 @@ from app.api.chat_routes import router as chat_router
 from app.api.client_routes import router as client_router
 from app.api.document_routes import router as document_router
 from app.api.lead_routes import router as lead_router
+from app.api.oauth_routes import router as oauth_router
 from app.api.offline_message_routes import router as offline_message_router
 from app.api.operator_routes import router as operator_router
 from app.api.subscription_routes import credits_router
@@ -118,6 +119,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Routers ---
 app.include_router(auth_router)
+app.include_router(oauth_router)
 app.include_router(superadmin_router)
 app.include_router(public_bot_router)
 app.include_router(bot_router)
