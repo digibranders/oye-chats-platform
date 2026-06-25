@@ -345,17 +345,20 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
 
     plan_includes_live_chat = False
     plan_slug = "free"
+    _plan_branding_removable = False  # fail-closed: never hide branding on resolution error
     try:
         with _get_session() as _s:
             _plan = get_client_plan(_s, bot.client_id)
             plan_includes_live_chat = is_feature_enabled(_plan, "live_chat")
             plan_slug = (_plan.slug or "free").lower()
+            _plan_branding_removable = is_feature_enabled(_plan, "branding_removable")
     except Exception:
         # Fail closed — if we can't resolve the plan, hide live chat AND
         # apply Free-plan widget-behavior locks. Safer than leaking a paid
         # feature when the entitlements check fails.
         plan_includes_live_chat = False
         plan_slug = "free"
+        _plan_branding_removable = False
     effective_live_chat_enabled = bool(bot.live_chat_enabled) and plan_includes_live_chat
 
     # Free plan: the Widget Behavior section in Admin → Settings is fully
@@ -375,6 +378,13 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
                 "email_transcript": False,
             }
         )
+    elif not _plan_branding_removable:
+        # Non-free plans that don't include branding removal (e.g. Starter)
+        # must also force show_branding=True. The admin UI locks the toggle
+        # for these plans but stored feature_flags may have show_branding=False
+        # left over from a previous paid tier — enforce server-side so the
+        # widget always reflects the plan entitlement.
+        effective_feature_flags["show_branding"] = True
 
     return {
         "bot_name": bot.name,

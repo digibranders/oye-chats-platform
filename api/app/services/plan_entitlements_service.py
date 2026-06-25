@@ -91,7 +91,7 @@ UNLIMITED = -1
 # (e.g. the four canonical plans were deleted by a misconfigured super
 # admin). Matches the seeded Free plan exactly.
 _FREE_FALLBACK_LIMITS: dict[str, Any] = {
-    "credits": 250,
+    "credits": 200,
     "bots": 1,
     "operators": 0,
     # Leads dashboard is feature-locked on Free (sidebar gate); the
@@ -99,7 +99,7 @@ _FREE_FALLBACK_LIMITS: dict[str, Any] = {
     # chat conversations + offline messages continues to work for the
     # Insights view the customer DOES have access to.
     "leads": -1,
-    "page_scraping": 30,
+    "page_scraping": 20,
     "documents": 5,
     "chat_history_days": 7,
 }

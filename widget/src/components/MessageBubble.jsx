@@ -28,6 +28,7 @@ const _FOLLOW_UP_OPENERS = [
     "Want to",
     "Should I",
     "Do you want",
+    "Do you need",
     "Can I",
     "Let me know if",
     "Just let me know",
@@ -37,10 +38,20 @@ const _FOLLOW_UP_OPENERS = [
     "I can help",
 ];
 
+const _FOLLOW_UP_OPENERS_RE = _FOLLOW_UP_OPENERS
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+
+// Fires when the opener follows sentence-ending punctuation (existing case).
 const _FOLLOW_UP_REGEX = new RegExp(
-    `([.!?])[ \\t]+(?=(?:${_FOLLOW_UP_OPENERS
-        .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-        .join('|')})\\b)`,
+    `([.!?])[ \\t]+(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
+    'g',
+);
+
+// Fires when the opener is glued directly after a word (no punctuation gap) —
+// e.g. the LLM emits "add-onDo you need…" with no newline or space.
+const _FOLLOW_UP_INLINE_REGEX = new RegExp(
+    `([a-z])[ \\t]*(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
     'g',
 );
 
@@ -101,7 +112,9 @@ const formatBotMarkdown = (text) => {
         out.push('');
     }
 
-    return out.join('\n').replace(_FOLLOW_UP_REGEX, '$1\n\n');
+    return out.join('\n')
+        .replace(_FOLLOW_UP_REGEX, '$1\n\n')
+        .replace(_FOLLOW_UP_INLINE_REGEX, '$1\n\n');
 };
 
 const _linkText = (children) =>
@@ -198,7 +211,7 @@ const _markdownToPlainText = (text) => {
         .trim();
 };
 
-const MessageActionButton = ({ children, label, onClick, active = false, success = false, disabled = false }) => (
+const MessageActionButton = ({ children, label, onClick, active = false, success = false, disabled = false, activeClass = 'text-blue-600 bg-blue-50' }) => (
     <button
         type="button"
         onClick={onClick}
@@ -209,7 +222,7 @@ const MessageActionButton = ({ children, label, onClick, active = false, success
             success
                 ? 'text-emerald-600 bg-emerald-50'
                 : active
-                ? 'text-blue-600 bg-blue-50'
+                ? activeClass
                 : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
         }`}
     >
@@ -314,6 +327,7 @@ const MessageBubble = ({
                                 label={msg.feedback === 1 ? 'Remove thumbs up' : 'Helpful'}
                                 onClick={() => handleFeedback(1)}
                                 active={msg.feedback === 1}
+                                activeClass="text-emerald-600 bg-emerald-50"
                             >
                                 <ThumbsUp className="w-3.5 h-3.5" strokeWidth={2} />
                             </MessageActionButton>
@@ -321,6 +335,7 @@ const MessageBubble = ({
                                 label={msg.feedback === -1 ? 'Remove thumbs down' : 'Not helpful'}
                                 onClick={() => handleFeedback(-1)}
                                 active={msg.feedback === -1}
+                                activeClass="text-rose-500 bg-rose-50"
                             >
                                 <ThumbsDown className="w-3.5 h-3.5" strokeWidth={2} />
                             </MessageActionButton>

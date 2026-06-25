@@ -845,20 +845,26 @@ def change_plan(
                 # Razorpay's UPI mandate kept debiting the customer at the
                 # next cycle — real "still charging after cancellation"
                 # support tickets and chargeback risk.
-                from app.services.razorpay_service import (
-                    RazorpayBillingError,
-                )
-                from app.services.razorpay_service import (
-                    cancel_subscription as cancel_razorpay_subscription,
-                )
+                #
+                # Skip the provider call if our DB already shows the mandate
+                # as cancelled/expired — it means the webhook already fired
+                # and Razorpay would reject a second cancel with a 400.
+                already_cancelled = sub.status in ("canceled", "cancelled", "expired", "completed")
+                if not already_cancelled:
+                    from app.services.razorpay_service import (
+                        RazorpayBillingError,
+                    )
+                    from app.services.razorpay_service import (
+                        cancel_subscription as cancel_razorpay_subscription,
+                    )
 
-                try:
-                    cancel_razorpay_subscription(sub, at_period_end=True)
-                except RazorpayBillingError as exc:
-                    raise HTTPException(
-                        status_code=502,
-                        detail="Could not cancel your subscription with the payment provider. Please try again in a moment.",
-                    ) from exc
+                    try:
+                        cancel_razorpay_subscription(sub, at_period_end=True)
+                    except RazorpayBillingError as exc:
+                        raise HTTPException(
+                            status_code=502,
+                            detail="Could not cancel your subscription with the payment provider. Please try again in a moment.",
+                        ) from exc
                 sub.cancel_at_period_end = True
                 msg = f"Scheduled downgrade to {new_plan.name} at the end of the current billing cycle."
             else:

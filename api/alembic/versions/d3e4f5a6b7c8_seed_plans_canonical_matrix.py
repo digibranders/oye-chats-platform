@@ -51,23 +51,23 @@ depends_on = None
 _PLAN_DATA = {
     "free": {
         "name": "Free",
-        "credits_per_month": 250,
+        "credits_per_month": 200,
         "monthly_price_cents": 0,
         "annual_price_cents": 0,
         "annual_discount_percent": 0,
         "trial_days": 0,
         "limits": {
             # Canonical entitlement keys
-            "credits": 250,
+            "credits": 200,
             "bots": 1,
             "operators": 0,
             "leads": 15,
-            "page_scraping": 30,
+            "page_scraping": 20,
             "documents": 5,
             "chat_history_days": 7,
             # Legacy crawler config (preserved)
             "max_crawl_depth": 2,
-            "max_crawl_pages": 30,
+            "max_crawl_pages": 20,
             "max_crawl_js_pages": 10,
             "max_crawl_concurrency": 2,
         },

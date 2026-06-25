@@ -574,16 +574,16 @@ export default function Billing() {
           Refresh
         </Button>
         {topupAllowed ? (
-          <Button onClick={() => setTopupOpen(true)} disabled={loading}>
-            <CreditCoin className="w-4 h-4" />
+          <Button size="sm" onClick={() => setTopupOpen(true)} disabled={loading}>
+            <CreditCoin className="w-3.5 h-3.5" />
             Buy more credits
           </Button>
         ) : (
           // Free: route to plan upgrade flow instead of top up. Same CTA
           // slot so the page layout doesn't shift; only the label and
           // handler change.
-          <Button onClick={() => setPlanOpen(true)} disabled={loading}>
-            <Sparkles className="w-4 h-4" />
+          <Button size="sm" onClick={() => setPlanOpen(true)} disabled={loading}>
+            <Sparkles className="w-3.5 h-3.5" />
             Upgrade to Starter
           </Button>
         )}

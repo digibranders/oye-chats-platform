@@ -166,6 +166,24 @@ RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
 RAZORPAY_ENABLED = bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
 
+# ── ₹1 checkout test mode (production-safe) ───────────────────────────────────
+# Scope the ₹1 override to specific client IDs only, so real customers are
+# never affected even when this is set in production.
+#
+# CHECKOUT_TEST_CLIENT_IDS — comma-separated list of client.id integers whose
+#   checkouts are overridden to ₹1. Leave empty (or unset) to disable entirely.
+#   Example: CHECKOUT_TEST_CLIENT_IDS=3,7
+#
+# RAZORPAY_TEST_PLAN_ID — Razorpay Plan ID for a ₹1/month recurring plan.
+#   Required for subscription checkouts when a test client ID is matched.
+#   Create once in the Razorpay dashboard: ₹1/month, e.g. "OyeChats Test ₹1".
+#   Top-up orders don't need this — their amount is overridden directly.
+_raw_test_ids = os.getenv("CHECKOUT_TEST_CLIENT_IDS", "")
+CHECKOUT_TEST_CLIENT_IDS: frozenset[int] = frozenset(
+    int(x.strip()) for x in _raw_test_ids.split(",") if x.strip().isdigit()
+)
+RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
+
 # Default billing provider for new subscriptions and top-ups. Customers on a
 # subscription continue to use whichever provider their record is tagged with;
 # this only affects new sign-ups and the admin checkout button.

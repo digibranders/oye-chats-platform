@@ -897,7 +897,11 @@ NEED — a stated PROBLEM or PAIN the user is trying to solve:
     - "We've been burned by tools before"                       (concern, not stated current pain)
 
 BUDGET — a stated CURRENT financial commitment or allocation:
+  AMOUNT SIZE DOES NOT MATTER. $50, $200, $500, $5k — any specific dollar/currency figure the user names for their OWN spend is a budget signal. Score it against the rubric tiers; do not discard it because it is small.
   POSITIVE (these ARE budget signals; note PRESENT TENSE + commitment):
+    + "My budget is around 200 dollars"                         (small explicit amount — VALID, score to nearest tier)
+    + "I can spend up to $500 for this"                         (ceiling with specific number — VALID)
+    + "We have about $200 set aside for a chatbot tool"         (small allocation — VALID)
     + "We HAVE 5k a month allocated for this"                   (present allocation)
     + "Our budget for this initiative is around 10k"            (current capacity)
     + "I'm APPROVED to spend up to 20k"                         (authority + amount)
@@ -907,10 +911,11 @@ BUDGET — a stated CURRENT financial commitment or allocation:
     - "Our previous vendor COST us 5k a month"                  (past + competitor pricing)
     - "How much does this cost?"                                (pricing question, NOT budget)
     - "Do you have a free trial?"                               (plan question)
-    - "We want something affordable"                            (too vague, no number)
-    - "It depends on the price"                                 (contingent, not committed)
-    - "We've never spent more than 2k"                          (historical ceiling)
+    - "We want something affordable"                            (NO specific figure — too vague)
+    - "It depends on the price"                                 (contingent, no figure stated)
+    - "We've never spent more than 2k"                          (historical ceiling, not current allocation)
     - "Your competitor charges 100 a month"                     (market intel, not user's budget)
+  RUBRIC MATCHING: After deciding a signal exists, map the stated amount to the CLOSEST rubric tier to determine the score. A $200 budget maps to the lowest tier — extract it and score it low, not discard it.
 
 AUTHORITY — the user's stated ROLE in the buying decision:
   POSITIVE (these ARE authority signals):
@@ -966,13 +971,19 @@ SCORING DISCIPLINE
 
         resp_text = response.choices[0].message.content
         if not resp_text:
+            logger.debug("[bant] extraction returned empty response for question=%r", question[:80])
             return []
 
         result = QualificationExtractionResult.model_validate_json(resp_text)
-        return [s.model_dump() for s in result.signals]
+        signals = [s.model_dump() for s in result.signals]
+        logger.info(
+            "[bant] extraction question=%r signals=%s",
+            question[:80],
+            [(s["dimension"], s["score"], s["confidence"]) for s in signals],
+        )
+        return signals
     except Exception as e:
-        logger.warning(f"BANT extraction failed (non-breaking): {e}")
-        return []
+        logger.warning("[bant] extraction failed (non-breaking): %s | question=%r", e, question[:80])
 
 
 def extract_bant_from_conversation(
@@ -1059,6 +1070,13 @@ def _background_bant_extraction(
                 # down a strong earlier one — so we only touch the columns
                 # when the new signal beats the current high-water mark.
                 if new_score <= current_score:
+                    logger.debug(
+                        "[bant] never-downgrade: skipping %s score %d (current=%d) session=%s",
+                        dim,
+                        new_score,
+                        current_score,
+                        session_id,
+                    )
                     continue
 
                 if dim in score_field_map:

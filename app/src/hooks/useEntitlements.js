@@ -45,14 +45,14 @@ const FREE_FALLBACK = {
     plan_name: 'Free',
     subscription_status: 'none',
     limits: {
-        credits: 250,
+        credits: 200,
         bots: 1,
         operators: 0,
         // Leads dashboard is feature-locked on Free (sidebar gate); the
         // numeric quota is UNLIMITED so lead storage continues to work
         // for the Insights → Conversations view the customer can access.
         leads: -1,
-        page_scraping: 30,
+        page_scraping: 20,
         documents: 5,
         chat_history_days: 7,
     },

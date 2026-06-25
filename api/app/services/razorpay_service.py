@@ -41,9 +41,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import (
+    CHECKOUT_TEST_CLIENT_IDS,
     RAZORPAY_ENABLED,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
+    RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.db.models import Client, Invoice, Plan, ProcessedWebhook, Subscription
@@ -134,6 +136,9 @@ def create_topup_order(
     rzp = _get_razorpay()
     amount_inr = int(pack["amount"])
     amount_paise = amount_inr * 100
+    if client.id in CHECKOUT_TEST_CLIENT_IDS:
+        logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
+        amount_paise = 100
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
 
@@ -270,7 +275,21 @@ def create_subscription(
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
 
     razorpay_plan_id = plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
-    if not razorpay_plan_id:
+    if client.id in CHECKOUT_TEST_CLIENT_IDS:
+        if not RAZORPAY_TEST_PLAN_ID:
+            raise ValueError(
+                "RAZORPAY_TEST_PLAN_ID is not set. "
+                "Create a ₹1/month plan in the Razorpay dashboard and set its plan ID in this env var."
+            )
+        logger.warning(
+            "checkout test override: client %d subscription plan '%s' (%s) → test plan %s",
+            client.id,
+            plan.name,
+            billing_cycle,
+            RAZORPAY_TEST_PLAN_ID,
+        )
+        razorpay_plan_id = RAZORPAY_TEST_PLAN_ID
+    elif not razorpay_plan_id:
         raise ValueError(
             f"Plan '{plan.name}' has no Razorpay plan id configured for {billing_cycle} billing. "
             "Create the plan in the Razorpay dashboard and set the id from super admin."
@@ -442,6 +461,18 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
             data={"cancel_at_cycle_end": 1 if at_period_end else 0},
         )
     except Exception as exc:
+        # Razorpay returns BadRequestError when the subscription is already in
+        # a terminal state (cancelled/completed). The desired outcome — "stop
+        # charging the customer" — is already achieved, so treat it as a no-op
+        # instead of surfacing a 502 to the caller.
+        exc_msg = str(exc).lower()
+        if "not cancellable" in exc_msg or "cancelled status" in exc_msg or "completed status" in exc_msg:
+            logger.warning(
+                "Razorpay subscription %s is already in a terminal state — skipping cancel: %s",
+                subscription.razorpay_subscription_id,
+                exc,
+            )
+            return
         logger.exception(
             "Razorpay subscription.cancel failed for %s: %s",
             subscription.razorpay_subscription_id,

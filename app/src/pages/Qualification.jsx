@@ -21,6 +21,7 @@ import {
     Calendar,
     ArrowRight,
     Filter,
+    ChevronDown,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import {
@@ -656,29 +657,35 @@ function ConfigurationTab() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-[11px] font-bold uppercase tracking-widest text-surface-500 dark:text-surface-400 mb-2">Select Bot</label>
-                        <select
-                            value={selectedBotId || ''}
-                            onChange={(e) => setSelectedBotId(Number(e.target.value))}
-                            className="w-full px-3 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100"
-                        >
-                            <option value="" disabled>Choose a bot...</option>
-                            {bots.map((bot) => (
-                                <option key={bot.id} value={bot.id}>{bot.name}</option>
-                            ))}
-                        </select>
+                        <div className="relative">
+                            <select
+                                value={selectedBotId || ''}
+                                onChange={(e) => setSelectedBotId(Number(e.target.value))}
+                                className="w-full appearance-none px-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100"
+                            >
+                                <option value="" disabled>Choose a bot...</option>
+                                {bots.map((bot) => (
+                                    <option key={bot.id} value={bot.id}>{bot.name}</option>
+                                ))}
+                            </select>
+                            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                        </div>
                     </div>
                     <div>
                         <label className="block text-[11px] font-bold uppercase tracking-widest text-surface-500 dark:text-surface-400 mb-2">Qualification Framework</label>
                         <div className="flex items-center gap-2">
-                            <select
-                                value={selectedFramework}
-                                onChange={(e) => handleFrameworkChange(e.target.value)}
-                                className="flex-1 px-3 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100"
-                            >
-                                {FRAMEWORK_OPTIONS.map((opt) => (
-                                    <option key={opt.key} value={opt.key}>{opt.label}</option>
-                                ))}
-                            </select>
+                            <div className="relative flex-1">
+                                <select
+                                    value={selectedFramework}
+                                    onChange={(e) => handleFrameworkChange(e.target.value)}
+                                    className="w-full appearance-none px-3 pr-9 py-2.5 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:focus:border-primary-500 dark:text-surface-100"
+                                >
+                                    {FRAMEWORK_OPTIONS.map((opt) => (
+                                        <option key={opt.key} value={opt.key}>{opt.label}</option>
+                                    ))}
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                            </div>
                             {selectedFramework === 'custom' && (
                                 <button
                                     type="button"
@@ -713,34 +720,39 @@ function ConfigurationTab() {
                         if (!d) return null;
                         const label = d.label || toLabel(dim);
                         return (
-                            <div key={dim} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 space-y-4">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="flex-1 space-y-2">
+                            <div key={dim} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+                                {/* ── Card header ─────────────────────────────── */}
+                                <div className="flex items-center gap-4 px-5 py-4 border-b border-surface-100 dark:border-surface-800 bg-surface-50/60 dark:bg-surface-800/40">
+                                    {/* Title */}
+                                    <div className="flex-1 min-w-0">
                                         {selectedFramework === 'custom' ? (
                                             <input
                                                 type="text"
                                                 value={label}
                                                 onChange={(e) => updateDimensionName(dim, e.target.value)}
-                                                className="w-full max-w-sm px-3 py-2 text-sm font-semibold bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                className="w-full max-w-xs px-3 py-1.5 text-sm font-semibold bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                             />
                                         ) : (
-                                            <h3 className="text-base font-bold text-surface-900 dark:text-surface-50">{label}</h3>
+                                            <h3 className="text-base font-bold text-surface-900 dark:text-surface-50 truncate">{label}</h3>
                                         )}
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[11px] text-surface-500 dark:text-surface-400">Weight</span>
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                max={100}
-                                                value={d.weight ?? 0}
-                                                onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
-                                                className="w-20 px-2 py-1 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100 text-center"
-                                            />
-                                            <span className="text-[11px] text-surface-500 dark:text-surface-400">/100</span>
-                                        </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
+                                    {/* Weight pill */}
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                        <span className="text-[11px] font-semibold text-surface-500 dark:text-surface-400">Weight</span>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            max={100}
+                                            value={d.weight ?? 0}
+                                            onChange={(e) => updateDimension(dim, 'weight', Number(e.target.value) || 0)}
+                                            className="w-14 px-2 py-1 text-sm font-semibold text-center bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                        />
+                                        <span className="text-[11px] text-surface-400 dark:text-surface-500">/100</span>
+                                    </div>
+
+                                    {/* Toggle + delete */}
+                                    <div className="flex items-center gap-3 shrink-0">
                                         <button
                                             type="button"
                                             role="switch"
@@ -754,7 +766,7 @@ function ConfigurationTab() {
                                             <button
                                                 type="button"
                                                 onClick={() => removeDimension(dim)}
-                                                className="p-1.5 text-surface-400 hover:text-rose-500"
+                                                className="p-1.5 rounded-lg text-surface-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors"
                                                 title="Remove dimension"
                                             >
                                                 <Trash2 size={14} />
@@ -763,19 +775,28 @@ function ConfigurationTab() {
                                     </div>
                                 </div>
 
+                                {/* ── Options body ────────────────────────────── */}
                                 {d.enabled && (
-                                    <>
+                                    <div className="px-5 py-4 space-y-4">
+                                        {/* Column headers */}
+                                        <div className="grid grid-cols-[20px_1fr_72px_32px] items-center gap-3">
+                                            <div />
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-surface-400 dark:text-surface-500">Label</span>
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-surface-400 dark:text-surface-500 text-center">Score</span>
+                                            <div />
+                                        </div>
+
+                                        {/* Option rows */}
                                         <div className="space-y-2">
-                                            <p className="text-[11px] font-bold uppercase tracking-widest text-surface-500 dark:text-surface-400">Options</p>
                                             {(d.options || []).map((opt, idx) => (
-                                                <div key={idx} className="flex items-center gap-3">
-                                                    <GripVertical size={14} className="text-surface-300 dark:text-surface-600 flex-shrink-0" />
+                                                <div key={idx} className="grid grid-cols-[20px_1fr_72px_32px] items-center gap-3">
+                                                    <GripVertical size={14} className="text-surface-300 dark:text-surface-600" />
                                                     <input
                                                         type="text"
                                                         value={opt.label}
                                                         onChange={(e) => updateOption(dim, idx, 'label', e.target.value)}
                                                         placeholder="Option label"
-                                                        className="flex-1 px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                                        className="px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                                     />
                                                     <input
                                                         type="number"
@@ -783,54 +804,55 @@ function ConfigurationTab() {
                                                         max={100}
                                                         value={opt.score}
                                                         onChange={(e) => updateOption(dim, idx, 'score', e.target.value)}
-                                                        className="w-20 px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100 text-center"
+                                                        className="w-full px-2 py-2 text-sm font-semibold text-center bg-surface-50 dark:bg-surface-800/80 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
                                                     />
                                                     <button
                                                         type="button"
                                                         onClick={() => removeOption(dim, idx)}
-                                                        className="p-1.5 text-surface-400 hover:text-rose-500 transition-colors"
+                                                        className="flex items-center justify-center w-8 h-8 rounded-lg text-surface-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors"
                                                         title="Remove option"
                                                     >
-                                                        <Trash2 size={14} />
+                                                        <Trash2 size={13} />
                                                     </button>
                                                 </div>
                                             ))}
-                                            <button
-                                                type="button"
-                                                onClick={() => addOption(dim)}
-                                                className="flex items-center gap-1.5 text-[12px] font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors mt-1"
-                                            >
-                                                <Plus size={14} />
-                                                Add option
-                                            </button>
                                         </div>
 
-                                        <div className="border-t border-surface-100 dark:border-surface-800 pt-4 space-y-3">
-                                            <div className="flex items-center gap-3">
-                                                <label className="flex items-center gap-2 cursor-pointer">
-                                                    <span className="text-sm font-medium text-surface-700 dark:text-surface-300">CTA Enabled</span>
-                                                    <button
-                                                        type="button"
-                                                        role="switch"
-                                                        aria-checked={d.cta_enabled}
-                                                        onClick={() => updateDimension(dim, 'cta_enabled', !d.cta_enabled)}
-                                                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.cta_enabled ? 'bg-primary-500' : 'bg-surface-300 dark:bg-surface-700'}`}
-                                                    >
-                                                        <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${d.cta_enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
-                                                    </button>
-                                                </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => addOption(dim)}
+                                            className="flex items-center gap-1.5 text-[12px] font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
+                                        >
+                                            <Plus size={13} />
+                                            Add option
+                                        </button>
+
+                                        {/* CTA row */}
+                                        <div className="flex items-center justify-between gap-4 pt-2 border-t border-surface-100 dark:border-surface-800">
+                                            <div>
+                                                <p className="text-sm font-semibold text-surface-700 dark:text-surface-300">CTA Enabled</p>
+                                                <p className="text-[11px] text-surface-500 dark:text-surface-400 mt-0.5">Show qualification chips to the visitor</p>
                                             </div>
-                                            {d.cta_enabled && (
-                                                <input
-                                                    type="text"
-                                                    value={d.cta_prompt || ''}
-                                                    onChange={(e) => updateDimension(dim, 'cta_prompt', e.target.value)}
-                                                    placeholder="CTA prompt text"
-                                                    className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
-                                                />
-                                            )}
+                                            <button
+                                                type="button"
+                                                role="switch"
+                                                aria-checked={d.cta_enabled}
+                                                onClick={() => updateDimension(dim, 'cta_enabled', !d.cta_enabled)}
+                                                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${d.cta_enabled ? 'bg-primary-500' : 'bg-surface-300 dark:bg-surface-700'}`}
+                                            >
+                                                <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${d.cta_enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                                            </button>
                                         </div>
-                                    </>
+                                        {d.cta_enabled && (
+                                            <input
+                                                type="text"
+                                                value={d.cta_prompt || ''}
+                                                onChange={(e) => updateDimension(dim, 'cta_prompt', e.target.value)}
+                                                placeholder="CTA prompt text shown to the visitor"
+                                                className="w-full px-3 py-2 text-sm bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
+                                            />
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         );

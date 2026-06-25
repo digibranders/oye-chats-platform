@@ -11,6 +11,7 @@ import { useUpgradeModal } from '../context/UpgradeModalContext';
 import StatCard from '../components/ui/StatCard';
 import EmptyState from '../components/ui/EmptyState';
 import { cn } from '../lib/utils';
+import { getAuthItem } from '../utils/authStorage';
 
 const DATE_RANGES = [
   { id: 7, label: '7 days' },
@@ -46,7 +47,7 @@ export default function Dashboard() {
   const copyResetTimeoutRef = useRef(null);
   const navigate = useNavigate();
 
-  const adminName = localStorage.getItem('admin_name') || 'there';
+  const adminName = getAuthItem('admin_name') || 'there';
 
   const loadDashboardData = useCallback(async () => {
     if (!selectedBot?.id) {
@@ -536,9 +537,9 @@ export default function Dashboard() {
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: i * 0.04 }}
-                  className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors"
+                  className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors"
                 >
-                  <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5',
+                  <div className={cn('w-7 h-7 rounded-full flex items-center justify-center shrink-0',
                     item.type === 'feedback'
                       ? item.positive ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-rose-50 dark:bg-rose-500/10'
                       : 'bg-blue-50 dark:bg-blue-500/10'
