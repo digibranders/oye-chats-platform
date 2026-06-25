@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Sparkles, Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
+import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
+import { setAuthBundle, getAuthItem } from '../utils/authStorage';
 import { cn } from '../lib/utils';
+import GoogleAuthButton from '../components/GoogleAuthButton';
 
 const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
@@ -67,15 +69,20 @@ export default function Register() {
         website.trim() || null,
       );
 
-      localStorage.setItem('admin_token', data.access_token);
-      localStorage.setItem('admin_name', data.name);
-      localStorage.setItem('admin_client_id', data.client_id.toString());
-      localStorage.setItem('admin_is_verified', 'false');
-      localStorage.setItem('admin_pending_email', email.trim());
-      localStorage.setItem('auth_type', 'client');
-      localStorage.setItem('is_superadmin', 'false');
-      localStorage.setItem('company_name', data.company_name || '');
-      localStorage.setItem('company_website', data.website || '');
+      // Register defaults to ``persistent=true`` — newly signed-up
+      // customers should stay logged in across browser restarts unless
+      // they explicitly opt out via Login → Remember me.
+      setAuthBundle({
+        admin_token: data.access_token,
+        admin_name: data.name,
+        admin_client_id: data.client_id,
+        admin_is_verified: 'false',
+        admin_pending_email: email.trim(),
+        auth_type: 'client',
+        is_superadmin: 'false',
+        company_name: data.company_name || '',
+        company_website: data.website || '',
+      });
       sessionStorage.setItem('login_toast', 'registered');
 
       // Mirror Login.jsx — clear any stale trial-banner dismissals from a
@@ -94,12 +101,12 @@ export default function Register() {
     }
   };
 
-  if (localStorage.getItem('admin_token')) {
-    if (localStorage.getItem('admin_is_verified') === 'false') {
-      const pending = localStorage.getItem('admin_pending_email') || '';
+  if (getAuthItem('admin_token')) {
+    if (getAuthItem('admin_is_verified') === 'false') {
+      const pending = getAuthItem('admin_pending_email') || '';
       return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
     }
-    const isSuper = localStorage.getItem('is_superadmin') === 'true';
+    const isSuper = getAuthItem('is_superadmin') === 'true';
     if (affiliateToken && !isSuper) {
       return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
     }
@@ -127,11 +134,9 @@ export default function Register() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="relative z-10 flex items-center gap-3"
+          className="relative z-10 flex items-center gap-1"
         >
-          <div className="w-10 h-10 rounded-xl bg-blue-600/80 backdrop-blur-md border border-blue-400/30 flex items-center justify-center shadow-lg shadow-blue-500/30">
-            <Sparkles size={20} className="text-white" />
-          </div>
+          <img src="/logo-icon.png" alt="OyeChats" className="h-12 w-auto object-contain" />
           <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
         </motion.div>
 
@@ -205,10 +210,8 @@ export default function Register() {
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
           className="w-full max-w-[400px] my-auto"
         >
-          <div className="flex items-center gap-3 mb-8 lg:hidden">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
-              <Sparkles size={18} />
-            </div>
+          <div className="flex items-center gap-1 mb-8 lg:hidden">
+            <img src="/logo-icon.png" alt="OyeChats" className="h-11 w-auto object-contain" />
             <span className="text-lg font-bold text-white">OyeChats</span>
           </div>
 
@@ -227,6 +230,25 @@ export default function Register() {
               {error}
             </motion.div>
           )}
+
+          {/* Google OAuth signup — backend uses the same endpoint as login;
+              it decides "new account" vs "returning" by looking up the
+              provider subject + email. Hidden when the server reports
+              Google OAuth is not configured. */}
+          <div className="mb-4">
+            <GoogleAuthButton
+              label="Sign up with Google"
+              mode="register"
+              next={affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/'}
+              tabIndex={0}
+            />
+          </div>
+
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px bg-white/10" />
+            <span className="text-xs text-white/40 uppercase tracking-wider">or</span>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
 
           <form onSubmit={handleRegister} className="space-y-3.5">
             <div>

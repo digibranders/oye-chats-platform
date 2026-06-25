@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, LogOut, Menu, PanelLeftClose, Settings, Mail, Bot as BotIcon, Calendar } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Breadcrumbs from '../components/Breadcrumbs';
-import { AUTH_STORAGE_KEYS } from '../utils/auth';
+import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import Avatar from '../components/ui/Avatar';
 import { getCurrentUser } from '../services/api';
@@ -23,7 +23,7 @@ function _formatJoinedDate(iso) {
 
 export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenSearch }) {
   const navigate = useNavigate();
-  const adminName = localStorage.getItem('admin_name') || 'Admin';
+  const adminName = getAuthItem('admin_name') || 'Admin';
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -34,7 +34,10 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   useEffect(() => () => { mountedRef.current = false; }, []);
 
   const handleLogout = async () => {
-    AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    // Clear from BOTH localStorage + sessionStorage so a session-only
+    // login leaves no stale shadow that would auto-log the user back in
+    // on the next request.
+    clearAuthStorage();
     // Wipe trial-banner dismissals so the next user to log in on this
     // tab sees their actual trial state on the first page.
     clearTrialBannerDismissals();

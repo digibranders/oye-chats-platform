@@ -30,47 +30,24 @@ const UpgradeModalContext = createContext(null);
  * the live "X of Y used" counter where it makes sense.
  */
 export const UPGRADE_INTENTS = {
-    add_bot: ({ current, limit, planName, canPurchase, hardCap } = {}) => {
+    add_bot: ({ current, planName } = {}) => {
         const plan = planName || 'Free';
-        // Two distinct narratives drive different copy:
-        //   * `canPurchase=true` (Starter / Standard not at cap) — frame it
-        //     as a quick add-on the customer can buy without upgrading.
-        //   * Otherwise (Free, or at hard cap) — frame it as a plan
-        //     upgrade. Free needs the strongest "must upgrade" framing;
-        //     hard-cap callers should already be on a paid plan and need
-        //     the next-tier nudge.
-        if (canPurchase) {
-            return {
-                intentKey: 'add_bot',
-                eyebrow: `Add a bot to your ${plan} plan`,
-                title: 'Need another chatbot?',
-                description:
-                    `You're using ${current ?? '?'} of ${limit ?? '?'} bots. ` +
-                    'Add a paid bot seat below — it lifts your cap immediately and bills with your subscription.',
-                highlights: [
-                    'New embed, knowledge base, and branding per bot',
-                    'Cancel any time from Billing → Plan & seats',
-                    'Pro-rated on your next invoice',
-                ],
-                recommendedPlan: plan,
-            };
-        }
-        const reachedHardCap = hardCap && current >= hardCap;
+        // Per-bot billing: every chatbot needs its own subscription, so
+        // the modal narrative is uniform regardless of current plan —
+        // "subscribe again to add another bot".
         return {
             intentKey: 'add_bot',
-            eyebrow: reachedHardCap
-                ? `${plan} caps at ${hardCap} bots`
-                : `Your ${plan} plan includes ${limit ?? 1} chatbot${(limit ?? 1) === 1 ? '' : 's'}`,
-            title: reachedHardCap ? 'Upgrade to add more bots' : 'Add more chatbots',
-            description: reachedHardCap
-                ? `You've reached the ${hardCap}-bot ceiling on ${plan}. Move up to Standard or Enterprise for a higher cap and more included credits.`
-                : `You're using ${current ?? 1} of ${limit ?? 1} bots on ${plan}. Upgrade to launch additional chatbots — each with its own embed, knowledge base, and branding.`,
+            eyebrow: `You already have ${current ?? 1} chatbot${(current ?? 1) === 1 ? '' : 's'} on ${plan}`,
+            title: 'Subscribe again to add another bot',
+            description:
+                'Each chatbot is its own subscription with its own credits, knowledge base, and branding. ' +
+                'Pick a plan for this new bot to spin it up.',
             highlights: [
-                'Up to 3 bots on Starter, 5 on Standard, unlimited on Enterprise',
-                'Per-bot knowledge base & branding',
-                'Separate analytics for each property',
+                'Isolated credits per bot — a busy bot never drains a quieter one',
+                'Per-bot knowledge base, branding, and embed key',
+                'Separate analytics and billing for every chatbot',
             ],
-            recommendedPlan: reachedHardCap ? 'Standard' : 'Starter',
+            recommendedPlan: 'Starter',
         };
     },
     add_operator: () => ({

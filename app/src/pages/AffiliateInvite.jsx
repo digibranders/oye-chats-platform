@@ -10,6 +10,7 @@ import {
     acceptAffiliateInviteExisting,
 } from '../services/api';
 import { cn } from '../lib/utils';
+import { getAuthItem, clearAuthStorage } from '../utils/authStorage';
 
 /**
  * Unified invite landing page — replaces the old "set up account inside the
@@ -36,7 +37,7 @@ export default function AffiliateInvite() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const token = searchParams.get('token') || '';
-    const isLoggedIn = !!localStorage.getItem('admin_token');
+    const isLoggedIn = !!getAuthItem('admin_token');
 
     // ── Lookup state (always runs) ──────────────────────────────────────
     const [invite, setInvite] = useState(null);
@@ -118,14 +119,10 @@ export default function AffiliateInvite() {
     /* eslint-enable react-hooks/set-state-in-effect */
 
     const handleSignOutRetry = () => {
-        // Clear the token, redirect back through the same invite URL so the
-        // not-logged-in branch can render. Keep the token in the URL so the
-        // recipient doesn't have to find the email again.
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_name');
-        localStorage.removeItem('admin_client_id');
-        localStorage.removeItem('auth_type');
-        localStorage.removeItem('is_superadmin');
+        // Clear the auth bundle from BOTH stores so a session-only
+        // login on this tab doesn't leave a sessionStorage shadow that
+        // would auto-log the user back in on the next request.
+        clearAuthStorage();
         navigate(`/affiliate-invite?token=${encodeURIComponent(token)}`, { replace: true });
         // Soft reload so any in-flight auth-aware components reset cleanly.
         window.location.reload();

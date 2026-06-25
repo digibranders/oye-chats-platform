@@ -85,16 +85,13 @@ def get_plan_limit(plan: Plan, metric: str) -> int:
 # test fixture). Lets the rest of the stack treat ``get_crawl_limits`` as
 # total without leaking ``None`` into the crawler subprocess env.
 #
-# ``max_crawl_pages`` was bumped from 75 → 100 in migration b8d2faf4c321 so
-# the cap aligns with the Free tier's credit budget (500 credits / 3 per
-# page ≈ 166 pages of theoretical headroom). Keeping the fallback in sync
-# means a test fixture or pre-migration seed still renders the same number
-# the UI displays as the Free baseline.
+# ``max_crawl_pages`` set to 20 to match the Free tier's page_scraping limit
+# (200 credits / month, 20 pages per crawl ceiling).
 _DEFAULT_CRAWL_LIMITS = {
-    "max_crawl_pages": 100,
+    "max_crawl_pages": 20,
     "max_crawl_depth": 3,
-    "max_crawl_js_pages": 25,
-    "max_crawl_concurrency": 3,
+    "max_crawl_js_pages": 10,
+    "max_crawl_concurrency": 2,
 }
 
 

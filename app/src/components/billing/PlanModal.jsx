@@ -580,7 +580,7 @@ export default function PlanModal({
                         <div className="px-6 py-3 border-t border-surface-200 dark:border-surface-800 shrink-0 flex items-center justify-between text-[11px] text-surface-500 dark:text-surface-400">
                             <span className="flex items-center gap-1.5">
                                 <ShieldCheck size={12} />
-                                Secure checkout · Cancel anytime · 14-day free trial on paid plans
+                                Secure checkout · Cancel anytime · 14-day free trial on Starter plan.
                             </span>
                             <span className="hidden sm:inline">
                                 Need help? <a href={`mailto:${SUPPORT_EMAIL}`} className="text-primary-600 dark:text-primary-400 hover:underline">{SUPPORT_EMAIL}</a>

@@ -41,9 +41,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import (
+    CHECKOUT_TEST_CLIENT_IDS,
     RAZORPAY_ENABLED,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
+    RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.db.models import Client, Invoice, Plan, ProcessedWebhook, Subscription
@@ -102,6 +104,8 @@ def create_topup_order(
     session: Session,
     client: Client,
     pack: dict[str, Any],
+    *,
+    bot_id: int | None = None,
 ) -> dict[str, Any]:
     """Create a Razorpay Order for a one-time top-up purchase.
 
@@ -132,6 +136,9 @@ def create_topup_order(
     rzp = _get_razorpay()
     amount_inr = int(pack["amount"])
     amount_paise = amount_inr * 100
+    if client.id in CHECKOUT_TEST_CLIENT_IDS:
+        logger.warning("checkout test override: client %d top-up amount ₹%d → ₹1", client.id, amount_inr)
+        amount_paise = 100
     credits = int(pack["credits"])
     bonus_pct = int(pack.get("bonus_pct", 0) or 0)
 
@@ -143,6 +150,11 @@ def create_topup_order(
         "amount_inr": str(amount_inr),
         "bonus_pct": str(bonus_pct),
     }
+    # Per-bot top-ups stamp the target bot in notes so the captured-
+    # payment handler grants to that bot's isolated ledger rather than
+    # the client pool.
+    if bot_id is not None:
+        notes["bot_id"] = str(int(bot_id))
 
     receipt = f"topup_c{client.id}_{int(datetime.now(UTC).timestamp())}"
 
@@ -195,118 +207,6 @@ def create_topup_order(
     }
 
 
-def create_bot_seat_order(
-    session: Session,
-    client: Client,
-    quantity: int,
-    price_paise: int,
-) -> dict[str, Any]:
-    """Create a Razorpay Order for a bot-seat add-on checkout.
-
-    Mirrors :func:`create_topup_order` exactly — same Order shape, same
-    notes-driven webhook dispatch — but with ``purpose='bot_seat_addon'``
-    so the captured-payment handler bumps ``client.extra_bot_seats``
-    instead of granting credits.
-
-    The customer is redirected through Razorpay Checkout (UPI / card /
-    NetBanking) and pays the prorated seat charge immediately. The local
-    counter is bumped AFTER the captured webhook arrives, OR via the
-    signature-verify endpoint as a sync fallback when webhooks haven't
-    reached localhost (mirrors the topup flow's ``/credits/topup/verify``).
-
-    Recurring billing for subsequent cycles is handled by
-    :func:`_handle_subscription_charged` which re-adds an addon on the
-    customer's Razorpay subscription at every renewal.
-    """
-    if quantity <= 0:
-        raise ValueError("Quantity must be positive.")
-    if price_paise <= 0:
-        raise ValueError("price_paise must be positive.")
-
-    rzp = _get_razorpay()
-    amount_paise = int(price_paise) * int(quantity)
-
-    notes = {
-        "purpose": "bot_seat_addon",
-        "client_id": str(client.id),
-        "quantity": str(int(quantity)),
-        "price_paise": str(int(price_paise)),
-    }
-
-    receipt = f"botseat_c{client.id}_{int(datetime.now(UTC).timestamp())}"
-
-    try:
-        order = rzp.order.create(
-            data={
-                "amount": amount_paise,
-                "currency": "INR",
-                "receipt": receipt,
-                "notes": notes,
-                "payment_capture": 1,
-            }
-        )
-    except Exception as exc:
-        logger.exception(
-            "Razorpay order.create for bot seat failed for client %s (qty=%d paise=%d): %s",
-            client.id,
-            quantity,
-            price_paise,
-            exc,
-        )
-        raise RazorpayBillingError("Could not start bot-seat checkout. Please try again.") from exc
-
-    logger.info(
-        "Created Razorpay bot-seat order %s for client %s: qty=%d × ₹%d → ₹%d",
-        order["id"],
-        client.id,
-        quantity,
-        price_paise // 100,
-        amount_paise // 100,
-    )
-
-    return {
-        "provider": "razorpay",
-        "order_id": order["id"],
-        "amount": amount_paise,
-        "currency": "INR",
-        "quantity": quantity,
-        "key_id": RAZORPAY_KEY_ID,
-        "name": "OyeChats bot seat",
-        "description": f"{quantity} bot seat{'s' if quantity != 1 else ''} (₹{price_paise // 100}/mo each)",
-        "prefill": {
-            "name": client.name or "",
-            "email": client.email or "",
-        },
-        "theme": {"color": "#6366f1"},
-        "receipt": receipt,
-    }
-
-
-def verify_bot_seat_signature(
-    *,
-    razorpay_order_id: str,
-    razorpay_payment_id: str,
-    razorpay_signature: str,
-) -> None:
-    """Verify the order-level signature for a bot-seat payment.
-
-    Identical to :func:`verify_topup_signature` — both are one-time
-    Razorpay Orders, so the same HMAC scheme applies. Kept as a separate
-    function for symmetry with the route layer.
-    """
-    rzp = _get_razorpay()
-    try:
-        rzp.utility.verify_payment_signature(
-            {
-                "razorpay_order_id": razorpay_order_id,
-                "razorpay_payment_id": razorpay_payment_id,
-                "razorpay_signature": razorpay_signature,
-            }
-        )
-    except Exception as exc:
-        raise SignatureMismatch("Razorpay bot-seat payment signature mismatch") from exc
-
-
 def verify_topup_signature(
     *,
     razorpay_order_id: str,
@@ -350,7 +250,7 @@ def create_subscription(
     billing_cycle: str = "monthly",
     *,
     seat_quantity: int | None = None,
-    total_count: int = 120,
+    total_count: int | None = None,
     extra_notes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
@@ -359,9 +259,12 @@ def create_subscription(
     ``razorpay_plan_id_annual`` — these must be configured in the super admin
     once the plan is created in the Razorpay dashboard.
 
-    ``total_count`` defaults to 120 cycles (10 years monthly / 10 years
-    annual) so subscriptions effectively run until the customer cancels.
-    Razorpay requires a finite count, so this is the standard SaaS pattern.
+    ``total_count`` defaults to a cycle-appropriate value so subscriptions
+    run for ~10 years and effectively last until the customer cancels.
+    Razorpay caps ``total_count`` at 100 for annual plans and 120 for
+    monthly plans, so we pick per cycle: monthly=120 (10 years), annual=100
+    (~100 years — well beyond any realistic SaaS lifetime). Callers can
+    still override with an explicit ``total_count``.
 
     Returns the Checkout payload: subscription_id, key_id, plan + customer
     metadata. The frontend opens ``new Razorpay({ subscription_id, ... })``;
@@ -372,11 +275,31 @@ def create_subscription(
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
 
     razorpay_plan_id = plan.razorpay_plan_id_annual if billing_cycle == "annual" else plan.razorpay_plan_id_monthly
-    if not razorpay_plan_id:
+    if client.id in CHECKOUT_TEST_CLIENT_IDS:
+        if not RAZORPAY_TEST_PLAN_ID:
+            raise ValueError(
+                "RAZORPAY_TEST_PLAN_ID is not set. "
+                "Create a ₹1/month plan in the Razorpay dashboard and set its plan ID in this env var."
+            )
+        logger.warning(
+            "checkout test override: client %d subscription plan '%s' (%s) → test plan %s",
+            client.id,
+            plan.name,
+            billing_cycle,
+            RAZORPAY_TEST_PLAN_ID,
+        )
+        razorpay_plan_id = RAZORPAY_TEST_PLAN_ID
+    elif not razorpay_plan_id:
         raise ValueError(
             f"Plan '{plan.name}' has no Razorpay plan id configured for {billing_cycle} billing. "
             "Create the plan in the Razorpay dashboard and set the id from super admin."
         )
+
+    # Razorpay rejects total_count > 100 for annual plans; monthly accepts
+    # up to 120 (12 cycles × 10 years). Fall back to the cycle-specific
+    # max when the caller didn't override.
+    if total_count is None:
+        total_count = 100 if billing_cycle == "annual" else 120
 
     rzp = _get_razorpay()
 
@@ -439,6 +362,53 @@ def create_subscription(
     }
 
 
+def create_per_bot_subscription(
+    session: Session,
+    client: Client,
+    plan: Plan,
+    *,
+    bot_name: str,
+    bot_website: str | None,
+    bot_allowed_domains: list[str] | None,
+    bot_domain_check_enabled: bool,
+    billing_cycle: str = "monthly",
+) -> dict[str, Any]:
+    """Mint a Razorpay subscription that funds exactly one new bot.
+
+    Reuses :func:`create_subscription` so we get the same checkout payload
+    shape as the account-level subscription flow. The extra notes are the
+    only difference: ``purpose=per_bot_subscription`` flips
+    :func:`_handle_subscription_activated` into per-bot mode (skip
+    cancelling sibling subscriptions; create a Bot row from the carried
+    fields after the mandate authenticates).
+
+    No trial — bot #2+ charges immediately. The customer is already a
+    paying account, so a second trial would be free credits we don't
+    want to grant.
+    """
+    extra_notes: dict[str, str] = {
+        "purpose": "per_bot_subscription",
+        "bot_name": bot_name,
+        "bot_domain_check_enabled": "1" if bot_domain_check_enabled else "0",
+    }
+    if bot_website:
+        extra_notes["bot_website"] = bot_website
+    if bot_allowed_domains:
+        # Razorpay note values must be strings — pack as a JSON-encoded list
+        # so the webhook handler can round-trip back to a Python list.
+        import json as _json
+
+        extra_notes["bot_allowed_domains"] = _json.dumps(list(bot_allowed_domains))
+
+    return create_subscription(
+        session,
+        client,
+        plan,
+        billing_cycle=billing_cycle,
+        extra_notes=extra_notes,
+    )
+
+
 def verify_subscription_payment_signature(
     *,
     razorpay_payment_id: str,
@@ -491,6 +461,18 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
             data={"cancel_at_cycle_end": 1 if at_period_end else 0},
         )
     except Exception as exc:
+        # Razorpay returns BadRequestError when the subscription is already in
+        # a terminal state (cancelled/completed). The desired outcome — "stop
+        # charging the customer" — is already achieved, so treat it as a no-op
+        # instead of surfacing a 502 to the caller.
+        exc_msg = str(exc).lower()
+        if "not cancellable" in exc_msg or "cancelled status" in exc_msg or "completed status" in exc_msg:
+            logger.warning(
+                "Razorpay subscription %s is already in a terminal state — skipping cancel: %s",
+                subscription.razorpay_subscription_id,
+                exc,
+            )
+            return
         logger.exception(
             "Razorpay subscription.cancel failed for %s: %s",
             subscription.razorpay_subscription_id,
@@ -543,81 +525,6 @@ def update_subscription_quantity(
     session.flush()
     logger.info("Updated seat count for subscription %s to %d", sub.id, new_quantity)
     return new_quantity
-
-
-# ── Bot-seat add-on (recurring via cycle-end addon) ────────────────────────────
-
-
-def add_bot_seat_addon(
-    session: Session,
-    sub: Subscription,
-    quantity: int,
-    price_paise: int,
-) -> str | None:
-    """Add a Razorpay subscription addon for ``quantity`` bot seats.
-
-    Razorpay ``subscription.addon`` is a one-time line item that gets
-    included in the **next** invoice for that subscription. We use this
-    twice in the bot-seat lifecycle:
-
-    1. **On purchase** — when the customer clicks "Add bot seat", we
-       create an addon for the prorated amount so they pay at the next
-       invoice close (which Razorpay handles automatically). Our local
-       ``client.extra_bot_seats`` counter is the source of truth.
-    2. **On every cycle** — the ``subscription.charged`` webhook handler
-       re-adds the addon at each renewal so the customer pays
-       ``extra_bot_seats × $5`` recurring. Razorpay addons aren't
-       recurring on their own; they're consumed each invoice cycle.
-
-    Returns the Razorpay addon id on success, ``None`` if we couldn't
-    create it (no subscription, no Razorpay key configured, etc.) — the
-    local seat write still happens; we just log loudly so ops can
-    reconcile manually if the API call ever fails.
-    """
-    if not sub.razorpay_subscription_id:
-        logger.warning(
-            "add_bot_seat_addon: subscription %s has no razorpay_subscription_id — skipping addon",
-            sub.id,
-        )
-        return None
-    if quantity <= 0 or price_paise <= 0:
-        return None
-
-    rzp = _get_razorpay()
-    try:
-        addon = rzp.subscription.create_addon(
-            sub.razorpay_subscription_id,
-            {
-                "item": {
-                    "name": "OyeChats bot seat",
-                    "amount": int(price_paise),
-                    "currency": "INR",
-                },
-                "quantity": int(quantity),
-            },
-        )
-    except Exception as exc:
-        # Don't roll back the local write — the seat is granted and the
-        # customer can use it. Ops gets a loud log + Sentry trace so the
-        # billing miss can be reconciled by hand or via a backfill cron.
-        logger.exception(
-            "add_bot_seat_addon: Razorpay create_addon failed for sub %s (qty=%d, paise=%d): %s",
-            sub.razorpay_subscription_id,
-            quantity,
-            price_paise,
-            exc,
-        )
-        return None
-
-    addon_id = addon.get("id") if isinstance(addon, dict) else None
-    logger.info(
-        "Razorpay bot-seat addon created: subscription=%s qty=%d paise=%d addon_id=%s",
-        sub.razorpay_subscription_id,
-        quantity,
-        price_paise,
-        addon_id,
-    )
-    return addon_id
 
 
 # ── Webhooks ──────────────────────────────────────────────────────────────────
@@ -824,6 +731,69 @@ def reconcile_subscription_from_razorpay(session: Session, razorpay_subscription
     return _resolve_local_subscription(session, razorpay_subscription_id)
 
 
+def _create_bot_from_subscription_notes(
+    session: Session,
+    client_id: int,
+    subscription: Subscription | None,
+    plan_id: int,
+    notes: dict[str, Any],
+):
+    """Materialise a Bot from the notes carried on a per-bot subscription.
+
+    Called from :func:`_handle_subscription_activated` once a per-bot
+    Razorpay subscription mandate authenticates. The bot is created NOW
+    (post-payment) so a dismissed checkout leaves no orphan row.
+
+    ``subscription`` may be ``None`` when the caller hasn't inserted the
+    subscription row yet — the FK back is set later via
+    ``bot.subscription_id = sub.id`` once the sub is flushed. This
+    chicken-and-egg ordering is intentional: a per-bot subscription
+    inserted with ``bot_id=NULL`` would collide with the legacy partial
+    unique index ``ix_subscriptions_client_legacy_active``.
+
+    Notes contract (set by :func:`create_per_bot_subscription`):
+
+    * ``bot_name`` — required
+    * ``bot_website`` — optional
+    * ``bot_allowed_domains`` — optional JSON-encoded list
+    * ``bot_domain_check_enabled`` — "1" or "0"
+    """
+    import json as _json
+    import uuid as _uuid
+
+    from app.db.models import Bot
+
+    bot_name = (notes.get("bot_name") or "AI Assistant").strip() or "AI Assistant"
+    bot_website = notes.get("bot_website") or None
+    domain_check_raw = (notes.get("bot_domain_check_enabled") or "0").strip()
+    domain_check_enabled = domain_check_raw == "1"
+
+    allowed_domains: list[str] = []
+    raw_domains = notes.get("bot_allowed_domains")
+    if raw_domains:
+        try:
+            parsed = _json.loads(raw_domains) if isinstance(raw_domains, str) else raw_domains
+            if isinstance(parsed, list):
+                allowed_domains = [str(d) for d in parsed if isinstance(d, (str, int))]
+        except (ValueError, TypeError):
+            logger.warning("Could not parse bot_allowed_domains from notes: %r", raw_domains)
+
+    bot = Bot(
+        client_id=client_id,
+        bot_key=f"bot-{_uuid.uuid4().hex[:12]}",
+        name=bot_name,
+        website=bot_website,
+        plan_id=plan_id,
+        subscription_id=subscription.id if subscription is not None else None,
+        is_legacy_pooled=False,
+        allowed_domains=allowed_domains,
+        domain_check_enabled=domain_check_enabled,
+    )
+    session.add(bot)
+    session.flush()
+    return bot
+
+
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
     """First mandate-authentication or restart after a paused state.
 
@@ -860,29 +830,49 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             )
             return "missing notes; cannot create subscription"
 
-        # Cancel any existing active subscription for this client (upgrade flow).
-        existing = (
-            session.execute(
-                select(Subscription).where(
-                    Subscription.client_id == client_id,
-                    Subscription.status.in_(("active", "trialing", "past_due")),
+        # Per-bot billing branch: this subscription funds one new Bot row
+        # rather than replacing the client's existing subscription. Skip
+        # the "cancel sibling subscriptions" sweep so the client can hold
+        # one active subscription per bot concurrently.
+        is_per_bot = (notes.get("purpose") or "").lower() == "per_bot_subscription"
+
+        if not is_per_bot:
+            # Account-level (legacy) flow: cancel any existing active
+            # subscription for this client (upgrade flow).
+            existing = (
+                session.execute(
+                    select(Subscription).where(
+                        Subscription.client_id == client_id,
+                        Subscription.status.in_(("active", "trialing", "past_due")),
+                        Subscription.bot_id.is_(None),
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        for old in existing:
-            old.status = "canceled"
-            old.canceled_at = datetime.now(UTC)
+            for old in existing:
+                old.status = "canceled"
+                old.canceled_at = datetime.now(UTC)
 
         # ``notes.prev_razorpay_subscription_id`` is set by the upgrade /
         # scheduled-promotion paths so we can recognise this is a transition
         # (not a first-time signup) and apply any pending proration credit.
         prev_rzp_sub_id = (notes.get("prev_razorpay_subscription_id") or "").strip() or None
 
+        # For the per-bot path we have to materialise the Bot row FIRST so
+        # the subscription INSERT can carry ``bot_id`` from the start.
+        # Inserting a per-bot subscription with bot_id=NULL first would
+        # collide with ``ix_subscriptions_client_legacy_active`` (which
+        # enforces "one active client-level subscription per client" via
+        # ``WHERE bot_id IS NULL AND status IN active/trialing/past_due``).
+        new_bot = None
+        if is_per_bot:
+            new_bot = _create_bot_from_subscription_notes(session, client_id, None, plan_id, notes)
+
         local = Subscription(
             client_id=client_id,
             plan_id=plan_id,
+            bot_id=new_bot.id if new_bot is not None else None,
             status="active",
             billing_cycle=notes.get("billing_cycle", "monthly"),
             operator_quantity=quantity,
@@ -895,6 +885,22 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         )
         session.add(local)
         session.flush()
+
+        if is_per_bot and new_bot is not None:
+            # Now back-link the bot to the freshly inserted subscription so
+            # the bot row knows which sub funds it. Uses ``post_update`` on
+            # the Bot.subscription relationship to avoid the circular FK.
+            new_bot.subscription_id = local.id
+            session.flush()
+            credit_service.grant_for_subscription(session, local)
+            logger.info(
+                "Activated per-bot Razorpay subscription %s → local %s (client %s, bot %s)",
+                razorpay_sub_id,
+                local.id,
+                client_id,
+                new_bot.id,
+            )
+            return f"Per-bot subscription activated: client {client_id}, bot {new_bot.id}"
 
         # Expire any unused plan_grant from the prior subscription before
         # handing out the new plan's allowance. Without this, a free-tier
@@ -1007,28 +1013,6 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     local.status = "active"
     session.flush()
 
-    # ── Recurring bot-seat charge ──
-    # Razorpay addons are one-shot — they're consumed by the next invoice
-    # and don't carry forward. To bill ``extra_bot_seats × $5`` every
-    # cycle, we re-create the addon here at every successful renewal.
-    # The addon lands on the NEXT invoice (this one just closed), so the
-    # customer keeps paying for their seats as long as they hold them.
-    # Failures are logged but don't roll back the renewal — the seat is
-    # already granted locally, the next renewal will retry billing.
-    from app.db.models import Client
-    from app.services.credit_service import get_pricing
-
-    client = session.get(Client, local.client_id)
-    extra_seats = int(getattr(client, "extra_bot_seats", 0) or 0)
-    if client and extra_seats > 0:
-        try:
-            pricing = get_pricing(session)
-            price_paise = int(pricing.get("bot_seat_price_inr_paise") or 0)
-            if price_paise > 0:
-                add_bot_seat_addon(session, local, extra_seats, price_paise)
-        except Exception:
-            logger.exception("Failed to re-create bot-seat addon for client %s on renewal", local.client_id)
-
     return f"Subscription {razorpay_sub_id} charged"
 
 
@@ -1121,81 +1105,6 @@ def _handle_subscription_pending(session: Session, payload: dict[str, Any]) -> s
     return f"Subscription {sub_entity.get('id')} pending"
 
 
-def _grant_bot_seat_from_payment(
-    session: Session,
-    pay_entity: dict[str, Any] | None,
-    order_entity: dict[str, Any] | None,
-    notes: dict[str, Any],
-) -> str:
-    """Idempotently grant bot seats from a captured Razorpay payment.
-
-    Called from :func:`_handle_payment_captured` when ``notes.purpose ==
-    'bot_seat_addon'``. The same function backs the sync ``/verify``
-    fallback endpoint, so a payment that arrives both via webhook and via
-    the success-redirect verify call is granted exactly once.
-
-    Idempotency strategy mirrors how the topup flow protects against
-    double grants — we record an ``Invoice`` row keyed by
-    ``razorpay_payment_id`` and bail if one already exists.
-    """
-    client_id = _client_id_from_notes(notes)
-    quantity = int(notes.get("quantity") or 0)
-    if not client_id or quantity <= 0:
-        logger.warning("bot_seat_addon payment.captured missing client_id/quantity in notes: %s", notes)
-        return "missing bot_seat metadata"
-
-    rzp_payment_id = pay_entity.get("id") if pay_entity else None
-    rzp_order_id = (pay_entity or {}).get("order_id") or (order_entity or {}).get("id")
-
-    if rzp_payment_id:
-        existing = (
-            session.execute(select(Invoice).where(Invoice.razorpay_payment_id == rzp_payment_id)).scalars().first()
-        )
-        if existing:
-            return f"Bot-seat payment {rzp_payment_id} already granted"
-
-    client = session.get(Client, client_id)
-    if client is None:
-        logger.warning("bot_seat_addon payment.captured for unknown client_id %s", client_id)
-        return "client not found"
-
-    client.extra_bot_seats = int(client.extra_bot_seats or 0) + quantity
-
-    # Record the payment as a one-time invoice — gives ops a paper trail
-    # and powers the idempotency check above on retry.
-    amount_paise = int(pay_entity.get("amount", 0)) if pay_entity else 0
-    session.add(
-        Invoice(
-            client_id=client_id,
-            subscription_id=None,
-            amount_cents=amount_paise,
-            currency="inr",
-            status="paid",
-            razorpay_payment_id=rzp_payment_id,
-            description=f"Bot seat × {quantity} (one-time)",
-            paid_at=datetime.now(UTC),
-        )
-    )
-    session.flush()
-
-    # Bust the entitlements cache so the next /me/entitlements call sees
-    # the bumped seat count immediately (no 60s lag on the customer's
-    # billing page after they pay).
-    from app.services.plan_entitlements_service import invalidate as invalidate_entitlements
-
-    invalidate_entitlements(client_id)
-
-    logger.info(
-        "Bot seat granted via Razorpay payment %s: client=%s qty=%d (extra_bot_seats=%d)",
-        rzp_payment_id,
-        client_id,
-        quantity,
-        client.extra_bot_seats,
-    )
-    _ = rzp_order_id  # captured for future log enrichment
-    return f"Bot seat granted ({quantity}) for client {client_id}"
-
-
 def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     """Top-up payment captured — grant top-up credits and record the invoice.
 
@@ -1212,14 +1121,6 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         notes = order_entity.get("notes") or {}
 
     purpose = notes.get("purpose")
-
-    # ── Bot-seat add-on payment ──
-    # Bumps the local seat counter idempotently. Idempotency comes from
-    # tracking the razorpay_payment_id we've already processed: if the
-    # same payment fires twice (webhook + sync verify endpoint), the
-    # second run is a no-op.
-    if purpose == "bot_seat_addon":
-        return _grant_bot_seat_from_payment(session, pay_entity, order_entity, notes)
 
     if purpose != "topup":
         # Subscription cycles arrive via subscription.charged; ignore here.
@@ -1258,19 +1159,31 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     session.add(invoice)
     session.flush()
 
+    # Notes may carry ``bot_id`` for per-bot top-ups (set by
+    # ``create_topup_order(bot_id=...)``). Default to None → client pool.
+    target_bot_id_raw = notes.get("bot_id")
+    target_bot_id: int | None = None
+    if target_bot_id_raw is not None:
+        try:
+            target_bot_id = int(target_bot_id_raw)
+        except (TypeError, ValueError):
+            target_bot_id = None
+
     credit_service.grant_topup(
         session,
         client_id,
         credits,
         note=f"Top-up ₹{amount_inr} pack (Razorpay {rzp_order_id or rzp_payment_id})",
+        bot_id=target_bot_id,
     )
     logger.info(
-        "Granted %d top-up credits to client %s via Razorpay payment %s",
+        "Granted %d top-up credits to client %s bot %s via Razorpay payment %s",
         credits,
         client_id,
+        target_bot_id,
         rzp_payment_id,
     )
-    return f"Top-up credits granted to client {client_id}"
+    return f"Top-up credits granted to client {client_id} bot {target_bot_id}"
 
 
 def _handle_payment_failed(session: Session, payload: dict[str, Any]) -> str:

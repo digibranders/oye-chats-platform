@@ -90,21 +90,9 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   // flash where the create modal opens and immediately demands an upgrade.
   const handleCreateBot = () => {
     setDropdownOpen(false);
-    const botLimit = ent.limitFor('bots');
-    const canCreate = ent.withinLimit('bots', bots.length);
-    if (!canCreate) {
-      // Pass the plan + cap context so the modal can pick the right
-      // narrative (buy-a-seat vs. upgrade-your-plan vs. you've-hit-the-
-      // ceiling-on-this-plan).
-      requestUpgrade('add_bot', {
-        current: bots.length,
-        limit: botLimit,
-        planName: ent.planName,
-        canPurchase: ent.canPurchaseBotSeat,
-        hardCap: (ent.limits || {}).max_bots_cap,
-      });
-      return;
-    }
+    // Always route through the Chatbot page's create wizard. It picks
+    // the right narrative itself: a one-screen Free form for the first
+    // bot, the two-step plan-picker + Razorpay flow for every bot after.
     navigate('/chatbot?create=true');
   };
 

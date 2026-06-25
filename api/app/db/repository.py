@@ -97,9 +97,13 @@ def ensure_chat_session(
         return chat_session
 
     chat_session.last_active_at = func.now()
-    if location:
+    # location/device are first-message context. Never overwrite a stored value:
+    # the background geo-resolver in chat_routes upgrades the raw "IP: …" stamp
+    # to "City, Country | IP" after the first turn, and subsequent chat turns
+    # would otherwise clobber it back to the raw IP on every message.
+    if location and not chat_session.location:
         chat_session.location = location
-    if device:
+    if device and not chat_session.device:
         chat_session.device = device
     session.flush()
     return chat_session

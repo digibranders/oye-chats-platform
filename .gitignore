@@ -54,3 +54,6 @@ api/emails/preview/
 
 # Personal local-dev launcher (API + ARQ worker side-by-side, env overrides)
 api/dev.sh
+
+# Machine-specific uv config (points to local conda env path)
+api/uv.toml

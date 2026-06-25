@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { getAuthState } from '../utils/auth';
+import { getAuthItem } from '../utils/authStorage';
 import { HexColorPicker } from 'react-colorful';
 import Cropper from 'react-easy-crop';
 import { Upload, Trash2, CheckCircle, Image as ImageIcon, Settings2, RefreshCw, Palette, ChevronDown, ArrowUp, Bot, Sparkles, Check, AlertCircle, X, ZoomIn, ZoomOut, RotateCw, Paperclip, ThumbsUp, ThumbsDown, Copy, Plus, Mail, MoreHorizontal, Headphones, Lock } from 'lucide-react';
@@ -1036,7 +1037,7 @@ export default function Interface({ embedded = false }) {
                             <div>
                                 <h3 className="text-[15px] font-bold text-surface-900 dark:text-surface-50 flex items-center gap-2">
                                     <Bot className="w-4 h-4 text-primary-500" />
-                                    <span>BANT</span> Lead Qualification
+                                    <span className="text-green-600 dark:text-green-400">BANT</span> Lead Qualification
                                 </h3>
                                 <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                                     AI will subtly ask qualifying questions (Budget, Authority, Need, Timeline) when the user shows buying intent.
@@ -1286,53 +1287,56 @@ export default function Interface({ embedded = false }) {
                             </div>
 
                             {/* Waiting state */}
-                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
+                            <div className="bg-white dark:bg-surface-900 p-6 rounded-xl border border-surface-200 dark:border-white/[0.06] shadow-sm dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] space-y-5">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">Visitor requests live chat</h4>
-                                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">Shown while the visitor waits for an operator to accept.</p>
+                                    <h4 className="text-[13px] font-semibold tracking-[-0.01em] text-surface-900 dark:text-white">Visitor requests live chat</h4>
+                                    <p className="text-[12.5px] leading-relaxed text-surface-500 dark:text-surface-400 mt-1">Shown while the visitor waits for an operator to accept.</p>
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Waiting Message</label>
-                                    <textarea
+                                <div className="space-y-1.5">
+                                    <label className="text-[11px] font-medium uppercase tracking-[0.04em] text-surface-500 dark:text-surface-400">Waiting Message</label>
+                                    <input
+                                        type="text"
                                         value={waitingMessage}
                                         onChange={(e) => setWaitingMessage(e.target.value)}
                                         maxLength={200}
-                                        rows={2}
                                         placeholder="Connecting you to support..."
-                                        className="w-full px-3 py-2.5 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 resize-none dark:placeholder:text-surface-500"
+                                        className="w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg placeholder:text-surface-400 dark:placeholder:text-surface-500 transition-shadow focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/15"
                                     />
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Handoff Delay</label>
-                                    <p className="text-[11px] text-surface-400">Time before the handoff form appears after the bot suggests live chat.</p>
-                                    <select
-                                        value={handoffDelaySeconds}
-                                        onChange={(e) => setHandoffDelaySeconds(Number(e.target.value))}
-                                        className="h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:text-surface-100"
-                                    >
-                                        <option value={0}>Immediately</option>
-                                        <option value={2}>After 2 seconds</option>
-                                        <option value={5}>After 5 seconds</option>
-                                        <option value={10}>After 10 seconds</option>
-                                    </select>
+                                <div className="space-y-1.5">
+                                    <label className="text-[11px] font-medium uppercase tracking-[0.04em] text-surface-500 dark:text-surface-400">Handoff Delay</label>
+                                    <p className="text-[11.5px] text-surface-400 dark:text-surface-500">Time before the handoff form appears after the bot suggests live chat.</p>
+                                    <div className="relative">
+                                        <select
+                                            value={handoffDelaySeconds}
+                                            onChange={(e) => setHandoffDelaySeconds(Number(e.target.value))}
+                                            className="appearance-none w-full h-10 pl-3 pr-9 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg transition-shadow focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/15"
+                                        >
+                                            <option value={0}>Immediately</option>
+                                            <option value={2}>After 2 seconds</option>
+                                            <option value={5}>After 5 seconds</option>
+                                            <option value={10}>After 10 seconds</option>
+                                        </select>
+                                        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                                    </div>
                                 </div>
                             </div>
 
                             {/* Offline / unavailable state */}
-                            <div className="bg-white dark:bg-surface-900 p-5 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm space-y-4">
+                            <div className="bg-white dark:bg-surface-900 p-6 rounded-xl border border-surface-200 dark:border-white/[0.06] shadow-sm dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] space-y-5">
                                 <div>
-                                    <h4 className="text-[14px] font-semibold text-surface-900 dark:text-surface-100">No operators are available</h4>
-                                    <p className="text-[12px] text-surface-500 dark:text-surface-400 mt-0.5">Shown when live chat is off or all operators are offline.</p>
+                                    <h4 className="text-[13px] font-semibold tracking-[-0.01em] text-surface-900 dark:text-white">No operators are available</h4>
+                                    <p className="text-[12.5px] leading-relaxed text-surface-500 dark:text-surface-400 mt-1">Shown when live chat is off or all operators are offline.</p>
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[13px] font-bold text-surface-700 dark:text-surface-300">Offline / Unavailable Message</label>
-                                    <textarea
+                                <div className="space-y-1.5">
+                                    <label className="text-[11px] font-medium uppercase tracking-[0.04em] text-surface-500 dark:text-surface-400">Offline / Unavailable Message</label>
+                                    <input
+                                        type="text"
                                         value={offlineMessage}
                                         onChange={(e) => setOfflineMessage(e.target.value)}
                                         maxLength={200}
-                                        rows={2}
                                         placeholder="We'll be right back! Leave a message and we'll follow up shortly."
-                                        className="w-full px-3 py-2.5 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 resize-none dark:placeholder:text-surface-500"
+                                        className="w-full h-10 px-3 text-sm text-surface-700 dark:text-surface-200 bg-surface-50 dark:bg-white/[0.025] border border-surface-200 dark:border-white/[0.06] rounded-lg placeholder:text-surface-400 dark:placeholder:text-surface-500 transition-shadow focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/15"
                                     />
                                 </div>
                             </div>
@@ -1489,7 +1493,7 @@ export default function Interface({ embedded = false }) {
                             {previewState === 'chat' && (
                                 <div className="flex flex-col items-start text-left w-full pt-2">
                                     <h2 className="text-2xl font-bold text-[#16202C]">
-                                        {(welcomeTitle || 'Hi there 👋').replace(/\p{Extended_Pictographic}/gu, '').trim() || 'Hi there'}
+                                        {(welcomeTitle || 'Hi there 👋').replace(/there/i, getAuthItem('admin_name') || 'there').replace(/\p{Extended_Pictographic}/gu, '').trim() || `Hi ${getAuthItem('admin_name') || 'there'}`}
                                     </h2>
                                     {(() => {
                                         // Mirror the live widget's WelcomeScreen layout switch so
@@ -1544,7 +1548,7 @@ export default function Interface({ embedded = false }) {
                             )}
 
                             {previewState === 'waiting' && (
-                                <div className="flex flex-col items-center justify-center h-full py-10 gap-4 text-center">
+                                <div className="flex flex-col items-center justify-center h-full py-6 gap-2 text-center">
                                     <div
                                         className="w-14 h-14 rounded-full flex items-center justify-center"
                                         style={{ backgroundColor: `${primaryColor}22` }}
@@ -1556,23 +1560,21 @@ export default function Interface({ embedded = false }) {
                                     </div>
                                     <div>
                                         <p className="text-[14px] font-semibold text-[#16202C]">
-                                            {waitingMessage || 'Connecting you to support...'}
+                                            {(waitingMessage || 'Connecting you to support...').replace(/there/i, getAuthItem('admin_name') || 'there')}
                                         </p>
-                                        <p className="text-[12px] text-gray-400 mt-1">Please wait a moment.</p>
                                     </div>
                                 </div>
                             )}
 
                             {previewState === 'unavailable' && (
-                                <div className="flex flex-col items-center justify-center h-full py-10 gap-4 text-center">
+                                <div className="flex flex-col items-center justify-center h-full py-6 gap-2 text-center">
                                     <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
                                         <Bot className="w-7 h-7 text-gray-400" />
                                     </div>
                                     <div>
                                         <p className="text-[14px] font-semibold text-[#16202C]">
-                                            {offlineMessage || "We'll be right back! Leave a message and we'll follow up shortly."}
+                                            {(offlineMessage || "We'll be right back! Leave a message and we'll follow up shortly.").replace(/there/i, getAuthItem('admin_name') || 'there')}
                                         </p>
-                                        <p className="text-[12px] text-gray-400 mt-1">Leave a message and we&apos;ll get back to you.</p>
                                     </div>
                                 </div>
                             )}

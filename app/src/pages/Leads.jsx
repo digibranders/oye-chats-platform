@@ -408,7 +408,7 @@ export default function Leads() {
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Contact</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Score</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Status</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">BANT</th>
+                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Location</th>
                                 <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Last Active</th>
                                 <th className="px-4 py-3"></th>
@@ -575,7 +575,7 @@ export default function Leads() {
                                             </ResponsiveContainer>
                                         </div>
                                         <div className="flex-1">
-                                            <p className="text-[12px] font-bold text-surface-500 dark:text-surface-400 mb-1">BANT Score</p>
+                                            <p className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400 mb-1">BANT Score</p>
                                             <p className="text-3xl font-bold text-surface-900 dark:text-surface-100 leading-none">{leadDetail.score}<span className="text-sm text-surface-400 font-normal">/100</span></p>
                                             <span className={cn('inline-block mt-2 px-3 py-1 rounded-full text-[12px] font-bold', STATUS_CONFIG[leadDetail.status]?.color)}>
                                                 {STATUS_CONFIG[leadDetail.status]?.label}
@@ -635,7 +635,7 @@ export default function Leads() {
 
                                     {/* BANT Breakdown */}
                                     <div className="space-y-3">
-                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">BANT Qualification</h3>
+                                        <h3 className="text-[13px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT Qualification</h3>
                                         <div className="space-y-2">
                                             {Object.entries(BANT_LABELS).map(([key, label]) => {
                                                 const dimScore = leadDetail.bant?.[key]?.score || 0;

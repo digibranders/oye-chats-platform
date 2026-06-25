@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from fastapi import WebSocket
 from sqlalchemy import select
 
-from app.db.models import ChatSession, Operator
+from app.db.models import Bot, ChatSession, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services import operator_presence_service as presence
@@ -571,8 +571,16 @@ class ConnectionManager:
         department_id: int | None = None,
         visitor_name: str | None = None,
         reason: str | None = None,
+        bot_id: int | None = None,
+        bot_name: str | None = None,
     ):
-        """Add visitor to the waiting queue and notify operators."""
+        """Add visitor to the waiting queue and notify operators.
+
+        ``bot_id`` / ``bot_name`` flow through to the operator's queue
+        and active-chat payloads so the UI can label each conversation
+        with which bot it belongs to. Without these the operator has no
+        way to tell whether an incoming chat is from bot1 or bot2.
+        """
         if session_id not in self.waiting_queue:
             # Reject if queue is full
             if len(self.waiting_queue) >= self.MAX_QUEUE_SIZE:
@@ -585,6 +593,8 @@ class ConnectionManager:
         self._session_metadata[session_id] = {
             "name": visitor_name or "Anonymous",
             "reason": reason,
+            "bot_id": bot_id,
+            "bot_name": bot_name,
         }
 
         # Notify visitor they're in queue
@@ -660,6 +670,8 @@ class ConnectionManager:
                 "session_id": session_id,
                 "visitor_name": self._session_metadata.get(session_id, {}).get("name", "Anonymous"),
                 "reason": self._session_metadata.get(session_id, {}).get("reason"),
+                "bot_id": self._session_metadata.get(session_id, {}).get("bot_id"),
+                "bot_name": self._session_metadata.get(session_id, {}).get("bot_name"),
             },
         )
 
@@ -1270,6 +1282,8 @@ class ConnectionManager:
                         "session_id": sid,
                         "name": meta.get("name", "Anonymous"),
                         "reason": meta.get("reason"),
+                        "bot_id": meta.get("bot_id"),
+                        "bot_name": meta.get("bot_name"),
                     }
                 )
 
@@ -1295,6 +1309,8 @@ class ConnectionManager:
                         "visitor_name": meta.get("name", "Anonymous"),
                         "reason": meta.get("reason"),
                         "visitor_online": visitor_online,
+                        "bot_id": meta.get("bot_id"),
+                        "bot_name": meta.get("bot_name"),
                     }
                 )
 
@@ -1317,12 +1333,18 @@ class ConnectionManager:
                             self.assignments[cs.id] = operator_id
                             lead = get_lead_info_by_session(db, cs.id)
                             visitor_online = cs.id in self.visitor_connections
+                            # Restore bot label too — operators returning
+                            # after a refresh still need to know which bot
+                            # each chat belongs to.
+                            db_bot = db.get(Bot, cs.bot_id) if cs.bot_id else None
                             active.append(
                                 {
                                     "session_id": cs.id,
                                     "visitor_name": lead.name if lead else "Anonymous",
                                     "reason": cs.handoff_reason,
                                     "visitor_online": visitor_online,
+                                    "bot_id": cs.bot_id,
+                                    "bot_name": db_bot.name if db_bot else None,
                                 }
                             )
             except Exception as e:

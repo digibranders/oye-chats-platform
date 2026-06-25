@@ -22,6 +22,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
+import OAuthCallback from './pages/OAuthCallback';
 import AffiliateInvite from './pages/AffiliateInvite';
 import Dashboard from './pages/Dashboard';
 import KnowledgeBase from './pages/KnowledgeBase';
@@ -46,16 +47,17 @@ import SuperadminPricingInsights from './pages/superadmin/PricingInsights';
 
 // Components
 import AccessDenied from './components/AccessDenied';
+import { getAuthItem } from './utils/authStorage';
 
 const ProtectedRoute = ({ children }) => {
-    const isAuthenticated = !!localStorage.getItem('admin_token');
+    const isAuthenticated = !!getAuthItem('admin_token');
     if (!isAuthenticated) return <Navigate to="/login" replace />;
     return children;
 };
 
 const SuperadminRoute = ({ children }) => {
-    const isAuthenticated = !!localStorage.getItem('admin_token');
-    const isSuperadmin = localStorage.getItem('is_superadmin') === 'true';
+    const isAuthenticated = !!getAuthItem('admin_token');
+    const isSuperadmin = getAuthItem('is_superadmin') === 'true';
     if (!isAuthenticated) return <Navigate to="/login" replace />;
     if (!isSuperadmin) return <Navigate to="/" replace />;
     return children;
@@ -156,6 +158,9 @@ function App() {
                     <Route path="/register" element={<Register />} />
                     <Route path="/verify-email" element={<VerifyEmail />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
+                    {/* OAuth callback — backend redirects here with the api_key
+                        in the URL fragment after a successful Google sign-in. */}
+                    <Route path="/auth/callback" element={<OAuthCallback />} />
                     {/* Partners invite landing — public; reads ?token= and
                         either auto-accepts (logged-in) or shows two CTAs
                         (sign in / sign up) for the recipient to choose. */}

@@ -12,11 +12,54 @@ import {
 } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Sparkles } from 'lucide-react';
+import { getAuthItem } from '../utils/authStorage';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
+
+/**
+ * Render bot markdown in admin chat panels.
+ * Handles bold, italic, and line-breaks — the only patterns the LLM emits
+ * that look broken when displayed as raw text.
+ */
+const BotMessage = ({ content }) => {
+    if (!content) return null;
+    const segments = content.split('\n');
+    return (
+        <span>
+            {segments.map((line, li) => {
+                // Split line by bold (**…**) then italic (*…*) tokens
+                const parts = [];
+                let remaining = line;
+                let key = 0;
+                while (remaining.length > 0) {
+                    const boldMatch = remaining.match(/^(.*?)\*\*(.+?)\*\*(.*)/s);
+                    const italicMatch = remaining.match(/^(.*?)\*(.+?)\*(.*)/s);
+                    if (boldMatch && (!italicMatch || boldMatch[0].indexOf('**') <= italicMatch[0].indexOf('*'))) {
+                        if (boldMatch[1]) parts.push(<React.Fragment key={key++}>{boldMatch[1]}</React.Fragment>);
+                        parts.push(<strong key={key++}>{boldMatch[2]}</strong>);
+                        remaining = boldMatch[3];
+                    } else if (italicMatch) {
+                        if (italicMatch[1]) parts.push(<React.Fragment key={key++}>{italicMatch[1]}</React.Fragment>);
+                        parts.push(<em key={key++}>{italicMatch[2]}</em>);
+                        remaining = italicMatch[3];
+                    } else {
+                        parts.push(<React.Fragment key={key++}>{remaining}</React.Fragment>);
+                        remaining = '';
+                    }
+                }
+                return (
+                    <React.Fragment key={li}>
+                        {parts}
+                        {li < segments.length - 1 && <br />}
+                    </React.Fragment>
+                );
+            })}
+        </span>
+    );
+};
 
 /** Only allow https: URLs for file attachments (blocks javascript:, data:, etc.) */
 const isSafeFileUrl = (url) => typeof url === 'string' && /^https?:\/\//i.test(url);
@@ -350,8 +393,8 @@ export default function LiveChat({ embedded = false }) {
     // WebSocket: connect when online, heartbeat, auto-reconnect with exponential backoff
     // NOTE: selectedChat intentionally NOT in deps — use selectedChatRef to prevent reconnect on every chat click
     useEffect(() => {
-        const apiKey = localStorage.getItem('admin_token');
-        const authType = localStorage.getItem('auth_type');
+        const apiKey = getAuthItem('admin_token');
+        const authType = getAuthItem('auth_type');
         if (!apiKey || !isOnline) return;
 
         clearTimeout(reconnectTimerRef.current);
@@ -507,7 +550,15 @@ export default function LiveChat({ embedded = false }) {
 
                 case 'chat_accepted': {
                     setActiveChats(prev => [...new Set([...prev, data.session_id])]);
-                    const chatNameEntry = { name: data.visitor_name || 'Anonymous', reason: data.reason || null };
+                    // ``bot_name`` is the bot the visitor was chatting
+                    // with — surfaced to the operator UI so they know
+                    // which product/intent the conversation came from.
+                    const chatNameEntry = {
+                        name: data.visitor_name || 'Anonymous',
+                        reason: data.reason || null,
+                        botName: data.bot_name || null,
+                        botId: data.bot_id || null,
+                    };
                     chatNamesRef.current = { ...chatNamesRef.current, [data.session_id]: chatNameEntry };
                     setChatNames(prev => ({ ...prev, [data.session_id]: chatNameEntry }));
                     setVisitorStatus(prev => ({ ...prev, [data.session_id]: 'online' }));
@@ -551,7 +602,12 @@ export default function LiveChat({ embedded = false }) {
                         setChatNames(prev => {
                             const next = { ...prev };
                             data.chats.forEach(c => {
-                                next[c.session_id] = { name: c.visitor_name || 'Anonymous', reason: c.reason || null };
+                                next[c.session_id] = {
+                                    name: c.visitor_name || 'Anonymous',
+                                    reason: c.reason || null,
+                                    botName: c.bot_name || null,
+                                    botId: c.bot_id || null,
+                                };
                             });
                             return next;
                         });
@@ -1430,6 +1486,11 @@ export default function LiveChat({ embedded = false }) {
                                             </span>
                                             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
                                         </div>
+                                        {item.bot_name && (
+                                            <span className="inline-block mb-1.5 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">
+                                                {item.bot_name}
+                                            </span>
+                                        )}
                                         {item.reason && (
                                             <p className="text-[11px] text-surface-500 dark:text-surface-400 truncate mb-2">{item.reason}</p>
                                         )}
@@ -1462,6 +1523,7 @@ export default function LiveChat({ embedded = false }) {
                                 activeChats.map(sid => {
                                     const unread = unreadCounts[sid] || 0;
                                     const name = chatNames[sid]?.name || 'Visitor';
+                                    const botName = chatNames[sid]?.botName;
                                     const vStatus = visitorStatus[sid] || 'online';
                                     return (
                                         <button
@@ -1478,6 +1540,11 @@ export default function LiveChat({ embedded = false }) {
                                                     <span className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate block">
                                                         {name}
                                                     </span>
+                                                    {botName && (
+                                                        <span className="inline-block mt-0.5 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">
+                                                            {botName}
+                                                        </span>
+                                                    )}
                                                     {vStatus === 'disconnected' && (
                                                         <span className="text-[10px] text-amber-600 dark:text-amber-400 block">Disconnected</span>
                                                     )}
@@ -1521,7 +1588,7 @@ export default function LiveChat({ embedded = false }) {
                                 )}
 
                                 {qualifiedBotSessions.length === 0 ? (
-                                    <div className="px-4 py-4 text-center text-[11px] text-surface-400 dark:text-surface-500">
+                                    <div className="px-4 py-8 text-center text-sm text-surface-400 dark:text-surface-500">
                                         No qualified AI conversations yet
                                     </div>
                                 ) : (
@@ -1597,7 +1664,7 @@ export default function LiveChat({ embedded = false }) {
                                                                     showCount ? 'min-w-[24px] px-1 h-5' : 'w-5 h-5'
                                                                 } ${
                                                                     marked
-                                                                        ? 'bg-violet-600 text-white dark:bg-violet-500'
+                                                                        ? 'bg-emerald-600 text-white dark:bg-emerald-500'
                                                                         : 'bg-surface-100 text-surface-400 dark:bg-surface-800 dark:text-surface-600'
                                                                 }`}
                                                             >
@@ -1708,7 +1775,7 @@ export default function LiveChat({ embedded = false }) {
                                                                     showCount ? 'min-w-[22px] px-1 h-4' : 'w-4 h-4'
                                                                 } ${
                                                                     marked
-                                                                        ? 'bg-violet-600 text-white dark:bg-violet-500'
+                                                                        ? 'bg-emerald-600 text-white dark:bg-emerald-500'
                                                                         : 'bg-surface-100 text-surface-400 dark:bg-surface-800 dark:text-surface-600'
                                                                 }`}
                                                             >
@@ -1793,7 +1860,7 @@ export default function LiveChat({ embedded = false }) {
                                                 <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-0.5">
                                                     {msg.role === 'user' ? 'Visitor' : msg.role === 'bot' ? 'AI' : 'System'}
                                                 </div>
-                                                {msg.content}
+                                                {msg.role === 'bot' ? <BotMessage content={msg.content} /> : msg.content}
                                             </div>
                                         </div>
                                     ))}
@@ -1912,7 +1979,7 @@ export default function LiveChat({ embedded = false }) {
                                                             📎 {msg.filename || 'file'}
                                                         </a>
                                                     )
-                                                ) : msg.content}
+                                                ) : msg.role === 'bot' ? <BotMessage content={msg.content} /> : msg.content}
                                             </div>
                                         </div>
                                     ))}

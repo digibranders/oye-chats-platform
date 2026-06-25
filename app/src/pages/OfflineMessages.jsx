@@ -296,12 +296,20 @@ export default function OfflineMessages({ embedded = false }) {
                                                 if (msg.status === 'new') handleMarkRead(msg.id);
                                             }}
                                         >
-                                            <div className="flex items-center gap-2 mb-1">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap">
                                                 <span className="font-semibold text-sm text-surface-900 dark:text-surface-100 truncate">
                                                     {msg.visitor_name}
                                                 </span>
                                                 {statusBadge(msg.status)}
                                                 <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium', sc.color)}>{sc.label}</span>
+                                                {msg.bot_name && (
+                                                    <span
+                                                        className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300"
+                                                        title={`From ${msg.bot_name}`}
+                                                    >
+                                                        {msg.bot_name}
+                                                    </span>
+                                                )}
                                             </div>
                                             <p className="text-xs text-surface-500 dark:text-surface-400 mb-1">{msg.visitor_email}</p>
                                             <p className="text-sm text-surface-700 dark:text-surface-300 line-clamp-2">

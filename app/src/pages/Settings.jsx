@@ -393,38 +393,26 @@ export default function Settings() {
                         <button
                             type="button"
                             onClick={() => requestUpgrade('widget_behavior')}
-                            className="w-full mb-5 flex items-start gap-3 p-3.5 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-left hover:bg-amber-100 dark:hover:bg-amber-500/15 transition-colors"
+                            className="w-full mb-5 flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800/40 text-left hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                         >
-                            <span className="mt-0.5 p-1.5 rounded-lg bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300 flex-shrink-0">
-                                <Lock size={13} />
+                            <span className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                <Lock size={13} className="text-surface-400 dark:text-surface-500 flex-shrink-0" />
+                                Locked on the {entitlements.planName || 'Free'} plan
                             </span>
-                            <span className="min-w-0">
-                                <span className="block text-sm font-semibold text-amber-800 dark:text-amber-200">
-                                    Widget behavior is locked on the {entitlements.planName || 'Free'} plan
-                                </span>
-                                <span className="block text-xs text-amber-700/80 dark:text-amber-300/80 mt-0.5">
-                                    The OyeChats branding stays on, and the toggles below can&apos;t be changed. Upgrade to unlock file sharing, transcripts, queue position, typing preview, and more.
-                                </span>
-                            </span>
+                            <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Upgrade</span>
                         </button>
                     )}
                     {!widgetBehaviorLocked && brandingLocked && (
                         <button
                             type="button"
                             onClick={() => requestUpgrade('branding_removable')}
-                            className="w-full mb-5 flex items-start gap-3 p-3.5 rounded-xl border border-sky-200 dark:border-sky-500/30 bg-sky-50 dark:bg-sky-500/10 text-left hover:bg-sky-100 dark:hover:bg-sky-500/15 transition-colors"
+                            className="w-full mb-5 flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800/40 text-left hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
                         >
-                            <span className="mt-0.5 p-1.5 rounded-lg bg-sky-100 dark:bg-sky-500/20 text-sky-600 dark:text-sky-300 flex-shrink-0">
-                                <Lock size={13} />
+                            <span className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
+                                <Lock size={13} className="text-surface-400 dark:text-surface-500 flex-shrink-0" />
+                                Branding required on the {entitlements.planName || 'Starter'} plan
                             </span>
-                            <span className="min-w-0">
-                                <span className="block text-sm font-semibold text-sky-800 dark:text-sky-200">
-                                    &quot;Powered by OyeChats&quot; branding is required on the {entitlements.planName || 'Starter'} plan
-                                </span>
-                                <span className="block text-xs text-sky-700/80 dark:text-sky-300/80 mt-0.5">
-                                    Upgrade to Standard or Enterprise to remove the branding badge from your widget.
-                                </span>
-                            </span>
+                            <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Upgrade</span>
                         </button>
                     )}
 
@@ -1130,12 +1118,11 @@ function FlagRow({ icon, label, description, value, saving, onChange, locked = f
                     <p className="text-sm font-medium text-surface-800 dark:text-surface-200 flex items-center gap-1.5">
                         {label}
                         {locked && (
-                            <span
-                                className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30"
-                                title="Upgrade to change this"
-                            >
-                                <Lock size={9} /> Locked
-                            </span>
+                            <Lock
+                                size={12}
+                                className="text-surface-400 dark:text-surface-500 flex-shrink-0"
+                                aria-label="Locked — upgrade to change"
+                            />
                         )}
                     </p>
                     <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">{description}</p>

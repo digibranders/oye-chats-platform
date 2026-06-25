@@ -80,7 +80,7 @@ class _ExecuteResult:
 class TestCreateBot:
     def test_creates_bot(self, monkeypatch):
         from app.api import bot_routes
-        from app.services.plan_entitlements_service import UNLIMITED, PlanEntitlements
+        from app.services.plan_entitlements_service import AddBotDecision
 
         session = MagicMock()
         added = []
@@ -90,22 +90,14 @@ class TestCreateBot:
         app = _build_app(auth_override=_client_auth())
         tc = TestClient(app)
 
-        # Mock the entitlements resolver to return an "unlimited bots"
-        # snapshot. bot_routes now goes through plan_entitlements_service
-        # (not the legacy plan_service.get_plan_limit) so the route reads
-        # the effective bot limit + add-on seats from a single source.
-        fake_entitlements = PlanEntitlements(
-            client_id=1,
-            plan_slug="enterprise",
-            plan_name="Enterprise",
-            subscription_status="active",
-            limits={"bots": UNLIMITED, "max_bots_cap": UNLIMITED},
-            features={},
-            usage={"bots": 0},
-        )
+        # Per-bot billing model: ``create_bot`` consults
+        # ``can_client_add_new_bot`` instead of resolving plan-level
+        # bot limits. The fake decision says this client may still add
+        # another bot (paid subscription in good standing).
+        allowed = AddBotDecision(allowed=True, reason="ok", must_subscribe=False, active_bot_count=0)
         with patch(
-            "app.services.plan_entitlements_service.get_entitlements",
-            return_value=fake_entitlements,
+            "app.services.plan_entitlements_service.can_client_add_new_bot",
+            return_value=allowed,
         ):
             response = tc.post("/bots", json={"name": "My Bot", "website": "https://mysite.com"})
 
@@ -306,54 +298,39 @@ class TestBotAccessControl:
 
     def test_admin_operator_can_create(self, monkeypatch):
         from app.api import bot_routes
-        from app.services.plan_entitlements_service import UNLIMITED, PlanEntitlements
+        from app.services.plan_entitlements_service import AddBotDecision
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
-        # Same entitlements stub as TestCreateBot.test_creates_bot — the
-        # route reads bots limit via plan_entitlements_service now.
-        fake_entitlements = PlanEntitlements(
-            client_id=1,
-            plan_slug="enterprise",
-            plan_name="Enterprise",
-            subscription_status="active",
-            limits={"bots": UNLIMITED, "max_bots_cap": UNLIMITED},
-            features={},
-            usage={"bots": 0},
-        )
+        # Same gate as TestCreateBot.test_creates_bot — the route now
+        # consults ``can_client_add_new_bot`` instead of resolving
+        # plan-level bot limits.
+        allowed = AddBotDecision(allowed=True, reason="ok", must_subscribe=False, active_bot_count=0)
         app = _build_app(auth_override=_operator_auth(role="admin"))
         tc = TestClient(app)
         with patch(
-            "app.services.plan_entitlements_service.get_entitlements",
-            return_value=fake_entitlements,
+            "app.services.plan_entitlements_service.can_client_add_new_bot",
+            return_value=allowed,
         ):
             response = tc.post("/bots", json={"name": "Bot"})
         assert response.status_code == 201
 
     def test_owner_operator_can_create(self, monkeypatch):
         from app.api import bot_routes
-        from app.services.plan_entitlements_service import UNLIMITED, PlanEntitlements
+        from app.services.plan_entitlements_service import AddBotDecision
 
         session = MagicMock()
         session.add.side_effect = lambda x: None
         monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
 
-        fake_entitlements = PlanEntitlements(
-            client_id=1,
-            plan_slug="enterprise",
-            plan_name="Enterprise",
-            subscription_status="active",
-            limits={"bots": UNLIMITED, "max_bots_cap": UNLIMITED},
-            features={},
-            usage={"bots": 0},
-        )
+        allowed = AddBotDecision(allowed=True, reason="ok", must_subscribe=False, active_bot_count=0)
         app = _build_app(auth_override=_operator_auth(role="owner"))
         tc = TestClient(app)
         with patch(
-            "app.services.plan_entitlements_service.get_entitlements",
-            return_value=fake_entitlements,
+            "app.services.plan_entitlements_service.can_client_add_new_bot",
+            return_value=allowed,
         ):
             response = tc.post("/bots", json={"name": "Bot"})
         assert response.status_code == 201

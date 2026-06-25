@@ -15,7 +15,12 @@ class Client(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     company_name = Column(String, nullable=True)
-    hashed_password = Column(String, nullable=False)
+    # Nullable because OAuth-only signups never set a password. The
+    # /auth/google/callback path always creates the Client row first and
+    # never assigns a hashed_password; password login for that account
+    # only becomes possible after a /auth/request-password-reset round
+    # trip (forced "set initial password" UX).
+    hashed_password = Column(String, nullable=True)
     api_key = Column(String, unique=True, index=True, nullable=False)
     is_superadmin = Column(sqlalchemy.Boolean, default=False, nullable=False)
     superadmin_role = Column(String, nullable=True)  # owner | admin | readonly
@@ -90,6 +95,15 @@ class Client(Base):
         foreign_keys=[referral_code_id],
         lazy="joined",
     )
+    # External identity providers linked to this Client (Google, future:
+    # GitHub/Microsoft). Cascade-deletes so a workspace teardown also
+    # removes the OAuth links — provider rows on Google's side are not
+    # affected because we only store the provider's stable subject id.
+    oauth_accounts = relationship(
+        "OAuthAccount",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def is_affiliate(self) -> bool:
@@ -102,6 +116,59 @@ class Client(Base):
         """
         aff = self.affiliate
         return aff is not None and aff.deactivated_at is None
+
+
+class OAuthAccount(Base):
+    """External identity provider link for a Client.
+
+    One row per (provider, provider_user_id) pair. ``provider_user_id`` is
+    the provider's stable subject identifier (Google's ``sub`` claim) — never
+    the user's email, which can change. Matching by ``provider_user_id`` is
+    what lets a returning OAuth user log in even if they later changed their
+    Google account's primary email.
+
+    A single Client can have multiple OAuthAccount rows (future: Google +
+    GitHub on the same workspace) but only one per provider — enforced by
+    the partial unique index on (client_id, provider).
+    """
+
+    __tablename__ = "oauth_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider = Column(String, nullable=False)  # "google" (future: "github", "microsoft")
+    provider_user_id = Column(String, nullable=False)  # stable provider subject id
+    email = Column(String, nullable=True)  # provider-reported email at last login (informational)
+    picture_url = Column(Text, nullable=True)  # provider-reported avatar URL (informational)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+
+    client = relationship("Client", back_populates="oauth_accounts")
+
+    __table_args__ = (
+        # Same provider account can't be linked to two Clients — enforces
+        # the "find by provider_user_id" lookup as a true primary key for
+        # the OAuth identity.
+        Index(
+            "ix_oauth_accounts_provider_subject",
+            "provider",
+            "provider_user_id",
+            unique=True,
+        ),
+        # A Client can only have one row per provider. Future-proofs for
+        # multi-provider linking (Google + GitHub on the same account).
+        Index(
+            "ix_oauth_accounts_client_provider",
+            "client_id",
+            "provider",
+            unique=True,
+        ),
+    )
 
 
 class Bot(Base):
@@ -249,6 +316,24 @@ class Bot(Base):
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ── Per-bot billing (f8b2c4d6e1a3) ────────────────────────────────────
+    # ``plan_id`` and ``subscription_id`` point at the Plan / Subscription
+    # funding this specific bot in the per-bot billing model. Both are
+    # NULL for the single Free bot and for legacy-pooled bots that were
+    # grandfathered at migration time (those keep using the client-level
+    # ledger via ``is_legacy_pooled``). ``credits_balance`` is the eagerly
+    # maintained running total used by the chat hot path so we don't
+    # SUM(credit_ledger) on every deduction.
+    plan_id = Column(Integer, ForeignKey("plans.id", ondelete="RESTRICT"), nullable=True, index=True)
+    subscription_id = Column(
+        Integer,
+        ForeignKey("subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    is_legacy_pooled = Column(Boolean, default=False, server_default="false", nullable=False)
+    credits_balance = Column(Integer, default=0, server_default="0", nullable=False)
+
     # Relationships
     client = relationship("Client", back_populates="bots")
     documents = relationship("Document", back_populates="bot", cascade="all, delete-orphan")
@@ -257,6 +342,8 @@ class Bot(Base):
     growth_events = relationship("BotGrowthEvent", back_populates="bot", cascade="all, delete-orphan")
     webhooks = relationship("Webhook", back_populates="bot", cascade="all, delete-orphan")
     meeting_bookings = relationship("MeetingBooking", back_populates="bot", cascade="all, delete-orphan")
+    plan = relationship("Plan", foreign_keys=[plan_id])
+    subscription = relationship("Subscription", foreign_keys=[subscription_id], post_update=True)
 
 
 class Document(Base):
@@ -725,6 +812,10 @@ class Subscription(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     plan_id = Column(Integer, ForeignKey("plans.id", ondelete="RESTRICT"), nullable=False)
+    # Per-bot billing (f8b2c4d6e1a3): when set, this subscription funds
+    # one specific bot rather than the whole client. NULL = legacy
+    # client-level subscription (one per client, pre-migration shape).
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Subscription state
     status = Column(
@@ -803,12 +894,28 @@ class Subscription(Base):
     invoices = relationship("Invoice", back_populates="subscription", cascade="all, delete-orphan")
 
     __table_args__ = (
-        # Only one active/trialing subscription per client
+        # Legacy shape: at most one client-level (bot_id NULL) active
+        # subscription per client. Preserves the pre-per-bot-billing rule
+        # for grandfathered rows.
         Index(
-            "ix_subscriptions_client_active",
+            "ix_subscriptions_client_legacy_active",
             "client_id",
             unique=True,
-            postgresql_where=sqlalchemy.text("status IN ('active', 'trialing', 'past_due')"),
+            postgresql_where=sqlalchemy.text(
+                "bot_id IS NULL AND status IN ('active', 'trialing', 'past_due')",
+            ),
+        ),
+        # Per-bot shape: at most one active subscription per (client, bot).
+        # Allows a single client to hold many bot-scoped subscriptions
+        # concurrently — one per bot they pay for.
+        Index(
+            "ix_subscriptions_client_bot_active",
+            "client_id",
+            "bot_id",
+            unique=True,
+            postgresql_where=sqlalchemy.text(
+                "bot_id IS NOT NULL AND status IN ('active', 'trialing', 'past_due')",
+            ),
         ),
     )
 
@@ -943,6 +1050,11 @@ class CreditLedger(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    # Per-bot billing (f8b2c4d6e1a3): non-null on entries belonging to a
+    # specific bot's ledger. NULL for legacy/client-level entries (every
+    # row created before the per-bot rollout, plus any deductions made
+    # against legacy-pooled bots after rollout).
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
     delta = Column(Integer, nullable=False)
     reason = Column(String, nullable=False)  # credit_reason ENUM in PG
     reference_id = Column(Integer, nullable=True)  # chat_message_id, document_id, invoice_id, etc.
@@ -953,6 +1065,7 @@ class CreditLedger(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     client = relationship("Client", foreign_keys=[client_id])
+    bot = relationship("Bot", foreign_keys=[bot_id])
     creator = relationship("Client", foreign_keys=[created_by])
     grant = relationship("CreditLedger", remote_side=[id], foreign_keys=[grant_id])
 

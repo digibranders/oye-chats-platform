@@ -3,12 +3,13 @@ import ipaddress
 import logging
 import socket
 import uuid
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.api.auth import (
     bot_subscription_status,
@@ -344,17 +345,20 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
 
     plan_includes_live_chat = False
     plan_slug = "free"
+    _plan_branding_removable = False  # fail-closed: never hide branding on resolution error
     try:
         with _get_session() as _s:
             _plan = get_client_plan(_s, bot.client_id)
             plan_includes_live_chat = is_feature_enabled(_plan, "live_chat")
             plan_slug = (_plan.slug or "free").lower()
+            _plan_branding_removable = is_feature_enabled(_plan, "branding_removable")
     except Exception:
         # Fail closed — if we can't resolve the plan, hide live chat AND
         # apply Free-plan widget-behavior locks. Safer than leaking a paid
         # feature when the entitlements check fails.
         plan_includes_live_chat = False
         plan_slug = "free"
+        _plan_branding_removable = False
     effective_live_chat_enabled = bool(bot.live_chat_enabled) and plan_includes_live_chat
 
     # Free plan: the Widget Behavior section in Admin → Settings is fully
@@ -374,6 +378,13 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
                 "email_transcript": False,
             }
         )
+    elif not _plan_branding_removable:
+        # Non-free plans that don't include branding removal (e.g. Starter)
+        # must also force show_branding=True. The admin UI locks the toggle
+        # for these plans but stored feature_flags may have show_branding=False
+        # left over from a previous paid tier — enforce server-side so the
+        # widget always reflects the plan entitlement.
+        effective_feature_flags["show_branding"] = True
 
     return {
         "bot_name": bot.name,
@@ -1035,43 +1046,27 @@ def create_bot(
     """
     _require_bot_management_access(auth)
     with get_session() as session:
-        # ── Plan enforcement: check effective bot limit ──
-        # Uses ``plan_entitlements_service`` instead of reading
-        # ``plan.limits["bots"]`` directly so paid bot-seat add-ons
-        # (``clients.extra_bot_seats``) are counted toward the customer's
-        # allowance. The effective limit is computed as
-        # ``min(included + extras, hard_cap)``; ``UNLIMITED`` (-1) means no
-        # ceiling (Enterprise).
-        from app.services.plan_entitlements_service import UNLIMITED, get_entitlements
+        # ── Per-bot billing gate ──
+        # Free accounts get exactly one bot; every additional bot needs an
+        # active paid subscription somewhere on the account so the per-bot
+        # checkout has a funded counterpart. The decision is centralised
+        # in :func:`plan_entitlements_service.can_client_add_new_bot` so
+        # the frontend's ``/me/entitlements`` view and this route stay in
+        # lockstep.
+        from app.services.plan_entitlements_service import can_client_add_new_bot
 
-        entitlements = get_entitlements(auth["client_id"], session, include_usage=True)
-        bot_limit = entitlements.limit_for("bots")
-        if bot_limit != UNLIMITED:
-            current_bot_count = int(
-                session.execute(
-                    select(func.count(Bot.id)).where(
-                        Bot.client_id == auth["client_id"],
-                        Bot.is_active.is_(True),
-                    )
-                ).scalar_one()
-                or 0
+        decision = can_client_add_new_bot(auth["client_id"], session)
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": decision.reason,
+                    "metric": "bots",
+                    "active_bot_count": decision.active_bot_count,
+                    "must_subscribe": decision.must_subscribe,
+                    "message": ("Each additional chatbot needs its own paid subscription. Upgrade to add another bot."),
+                },
             )
-            if current_bot_count >= bot_limit:
-                raise HTTPException(
-                    status_code=429,
-                    detail={
-                        "error": "plan_limit_exceeded",
-                        "metric": "bots",
-                        "used": current_bot_count,
-                        "limit": bot_limit,
-                        "current_plan": entitlements.plan_slug,
-                        "can_purchase_seat": entitlements.can_purchase_bot_seat(),
-                        "message": (
-                            f"You have reached your plan's bot limit ({bot_limit}). "
-                            "Add a bot seat or upgrade your plan."
-                        ),
-                    },
-                )
 
         # Resolve the embed domain whitelist. If the customer supplied a list
         # we trust it (already normalized by the schema validator). Otherwise we
@@ -1110,6 +1105,185 @@ def create_bot(
             "bot_key": new_bot.bot_key,
             "name": new_bot.name,
         }
+
+
+# ── Per-bot checkout ──────────────────────────────────────────────────────
+
+
+class BotCheckoutRequest(BaseModel):
+    """Body for ``POST /bots/checkout`` — start a per-bot subscription.
+
+    The bot row is NOT created here. We pass the bot's name + website +
+    domain settings in the Razorpay subscription notes so the activation
+    webhook (or the sync verify endpoint) can materialise the bot only
+    after payment captures. Dismissed checkouts leave no orphan rows.
+    """
+
+    name: str = Field(..., min_length=1, max_length=120)
+    website: str | None = None
+    plan_slug: str = Field(..., min_length=1, max_length=64)
+    billing_cycle: str = Field(default="monthly", pattern="^(monthly|annual)$")
+    allowed_domains: list[str] | None = None
+    domain_check_enabled: bool | None = None
+
+    @field_validator("allowed_domains")
+    @classmethod
+    def _validate_allowed_domains(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_allowed_domains(value)
+
+
+class BotCheckoutVerifyRequest(BaseModel):
+    """Body for ``POST /bots/checkout/verify`` — sync fallback for localhost.
+
+    Webhook delivery is the source of truth in production, but Razorpay
+    can't hit ``localhost`` so the success callback hits this endpoint to
+    trigger the activation handler synchronously. Idempotent: re-running
+    on an already-active subscription is a no-op (the handler short-
+    circuits when the local row already exists).
+    """
+
+    razorpay_payment_id: str
+    razorpay_subscription_id: str
+    razorpay_signature: str
+
+
+@router.post("/checkout")
+def create_bot_checkout(request: BotCheckoutRequest, auth=Depends(get_current_client_or_operator)):
+    """Mint a Razorpay subscription for one new bot.
+
+    Returns the Razorpay Checkout payload (``subscription_id``,
+    ``key_id``, prefill). The frontend opens Razorpay; on success it
+    calls ``POST /bots/checkout/verify`` (or the production webhook
+    arrives first) to materialise the new Bot row.
+
+    Free / first-bot creation does NOT go through this endpoint — that
+    keeps using ``POST /bots`` directly. Use ``can_client_add_new_bot``
+    to decide which path the frontend should take.
+    """
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        from app.db.models import Client, Plan
+        from app.services import razorpay_service
+
+        plan = session.execute(select(Plan).where(Plan.slug == request.plan_slug)).scalars().first()
+        if plan is None:
+            raise HTTPException(status_code=404, detail=f"Plan '{request.plan_slug}' not found.")
+        if plan.slug == "free":
+            raise HTTPException(
+                status_code=400,
+                detail="Free plan cannot fund an additional bot. Pick a paid plan.",
+            )
+
+        client = session.get(Client, auth["client_id"])
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client not found.")
+
+        # Resolve the bot's domain whitelist now (deterministic — derived
+        # the same way ``POST /bots`` does) so the webhook handler doesn't
+        # have to repeat the logic.
+        if request.allowed_domains is not None:
+            resolved_domains = request.allowed_domains
+        else:
+            resolved_domains = _derive_allowed_domains_from_website(request.website)
+        if request.domain_check_enabled is None:
+            resolved_check_enabled = bool(resolved_domains)
+        else:
+            resolved_check_enabled = bool(request.domain_check_enabled)
+
+        try:
+            payload = razorpay_service.create_per_bot_subscription(
+                session,
+                client,
+                plan,
+                bot_name=request.name.strip(),
+                bot_website=request.website,
+                bot_allowed_domains=resolved_domains,
+                bot_domain_check_enabled=resolved_check_enabled,
+                billing_cycle=request.billing_cycle,
+            )
+        except razorpay_service.RazorpayBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        session.commit()
+        logger.info(
+            "Per-bot Razorpay subscription started: client=%s plan=%s cycle=%s sub=%s",
+            client.id,
+            plan.slug,
+            request.billing_cycle,
+            payload.get("subscription_id"),
+        )
+        return payload
+
+
+@router.post("/checkout/verify")
+def verify_bot_checkout(body: BotCheckoutVerifyRequest, auth=Depends(get_current_client_or_operator)):
+    """Verify the Razorpay success callback and materialise the new bot.
+
+    Webhook delivery is the source of truth in production; this endpoint
+    is the sync fallback so the customer doesn't have to wait for the
+    webhook to land before seeing their new bot. Idempotent: if the
+    subscription's activation webhook arrived first, the local row
+    already exists and the handler short-circuits.
+    """
+    _require_bot_management_access(auth)
+    from app.services import razorpay_service
+
+    try:
+        razorpay_service.verify_subscription_payment_signature(
+            razorpay_payment_id=body.razorpay_payment_id,
+            razorpay_subscription_id=body.razorpay_subscription_id,
+            razorpay_signature=body.razorpay_signature,
+        )
+    except razorpay_service.SignatureMismatch as exc:
+        raise HTTPException(status_code=400, detail="Signature verification failed.") from exc
+
+    # Fetch the subscription from Razorpay so we can hand a synthetic
+    # ``subscription.activated`` payload to the existing handler. This
+    # keeps the per-bot bot-creation code path single-sourced.
+    rzp = razorpay_service._get_razorpay()
+    try:
+        subscription_entity = rzp.subscription.fetch(body.razorpay_subscription_id)
+    except Exception as exc:
+        logger.exception(
+            "Razorpay subscription.fetch failed during bot checkout verify (sub=%s)",
+            body.razorpay_subscription_id,
+        )
+        raise HTTPException(status_code=502, detail="Could not verify subscription with Razorpay.") from exc
+
+    notes = subscription_entity.get("notes") or {}
+    if (notes.get("purpose") or "").lower() != "per_bot_subscription":
+        raise HTTPException(status_code=400, detail="This subscription is not a per-bot checkout.")
+
+    paid_client_id = razorpay_service._client_id_from_notes(notes)
+    if not paid_client_id or paid_client_id != auth["client_id"]:
+        raise HTTPException(status_code=403, detail="Subscription belongs to a different client.")
+
+    # Razorpay's real webhook envelope nests entities under
+    # ``payload.subscription.entity``, but ``_extract_subscription_entity``
+    # already starts from the ``payload`` dict — so the synthetic shape we
+    # pass to the handler must be ``{"subscription": {"entity": ...}}``,
+    # NOT wrapped again in a ``"payload"`` key.
+    synthetic_payload = {"subscription": {"entity": subscription_entity}}
+    with get_session() as session:
+        result = razorpay_service._handle_subscription_activated(session, synthetic_payload)
+        session.commit()
+
+        # Look up the now-attached bot so the frontend can navigate to it
+        # without a second list-bots round-trip.
+        from app.db.models import Subscription as _Sub
+
+        sub = (
+            session.execute(select(_Sub).where(_Sub.razorpay_subscription_id == body.razorpay_subscription_id))
+            .scalars()
+            .first()
+        )
+        bot_id = sub.bot_id if sub else None
+
+    return {"status": "activated", "detail": result, "bot_id": bot_id}
 
 
 @router.post("/{bot_id}/demo-share-click")
@@ -1270,12 +1444,61 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
 
 @router.delete("/{bot_id}")
 def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
-    """Delete a bot and all its data (documents, sessions, messages)."""
+    """Delete a bot and all its data (documents, sessions, messages).
+
+    When the bot has its own per-bot subscription, cancel that
+    subscription first (both with Razorpay and locally). Two reasons:
+
+    1. **Stop the bill.** Leaving the subscription active after the bot
+       is gone would keep charging the customer for nothing.
+    2. **Side-step the partial unique index.** ``subscriptions.bot_id``
+       is ``ON DELETE SET NULL``, so deleting the bot would otherwise
+       null the FK on an ``active`` subscription — which collides with
+       ``ix_subscriptions_client_legacy_active`` (only one client-level
+       active sub per client). Marking the sub ``canceled`` first takes
+       it out of that index's predicate before the row is touched.
+
+    The legacy / Free bot path (no ``subscription_id``) skips this and
+    just deletes the bot as before.
+    """
     _require_bot_management_access(auth)
     with get_session() as session:
-        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        from app.db.models import Subscription
 
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
         bot_key_val = bot.bot_key
+        # ``getattr`` defensively — test mocks use SimpleNamespace and
+        # may not populate per-bot-billing columns.
+        sub_id = getattr(bot, "subscription_id", None)
+
+        if sub_id is not None:
+            sub = session.get(Subscription, sub_id)
+            # Only cancel a sub that's actually funding THIS bot. Legacy
+            # / pooled bots have a copy of the client-level subscription
+            # id stamped on them (Phase 2 backfill) but the sub itself
+            # has ``bot_id IS NULL`` — cancelling that would kill the
+            # customer's account-level subscription too.
+            if sub is not None and sub.bot_id == bot.id and sub.status in ("active", "trialing", "past_due"):
+                # Best-effort cancel in Razorpay so we stop the renewal.
+                # Local row is marked canceled regardless — even if the
+                # provider call fails, we don't want to leave a stranded
+                # active subscription pointing at a bot we just deleted.
+                if sub.payment_provider == "razorpay" and sub.razorpay_subscription_id:
+                    try:
+                        from app.services import razorpay_service
+
+                        razorpay_service.cancel_subscription(sub, at_period_end=False)
+                    except Exception:
+                        logger.exception(
+                            "Razorpay cancel failed for sub %s during bot %s delete — proceeding with local cancel",
+                            sub.id,
+                            bot.id,
+                        )
+                sub.status = "canceled"
+                sub.canceled_at = datetime.now(UTC)
+                sub.bot_id = None  # release the (client, bot) unique-index slot
+                session.flush()
+
         session.delete(bot)
         session.commit()
         cache_delete(bot_config_key(bot_key_val))

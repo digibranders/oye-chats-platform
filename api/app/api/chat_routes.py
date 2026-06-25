@@ -4,6 +4,7 @@ import ipaddress
 import json
 import logging
 import re
+import time
 import urllib.request
 import uuid
 
@@ -203,13 +204,29 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
             except Exception as e2:
                 logger.warning(f"ipinfo.io also failed for {ip_address}: {e2}")
 
-        if location:
+        if not location:
+            return
+
+        # The ChatSession row is INSERTed by rag_pipeline on the same request
+        # that spawned this thread. Geo lookups (200-1000ms) usually finish
+        # after the INSERT, but a fast ip-api response can race ahead of it
+        # — retry briefly so the resolved value isn't dropped on the floor.
+        for _ in range(5):
             with get_session() as session:
                 chat_session = session.query(ChatSession).filter(ChatSession.id == session_id).first()
                 if chat_session:
-                    chat_session.location = location
-                    session.commit()
-                    logger.info(f"Background geolocation resolved | session={session_id} | location={location}")
+                    # Only overwrite the raw "IP: …" stamp left by the request
+                    # handler. If something else (manual edit, future resolver)
+                    # has already set a richer value, leave it alone.
+                    current = chat_session.location or ""
+                    if not current or current.startswith("IP:"):
+                        chat_session.location = location
+                        session.commit()
+                        logger.info(f"Background geolocation resolved | session={session_id} | location={location}")
+                    return
+            time.sleep(0.5)
+
+        logger.warning(f"Background geolocation: session row never appeared | session={session_id}")
     except Exception as e:
         logger.warning(f"Background geolocation failed for session {session_id}: {e}")
 
@@ -274,6 +291,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
                 cost,
                 reason="ai_chat",
                 reference_id=bot.id,
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
             )
             db.commit()
         except credit_service.InsufficientCredits as exc:
@@ -386,6 +404,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
                 cost,
                 reason="ai_chat",
                 reference_id=bot.id,
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
             )
             db.commit()
         except credit_service.InsufficientCredits as exc:
@@ -782,6 +801,7 @@ def get_history_endpoint(
                     "role": m.role,
                     "content": m.content,
                     "timestamp": m.created_at.isoformat(),
+                    "feedback": m.feedback if hasattr(m, "feedback") else None,
                 }
                 for m in all_history
             ]
