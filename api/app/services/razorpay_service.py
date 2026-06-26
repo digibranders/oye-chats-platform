@@ -45,6 +45,7 @@ from app.config import (
     RAZORPAY_ENABLED,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
+    RAZORPAY_SEAT_PLAN_ID,
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
@@ -441,9 +442,6 @@ def resolve_discounted_plan(
     session.add(row)
     session.flush()
     return plan["id"]
-
-
-RAZORPAY_SEAT_PLAN_ID = "plan_T5rNFpt3vSkl4R"  # Extra Seat Monthly, ₹499
 
 
 def create_seat_addon_subscription(
@@ -917,7 +915,7 @@ def _create_bot_from_subscription_notes(
         try:
             parsed = _json.loads(raw_domains) if isinstance(raw_domains, str) else raw_domains
             if isinstance(parsed, list):
-                allowed_domains = [str(d) for d in parsed if isinstance(d, (str, int))]
+                allowed_domains = [str(d) for d in parsed if isinstance(d, str | int)]
         except (ValueError, TypeError):
             logger.warning("Could not parse bot_allowed_domains from notes: %r", raw_domains)
 
