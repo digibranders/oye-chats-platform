@@ -29,6 +29,7 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.core.geo import resolve_country
+from app.core.pricing import display_price, format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service
@@ -348,7 +349,7 @@ def get_billing_geo(request: Request, _client: Client = Depends(get_current_clie
     # that ``resolve_country`` honours.
     return {
         "country": country,
-        "display_currency": "USD",
+        "display_currency": "INR" if indian else "USD",
         "display_rate": DISPLAY_USD_TO_INR,
         "intl_payments_enabled": INTL_PAYMENTS_ENABLED,
         "razorpay_enabled": RAZORPAY_ENABLED,
@@ -564,35 +565,15 @@ def checkout_quote(
 
         country = resolve_country(request)
         indian = country == "IN"
-        amount_minor = _amount_for_cycle(plan, billing_cycle)
-
-        # Normalise to INR paise for Indian customers, USD cents for everyone
-        # else.  Plans are now stored in INR paise (currency='INR'), but we
-        # guard against any row still carrying the legacy USD-cent value so
-        # a partial rollout never mis-displays.
-        plan_currency = (plan.currency or "INR").upper()
-
-        if indian:
-            currency = "INR"
-            if plan_currency == "USD":
-                # Legacy USD-cent row: convert to paise for display/checkout.
-                amount_minor = round((amount_minor / 100) * DISPLAY_USD_TO_INR * 100)
-            # amount_minor is now INR paise.
-            rupees = amount_minor / 100
-            amount_display = f"₹{rupees:,.0f}" if rupees == int(rupees) else f"₹{rupees:,.2f}"
-        else:
-            currency = "USD"
-            # USD display is informational only — non-Indian customers reach
-            # contact_sales until INTL_PAYMENTS_ENABLED is set.
-            if plan_currency == "INR":
-                # INR paise → USD cents via display rate.
-                usd_cents = round((amount_minor / 100) / DISPLAY_USD_TO_INR * 100) if DISPLAY_USD_TO_INR > 0 else 0
-            else:
-                # Already USD cents.
-                usd_cents = amount_minor
-            amount_minor = int(usd_cents)
-            dollars = amount_minor / 100
-            amount_display = f"${dollars:,.0f}" if dollars == int(dollars) else f"${dollars:,.2f}"
+        inr_paise = _amount_for_cycle(plan, billing_cycle)
+        usd_minor = (
+            plan.annual_price_usd_cents if billing_cycle == "annual"
+            else plan.monthly_price_usd_cents
+        )
+        amount_minor, currency = display_price(
+            inr_paise=inr_paise, usd_cents=usd_minor, country=country, rate=DISPLAY_USD_TO_INR
+        )
+        amount_display = format_amount(amount_minor, currency)
 
         # Free plan: render a quote but mark checkout as unsupported.
         if amount_minor == 0 and plan.slug != "enterprise":
@@ -631,7 +612,7 @@ def checkout_quote(
         if not indian and not INTL_PAYMENTS_ENABLED:
             return {
                 "country": country,
-                "currency": "USD",
+                "currency": currency,
                 "amount_minor": amount_minor,
                 "amount_display": amount_display,
                 "billing_cycle": billing_cycle,
