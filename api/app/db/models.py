@@ -784,6 +784,15 @@ class Plan(Base):
     razorpay_plan_id_monthly = Column(String, nullable=True)
     razorpay_plan_id_annual = Column(String, nullable=True)
 
+    # Fixed USD headline pricing (cents). Independent of the INR columns —
+    # set deliberately, NEVER converted live. Shown to non-Indian visitors and
+    # charged by Stripe. NULL → caller falls back to a DISPLAY_USD_TO_INR
+    # conversion for legacy rows that predate these columns. See
+    # ``app.core.pricing.display_price`` and ADR D2/D3 in the billing plan.
+    monthly_price_usd_cents = Column(Integer, nullable=True)
+    annual_price_usd_cents = Column(Integer, nullable=True)
+    extra_seat_price_usd_cents = Column(Integer, nullable=True)
+
     # Display & ordering
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)  # auto-assigned to new clients
