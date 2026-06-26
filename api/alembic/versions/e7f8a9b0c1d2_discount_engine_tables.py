@@ -15,7 +15,7 @@ Also adds ``subscriptions.razorpay_billing_plan_id`` — the Razorpay plan
 actually billed (discounted or base). Entitlements still follow
 ``subscriptions.plan_id`` (always the base plan).
 
-Revision ID: d4e5f6a7b8c9
+Revision ID: e7f8a9b0c1d2
 Revises: b1c2d3e4f5a6
 Create Date: 2026-06-26
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "d4e5f6a7b8c9"
+revision = "e7f8a9b0c1d2"
 down_revision = "b1c2d3e4f5a6"
 branch_labels = None
 depends_on = None
