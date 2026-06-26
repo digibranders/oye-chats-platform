@@ -1421,15 +1421,17 @@ class DiscountedPlanCache(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     base_plan_id = Column(Integer, ForeignKey("plans.id", ondelete="CASCADE"), nullable=False)
-    billing_cycle = Column(String, nullable=False)   # "monthly" | "annual"
-    discount_bps = Column(Integer, nullable=False)   # e.g. 1500 = 15 %
+    billing_cycle = Column(String, nullable=False)  # "monthly" | "annual"
+    discount_bps = Column(Integer, nullable=False)  # e.g. 1500 = 15 %
     razorpay_plan_id = Column(String, nullable=False)
     amount_paise = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint(
-            "base_plan_id", "billing_cycle", "discount_bps",
+            "base_plan_id",
+            "billing_cycle",
+            "discount_bps",
             name="uq_discounted_plan",
         ),
         CheckConstraint(
@@ -1450,15 +1452,9 @@ class ReferralConversion(Base):
     __tablename__ = "referral_conversions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    client_id = Column(
-        Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    referral_code_id = Column(
-        Integer, ForeignKey("referral_codes.id", ondelete="SET NULL"), nullable=True
-    )
-    affiliate_id = Column(
-        Integer, ForeignKey("affiliates.id", ondelete="SET NULL"), nullable=True
-    )
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    referral_code_id = Column(Integer, ForeignKey("referral_codes.id", ondelete="SET NULL"), nullable=True)
+    affiliate_id = Column(Integer, ForeignKey("affiliates.id", ondelete="SET NULL"), nullable=True)
     commission_bps = Column(Integer, nullable=False)
     customer_discount_bps = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

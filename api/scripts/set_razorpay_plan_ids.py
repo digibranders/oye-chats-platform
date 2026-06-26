@@ -46,8 +46,8 @@ from app.db.models import Plan
 from app.db.session import get_session
 
 _SLUG_TO_ARGS: dict[str, tuple[str, str]] = {
-    "starter":    ("starter_monthly", "starter_annual"),
-    "standard":   ("standard_monthly", "standard_annual"),
+    "starter": ("starter_monthly", "starter_annual"),
+    "standard": ("standard_monthly", "standard_annual"),
     "enterprise": ("enterprise_monthly", "enterprise_annual"),
 }
 
@@ -72,9 +72,7 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
             }
 
     with get_session() as session:
-        plans = session.scalars(
-            select(Plan).where(Plan.slug.in_(list(_SLUG_TO_ARGS.keys())))
-        ).all()
+        plans = session.scalars(select(Plan).where(Plan.slug.in_(list(_SLUG_TO_ARGS.keys())))).all()
         plan_map = {p.slug: p for p in plans}
 
         if not updates:
@@ -119,16 +117,14 @@ def run(args: argparse.Namespace, *, apply: bool) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true", help="Commit changes (default: dry-run).")
-    parser.add_argument("--starter-monthly",   metavar="PLAN_ID", help="plan_XXX for Starter monthly")
-    parser.add_argument("--starter-annual",    metavar="PLAN_ID", help="plan_XXX for Starter annual")
-    parser.add_argument("--standard-monthly",  metavar="PLAN_ID", help="plan_XXX for Standard monthly")
-    parser.add_argument("--standard-annual",   metavar="PLAN_ID", help="plan_XXX for Standard annual")
+    parser.add_argument("--starter-monthly", metavar="PLAN_ID", help="plan_XXX for Starter monthly")
+    parser.add_argument("--starter-annual", metavar="PLAN_ID", help="plan_XXX for Starter annual")
+    parser.add_argument("--standard-monthly", metavar="PLAN_ID", help="plan_XXX for Standard monthly")
+    parser.add_argument("--standard-annual", metavar="PLAN_ID", help="plan_XXX for Standard annual")
     parser.add_argument("--enterprise-monthly", metavar="PLAN_ID", help="plan_XXX for Enterprise monthly")
-    parser.add_argument("--enterprise-annual",  metavar="PLAN_ID", help="plan_XXX for Enterprise annual")
+    parser.add_argument("--enterprise-annual", metavar="PLAN_ID", help="plan_XXX for Enterprise annual")
 
     args = parser.parse_args()
     return run(args, apply=args.apply)

@@ -268,11 +268,11 @@ class AcceptInviteResponse(BaseModel):
 
 def _to_http(exc: AffiliateProgramError) -> HTTPException:
     """Map service-layer exceptions to clean HTTP responses."""
-    if isinstance(exc, (InvalidCodeFormat, CodeAlreadyExists, CommissionSplitExceedsPool)):
+    if isinstance(exc, InvalidCodeFormat | CodeAlreadyExists | CommissionSplitExceedsPool):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if isinstance(
         exc,
-        (AffiliateLimitReached, CodeLimitReached, AlreadyAffiliate, InviteAlreadyPending),
+        AffiliateLimitReached | CodeLimitReached | AlreadyAffiliate | InviteAlreadyPending,
     ):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if isinstance(exc, InviteAlreadyUsed):
@@ -286,7 +286,7 @@ def _to_http(exc: AffiliateProgramError) -> HTTPException:
         # specific token. UI uses the distinct status to render targeted
         # "this invite is for X — sign in with that email" copy.
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    if isinstance(exc, (ClientNotFound, CodeNotFound, NotAffiliate, InviteNotFound)):
+    if isinstance(exc, ClientNotFound | CodeNotFound | NotAffiliate | InviteNotFound):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

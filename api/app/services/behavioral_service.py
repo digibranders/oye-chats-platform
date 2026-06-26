@@ -94,7 +94,7 @@ def score_behavioral_signals(
     # Time on site (seconds)
     time_on_page = signals.get("time_on_page", 0)
     threshold = config.get("time_on_site_threshold", config.get("time_on_site_threshold_seconds", 60))
-    if isinstance(time_on_page, (int, float)) and time_on_page >= threshold:
+    if isinstance(time_on_page, int | float) and time_on_page >= threshold:
         score += config.get("time_on_site_score", 3)
 
     # Pages viewed
