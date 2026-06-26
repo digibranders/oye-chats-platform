@@ -252,6 +252,94 @@ def test_create_seat_addon_rejects_zero_seats():
         razorpay_service.create_seat_addon_subscription(MagicMock(), _make_client(), extra_seats=0)
 
 
+# ── resolve_discounted_plan ───────────────────────────────────────────────────
+
+
+def test_resolve_discounted_plan_creates_and_caches(monkeypatch):
+    """Cache miss: creates a discounted Razorpay plan at the right paise amount."""
+    from app.services import razorpay_service as rs
+
+    rzp = MagicMock()
+    rzp.plan.create.return_value = {"id": "plan_disc_15pct"}
+    monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
+
+    session = MagicMock()
+    session.scalars.return_value.first.return_value = None  # cache miss
+
+    base = _make_plan(
+        id=2, name="Standard", slug="standard",
+        monthly_price_cents=459900, annual_price_cents=4409900,
+    )
+    result = rs.resolve_discounted_plan(session, base, "monthly", 1500)
+
+    assert result == "plan_disc_15pct"
+    sent = rzp.plan.create.call_args.kwargs["data"]
+    # 459900 - (459900 * 1500) // 10000 = 459900 - 68985 = 390915
+    assert sent["item"]["amount"] == 390915
+    assert sent["item"]["currency"] == "INR"
+    assert sent["period"] == "monthly"
+    assert rzp.plan.create.call_count == 1
+    session.add.assert_called_once()
+    session.flush.assert_called_once()
+
+
+def test_resolve_discounted_plan_reuses_cached(monkeypatch):
+    """Cache hit: returns stored plan_id without calling Razorpay."""
+    from app.services import razorpay_service as rs
+
+    rzp = MagicMock()
+    monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
+
+    session = MagicMock()
+    cached = SimpleNamespace(razorpay_plan_id="plan_already_exists")
+    session.scalars.return_value.first.return_value = cached
+
+    base = _make_plan(id=2, name="Standard", slug="standard",
+                      monthly_price_cents=459900, annual_price_cents=4409900)
+    result = rs.resolve_discounted_plan(session, base, "monthly", 1500)
+
+    assert result == "plan_already_exists"
+    rzp.plan.create.assert_not_called()
+
+
+def test_resolve_discounted_plan_annual_uses_annual_price(monkeypatch):
+    """Annual cycle uses annual_price_cents as the base amount."""
+    from app.services import razorpay_service as rs
+
+    rzp = MagicMock()
+    rzp.plan.create.return_value = {"id": "plan_disc_annual"}
+    monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
+
+    session = MagicMock()
+    session.scalars.return_value.first.return_value = None
+
+    base = _make_plan(id=2, name="Standard", slug="standard",
+                      monthly_price_cents=459900, annual_price_cents=4409900)
+    rs.resolve_discounted_plan(session, base, "annual", 1000)
+
+    sent = rzp.plan.create.call_args.kwargs["data"]
+    # 4409900 - (4409900 * 1000) // 10000 = 4409900 - 440990 = 3968910
+    assert sent["item"]["amount"] == 3968910
+    assert sent["period"] == "yearly"
+
+
+def test_resolve_discounted_plan_rejects_invalid_bps():
+    from app.services import razorpay_service as rs
+
+    with pytest.raises(ValueError, match="discount_bps"):
+        rs.resolve_discounted_plan(MagicMock(), _make_plan(), "monthly", 0)
+
+    with pytest.raises(ValueError, match="discount_bps"):
+        rs.resolve_discounted_plan(MagicMock(), _make_plan(), "monthly", 10000)
+
+
+def test_resolve_discounted_plan_rejects_invalid_cycle():
+    from app.services import razorpay_service as rs
+
+    with pytest.raises(ValueError, match="billing_cycle"):
+        rs.resolve_discounted_plan(MagicMock(), _make_plan(), "weekly", 500)
+
+
 # ── Webhook dispatcher ────────────────────────────────────────────────────────
 
 

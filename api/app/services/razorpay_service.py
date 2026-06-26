@@ -48,7 +48,7 @@ from app.config import (
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
-from app.db.models import Client, Invoice, Plan, ProcessedWebhook, Subscription
+from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
 from app.services import credit_service
 
 if TYPE_CHECKING:
@@ -364,6 +364,74 @@ def create_subscription(
         },
         "theme": {"color": "#6366f1"},
     }
+
+
+def resolve_discounted_plan(
+    session: Session,
+    base_plan: Plan,
+    billing_cycle: str,
+    discount_bps: int,
+) -> str:
+    """Return a Razorpay plan_id for base_plan discounted by discount_bps.
+
+    Looks up the (base_plan_id, billing_cycle, discount_bps) cache first.
+    On a miss, creates a new Razorpay plan at the discounted paise amount,
+    inserts it into the cache, and returns the new plan_id.
+
+    Razorpay Offers have no create API, so recurring discounts are modelled
+    as discounted plans — a lower plan amount recurs automatically every
+    cycle with no per-cycle coupon redemption required.
+
+    Discount math: discounted = base - floor(base × bps / 10000).
+    Integer floor keeps paise whole; the tiny rounding difference (<₹1) is
+    in the customer's favour.
+    """
+    if not (0 < discount_bps < 10000):
+        raise ValueError(f"discount_bps must be 1–9999, got {discount_bps}")
+    if billing_cycle not in ("monthly", "annual"):
+        raise ValueError(f"billing_cycle must be 'monthly' or 'annual', got {billing_cycle!r}")
+
+    cached = session.scalars(
+        select(DiscountedPlanCache)
+        .where(DiscountedPlanCache.base_plan_id == base_plan.id)
+        .where(DiscountedPlanCache.billing_cycle == billing_cycle)
+        .where(DiscountedPlanCache.discount_bps == discount_bps)
+    ).first()
+    if cached is not None:
+        return cached.razorpay_plan_id
+
+    base_amount = int(
+        base_plan.annual_price_cents if billing_cycle == "annual"
+        else base_plan.monthly_price_cents
+    )
+    discounted_paise = base_amount - (base_amount * discount_bps) // 10000
+    period = "yearly" if billing_cycle == "annual" else "monthly"
+
+    rzp = _get_razorpay()
+    plan = rzp.plan.create(data={
+        "period": period,
+        "interval": 1,
+        "item": {
+            "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}%",
+            "amount": discounted_paise,
+            "currency": "INR",
+        },
+        "notes": {
+            "base_plan_id": str(base_plan.id),
+            "discount_bps": str(discount_bps),
+        },
+    })
+
+    row = DiscountedPlanCache(
+        base_plan_id=base_plan.id,
+        billing_cycle=billing_cycle,
+        discount_bps=discount_bps,
+        razorpay_plan_id=plan["id"],
+        amount_paise=discounted_paise,
+    )
+    session.add(row)
+    session.flush()
+    return plan["id"]
 
 
 RAZORPAY_SEAT_PLAN_ID = "plan_T5rNFpt3vSkl4R"  # Extra Seat Monthly, ₹499
