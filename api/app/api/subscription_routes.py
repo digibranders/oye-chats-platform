@@ -704,14 +704,26 @@ def create_checkout(
             )
 
         if provider == "razorpay":
-            from app.services import razorpay_service
+            from app.db.models import ReferralConversion
+            from app.services import discount_service, razorpay_service
 
+            discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
             try:
-                result = razorpay_service.create_subscription(session, client, plan, request.billing_cycle)
+                result = razorpay_service.create_subscription(
+                    session, client, plan, request.billing_cycle, discount_bps=discount_bps
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except razorpay_service.RazorpayBillingError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
+            if disc_meta:
+                session.add(ReferralConversion(
+                    client_id=client.id,
+                    referral_code_id=int(disc_meta["referral_code_id"]),
+                    affiliate_id=None,
+                    commission_bps=int(disc_meta["affiliate_commission_bps"]),
+                    customer_discount_bps=int(disc_meta["discount_bps"]),
+                ))
             session.commit()
             return result
 

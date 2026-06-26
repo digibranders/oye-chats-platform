@@ -252,6 +252,7 @@ def create_subscription(
     seat_quantity: int | None = None,
     total_count: int | None = None,
     extra_notes: dict[str, str] | None = None,
+    discount_bps: int = 0,
 ) -> dict[str, Any]:
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
 
@@ -294,6 +295,11 @@ def create_subscription(
             f"Plan '{plan.name}' has no Razorpay plan id configured for {billing_cycle} billing. "
             "Create the plan in the Razorpay dashboard and set the id from super admin."
         )
+
+    # Apply a recurring customer discount by swapping in a discounted plan.
+    # Test-client override is excluded from discounts so QA flows stay clean.
+    if discount_bps and client.id not in CHECKOUT_TEST_CLIENT_IDS:
+        razorpay_plan_id = resolve_discounted_plan(session, plan, billing_cycle, discount_bps)
 
     # Razorpay rejects total_count > 100 for annual plans; monthly accepts
     # up to 120 (12 cycles × 10 years). Fall back to the cycle-specific
@@ -363,6 +369,10 @@ def create_subscription(
             "email": client.email or "",
         },
         "theme": {"color": "#6366f1"},
+        # The plan actually billed — may differ from plan.razorpay_plan_id_*
+        # when a discount was applied. The route stores this on
+        # Subscription.razorpay_billing_plan_id for audit.
+        "billing_plan_id": razorpay_plan_id,
     }
 
 

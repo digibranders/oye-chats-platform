@@ -340,6 +340,45 @@ def test_resolve_discounted_plan_rejects_invalid_cycle():
         rs.resolve_discounted_plan(MagicMock(), _make_plan(), "weekly", 500)
 
 
+# ── create_subscription + discount_bps ───────────────────────────────────────
+
+
+def test_create_subscription_uses_discounted_plan_when_bps_given(monkeypatch):
+    """With discount_bps set, create_subscription swaps in the discounted plan_id."""
+    from app.services import razorpay_service as rs
+
+    rzp = MagicMock()
+    rzp.subscription.create.return_value = {"id": "sub_disc", "short_url": "u", "status": "created"}
+    monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
+    monkeypatch.setattr(rs, "resolve_discounted_plan", lambda *a, **kw: "plan_disc_15pct")
+
+    plan = _make_plan(id=2, name="Standard", slug="standard",
+                      razorpay_plan_id_monthly="plan_base",
+                      razorpay_plan_id_annual="plan_base_y",
+                      included_operator_seats=2)
+    result = rs.create_subscription(MagicMock(), _make_client(), plan, "monthly", discount_bps=1500)
+
+    sent = rzp.subscription.create.call_args.kwargs["data"]
+    assert sent["plan_id"] == "plan_disc_15pct"
+    assert result["billing_plan_id"] == "plan_disc_15pct"
+
+
+def test_create_subscription_no_discount_uses_base_plan(monkeypatch):
+    """Without discount_bps, the base plan_id is used and billing_plan_id matches."""
+    from app.services import razorpay_service as rs
+
+    rzp = MagicMock()
+    rzp.subscription.create.return_value = {"id": "sub_base", "short_url": "u", "status": "created"}
+    monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
+
+    plan = _make_plan(razorpay_plan_id_monthly="plan_starter_inr_monthly")
+    result = rs.create_subscription(MagicMock(), _make_client(), plan, "monthly")
+
+    sent = rzp.subscription.create.call_args.kwargs["data"]
+    assert sent["plan_id"] == "plan_starter_inr_monthly"
+    assert result["billing_plan_id"] == "plan_starter_inr_monthly"
+
+
 # ── Webhook dispatcher ────────────────────────────────────────────────────────
 
 
