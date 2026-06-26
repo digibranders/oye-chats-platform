@@ -838,23 +838,25 @@ git commit -m "feat(affiliate): reserved-code blocklist, self-referral guard, no
 
 ### Task 3.1: Full regression suite (Razorpay only)
 
-- [ ] **Step 1: Backend baseline**
+- [x] **Step 1: Backend baseline**
 
 Run: `cd api && uv run ruff check . && uv run ruff format --check . && uv run pytest -q`
-Expected: all pass, zero Stripe errors.
+Expected: all pass, zero Stripe errors. ✅ 641 passed, lint ✓, format ✓
 
-- [ ] **Step 2: Frontend baseline**
+- [x] **Step 2: Frontend baseline**
 
 Run: `cd app && npm run lint && npm run build`
-Expected: lint ✓ · build ✓.
+Expected: lint ✓ · build ✓. ✅ 1 pre-existing warning (no errors), build succeeds.
 
-- [ ] **Step 3: Verify no Stripe bleed**
+- [x] **Step 3: Verify no Stripe bleed**
 
-Unset all `STRIPE_*` env vars, rerun `pytest -q` → still fully green.
+Unset all `STRIPE_*` env vars, rerun `pytest -q` → still fully green. ✅ 641 passed with Stripe vars unset.
 
 ### Task 3.2: End-to-end Razorpay smoke test (₹1 test plan)
 
-- [ ] **Step 1:** With `RAZORPAY_TEST_PLAN_ID` set and a `CHECKOUT_TEST_CLIENT_IDS` entry, run `scripts/razorpay_smoke_test.py` (live test keys) and confirm:
+Script: `scripts/razorpay_subscription_smoke_test.py` (created 2026-06-26)
+
+- [ ] **Step 1:** Run `python scripts/razorpay_subscription_smoke_test.py --client-id <id>` with live test keys and confirm:
   - Subscription activates
   - `subscription.activated` webhook creates the local DB row
   - Credits are granted
