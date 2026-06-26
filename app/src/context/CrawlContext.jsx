@@ -38,6 +38,7 @@ import {
  */
 
 const POLL_INTERVAL_MS = 2000;
+const CANCELLING_POLL_INTERVAL_MS = 500; // poll aggressively while waiting for cancel confirmation
 // Backoff for the "are there any leftover crawls?" probe when nothing is
 // running locally — avoids hammering the API every 2s for a no-op. Long
 // enough that a stale ``done`` from the server can't keep re-triggering UI
@@ -60,10 +61,15 @@ const initialState = {
     urls: [],
     pagesCrawled: 0,
     maxPages: null,
+    // Client-side hint: actual page count from the pre-crawl discovery step.
+    // When set, the UI uses this as the progress-bar denominator instead of
+    // maxPages (the plan ceiling) so "3/47" is shown rather than "3/1200".
+    discoveredTotal: null,
     currentUrl: null,
     startedAt: null, // epoch seconds (server-side)
     rootUrl: null, // domain we asked to crawl, kept across polls so the UI label is stable
     botId: null, // bot ownership for cancel calls
+    botName: null, // display name of the owning bot (set client-side, never from server)
     result: null, // populated on 'done' / 'cancelled'
     error: null, // populated on 'failed'
     cancellable: true,
@@ -79,10 +85,13 @@ function normalizeProgress(raw, prev) {
         urls,
         pagesCrawled: raw?.pages_crawled ?? urls.length,
         maxPages: raw?.max_pages ?? prev.maxPages,
+        // discoveredTotal is client-side only — preserve it across every server poll
+        discoveredTotal: prev.discoveredTotal,
         currentUrl: raw?.current_url ?? (urls.length ? urls[urls.length - 1] : prev.currentUrl),
         startedAt: raw?.started_at ?? prev.startedAt,
         rootUrl: prev.rootUrl, // set client-side on startCrawl; server doesn't echo
         botId: prev.botId,
+        botName: prev.botName, // client-side only — preserved across polls
         result: raw?.result ?? null,
         error: raw?.error ?? null,
         cancellable: raw?.cancellable ?? (status === 'running'),
@@ -196,9 +205,12 @@ export const CrawlProvider = ({ children }) => {
         const tick = async () => {
             await poll();
             const current = crawlRef.current;
-            const interval = ACTIVE_STATUSES.has(current.status) || current.isStarting
-                ? POLL_INTERVAL_MS
-                : IDLE_PROBE_INTERVAL_MS;
+            const interval =
+                current.status === 'cancelling'
+                    ? CANCELLING_POLL_INTERVAL_MS
+                    : ACTIVE_STATUSES.has(current.status) || current.isStarting
+                      ? POLL_INTERVAL_MS
+                      : IDLE_PROBE_INTERVAL_MS;
             pollTimerRef.current = setTimeout(tick, interval);
         };
         // Fire the first poll immediately on mount so a returning user sees
@@ -242,7 +254,7 @@ export const CrawlProvider = ({ children }) => {
     // ── Actions ──────────────────────────────────────────────────────────────
 
     const startCrawl = useCallback(
-        async ({ url, botId, useJs = false, replaceSource = null } = {}) => {
+        async ({ url, botId, botName = null, useJs = false, replaceSource = null, discoveredTotal = null } = {}) => {
             cancelledByUserRef.current = false;
             // Brand-new crawl → forget which terminal we already handled so
             // the next "Crawl complete" toast fires once for THIS run. Also
@@ -262,10 +274,15 @@ export const CrawlProvider = ({ children }) => {
                 urls: [],
                 pagesCrawled: 0,
                 maxPages: prev.maxPages,
+                // Store the pre-crawl discovered page count so both the
+                // KnowledgeBase page and the GlobalCrawlIndicator can show
+                // "3/47" instead of "3/1200" during the crawl.
+                discoveredTotal: discoveredTotal && discoveredTotal > 0 ? discoveredTotal : null,
                 currentUrl: null,
                 startedAt: Date.now() / 1000,
                 rootUrl: url,
                 botId: botId ?? null,
+                botName: botName ?? null,
                 result: null,
                 error: null,
                 cancellable: true,

@@ -12,7 +12,7 @@ from app.db.models import Bot, Document
 from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
 from app.ingestion.pipeline import run_folder_ingestion
-from app.schemas.client import CrawlRequest, DocumentPagesResponse
+from app.schemas.client import CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
 from app.services.crawler_service import (
     acquire_crawl_lock,
     get_crawl_progress,
@@ -498,8 +498,59 @@ def crawl_cancel_endpoint(
     return {"status": "cancelling", "message": "Cancel requested. Crawl will stop within a few seconds."}
 
 
+@router.post("/crawl/discover")
+@limiter.limit("30/hour", key_func=key_from_api_key)
+async def crawl_discover_endpoint(
+    discover_request: CrawlDiscoverRequest,
+    request: Request,
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Discover the number of crawlable pages on a site without ingesting content.
+
+    Fetches robots.txt → sitemaps → falls back to a 1-level HTML BFS if no
+    sitemap is found. Returns within ~20 seconds. Used by the frontend to show
+    "Found X pages. Ready to crawl?" before the user commits to a full crawl.
+
+    The ``total_found`` count is capped at the caller's plan ``max_crawl_pages``
+    ceiling so the number is always actionable and never exceeds what the plan
+    allows. ``capped=true`` signals that there may be more pages than shown.
+    """
+    _require_knowledge_management_access(auth)
+    client_id = auth["client_id"]
+    _verify_bot_ownership(bot_id, client_id)
+    _check_memory()
+
+    from app.services import plan_service
+    from app.services.url_discovery import discover_website_urls
+
+    with get_session() as db:
+        plan = plan_service.get_client_plan(db, client_id)
+        crawl_limits = plan_service.get_crawl_limits(plan)
+        plan_max = crawl_limits["max_crawl_pages"]
+
+    discovery_cap = min(plan_max, 1000)
+    try:
+        urls = await discover_website_urls(
+            discover_request.url,
+            max_urls=discovery_cap,
+            timeout=20.0,
+        )
+        total = len(urls)
+    except Exception as exc:
+        logger.warning("URL discovery failed for %s: %s", discover_request.url, exc)
+        total = 0
+
+    return {
+        "url": discover_request.url,
+        "total_found": total,
+        "capped": total >= discovery_cap,
+        "plan_max": plan_max,
+    }
+
+
 @router.post("/crawl", status_code=202)
-@limiter.limit("3/hour", key_func=key_from_api_key)
+@limiter.limit("10/hour", key_func=key_from_api_key)
 async def crawl_endpoint(
     crawl_request: CrawlRequest,
     request: Request,

@@ -40,7 +40,7 @@ import { Button } from '../components/ui/Button';
 import Progress from '../components/ui/Progress';
 import { useToast } from '../context/ToastContext';
 import { useBotContext } from '../context/BotContext';
-import useEntitlements from '../hooks/useEntitlements';
+import useEntitlements, { entitlementsRefresh } from '../hooks/useEntitlements';
 import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
@@ -311,6 +311,9 @@ export default function Billing() {
       setSubscription(subRes?.subscription || null);
       setPlan(subRes?.plan || null);
       setHistory(Array.isArray(histRes) ? histRes : []);
+      // Bust the entitlements cache so every feature gate in the app
+      // re-reads the new plan limits immediately — no page refresh needed.
+      entitlementsRefresh();
     } catch (err) {
       showToast(err?.message || 'Failed to load billing data', 'error');
     } finally {
@@ -726,6 +729,9 @@ export default function Billing() {
         }
         hasStripeSubscription={subscription?.payment_provider === 'stripe'}
         onSuccess={(evt) => {
+          // Bust the cache immediately so feature gates unlock in the same
+          // frame as the success toast — no refresh needed.
+          entitlementsRefresh();
           // Map every PlanModal outcome kind to its own toast so users get
           // accurate feedback instead of a generic "Plan updated." for
           // distinct outcomes (trial-start vs subscribe vs prorated swap).
