@@ -317,7 +317,11 @@ def create_subscription(
                 continue
             notes[str(key)] = str(value)
 
-    quantity = max(int(seat_quantity or plan.included_operator_seats or 1), 1)
+    # Base subscription is always quantity 1 — the flat plan price already
+    # covers the bundled included seats. Extra seats are billed on a SEPARATE
+    # add-on subscription via create_seat_addon_subscription, because Razorpay
+    # quantity multiplies the WHOLE plan amount (₹4,599×2 = ₹9,198, not ₹4,599+₹499).
+    quantity = max(int(seat_quantity or 1), 1)
 
     try:
         subscription = rzp.subscription.create(
@@ -354,6 +358,68 @@ def create_subscription(
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats",
         "description": f"{plan.name} ({billing_cycle})",
+        "prefill": {
+            "name": client.name or "",
+            "email": client.email or "",
+        },
+        "theme": {"color": "#6366f1"},
+    }
+
+
+RAZORPAY_SEAT_PLAN_ID = "plan_T5rNFpt3vSkl4R"  # Extra Seat Monthly, ₹499
+
+
+def create_seat_addon_subscription(
+    session: Session,
+    client: Client,
+    *,
+    extra_seats: int,
+) -> dict[str, Any]:
+    """Create a separate ₹499 × extra_seats Razorpay subscription for operator seats.
+
+    Must be a distinct subscription from the main plan. Razorpay `quantity`
+    multiplies the entire plan amount, which would make the main plan wrong
+    (₹4,599×2 instead of ₹4,599+₹499). The Extra-Seat plan's amount IS the
+    per-seat price (₹499), so ₹499 × extra_seats is exactly right here.
+    """
+    if extra_seats < 1:
+        raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
+
+    rzp = _get_razorpay()
+    try:
+        subscription = rzp.subscription.create(
+            data={
+                "plan_id": RAZORPAY_SEAT_PLAN_ID,
+                "total_count": 120,
+                "customer_notify": 1,
+                "quantity": int(extra_seats),
+                "notes": {
+                    "oyechats_client_id": str(client.id),
+                    "purpose": "seat_addon",
+                },
+            }
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay seat add-on subscription.create failed for client %s: %s",
+            client.id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not create seat add-on subscription. Please try again.") from exc
+
+    logger.info(
+        "Created Razorpay seat add-on subscription %s for client %s (%d extra seats)",
+        subscription["id"],
+        client.id,
+        extra_seats,
+    )
+
+    return {
+        "provider": "razorpay",
+        "subscription_id": subscription["id"],
+        "key_id": RAZORPAY_KEY_ID,
+        "name": "OyeChats operator seats",
+        "description": f"{extra_seats} extra seat(s) — ₹499/seat/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",

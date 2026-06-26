@@ -198,6 +198,60 @@ def test_create_subscription_rejects_missing_plan_id():
         razorpay_service.create_subscription(MagicMock(), _make_client(), plan)
 
 
+def test_base_subscription_quantity_is_one_for_multi_seat_plan():
+    """Standard plan (2 included seats) must still send quantity=1.
+
+    Razorpay `quantity` multiplies the WHOLE plan amount, so passing
+    included_operator_seats=2 would bill ₹4,599×2 = ₹9,198 instead of
+    ₹4,599. Extra seats are billed via a separate add-on subscription.
+    """
+    from app.services import razorpay_service
+
+    fake = MagicMock()
+    fake.subscription.create.return_value = {"id": "sub_std", "short_url": "u", "status": "created"}
+
+    standard = _make_plan(
+        id=2, name="Standard", slug="standard",
+        razorpay_plan_id_monthly="plan_standard_inr_monthly",
+        razorpay_plan_id_annual="plan_standard_inr_annual",
+        included_operator_seats=2,
+    )
+    with patch.object(razorpay_service, "_get_razorpay", return_value=fake):
+        razorpay_service.create_subscription(MagicMock(), _make_client(), standard, "monthly")
+
+    sent = fake.subscription.create.call_args.kwargs["data"]
+    assert sent["quantity"] == 1, f"Expected quantity=1, got {sent['quantity']}"
+
+
+def test_create_seat_addon_subscription():
+    """Seat add-on creates a separate Razorpay subscription at ₹499 × N."""
+    from app.services import razorpay_service
+
+    fake = MagicMock()
+    fake.subscription.create.return_value = {"id": "sub_seats", "status": "created"}
+
+    with patch.object(razorpay_service, "_get_razorpay", return_value=fake):
+        result = razorpay_service.create_seat_addon_subscription(
+            MagicMock(), _make_client(), extra_seats=3
+        )
+
+    sent = fake.subscription.create.call_args.kwargs["data"]
+    assert sent["plan_id"] == razorpay_service.RAZORPAY_SEAT_PLAN_ID
+    assert sent["quantity"] == 3
+    assert sent["total_count"] == 120
+    assert sent["notes"]["purpose"] == "seat_addon"
+    assert result["provider"] == "razorpay"
+    assert result["subscription_id"] == "sub_seats"
+    assert "3 extra seat" in result["description"]
+
+
+def test_create_seat_addon_rejects_zero_seats():
+    from app.services import razorpay_service
+
+    with pytest.raises(ValueError, match="extra_seats"):
+        razorpay_service.create_seat_addon_subscription(MagicMock(), _make_client(), extra_seats=0)
+
+
 # ── Webhook dispatcher ────────────────────────────────────────────────────────
 
 
