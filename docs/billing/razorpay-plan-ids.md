@@ -9,39 +9,44 @@
 
 ---
 
-## ⚠️ Action required — fix the Annual test plans' billing cycle
+## ⚠️ Duplicate test plans exist — use Batch A, ignore Batch B
 
-In the Test Mode dashboard, **OyeChats Starter Annual** and **OyeChats Standard Annual** were created with a **monthly** billing cycle ("Every Month") instead of **yearly**. As-is, an "annual" subscriber would be charged the full annual amount **every month** (e.g. ₹44,099/month).
+The Test Mode dashboard contains **two batches** of plans (Razorpay plans are immutable and **cannot be deleted or edited**, so duplicates are permanent — harmless as long as the wrong IDs are never referenced):
 
-**Fix:** Razorpay plans are immutable, so delete/disable these two test plans and recreate them with **Billing Cycle = Yearly (every 1 year)**, then update the test plan IDs below. The amount stays the same (Starter Annual ₹17,299/yr, Standard Annual ₹44,099/yr).
+- **Batch A** (created ~04:13–04:14, `T6EO…`) — ✅ **canonical**. Annual plans are correctly **"Every Year"**.
+- **Batch B** (created ~04:16–04:17, `T6ER/T6ES…`) — ❌ **defective duplicate**. Its two Annual plans were created as **"Every Month"** (would charge the annual amount monthly). **Do not use.**
 
-Also note: the **₹1 Test Plan** is **not yet created in Test Mode** (only 5 of 6 plans present). Create it for `RAZORPAY_TEST_PLAN_ID` if you want the ₹1 internal-smoke-test override to work under test keys.
+The local DB is wired to **Batch A**. There is nothing to fix in Razorpay — the correct annual plans already exist.
+
+Outstanding: the **₹1 Test Plan** is not created in Test Mode. Create it (Monthly, ₹1) only if you want the `RAZORPAY_TEST_PLAN_ID` ₹1 internal-override to work under test keys.
 
 ---
 
-## Test Mode plan IDs (`rzp_test_…`)
+## Test Mode plan IDs (`rzp_test_…`) — Batch A (canonical)
 
-Created 26 Jun 2026. Use these in the **local / staging** database.
+Use these in the **local / staging** database. Currently wired in the local DB.
 
-| Plan | Test Plan ID | Amount | Billing cycle | Status |
-|------|--------------|--------|---------------|--------|
-| Starter Monthly | `plan_T6EREtejBRJucw` | ₹1,799 | Monthly | ✅ correct |
-| Starter Annual | `plan_T6ERX5WXBj2kB5` | ₹17,299 | **Monthly** | ⚠️ should be Yearly — recreate |
-| Standard Monthly | `plan_T6ERnPJkl1vMhQ` | ₹4,599 | Monthly | ✅ correct |
-| Standard Annual | `plan_T6ES55C6QYZ6kf` | ₹44,099 | **Monthly** | ⚠️ should be Yearly — recreate |
-| Extra Seat Monthly | `plan_T6ESNBnNqJcgID` | ₹499 | Monthly | ✅ correct |
-| Test Plan (₹1) | _not created yet_ | ₹1 | Monthly | ❌ create in Test Mode |
+| Plan | Test Plan ID | Amount | Billing cycle |
+|------|--------------|--------|---------------|
+| Starter Monthly | `plan_T6EODsEtLr87wb` | ₹1,799 | Monthly ✓ |
+| Starter Annual | `plan_T6EOE2v4XH5imU` | ₹17,299 | **Yearly** ✓ |
+| Standard Monthly | `plan_T6EOEE8VVc2P6I` | ₹4,599 | Monthly ✓ |
+| Standard Annual | `plan_T6EOEQRzgM5Mkz` | ₹44,099 | **Yearly** ✓ |
+| Extra Seat Monthly | `plan_T6EOSLrKfQQrFU` | ₹499 | Monthly ✓ |
+| Test Plan (₹1) | _not created yet_ | ₹1 | Monthly |
 
-**Apply to local DB** (after fixing the two annual plans):
+> **Ignore (Batch B, defective):** `plan_T6EREtejBRJucw`, `plan_T6ERX5WXBj2kB5` (annual=monthly ✗), `plan_T6ERnPJkl1vMhQ`, `plan_T6ES55C6QYZ6kf` (annual=monthly ✗), `plan_T6ESNBnNqJcgID`.
+
+**Apply to local DB** (already done):
 
 ```bash
 cd api && uv run python scripts/set_razorpay_plan_ids.py \
-  --starter-monthly  plan_T6EREtejBRJucw \
-  --starter-annual   <new-yearly-test-id> \
-  --standard-monthly plan_T6ERnPJkl1vMhQ \
-  --standard-annual  <new-yearly-test-id> \
+  --starter-monthly  plan_T6EODsEtLr87wb \
+  --starter-annual   plan_T6EOE2v4XH5imU \
+  --standard-monthly plan_T6EOEE8VVc2P6I \
+  --standard-annual  plan_T6EOEQRzgM5Mkz \
   --apply
-# then: RAZORPAY_TEST_PLAN_ID=<test-₹1-plan-id> in local .env
+# then (optional): RAZORPAY_TEST_PLAN_ID=<test-₹1-plan-id> in local .env
 ```
 
 ---
