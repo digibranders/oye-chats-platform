@@ -769,7 +769,7 @@ git commit -m "feat(billing): apply affiliate discount via discounted plan + sna
 - Modify: `api/app/services/affiliate_service.py`
 - Test: `api/tests/test_affiliate_service.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_reserved_code_rejected():
@@ -790,12 +790,12 @@ def test_no_stacking_when_both_code_and_coupon_present():
     ...
 ```
 
-- [ ] **Step 2: Run, verify fail**
+- [x] **Step 2: Run, verify fail**
 
 Run: `cd api && uv run pytest tests/test_affiliate_service.py -k "reserved or stacking" -v`
 Expected: FAIL — `_assert_not_reserved` missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `affiliate_service.py`:
 
@@ -819,11 +819,11 @@ if client.referral_code_id and request.coupon_code:
     raise HTTPException(status_code=400, detail="Cannot apply both a referral code and a coupon.")
 ```
 
-- [ ] **Step 4: Run, verify pass**
+- [x] **Step 4: Run, verify pass**
 
 Run: `cd api && uv run pytest tests/test_affiliate_service.py -v` → PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/services/affiliate_service.py app/api/subscription_routes.py tests/test_affiliate_service.py

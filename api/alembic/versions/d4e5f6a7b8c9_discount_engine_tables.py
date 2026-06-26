@@ -21,6 +21,7 @@ Create Date: 2026-06-26
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "d4e5f6a7b8c9"
@@ -49,7 +50,9 @@ def upgrade() -> None:
             server_default=sa.func.now(),
         ),
         sa.UniqueConstraint(
-            "base_plan_id", "billing_cycle", "discount_bps",
+            "base_plan_id",
+            "billing_cycle",
+            "discount_bps",
             name="uq_discounted_plan",
         ),
         sa.CheckConstraint(

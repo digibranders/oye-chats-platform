@@ -410,27 +410,26 @@ def resolve_discounted_plan(
     if cached is not None:
         return cached.razorpay_plan_id
 
-    base_amount = int(
-        base_plan.annual_price_cents if billing_cycle == "annual"
-        else base_plan.monthly_price_cents
-    )
+    base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
     discounted_paise = base_amount - (base_amount * discount_bps) // 10000
     period = "yearly" if billing_cycle == "annual" else "monthly"
 
     rzp = _get_razorpay()
-    plan = rzp.plan.create(data={
-        "period": period,
-        "interval": 1,
-        "item": {
-            "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}%",
-            "amount": discounted_paise,
-            "currency": "INR",
-        },
-        "notes": {
-            "base_plan_id": str(base_plan.id),
-            "discount_bps": str(discount_bps),
-        },
-    })
+    plan = rzp.plan.create(
+        data={
+            "period": period,
+            "interval": 1,
+            "item": {
+                "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}%",
+                "amount": discounted_paise,
+                "currency": "INR",
+            },
+            "notes": {
+                "base_plan_id": str(base_plan.id),
+                "discount_bps": str(discount_bps),
+            },
+        }
+    )
 
     row = DiscountedPlanCache(
         base_plan_id=base_plan.id,

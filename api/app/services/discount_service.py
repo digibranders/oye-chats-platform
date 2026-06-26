@@ -20,9 +20,7 @@ from sqlalchemy.orm import Session
 from app.db.models import Client, ReferralCode
 
 
-def resolve_customer_discount_bps(
-    session: Session, client: Client
-) -> tuple[int, dict | None]:
+def resolve_customer_discount_bps(session: Session, client: Client) -> tuple[int, dict | None]:
     """Return (discount_bps, audit_meta) for the client's referral code.
 
     Returns (0, None) when:

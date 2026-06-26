@@ -211,7 +211,9 @@ def test_base_subscription_quantity_is_one_for_multi_seat_plan():
     fake.subscription.create.return_value = {"id": "sub_std", "short_url": "u", "status": "created"}
 
     standard = _make_plan(
-        id=2, name="Standard", slug="standard",
+        id=2,
+        name="Standard",
+        slug="standard",
         razorpay_plan_id_monthly="plan_standard_inr_monthly",
         razorpay_plan_id_annual="plan_standard_inr_annual",
         included_operator_seats=2,
@@ -231,9 +233,7 @@ def test_create_seat_addon_subscription():
     fake.subscription.create.return_value = {"id": "sub_seats", "status": "created"}
 
     with patch.object(razorpay_service, "_get_razorpay", return_value=fake):
-        result = razorpay_service.create_seat_addon_subscription(
-            MagicMock(), _make_client(), extra_seats=3
-        )
+        result = razorpay_service.create_seat_addon_subscription(MagicMock(), _make_client(), extra_seats=3)
 
     sent = fake.subscription.create.call_args.kwargs["data"]
     assert sent["plan_id"] == razorpay_service.RAZORPAY_SEAT_PLAN_ID
@@ -267,8 +267,11 @@ def test_resolve_discounted_plan_creates_and_caches(monkeypatch):
     session.scalars.return_value.first.return_value = None  # cache miss
 
     base = _make_plan(
-        id=2, name="Standard", slug="standard",
-        monthly_price_cents=459900, annual_price_cents=4409900,
+        id=2,
+        name="Standard",
+        slug="standard",
+        monthly_price_cents=459900,
+        annual_price_cents=4409900,
     )
     result = rs.resolve_discounted_plan(session, base, "monthly", 1500)
 
@@ -294,8 +297,7 @@ def test_resolve_discounted_plan_reuses_cached(monkeypatch):
     cached = SimpleNamespace(razorpay_plan_id="plan_already_exists")
     session.scalars.return_value.first.return_value = cached
 
-    base = _make_plan(id=2, name="Standard", slug="standard",
-                      monthly_price_cents=459900, annual_price_cents=4409900)
+    base = _make_plan(id=2, name="Standard", slug="standard", monthly_price_cents=459900, annual_price_cents=4409900)
     result = rs.resolve_discounted_plan(session, base, "monthly", 1500)
 
     assert result == "plan_already_exists"
@@ -313,8 +315,7 @@ def test_resolve_discounted_plan_annual_uses_annual_price(monkeypatch):
     session = MagicMock()
     session.scalars.return_value.first.return_value = None
 
-    base = _make_plan(id=2, name="Standard", slug="standard",
-                      monthly_price_cents=459900, annual_price_cents=4409900)
+    base = _make_plan(id=2, name="Standard", slug="standard", monthly_price_cents=459900, annual_price_cents=4409900)
     rs.resolve_discounted_plan(session, base, "annual", 1000)
 
     sent = rzp.plan.create.call_args.kwargs["data"]
@@ -352,10 +353,14 @@ def test_create_subscription_uses_discounted_plan_when_bps_given(monkeypatch):
     monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
     monkeypatch.setattr(rs, "resolve_discounted_plan", lambda *a, **kw: "plan_disc_15pct")
 
-    plan = _make_plan(id=2, name="Standard", slug="standard",
-                      razorpay_plan_id_monthly="plan_base",
-                      razorpay_plan_id_annual="plan_base_y",
-                      included_operator_seats=2)
+    plan = _make_plan(
+        id=2,
+        name="Standard",
+        slug="standard",
+        razorpay_plan_id_monthly="plan_base",
+        razorpay_plan_id_annual="plan_base_y",
+        included_operator_seats=2,
+    )
     result = rs.create_subscription(MagicMock(), _make_client(), plan, "monthly", discount_bps=1500)
 
     sent = rzp.subscription.create.call_args.kwargs["data"]
