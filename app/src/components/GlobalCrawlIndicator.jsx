@@ -127,7 +127,10 @@ const GlobalCrawlIndicator = () => {
     }
 
     const pages = crawl.pagesCrawled ?? crawl.urls.length;
-    const max = crawl.maxPages;
+    // Prefer the pre-crawl discovered count as the denominator so "3/47" is
+    // shown rather than "3/1200" (the plan ceiling). Fall back to maxPages
+    // when no discovery was run (e.g. recrawl from the All Sources table).
+    const max = crawl.discoveredTotal || crawl.maxPages;
     const pct = max ? Math.min(100, Math.round((pages / max) * 100)) : null;
     const eta = estimateEta({ pagesCrawled: pages, maxPages: max, startedAt: crawl.startedAt });
     const elapsed = formatElapsed(elapsedSeconds);
@@ -220,6 +223,12 @@ const GlobalCrawlIndicator = () => {
                                 )}
                             </div>
                             <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                {crawl.botName && (
+                                    <span className="font-medium text-slate-600 dark:text-slate-300">
+                                        {crawl.botName}
+                                        {' · '}
+                                    </span>
+                                )}
                                 {domain ?? 'Website'}
                                 {pages > 0 && (
                                     <>

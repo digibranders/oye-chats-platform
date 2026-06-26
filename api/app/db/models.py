@@ -359,7 +359,7 @@ class Document(Base):
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)
-    embedding = Column(Vector(1536), nullable=False)
+    embedding = Column(Vector(768), nullable=True)  # nullable during re-embed; NOT NULL restored after backfill
     search_vector = Column(TSVECTOR)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

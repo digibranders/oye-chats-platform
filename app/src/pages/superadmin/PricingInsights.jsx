@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Wallet,
     TrendingUp,
@@ -7,6 +7,9 @@ import {
     Loader2,
     PieChart as PieChartIcon,
     Calendar,
+    Eye,
+    X,
+    ExternalLink,
 } from 'lucide-react';
 import {
     getSuperadminRevenue,
@@ -77,6 +80,8 @@ export default function SuperadminPricingInsights() {
     const [plans, setPlans] = useState([]);
     const [subscriptions, setSubscriptions] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [viewingPlan, setViewingPlan] = useState(null);
+    const modalRef = useRef(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -122,9 +127,15 @@ export default function SuperadminPricingInsights() {
                 planName: plan.name,
                 subscribers: 0,
                 mrrCents: 0,
+                clients: [],
             };
             existing.subscribers += 1;
             existing.mrrCents += mrr;
+            existing.clients.push({
+                clientId: sub.client_id,
+                clientName: sub.client_name || `Customer #${sub.client_id}`,
+                billingCycle: sub.billing_cycle,
+            });
             buckets.set(plan.id, existing);
         }
         return Array.from(buckets.values()).sort((a, b) => b.mrrCents - a.mrrCents);
@@ -324,7 +335,18 @@ export default function SuperadminPricingInsights() {
                                                 {p.planName}
                                             </td>
                                             <td className="px-6 py-3 text-right tabular-nums text-surface-700 dark:text-surface-300">
-                                                {formatNumber(p.subscribers)}
+                                                <span className="inline-flex items-center justify-end gap-2">
+                                                    {formatNumber(p.subscribers)}
+                                                    {p.subscribers > 0 && (
+                                                        <button
+                                                            onClick={() => setViewingPlan(p)}
+                                                            title={`View subscribers for ${p.planName}`}
+                                                            className="text-surface-400 hover:text-primary-500 dark:text-surface-500 dark:hover:text-primary-400 transition-colors"
+                                                        >
+                                                            <Eye size={14} />
+                                                        </button>
+                                                    )}
+                                                </span>
                                             </td>
                                             <td className="px-6 py-3 text-right tabular-nums font-semibold text-surface-900 dark:text-surface-100">
                                                 {formatCents(p.mrrCents)}
@@ -343,6 +365,65 @@ export default function SuperadminPricingInsights() {
                     </table>
                 </div>
             </div>
+
+            {/* Subscriber list modal */}
+            {viewingPlan && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+                    onClick={(e) => { if (e.target === e.currentTarget) setViewingPlan(null); }}
+                >
+                    <div
+                        ref={modalRef}
+                        className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl border border-surface-200 dark:border-surface-700 w-full max-w-md flex flex-col max-h-[80vh]"
+                    >
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-100 dark:border-surface-800">
+                            <div>
+                                <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">
+                                    {viewingPlan.planName} subscribers
+                                </h3>
+                                <p className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                                    {viewingPlan.subscribers} active subscription{viewingPlan.subscribers === 1 ? '' : 's'}
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setViewingPlan(null)}
+                                className="text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 transition-colors"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+                        <ul className="overflow-y-auto divide-y divide-surface-100 dark:divide-surface-800/60">
+                            {viewingPlan.clients.map((c, idx) => (
+                                <li
+                                    key={`${c.clientId}-${idx}`}
+                                    className="flex items-center gap-3 px-6 py-3 hover:bg-surface-50 dark:hover:bg-surface-800/40 transition-colors"
+                                >
+                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500/30 to-purple-500/30 ring-1 ring-surface-200 dark:ring-surface-700 flex items-center justify-center text-[11px] font-semibold text-primary-600 dark:text-primary-300 shrink-0">
+                                        {c.clientName.slice(0, 1).toUpperCase()}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-[13px] font-medium text-surface-900 dark:text-surface-100 truncate">
+                                            {c.clientName}
+                                        </p>
+                                        <p className="text-[11px] text-surface-500 dark:text-surface-400 capitalize">
+                                            {c.billingCycle} billing
+                                        </p>
+                                    </div>
+                                    <a
+                                        href={`/superadmin/clients?id=${c.clientId}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title="View client"
+                                        className="text-surface-400 hover:text-primary-500 dark:hover:text-primary-400 transition-colors shrink-0"
+                                    >
+                                        <ExternalLink size={13} />
+                                    </a>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

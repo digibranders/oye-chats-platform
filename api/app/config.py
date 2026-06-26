@@ -57,8 +57,14 @@ else:
 # ─────────────────────────────────────────────────────────────────────────────
 # Embeddings & RAG
 # ─────────────────────────────────────────────────────────────────────────────
-EMBED_MODEL = "text-embedding-3-small"
-EMBED_DIMENSIONS = 1536
+# Primary provider: "fastembed" (local ONNX, no API cost) or "openai" (API).
+# FastEmbed runs BAAI/bge-base-en-v1.5 locally — 768-dim, ~420MB RAM per worker.
+# OpenAI text-embedding-3-small is used as fallback when FastEmbed fails, and
+# as the sole provider when EMBED_PROVIDER=openai.
+EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "fastembed")
+FASTEMBED_MODEL = os.getenv("FASTEMBED_MODEL", "BAAI/bge-base-en-v1.5")
+EMBED_MODEL = "text-embedding-3-small"  # OpenAI fallback model
+EMBED_DIMENSIONS = 768  # bge-base-en-v1.5 output dimensions
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 

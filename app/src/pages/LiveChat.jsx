@@ -334,7 +334,7 @@ export default function LiveChat({ embedded = false }) {
 
     const sendBrowserNotification = useCallback((title, body) => {
         if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-            new Notification(title, { body, icon: '/favicon.ico' });
+            new Notification(title, { body, icon: '/oye_favicon_cropped.png' });
         }
     }, []);
 

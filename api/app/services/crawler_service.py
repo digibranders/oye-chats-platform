@@ -48,7 +48,7 @@ _CANCEL_POLL_INTERVAL = 0.5  # seconds between cancel-flag checks while crawl ru
 # checkpoint — SIGTERM-via-process-group is the only reliable way out). Loose
 # enough that a normal page-load can finish writing its result and exit
 # cleanly without truncating the URL list.
-_COOPERATIVE_CANCEL_GRACE = 2.0
+_COOPERATIVE_CANCEL_GRACE = 0.3
 
 # In-process fallback for single-worker dev (no Redis). Without these the
 # entire progress + lock subsystem is a no-op locally — the UI polls forever
