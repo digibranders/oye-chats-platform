@@ -211,7 +211,7 @@ INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in (
 # Plan row long-term (super-admin editor); until that column lands, this
 # fallback keeps the marketing site self-consistent. Treated as ``rupees
 # per US dollar``: a plan priced at ₹1,499 displays as ~$18 at the default.
-DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "83"))
+DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "94.67"))
 
 # Frontend URL for checkout redirects (Stripe success/cancel, Razorpay return).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")

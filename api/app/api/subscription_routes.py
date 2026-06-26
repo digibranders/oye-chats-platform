@@ -566,25 +566,33 @@ def checkout_quote(
         indian = country == "IN"
         amount_minor = _amount_for_cycle(plan, billing_cycle)
 
-        # Indian buyers see the INR price stored on the plan row.
-        # Everyone else sees USD on the pricing page — which is purely
-        # informational until International Payments is live; the actual
-        # gateway call is gated below.
+        # Normalise to INR paise for Indian customers, USD cents for everyone
+        # else.  Plans are now stored in INR paise (currency='INR'), but we
+        # guard against any row still carrying the legacy USD-cent value so
+        # a partial rollout never mis-displays.
+        plan_currency = (plan.currency or "INR").upper()
+
         if indian:
             currency = "INR"
-            display_amount = amount_minor / 100
-            amount_display = f"₹{display_amount:,.0f}" if display_amount.is_integer() else f"₹{display_amount:,.2f}"
+            if plan_currency == "USD":
+                # Legacy USD-cent row: convert to paise for display/checkout.
+                amount_minor = round((amount_minor / 100) * DISPLAY_USD_TO_INR * 100)
+            # amount_minor is now INR paise.
+            rupees = amount_minor / 100
+            amount_display = f"₹{rupees:,.0f}" if rupees == int(rupees) else f"₹{rupees:,.2f}"
         else:
             currency = "USD"
-            # USD display is informational only — non-Indian customers go
-            # through ``contact_sales`` until International Payments is live,
-            # so the gateway never sees this value. We convert the plan's INR
-            # paise amount via the env-tunable display rate; per-plan USD
-            # columns will replace this in the super-admin editor (Phase 4).
-            usd_cents = round((amount_minor / 100) / DISPLAY_USD_TO_INR * 100) if DISPLAY_USD_TO_INR > 0 else 0
+            # USD display is informational only — non-Indian customers reach
+            # contact_sales until INTL_PAYMENTS_ENABLED is set.
+            if plan_currency == "INR":
+                # INR paise → USD cents via display rate.
+                usd_cents = round((amount_minor / 100) / DISPLAY_USD_TO_INR * 100) if DISPLAY_USD_TO_INR > 0 else 0
+            else:
+                # Already USD cents.
+                usd_cents = amount_minor
             amount_minor = int(usd_cents)
-            display_amount = amount_minor / 100
-            amount_display = f"${display_amount:,.0f}" if display_amount.is_integer() else f"${display_amount:,.2f}"
+            dollars = amount_minor / 100
+            amount_display = f"${dollars:,.0f}" if dollars == int(dollars) else f"${dollars:,.2f}"
 
         # Free plan: render a quote but mark checkout as unsupported.
         if amount_minor == 0 and plan.slug != "enterprise":
