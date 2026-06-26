@@ -502,6 +502,7 @@ class CheckoutRequest(BaseModel):
     plan_id: int
     billing_cycle: str = "monthly"  # monthly|annual
     provider: str | None = None  # "razorpay" | "stripe" — defaults to BILLING_PROVIDER
+    coupon_code: str | None = None  # future Stripe coupons; blocked when referral code is active
 
 
 # ── Checkout quote (currency + payment-method preview) ────────────────────────
@@ -566,10 +567,7 @@ def checkout_quote(
         country = resolve_country(request)
         indian = country == "IN"
         inr_paise = _amount_for_cycle(plan, billing_cycle)
-        usd_minor = (
-            plan.annual_price_usd_cents if billing_cycle == "annual"
-            else plan.monthly_price_usd_cents
-        )
+        usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
         amount_minor, currency = display_price(
             inr_paise=inr_paise, usd_cents=usd_minor, country=country, rate=DISPLAY_USD_TO_INR
         )
@@ -659,6 +657,8 @@ def create_checkout(
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
 
+    _assert_no_stacking(client, request.coupon_code)
+
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
 
@@ -717,13 +717,15 @@ def create_checkout(
             except razorpay_service.RazorpayBillingError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
             if disc_meta:
-                session.add(ReferralConversion(
-                    client_id=client.id,
-                    referral_code_id=int(disc_meta["referral_code_id"]),
-                    affiliate_id=None,
-                    commission_bps=int(disc_meta["affiliate_commission_bps"]),
-                    customer_discount_bps=int(disc_meta["discount_bps"]),
-                ))
+                session.add(
+                    ReferralConversion(
+                        client_id=client.id,
+                        referral_code_id=int(disc_meta["referral_code_id"]),
+                        affiliate_id=None,
+                        commission_bps=int(disc_meta["affiliate_commission_bps"]),
+                        customer_discount_bps=int(disc_meta["discount_bps"]),
+                    )
+                )
             session.commit()
             return result
 
@@ -1784,6 +1786,21 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
         if int(pack.get("amount") or pack.get("usd") or 0) == requested_amount:
             return pack
     return None
+
+
+def _assert_no_stacking(client, coupon_code: str | None) -> None:
+    """Prevent a referral-code discount from being combined with a manual coupon.
+
+    A referral code already locks in the customer discount at subscription
+    creation. Layering a second coupon on top would double-discount the same
+    period and pay the affiliate commission twice on revenue we're not
+    collecting. Raise 400 so the frontend can surface a friendly message.
+    """
+    if getattr(client, "referral_code_id", None) and coupon_code:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot apply a coupon when a referral code is already active on your account.",
+        )
 
 
 def _resolve_referral_discount(session, client: Client) -> tuple[int, dict[str, str]]:

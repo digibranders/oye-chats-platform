@@ -304,6 +304,24 @@ class TestCreateCode:
         row = svc.create_code(db, affiliate, "FITS1", affiliate_commission_bps=1500, customer_discount_bps=500)
         assert row.affiliate_commission_bps == 1500
 
+    @pytest.mark.parametrize("reserved", ["FREE", "OYECHATS", "ADMIN", "TEST", "OFFER", "SALE", "DISCOUNT", "SUPPORT"])
+    def test_reserved_codes_rejected(self, db, reserved):
+        affiliate = make_affiliate(db)
+        with pytest.raises(svc.InvalidCodeFormat):
+            svc.create_code(db, affiliate, reserved)
+
+    def test_reserved_codes_case_insensitive(self, db):
+        affiliate = make_affiliate(db)
+        with pytest.raises(svc.InvalidCodeFormat):
+            svc.create_code(db, affiliate, "free")
+        with pytest.raises(svc.InvalidCodeFormat):
+            svc.create_code(db, affiliate, "Admin")
+
+    def test_non_reserved_code_is_allowed(self, db):
+        affiliate = make_affiliate(db)
+        row = svc.create_code(db, affiliate, "JOHN10")
+        assert row.code == "JOHN10"
+
 
 # ── update_code ──────────────────────────────────────────────────────────────
 
@@ -346,6 +364,14 @@ class TestUpdateCode:
         me = make_affiliate(db)
         with pytest.raises(svc.CodeNotFound):
             svc.update_code(db, me, theirs.id, label="hijack")
+
+    @pytest.mark.parametrize("reserved", ["FREE", "admin", "Test"])
+    def test_rename_to_reserved_code_rejected(self, db, reserved):
+        affiliate = make_affiliate(db)
+        row = svc.create_code(db, affiliate, "MYCODE1")
+        db.commit()
+        with pytest.raises(svc.InvalidCodeFormat):
+            svc.update_code(db, affiliate, row.id, code=reserved)
 
 
 # ── invite_affiliate / accept_invite (program cap + magic-link lifecycle) ────
@@ -426,3 +452,46 @@ class TestInviteLifecycle:
         db.commit()
         with pytest.raises(svc.InviteAlreadyUsed):
             svc.lookup_invite_by_token(db, result["raw_token"])
+
+
+# ── no-stacking guard ─────────────────────────────────────────────────────────
+
+
+class TestNoStackingGuard:
+    """The checkout no-stacking guard prevents combining referral + coupon."""
+
+    def test_raises_when_both_referral_and_coupon(self):
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from app.api.subscription_routes import _assert_no_stacking
+
+        client = SimpleNamespace(referral_code_id=7)
+        with pytest.raises(HTTPException) as exc_info:
+            _assert_no_stacking(client, "SUMMER10")
+        assert exc_info.value.status_code == 400
+
+    def test_passes_when_only_referral_code(self):
+        from types import SimpleNamespace
+
+        from app.api.subscription_routes import _assert_no_stacking
+
+        client = SimpleNamespace(referral_code_id=7)
+        _assert_no_stacking(client, None)  # no raise
+
+    def test_passes_when_only_coupon(self):
+        from types import SimpleNamespace
+
+        from app.api.subscription_routes import _assert_no_stacking
+
+        client = SimpleNamespace(referral_code_id=None)
+        _assert_no_stacking(client, "SUMMER10")  # no raise
+
+    def test_passes_when_neither(self):
+        from types import SimpleNamespace
+
+        from app.api.subscription_routes import _assert_no_stacking
+
+        client = SimpleNamespace(referral_code_id=None)
+        _assert_no_stacking(client, None)  # no raise
