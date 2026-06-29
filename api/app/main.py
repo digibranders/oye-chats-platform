@@ -75,41 +75,13 @@ _litellm.drop_params = True
 # We use the plain "langfuse" callback (REST API) instead of "langfuse_otel"
 # because the OTEL variant caused APIConnectionError under memory pressure on
 # the production droplet — see CLAUDE.md and config.LANGFUSE_FORCE_DISABLE.
-from app.config import LANGFUSE_ENABLED  # noqa: E402
 
-if LANGFUSE_ENABLED:
-    # LiteLLM's Langfuse integration accesses `langfuse.version.__version__` (v2/v3
-    # pattern). Langfuse v4 moved the version to `langfuse.__version__` and removed
-    # the `version` submodule. Inject a minimal shim so the callback initialises
-    # without AttributeError — this is safe and idempotent.
-    import types as _types
-
-    import langfuse as _langfuse_pkg
-
-    if not hasattr(_langfuse_pkg, "version"):
-        _ver_mod = _types.ModuleType("langfuse.version")
-        _ver_mod.__version__ = _langfuse_pkg.__version__
-        _langfuse_pkg.version = _ver_mod
-
-    # LiteLLM passes `sdk_integration=...` to Langfuse(**params) — another v3
-    # keyword removed in v4. Patch __init__ to silently drop unknown kwargs so
-    # the generation logger initialises and token/cost data populates traces.
-    from langfuse import Langfuse as _LangfuseClass
-
-    _orig_lf_init = _LangfuseClass.__init__
-
-    def _patched_lf_init(self, *args, **kwargs):
-        kwargs.pop("sdk_integration", None)
-        _orig_lf_init(self, *args, **kwargs)
-
-    _LangfuseClass.__init__ = _patched_lf_init
-
-    _existing = list(getattr(_litellm, "callbacks", []) or [])
-    if "langfuse" not in _existing:
-        _existing.append("langfuse")
-    _litellm.callbacks = _existing
-    _litellm.success_callback = list({*(_litellm.success_callback or []), "langfuse"})
-    _litellm.failure_callback = list({*(_litellm.failure_callback or []), "langfuse"})
+# LiteLLM's built-in "langfuse" callback targets the Langfuse v2/v3 SDK API
+# (langfuse.version.__version__, Langfuse(sdk_integration=...), Langfuse.trace()).
+# All three are absent in Langfuse v4, causing non-blocking errors on every
+# LLM call. The callback is intentionally not registered here.
+# RAG pipeline traces are emitted via the Langfuse v4 SDK directly in
+# rag_service.py using start_as_current_observation / propagate_attributes.
 
 # Initialize Sentry (must be before FastAPI app creation)
 if SENTRY_ENABLED:
