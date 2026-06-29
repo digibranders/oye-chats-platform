@@ -273,6 +273,13 @@ def get_current_subscription(client: Client = Depends(get_current_client)):
                 "currency": plan.currency,
                 "monthly_price_cents": plan.monthly_price_cents,
                 "annual_price_cents": plan.annual_price_cents,
+                # USD headline columns — the dashboard renders prices in USD,
+                # so these must travel with every plan payload (mirrors the
+                # /plans endpoint). Omitting them makes the UI read them as
+                # undefined and fall through to "No paid subscription".
+                "monthly_price_usd_cents": plan.monthly_price_usd_cents,
+                "annual_price_usd_cents": plan.annual_price_usd_cents,
+                "extra_seat_price_usd_cents": plan.extra_seat_price_usd_cents,
                 "credits_per_month": plan.credits_per_month,
                 "included_operator_seats": plan.included_operator_seats,
                 "extra_seat_price_cents": plan.extra_seat_price_cents,
