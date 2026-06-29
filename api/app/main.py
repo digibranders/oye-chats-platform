@@ -91,6 +91,19 @@ if LANGFUSE_ENABLED:
         _ver_mod.__version__ = _langfuse_pkg.__version__
         _langfuse_pkg.version = _ver_mod
 
+    # LiteLLM passes `sdk_integration=...` to Langfuse(**params) — another v3
+    # keyword removed in v4. Patch __init__ to silently drop unknown kwargs so
+    # the generation logger initialises and token/cost data populates traces.
+    from langfuse import Langfuse as _LangfuseClass
+
+    _orig_lf_init = _LangfuseClass.__init__
+
+    def _patched_lf_init(self, *args, **kwargs):
+        kwargs.pop("sdk_integration", None)
+        _orig_lf_init(self, *args, **kwargs)
+
+    _LangfuseClass.__init__ = _patched_lf_init
+
     _existing = list(getattr(_litellm, "callbacks", []) or [])
     if "langfuse" not in _existing:
         _existing.append("langfuse")
