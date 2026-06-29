@@ -232,14 +232,48 @@ def _make_html2text() -> html2text.HTML2Text:
 
 
 def extract_links_from_html(html: str, base_url: str) -> list[str]:
-    """Extract all href links from HTML using BeautifulSoup."""
+    """Extract navigable URLs from HTML using BeautifulSoup.
+
+    Covers the patterns that modern WordPress / agency themes use beyond
+    plain <a href>:
+      - <area href> (image maps)
+      - data-href / data-url on any element (JS-powered menus, sliders)
+      - <link rel="alternate" hreflang> (multilingual canonical pages)
+    """
     soup = BeautifulSoup(html, "html.parser")
+    seen: set[str] = set()
     links: list[str] = []
-    for a_tag in soup.find_all("a", href=True):
-        href = a_tag["href"]
-        if href:
-            full_url = urljoin(base_url, href)
+
+    def _add(href: str | None) -> None:
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            return
+        full_url = urljoin(base_url, href.strip())
+        if full_url not in seen:
+            seen.add(full_url)
             links.append(full_url)
+
+    # <a href> — standard navigation
+    for tag in soup.find_all("a", href=True):
+        _add(tag["href"])
+
+    # <area href> — image maps
+    for tag in soup.find_all("area", href=True):
+        _add(tag["href"])
+
+    # data-href / data-url — JS-powered menus (common in WordPress themes)
+    for tag in soup.find_all(attrs={"data-href": True}):
+        _add(tag["data-href"])
+    for tag in soup.find_all(attrs={"data-url": True}):
+        _add(tag["data-url"])
+
+    # <link rel="alternate" hreflang> — multilingual pages not linked anywhere else
+    for tag in soup.find_all("link", rel=True, href=True):
+        rel = tag.get("rel", [])
+        if isinstance(rel, list):
+            rel = " ".join(rel)
+        if "alternate" in rel:
+            _add(tag["href"])
+
     return links
 
 
@@ -328,6 +362,7 @@ async def fetch_sitemap_urls(
     *,
     max_sitemaps: int = 10,
     extra_seeds: list[str] | None = None,
+    cancel_file: str | None = None,
 ) -> list[str]:
     """Discover URLs from sitemap.xml (and robots.txt Sitemap directives).
 
@@ -370,6 +405,8 @@ async def fetch_sitemap_urls(
 
     async with aiohttp.ClientSession() as session:
         while idx < len(sitemap_queue) and idx < max_sitemaps:
+            if _is_cancelled(cancel_file):
+                break
             sitemap_url = sitemap_queue[idx]
             idx += 1
             # SSRF guard: sitemap URLs can come from attacker-controlled robots.txt
@@ -687,8 +724,14 @@ async def crawl_single_http(
                         )
                     except Exception:
                         pass
-                    if not markdown:
+                    if not markdown or not markdown.strip():
                         markdown = h2t.handle(raw_html)
+
+                    # Treat whitespace-only extraction as a content failure so
+                    # the caller's "if not markdown" guard correctly skips the page
+                    # rather than storing empty chunks.
+                    if markdown and not markdown.strip():
+                        markdown = None
 
                     return {"url": url, "depth": depth, "html": raw_html, "markdown": markdown, "error": None}
             except TimeoutError:
@@ -1057,7 +1100,12 @@ async def crawl_recursive(
     # sitemap location — feed it through ``extra_seeds`` so the discovery
     # helper parses it even when robots.txt doesn't advertise it.
     extra_sitemap_seeds = [start_url] if sitemap_mode else None
-    sitemap_urls = await fetch_sitemap_urls(start_url, robot_parser, extra_seeds=extra_sitemap_seeds)
+    if _is_cancelled(cancel_file):
+        print(json.dumps({"cancelled": True, "results": [], "recommended_colors": []}))
+        return
+    sitemap_urls = await fetch_sitemap_urls(
+        start_url, robot_parser, extra_seeds=extra_sitemap_seeds, cancel_file=cancel_file
+    )
     sitemap_seeded = 0
     # In sitemap-seed mode the URLs are explicitly curated by the site owner,
     # so we trust them as depth-0 entries (deeper than BFS depth-1 discoveries).
@@ -1075,6 +1123,10 @@ async def crawl_recursive(
     if sitemap_seeded:
         mode_label = "sitemap-seed mode" if sitemap_mode else "sitemap"
         print(json.dumps({"log": f"Seeded {sitemap_seeded} URLs from {mode_label}"}))
+
+    if _is_cancelled(cancel_file):
+        print(json.dumps({"cancelled": True, "results": [], "recommended_colors": []}))
+        return
 
     # ======================================================================
     # Phase 1: Crawl seed URL with Chromium (for JS color extraction)

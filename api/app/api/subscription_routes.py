@@ -877,7 +877,7 @@ def change_plan(
                 # Immediate manual-sub flip → balance must follow the plan.
                 # The renewal cron is what normally hands out monthly grants;
                 # since manual subs aren't on the cron we do it inline here.
-                credit_service.reset_monthly_plan_credits(session, client.id)
+                credit_service.reset_monthly_plan_credits(session, client.id, bot_id=sub.bot_id)
                 credit_service.grant_for_subscription(session, sub)
                 msg = f"Switched to {new_plan.name} immediately."
             session.commit()
@@ -996,7 +996,7 @@ def change_plan(
             # also emits ``invoice.paid`` on the proration, but webhooks
             # may not reach this server (local dev) so we do not rely
             # on them to make the customer's balance correct.
-            credit_service.reset_monthly_plan_credits(session, client.id)
+            credit_service.reset_monthly_plan_credits(session, client.id, bot_id=sub.bot_id)
             credit_service.grant_for_subscription(session, sub)
             session.commit()
 
@@ -1333,7 +1333,7 @@ def _reconcile_stripe_subscription(
     sub.canceled_at = None
     session.flush()
 
-    credit_service.reset_monthly_plan_credits(session, client.id)
+    credit_service.reset_monthly_plan_credits(session, client.id, bot_id=sub.bot_id)
     credit_service.grant_for_subscription(session, sub)
     session.commit()
 

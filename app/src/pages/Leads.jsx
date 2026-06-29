@@ -565,22 +565,77 @@ export default function Leads() {
                                         </div>
                                     </div>
 
-                                    {/* Score + Status with RadialBar gauge */}
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-24 h-24 shrink-0">
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <RadialBarChart cx="50%" cy="50%" innerRadius="60%" outerRadius="100%" data={[{ value: leadDetail.score, fill: leadDetail.score >= 75 ? '#22c55e' : leadDetail.score >= 50 ? '#f97316' : leadDetail.score >= 25 ? '#eab308' : '#94a3b8' }]} startAngle={90} endAngle={-270}>
-                                                    <RadialBar dataKey="value" cornerRadius={6} background={{ fill: 'rgba(148,163,184,0.15)' }} />
-                                                </RadialBarChart>
-                                            </ResponsiveContainer>
+                                    {/* Score + Status with circular gauge matching first image */}
+                                    <div className="flex flex-col items-center justify-center p-6 bg-surface-50 dark:bg-surface-800/40 rounded-2xl border border-surface-200 dark:border-surface-800/50">
+                                        <div className="relative flex flex-col items-center">
+                                            {(() => {
+                                                const score = leadDetail.score;
+                                                const size = 120;
+                                                const strokeWidth = 8;
+                                                const center = size / 2;
+                                                const radius = center - strokeWidth / 2 - 4;
+                                                const circumference = 2 * Math.PI * radius;
+                                                const dashOffset = circumference - (score / 100) * circumference;
+                                                const color = score >= 75 ? '#22c55e' : score >= 50 ? '#f97316' : score >= 25 ? '#eab308' : '#94a3b8';
+                                                return (
+                                                    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
+                                                        {/* Track */}
+                                                        <circle
+                                                            cx={center}
+                                                            cy={center}
+                                                            r={radius}
+                                                            fill="none"
+                                                            stroke="rgba(148, 163, 184, 0.1)"
+                                                            strokeWidth={strokeWidth}
+                                                        />
+                                                        {/* Fill */}
+                                                        <circle
+                                                            cx={center}
+                                                            cy={center}
+                                                            r={radius}
+                                                            fill="none"
+                                                            stroke={color}
+                                                            strokeWidth={strokeWidth}
+                                                            strokeLinecap="round"
+                                                            strokeDasharray={circumference}
+                                                            strokeDashoffset={dashOffset}
+                                                            transform={`rotate(-90 ${center} ${center})`}
+                                                            style={{
+                                                                transition: 'stroke-dashoffset 1s ease-in-out',
+                                                                filter: `drop-shadow(0 0 6px ${color}40)`,
+                                                            }}
+                                                        />
+                                                        {/* Score text */}
+                                                        <text
+                                                            x={center}
+                                                            y={center - 4}
+                                                            textAnchor="middle"
+                                                            dominantBaseline="middle"
+                                                            fill="currentColor"
+                                                            className="text-surface-900 dark:text-white font-bold"
+                                                            fontSize={Math.round(size * 0.22)}
+                                                        >
+                                                            {score}
+                                                        </text>
+                                                        {/* Label */}
+                                                        <text
+                                                            x={center}
+                                                            y={center + size * 0.14}
+                                                            textAnchor="middle"
+                                                            dominantBaseline="middle"
+                                                            fill="currentColor"
+                                                            className="text-surface-450 dark:text-surface-400 font-bold tracking-wider"
+                                                            fontSize={Math.round(size * 0.075)}
+                                                        >
+                                                            BANT SCORE
+                                                        </text>
+                                                    </svg>
+                                                );
+                                            })()}
                                         </div>
-                                        <div className="flex-1">
-                                            <p className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400 mb-1">BANT Score</p>
-                                            <p className="text-3xl font-bold text-surface-900 dark:text-surface-100 leading-none">{leadDetail.score}<span className="text-sm text-surface-400 font-normal">/100</span></p>
-                                            <span className={cn('inline-block mt-2 px-3 py-1 rounded-full text-[12px] font-bold', STATUS_CONFIG[leadDetail.status]?.color)}>
-                                                {STATUS_CONFIG[leadDetail.status]?.label}
-                                            </span>
-                                        </div>
+                                        <span className={cn('inline-block mt-3 px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wide shadow-sm', STATUS_CONFIG[leadDetail.status]?.color)}>
+                                            {STATUS_CONFIG[leadDetail.status]?.label}
+                                        </span>
                                     </div>
 
                                     {/* Tags */}

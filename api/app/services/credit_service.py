@@ -54,13 +54,27 @@ from app.db.models import Bot, CreditLedger, PricingConfig, Subscription
 # routes) and thread the result through the credit_service calls.
 
 
+_UNSET: object = object()
+
+
 def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
     """Decide which ledger bucket a bot's usage should drain.
 
-    Returns the bot's id (per-bot ledger) when the bot has its own paid
-    subscription and isn't grandfathered into the pool. Returns ``None``
-    (client pool) for legacy-pooled bots and the single Free bot — both
-    keep the pre-per-bot-billing behaviour.
+    Returns ``bot.id`` (per-bot ledger) only when the subscription linked to
+    this bot is itself scoped to the bot (``subscription.bot_id == bot.id``).
+    Returns ``None`` (client pool) for:
+    - legacy-pooled / Free bots
+    - bots whose ``subscription_id`` is a convenience pointer set by the
+      per-bot-billing migration but whose subscription still has
+      ``bot_id = NULL`` — credits live in the client pool for those bots.
+
+    Credit routing path:
+    - ``get_current_bot()`` pre-resolves ``subscription.bot_id`` into
+      ``bot._subscription_bot_id`` before expunging the ORM object from
+      the session, so detached bots can be routed without a lazy-load.
+    - ``subscription_routes`` and tests pass fresh ORM objects with an
+      active session; those fall through to the ``bot.subscription``
+      relationship (lazy-loaded while the session is alive).
     """
     if bot is None:
         return None
@@ -68,7 +82,18 @@ def resolve_bot_ledger_bot_id(bot: Bot | None) -> int | None:
         return None
     if getattr(bot, "subscription_id", None) is None:
         return None
-    return getattr(bot, "id", None)
+    bot_pk = getattr(bot, "id", None)
+    # Fast path: _subscription_bot_id is pre-resolved by get_current_bot()
+    # for detached bots (avoids DetachedInstanceError on lazy relationship).
+    sub_bot_id = getattr(bot, "_subscription_bot_id", _UNSET)
+    if sub_bot_id is _UNSET:
+        # Slow path: bot was loaded with an active session (subscription_routes,
+        # billing endpoints) — lazy-load the relationship normally.
+        sub = getattr(bot, "subscription", None)
+        sub_bot_id = getattr(sub, "bot_id", None) if sub is not None else None
+    if sub_bot_id != bot_pk:
+        return None
+    return bot_pk
 
 
 logger = logging.getLogger(__name__)

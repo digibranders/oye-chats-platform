@@ -300,7 +300,7 @@ export default function Users({ embedded = false }) {
                                                     </div>
                                                     <div className={cn('flex flex-col', isBot ? 'items-start' : 'items-end')}>
                                                         <div className={cn(
-                                                            'px-3.5 py-2.5 rounded-2xl text-[13px] leading-relaxed',
+                                                            'px-3.5 py-2.5 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap break-words',
                                                             isBot
                                                                 ? 'bg-surface-100 dark:bg-surface-800 text-surface-800 dark:text-surface-200 rounded-tl-sm'
                                                                 : 'bg-primary-600 dark:bg-primary-500 text-white rounded-tr-sm'

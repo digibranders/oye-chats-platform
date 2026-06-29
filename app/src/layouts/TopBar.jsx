@@ -7,6 +7,7 @@ import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import Avatar from '../components/ui/Avatar';
 import { getCurrentUser } from '../services/api';
+import useEntitlements from '../hooks/useEntitlements';
 
 // Format an ISO timestamp as e.g. "Joined May 4, 2026". Returns "—" on bad input
 // so a fetch hiccup or pre-2024 row never renders the profile dropdown blank.
@@ -28,6 +29,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
+  const { entitlements } = useEntitlements();
   // Mounted-flag prevents a state update after the menu closes if the network
   // request is still in flight — avoids the React "set state on unmounted" warn.
   const mountedRef = useRef(true);
@@ -145,9 +147,16 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                         </span>
                       )}
                     </div>
-                    <p className="text-[12px] text-surface-500 dark:text-surface-400 truncate">
-                      {profileLoading && !profile ? 'Loading…' : (profile?.email || (profileError ? 'Profile unavailable' : '—'))}
-                    </p>
+                    <div className="flex items-center gap-2 mt-0.5 min-w-0">
+                      <p className="text-[12px] text-surface-500 dark:text-surface-400 truncate flex-1">
+                        {profileLoading && !profile ? 'Loading…' : (profile?.email || (profileError ? 'Profile unavailable' : '—'))}
+                      </p>
+                      {!profileLoading && profile && (
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 shrink-0">
+                          {entitlements?.planName || 'Free'} Plan
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 

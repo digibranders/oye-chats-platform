@@ -179,7 +179,7 @@ export default function Login() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="text-white/45 text-lg mb-10 max-w-md leading-relaxed"
           >
-            Deploy intelligent chatbots trained on your data. Capture leads, support customers, and grow revenue — all on autopilot.
+            Deploy intelligent chatbots trained on your data. Capture leads, support customers, and grow revenue. All on autopilot.
           </motion.p>
 
           <div className="grid grid-cols-2 gap-3">

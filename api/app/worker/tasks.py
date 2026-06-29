@@ -141,6 +141,85 @@ async def task_ingest_web_batch(
     return result
 
 
+# ── Embedding Backfill ──────────────────────────────────────────────────────
+
+
+async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
+    """Re-embed all documents using the current embed_chunks() provider.
+
+    Run this once after the a1b2c3d4e5f6 migration to backfill 768-dim vectors
+    for every document that has a NULL embedding (i.e. all rows post-migration).
+
+    Returns a summary dict with total, succeeded, and failed counts.
+    """
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.db.database import SessionLocal
+    from app.ingestion.embedder import embed_chunks
+
+    logger.info("task_reembed_all_documents: starting (batch_size=%d)", batch_size)
+
+    total = succeeded = failed = 0
+
+    with SessionLocal() as session:
+        # Fetch IDs of all documents with NULL embedding in ascending order.
+        id_rows = session.execute(text("SELECT id FROM documents WHERE embedding IS NULL ORDER BY id")).fetchall()
+        doc_ids = [r[0] for r in id_rows]
+
+    total = len(doc_ids)
+    logger.info("task_reembed_all_documents: %d documents to embed", total)
+
+    for batch_start in range(0, total, batch_size):
+        batch_ids = doc_ids[batch_start : batch_start + batch_size]
+
+        with SessionLocal() as session:
+            rows = session.execute(
+                text("SELECT id, content FROM documents WHERE id = ANY(:ids)"),
+                {"ids": batch_ids},
+            ).fetchall()
+
+        contents = [r[1] for r in rows]
+
+        try:
+            embeddings = await asyncio.to_thread(embed_chunks, contents)
+        except Exception as exc:
+            logger.error(
+                "task_reembed_all_documents: batch starting id=%d failed — %s: %s",
+                batch_ids[0],
+                type(exc).__name__,
+                exc,
+            )
+            failed += len(batch_ids)
+            continue
+
+        with SessionLocal() as session:
+            for row, embedding in zip(rows, embeddings, strict=True):
+                emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
+                session.execute(
+                    text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
+                    {"emb": emb_str, "id": row[0]},
+                )
+            session.commit()
+
+        succeeded += len(batch_ids)
+        logger.info(
+            "task_reembed_all_documents: %d/%d done (failed=%d)",
+            succeeded,
+            total,
+            failed,
+        )
+
+    logger.info(
+        "task_reembed_all_documents: complete — total=%d succeeded=%d failed=%d",
+        total,
+        succeeded,
+        failed,
+    )
+    return {"total": total, "succeeded": succeeded, "failed": failed}
+
+
 # ── Webhook Delivery ────────────────────────────────────────────────────────
 
 

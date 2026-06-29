@@ -40,7 +40,7 @@ import { Button } from '../components/ui/Button';
 import Progress from '../components/ui/Progress';
 import { useToast } from '../context/ToastContext';
 import { useBotContext } from '../context/BotContext';
-import useEntitlements from '../hooks/useEntitlements';
+import useEntitlements, { entitlementsRefresh } from '../hooks/useEntitlements';
 import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
@@ -311,6 +311,9 @@ export default function Billing() {
       setSubscription(subRes?.subscription || null);
       setPlan(subRes?.plan || null);
       setHistory(Array.isArray(histRes) ? histRes : []);
+      // Bust the entitlements cache so every feature gate in the app
+      // re-reads the new plan limits immediately — no page refresh needed.
+      entitlementsRefresh();
     } catch (err) {
       showToast(err?.message || 'Failed to load billing data', 'error');
     } finally {
@@ -726,6 +729,9 @@ export default function Billing() {
         }
         hasStripeSubscription={subscription?.payment_provider === 'stripe'}
         onSuccess={(evt) => {
+          // Bust the cache immediately so feature gates unlock in the same
+          // frame as the success toast — no refresh needed.
+          entitlementsRefresh();
           // Map every PlanModal outcome kind to its own toast so users get
           // accurate feedback instead of a generic "Plan updated." for
           // distinct outcomes (trial-start vs subscribe vs prorated swap).
@@ -873,7 +879,7 @@ function OverviewTab({
   // counters at 0, which is a contradiction. Summing the actual usage
   // rows is always honest.
   const dPeriodUsed = isBotView
-    ? Object.values(dUsage).reduce((sum, u) => sum + (u?.credits_used || 0), 0)
+    ? (dUsage?.ai_chat?.credits_used || 0) + (dUsage?.url_scan?.credits_used || 0) + (dUsage?.document_upload?.credits_used || 0)
     : periodUsed;
   const dSoonestExpiry = isBotView ? selectedBotLedger.soonest_expiry : balance?.soonest_expiry;
   const dResetsAt = isBotView ? selectedBotLedger.resets_at : balance?.resets_at;
@@ -888,6 +894,9 @@ function OverviewTab({
   // → can top up). For the account pool, defer to the entitlement-
   // driven ``topupAllowed`` flag (Free plan blocks top-ups).
   const dTopupAllowed = isBotView ? true : topupAllowed;
+  const dTotalRemaining = isBotView ? Number(selectedBotLedger.total || 0) : totalRemaining;
+  const dPlanName = isBotView ? (selectedBotLedger.plan_name || plan?.name || 'Starter') : (plan?.name || 'Free');
+  const dSubscriptionStatus = isBotView ? selectedBotLedger.subscription_status : subscription?.status;
   const handleTopupClick = () => {
     if (isBotView) {
       onTopupBot?.(selectedBotLedger);
@@ -1055,22 +1064,22 @@ function OverviewTab({
               <div className="flex items-center gap-2 flex-wrap">
                 <CreditCard className="w-4 h-4 text-surface-500" />
                 <span className="text-sm font-semibold text-surface-900 dark:text-surface-50">
-                  {plan?.name || 'Free'} plan
+                  {dPlanName} plan
                 </span>
-                {subscription?.status && (
+                {dSubscriptionStatus && (
                   <span
                     className={`text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                      subscription.status === 'trialing'
+                      dSubscriptionStatus === 'trialing'
                         ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
-                        : subscription.status === 'active'
+                        : dSubscriptionStatus === 'active'
                         ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
                         : 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300'
                     }`}
                   >
-                    {subscription.status}
+                    {dSubscriptionStatus}
                   </span>
                 )}
-                {subscription?.status === 'trialing' && subscription?.trial_end && (
+                {dSubscriptionStatus === 'trialing' && subscription?.trial_end && !isBotView && (
                   <TrialCountdownBadge trialEndIso={subscription.trial_end} />
                 )}
               </div>
@@ -1079,12 +1088,12 @@ function OverviewTab({
                   ? `${fmtCurrency(plan.monthly_price_cents, currency)} / month`
                   : 'No paid subscription'}
                 {' · '}
-                {fmtNumber(monthlyGrant)} credits / month
+                {fmtNumber(dMonthlyGrant)} credits / month
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-surface-500 dark:text-surface-400">
-                Total credits Remaining: <strong className="text-surface-700 dark:text-surface-200">{fmtNumber(totalRemaining)}</strong>
+                Total credits Remaining: <strong className="text-surface-700 dark:text-surface-200">{fmtNumber(dTotalRemaining)}</strong>
               </span>
             </div>
           </div>
@@ -1438,23 +1447,19 @@ function SeatsTab({
         </CardContent>
       </Card>
 
-      {/* Per-bot billing note — each additional chatbot lives under its
-          own subscription. Compact single-row layout (no CardHeader split)
-          so the title, blurb, and CTA all line up tightly. */}
       <Card>
-        <CardContent className="py-4">
+        <CardHeader>
+          <CardTitle>
+            <span className="flex items-center gap-2">
+              <Bot className="w-4 h-4 text-surface-500" /> Chatbots
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex items-start gap-3 min-w-0">
-              <Bot className="w-4 h-4 text-surface-500 mt-0.5 shrink-0" />
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-surface-900 dark:text-surface-50">
-                  Chatbots
-                </div>
-                <div className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
-                  Each chatbot is its own subscription with isolated credits.
-                  Free includes one bot; subscribe again to add more.
-                </div>
-              </div>
+            <div className="text-xs text-surface-500 dark:text-surface-400">
+              Each chatbot is its own subscription with isolated credits.
+              Free includes one bot; subscribe again to add more.
             </div>
             <Button onClick={onCreateBot} size="sm" className="shrink-0">
               <Plus className="w-3.5 h-3.5" />

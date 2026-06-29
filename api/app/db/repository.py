@@ -2,9 +2,20 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import case, desc, func, insert, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import aliased
 
 from app.core.exceptions import SessionOwnershipError
-from app.db.models import BANTSignal, Bot, BotGrowthEvent, ChatMessage, ChatSession, Client, Document, LeadInfo
+from app.db.models import (
+    BANTSignal,
+    Bot,
+    BotGrowthEvent,
+    ChatMessage,
+    ChatSession,
+    Client,
+    Document,
+    LeadInfo,
+    PlatformFeedback,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: Resolve bot_id or client_id for backward compatibility
@@ -487,14 +498,10 @@ def search_similar_documents(
     Uses raw SQL for the vector distance calculation to bypass pgvector Python
     package version incompatibilities with the Vector type processor.
 
-    ``max_distance`` is **cosine** distance (the ``<=>`` operator). Cosine is
-    the standard semantic-similarity metric for OpenAI ``text-embedding-3-small``
-    and matches the convention used by the pgvector ``vector_cosine_ops`` HNSW
-    index. For OpenAI's normalised 1536-dim vectors, L2 and cosine produce
-    identical rank ordering (both are monotonic in the dot product), so this
-    change preserves retrieval behaviour today while making the threshold
-    semantically meaningful and forward-compatible with any future cosine
-    HNSW index.
+    ``max_distance`` is **cosine** distance (the ``<=>`` operator). Both
+    BAAI/bge-base-en-v1.5 (primary) and OpenAI text-embedding-3-small (fallback)
+    produce L2-normalised vectors, so cosine distance equals L2 rank ordering
+    and is the correct metric for either model.
 
     The default 0.78 is the math-equivalent of the previously tuned
     ``L2 = 1.25`` (for unit vectors, ``cos_dist = L2² / 2``). That threshold
@@ -833,11 +840,25 @@ def get_feedback_data(session, client_id: int = None, bot_id: int = None):
 
 
 def get_global_feedback_data(session):
-    """Retrieve all feedback across all clients (superadmin)."""
+    """Retrieve all feedback across all clients (superadmin).
+
+    ChatSession.client_id is nullable (legacy FK). Newer sessions carry only
+    bot_id; the client must be resolved via Bot.client_id instead.  We use
+    LEFT OUTER JOINs on both paths and COALESCE so every feedback row is
+    returned regardless of which FK is populated.
+    """
+    ClientViaBot = aliased(Client)
+
     stmt = (
-        select(ChatMessage, ChatSession.id.label("session_id"), Client.name.label("client_name"))
-        .join(ChatSession)
-        .join(Client, ChatSession.client_id == Client.id)
+        select(
+            ChatMessage,
+            ChatSession.id.label("session_id"),
+            func.coalesce(Client.name, ClientViaBot.name, "Unknown").label("client_name"),
+        )
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .outerjoin(Client, ChatSession.client_id == Client.id)
+        .outerjoin(Bot, ChatSession.bot_id == Bot.id)
+        .outerjoin(ClientViaBot, Bot.client_id == ClientViaBot.id)
         .where(ChatMessage.role == "bot", ChatMessage.feedback.isnot(None))
         .order_by(ChatMessage.created_at)
     )
@@ -877,6 +898,52 @@ def get_global_feedback_data(session):
         )
 
     return feedback_list
+
+
+def save_platform_feedback(
+    session,
+    client_id: int,
+    message: str,
+    attachment_url: str | None = None,
+    category: str | None = None,
+) -> PlatformFeedback:
+    """Persist a free-text feedback entry from an admin dashboard user."""
+    entry = PlatformFeedback(
+        client_id=client_id,
+        message=message,
+        attachment_url=attachment_url,
+        category=category,
+    )
+    session.add(entry)
+    session.commit()
+    session.refresh(entry)
+    return entry
+
+
+def get_all_platform_feedback(session) -> list[dict]:
+    """Return all platform feedback for the superadmin, newest first."""
+    stmt = (
+        select(
+            PlatformFeedback,
+            Client.name.label("client_name"),
+            Client.email.label("client_email"),
+        )
+        .outerjoin(Client, PlatformFeedback.client_id == Client.id)
+        .order_by(desc(PlatformFeedback.created_at))
+    )
+    results = session.execute(stmt).all()
+    return [
+        {
+            "id": row.PlatformFeedback.id,
+            "client_name": row.client_name or "Unknown",
+            "client_email": row.client_email or "",
+            "message": row.PlatformFeedback.message,
+            "attachment_url": row.PlatformFeedback.attachment_url,
+            "category": row.PlatformFeedback.category,
+            "created_at": row.PlatformFeedback.created_at.isoformat(),
+        }
+        for row in results
+    ]
 
 
 def get_visitor_data(session, client_id: int = None, bot_id: int = None):

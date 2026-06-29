@@ -340,6 +340,37 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                     session.add(offline_msg)
                     session.commit()
 
+                    # Send team notification — mirrors offline_message_routes.py
+                    # so the team is alerted regardless of whether the visitor
+                    # arrived here via the REST form or the mid-flow WS fallback.
+                    ws_bot = session.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
+                    if ws_bot and getattr(ws_bot, "email_on_offline", True):
+                        from app.services.email_service import (
+                            get_notification_recipients,
+                            send_offline_message_email,
+                            send_unavailable_callback_email,
+                        )
+
+                        recipients = get_notification_recipients(ws_bot, "offline_message")
+                        reply_to = getattr(ws_bot, "reply_to_email", None)
+                        for recipient in recipients:
+                            if phone:
+                                send_unavailable_callback_email(
+                                    notification_email=recipient,
+                                    bot_name=ws_bot.name,
+                                    contact={"name": name, "email": email, "phone": phone},
+                                    reply_to=reply_to,
+                                )
+                            else:
+                                send_offline_message_email(
+                                    notification_email=recipient,
+                                    bot_name=ws_bot.name,
+                                    visitor_name=name,
+                                    visitor_email=email,
+                                    message_preview=message[:200],
+                                    reply_to=reply_to,
+                                )
+
                 await ws.send_json({"type": "offline_form_submitted"})
                 logger.info(
                     "Offline form submitted via WS: session=%s bot=%s reason=%s transcript_len=%s",

@@ -335,11 +335,13 @@ def apply_pending_proration(
         new_sub.client_id,
         amount=credit_amount,
         note=f"Upgrade rollover (unused {old_sub.plan.slug if old_sub.plan else 'previous plan'} credits)",
+        bot_id=new_sub.bot_id,
     )
 
     logger.info(
-        "Applied upgrade rollover credits: client=%s amount=%d",
+        "Applied upgrade rollover credits: client=%s bot=%s amount=%d",
         new_sub.client_id,
+        new_sub.bot_id,
         credit_amount,
     )
     return credit_amount

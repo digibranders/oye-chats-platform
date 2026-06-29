@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Settings, MessageCircle } from 'lucide-react';
 import FeedbackModal from './FeedbackModal';
 import { cn } from '../lib/utils';
+import { submitPlatformFeedback } from '../services/api';
 
 const SettingsDropup = ({ isOpen: sidebarOpen }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -18,9 +19,8 @@ const SettingsDropup = ({ isOpen: sidebarOpen }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleFeedbackSubmit = async (text) => {
-    console.log("Submitting feedback:", text);
-    return new Promise(resolve => setTimeout(resolve, 800));
+  const handleFeedbackSubmit = async (text, category, attachmentUrl) => {
+    await submitPlatformFeedback(text, category, attachmentUrl);
   };
 
   return (
