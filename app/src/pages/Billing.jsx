@@ -40,6 +40,7 @@ import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
 import { cn } from '../lib/utils';
+import { trialDaysLeft } from '../utils/trial';
 
 const fmtNumber = (n) => Number(n || 0).toLocaleString();
 
@@ -194,9 +195,10 @@ function TrialCountdownBadge({ trialEndIso }) {
   const endMs = Date.parse(trialEndIso);
   if (Number.isNaN(endMs)) return null;
 
-  // Ceil so a trial expiring in 14h still reads "1 day left", not "0 days
-  // left" — matches how customers actually count remaining time.
-  const daysLeft = Math.ceil((endMs - now) / 86_400_000);
+  // Shared ceil helper — keeps this badge and the top TrialBanner in lockstep
+  // (both derive "days left" from the same trial_end via the same rounding,
+  // so they can never disagree the way floor-vs-ceil did).
+  const daysLeft = trialDaysLeft(trialEndIso, now);
 
   let label;
   if (daysLeft < 0) label = 'Trial ended';

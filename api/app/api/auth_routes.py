@@ -10,6 +10,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator, get_current_operator
+from app.core.dates import trial_days_remaining
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
@@ -292,7 +293,7 @@ class TrialStatePayload(BaseModel):
 
     status: str  # "trialing" | "trial_expired" | "active" | ...
     trial_end_at: str | None = None  # ISO-8601, UTC
-    days_remaining: int | None = None  # floor((trial_end - now).days)
+    days_remaining: int | None = None  # ceil((trial_end - now) / 1 day), 0 once lapsed
     credits_granted: int | None = None
 
 
@@ -464,7 +465,7 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
     ``trial_expired`` we always return a payload so the UI can render the
     countdown or the reactivation prompt respectively.
     """
-    from datetime import UTC, datetime
+    from datetime import UTC
 
     from app.db.models import Subscription
 
@@ -491,7 +492,7 @@ def _build_trial_payload(session, client_id: int) -> "TrialStatePayload | None":
         if trial_end.tzinfo is None:
             trial_end = trial_end.replace(tzinfo=UTC)
         end_iso = trial_end.isoformat()
-        days_remaining = max(0, (trial_end - datetime.now(UTC)).days) if sub.status == "trialing" else 0
+        days_remaining = trial_days_remaining(trial_end) if sub.status == "trialing" else 0
 
     plan = sub.plan
     credits_granted = int(plan.credits_per_month or 0) if plan else None
@@ -720,7 +721,7 @@ def register(request: Request, body: RegisterRequest):
                 trial_end = subscription.trial_end
                 if trial_end.tzinfo is None:
                     trial_end = trial_end.replace(tzinfo=UTC)
-                days_remaining = max(0, (trial_end - datetime.now(UTC)).days)
+                days_remaining = trial_days_remaining(trial_end)
                 credits_granted = int(subscription.plan.credits_per_month or 0) if subscription.plan else TRIAL_CREDITS
 
                 trial_payload = TrialStatePayload(
