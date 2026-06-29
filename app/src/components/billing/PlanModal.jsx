@@ -984,12 +984,17 @@ function toDisplayPrice(planCents, planCurrency, geo) {
 }
 
 function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = null }) {
-    // Plan rows are INR-native (paise in *_cents columns). For Indian
-    // customers we render those directly; for everyone else we convert to
-    // USD via the geo display rate. The actual charged currency at the
-    // gateway is always INR — USD here is informational.
-    const planCents = billingCycle === 'annual' ? plan.annual_price_cents : plan.monthly_price_cents;
-    const { cents, symbol: sym } = toDisplayPrice(planCents, plan.currency || 'INR', geo);
+    // Prefer stored USD prices when displaying to non-Indian visitors —
+    // these are the exact prices charged at the gateway, not a rate conversion.
+    // Fall back to INR→USD conversion only if the USD columns are absent.
+    const displayCurrency = (geo?.display_currency || plan.currency || 'INR').toUpperCase();
+    const usdAvailable = displayCurrency === 'USD' && plan.monthly_price_usd_cents != null;
+    const planCents = usdAvailable
+        ? (billingCycle === 'annual' ? (plan.annual_price_usd_cents ?? 0) : (plan.monthly_price_usd_cents ?? 0))
+        : (billingCycle === 'annual' ? plan.annual_price_cents : plan.monthly_price_cents);
+    const { cents, symbol: sym } = usdAvailable
+        ? { cents: Number(planCents) || 0, currency: 'USD', symbol: '$' }
+        : toDisplayPrice(planCents, plan.currency || 'INR', geo);
     if (plan.slug === 'enterprise') {
         return (
             <div>
@@ -1018,7 +1023,8 @@ function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = nu
     const chargedCents = hasDiscount ? cents - Math.floor((cents * bps) / 10_000) : cents;
     const major = cents / 100;
     const chargedMajor = chargedCents / 100;
-    const monthlyEquiv = billingCycle === 'annual' && plan.monthly_price_cents > 0
+    const hasMonthlyCents = usdAvailable ? (plan.monthly_price_usd_cents ?? 0) > 0 : (plan.monthly_price_cents ?? 0) > 0;
+    const monthlyEquiv = billingCycle === 'annual' && hasMonthlyCents
         ? (chargedCents / 12) / 100
         : null;
     const fmt = (val) => `${sym}${Number.isInteger(val) ? val.toLocaleString() : val.toFixed(2)}`;
@@ -1084,13 +1090,17 @@ function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = nu
                     / month — save vs paying month-to-month.
                 </p>
             )}
-            {!hasDiscount && billingCycle === 'monthly' && plan.annual_price_cents > 0 && plan.monthly_price_cents > 0 && (() => {
+            {!hasDiscount && billingCycle === 'monthly' && hasMonthlyCents && (usdAvailable ? (plan.annual_price_usd_cents ?? 0) > 0 : (plan.annual_price_cents ?? 0) > 0) && (() => {
                 // Compute the savings in the same display currency the rest
                 // of the block uses, so a US visitor never sees a ₹-prefixed
                 // savings line right under a $-prefixed headline price.
-                const monthly = toDisplayPrice(plan.monthly_price_cents, plan.currency || 'INR', geo).cents;
-                const annual = toDisplayPrice(plan.annual_price_cents, plan.currency || 'INR', geo).cents;
-                const saved = (monthly * 12 - annual) / 100;
+                const monthly = usdAvailable
+                    ? { cents: Number(plan.monthly_price_usd_cents) || 0 }
+                    : toDisplayPrice(plan.monthly_price_cents, plan.currency || 'INR', geo);
+                const annual = usdAvailable
+                    ? { cents: Number(plan.annual_price_usd_cents) || 0 }
+                    : toDisplayPrice(plan.annual_price_cents, plan.currency || 'INR', geo);
+                const saved = (monthly.cents * 12 - annual.cents) / 100;
                 return saved > 0 ? (
                     <p className="text-[12px] text-emerald-600 dark:text-emerald-400">
                         Switch to annual and save <strong>{sym}{saved.toFixed(0)}/yr</strong>.
@@ -1323,8 +1333,16 @@ function buildFeatureList(plan, geo) {
 }
 
 function renderPriceLabel(plan, billingCycle, geo, compact = false) {
-    const planCents = billingCycle === 'annual' ? plan.annual_price_cents : plan.monthly_price_cents;
-    const { cents, symbol: sym } = toDisplayPrice(planCents, plan.currency || 'INR', geo);
+    const displayCurrency = (geo?.display_currency || plan.currency || 'INR').toUpperCase();
+    const usdAvailable = displayCurrency === 'USD' && plan.monthly_price_usd_cents != null;
+    let cents, sym;
+    if (usdAvailable) {
+        cents = Number(billingCycle === 'annual' ? (plan.annual_price_usd_cents ?? 0) : (plan.monthly_price_usd_cents ?? 0));
+        sym = '$';
+    } else {
+        const planCents = billingCycle === 'annual' ? plan.annual_price_cents : plan.monthly_price_cents;
+        ({ cents, symbol: sym } = toDisplayPrice(planCents, plan.currency || 'INR', geo));
+    }
     if (plan.slug === 'enterprise') return 'Custom';
     if (!cents) return compact ? 'Free' : `${sym}0`;
     const major = cents / 100;
