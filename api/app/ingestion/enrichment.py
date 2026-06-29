@@ -63,6 +63,7 @@ def enrich_chunk(chunk_text: str, document_summary: str) -> str:
             model=ENRICHMENT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=_SUMMARY_MAX_TOKENS,
+            metadata={"generation_name": "chunk-enrichment"},
         )
         summary = (response.choices[0].message.content or "").strip()
         if summary and len(summary) < 500:

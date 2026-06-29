@@ -134,6 +134,7 @@ def check_relevance(
             max_tokens=20,
             response_format={"type": "json_object"},
             timeout=_GATE_LLM_TIMEOUT_S,
+            metadata={"generation_name": "relevance-gate"},
         )
         raw = (response.choices[0].message.content or "").strip()
         data = json.loads(raw)
