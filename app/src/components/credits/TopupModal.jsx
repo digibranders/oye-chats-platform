@@ -14,24 +14,9 @@ import { getTopupPacks, initiateTopup, verifyTopupPayment } from '../../services
 import { useToast } from '../../context/ToastContext';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 
-const TRUSTED_REDIRECT_DOMAINS = ['checkout.stripe.com', 'billing.stripe.com'];
-function isTrustedRedirectUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return (
-      parsed.protocol === 'https:' &&
-      TRUSTED_REDIRECT_DOMAINS.some(
-        (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d),
-      )
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** Display amount with currency symbol. Defaults to "$" (USD). */
+/** Display amount with USD symbol. */
 function formatAmount(amount, currency) {
-  const sym = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : currency + ' ';
+  const sym = currency === 'USD' ? '$' : currency + ' ';
   const numeric = Number(amount);
   const formatted = Number.isInteger(numeric)
     ? numeric.toLocaleString()
@@ -50,8 +35,7 @@ function pricePerKCredits(amount, credits) {
  *
  * Referral discounts deliberately live on the *subscription* flow (PlanModal)
  * rather than here: an affiliate's reward should track recurring revenue, not
- * one-off credit packs. Customers can still buy top-ups freely; the prices
- * shown are exactly what Stripe charges.
+ * one-off credit packs.
  */
 export default function TopupModal({ open, onClose, onSuccess, botId = null, botName = null }) {
   const { showToast } = useToast();
@@ -79,17 +63,10 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
   }, [open, showToast]);
 
   /**
-   * Razorpay flow:
-   *   1. POST /credits/topup → { provider, order_id, amount, key_id, ... }
-   *   2. Open Razorpay Checkout with that payload.
-   *   3. On handler resolve, POST /credits/topup/verify with the signature trio.
-   *   4. Webhook eventually grants credits server-side; we trigger onSuccess
-   *      so the parent page polls for the new balance.
-   *
-   * Stripe flow:
-   *   1. POST /credits/topup → { provider, checkout_url, ... }
-   *   2. Validate URL host then redirect via window.location.
-   *   3. On return ?topup=success, the parent page picks up the success.
+   * 1. POST /credits/topup → { provider, order_id, amount, key_id, ... }
+   * 2. Open Razorpay Checkout with that payload.
+   * 3. On handler resolve, POST /credits/topup/verify with the signature trio.
+   * 4. Webhook eventually grants credits server-side; onSuccess triggers a balance poll.
    */
   async function handleBuy(pack) {
     const amount = Number(pack.amount ?? pack.usd ?? 0);
@@ -99,50 +76,30 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
     }
     setSubmittingPack(amount);
     try {
-      // ``botId`` scopes the top-up to a per-bot ledger so the credits
-      // land in that bot's isolated bucket instead of the client pool.
-      // Account-pool tops-ups leave it null.
       const result = await initiateTopup(amount, { botId });
-      const provider = String(result?.provider || '').toLowerCase();
-
-      if (provider === 'razorpay') {
-        const response = await openRazorpayCheckout({
-          key: result.key_id,
-          order_id: result.order_id,
-          amount: result.amount,
-          currency: result.currency || 'INR',
-          name: result.name || 'OyeChats credits',
-          description: result.description,
-          prefill: result.prefill || {},
-          theme: result.theme || { color: '#6366f1' },
-        });
-        try {
-          await verifyTopupPayment(response);
-        } catch (verifyErr) {
-          showToast(
-            verifyErr?.message ||
-              'Payment received but verification failed. Contact support if credits don\'t appear shortly.',
-            'error',
-          );
-          return;
-        }
-        showToast('Payment successful — credits will appear in a few seconds.', 'success');
-        onSuccess?.();
-        onClose?.();
+      const response = await openRazorpayCheckout({
+        key: result.key_id,
+        order_id: result.order_id,
+        amount: result.amount,
+        currency: result.currency || 'USD',
+        name: result.name || 'OyeChats credits',
+        description: result.description,
+        prefill: result.prefill || {},
+        theme: result.theme || { color: '#6366f1' },
+      });
+      try {
+        await verifyTopupPayment(response);
+      } catch (verifyErr) {
+        showToast(
+          verifyErr?.message ||
+            'Payment received but verification failed. Contact support if credits don\'t appear shortly.',
+          'error',
+        );
         return;
       }
-
-      if (provider === 'stripe') {
-        const url = result?.checkout_url;
-        if (!url || !isTrustedRedirectUrl(url)) {
-          showToast('Could not start checkout — please contact support.', 'error');
-          return;
-        }
-        window.location.href = url;
-        return;
-      }
-
-      showToast(`Unknown billing provider: ${provider || 'none'}`, 'error');
+      showToast('Payment successful — credits will appear in a few seconds.', 'success');
+      onSuccess?.();
+      onClose?.();
     } catch (err) {
       // openRazorpayCheckout throws on dismiss with code 'dismissed' — silent.
       if (err?.code === 'dismissed') return;
@@ -177,16 +134,9 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {packs.map((pack) => {
-              // ``amount`` is the gateway-native major unit (rupees for
-              // Razorpay) — keep using it as the submission/key value so
-              // the backend can match this pack row. ``displayAmount``
-              // is what we render: packs may ship a USD display price
-              // (display_amount/display_currency) while still charging
-              // INR at checkout.
               const amount = Number(pack.amount ?? pack.usd ?? 0);
-              const currency = pack.currency || 'USD';
               const displayAmount = Number(pack.display_amount ?? amount);
-              const displayCurrency = pack.display_currency || currency;
+              const displayCurrency = (pack.display_currency || pack.currency || 'USD').toUpperCase();
               const featured = (pack.bonus_pct || 0) >= 20;
               const submitting = submittingPack === amount;
               const perK = pricePerKCredits(displayAmount, pack.credits);
@@ -252,8 +202,8 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
         )}
 
         <p className="mt-4 text-[11px] text-surface-500 dark:text-surface-400 text-center">
-          Powered by Razorpay (UPI, cards, NetBanking, wallets) for India · Stripe for international.
-          Got a referral code? Apply it on the Plan & seats tab for recurring savings.
+          Powered by Razorpay (UPI, cards, NetBanking, wallets).
+          Got a referral code? Apply it on the Plan &amp; seats tab for recurring savings.
         </p>
       </DialogBody>
 

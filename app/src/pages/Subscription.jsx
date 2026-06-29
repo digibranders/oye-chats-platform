@@ -7,26 +7,13 @@ import {
 } from 'lucide-react';
 import {
   getCurrentSubscription, getSubscriptionUsage, getSubscriptionPlans,
-  getInvoices, createCheckoutSession, getBillingPortalUrl,
+  getInvoices, createCheckoutSession,
   cancelSubscription, resumeSubscription,
 } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
 import Progress from '../components/ui/Progress';
 import { cn } from '../lib/utils';
-
-/** Validate that a URL points to a trusted payment domain before redirecting. */
-const TRUSTED_REDIRECT_DOMAINS = ['checkout.stripe.com', 'billing.stripe.com'];
-const isTrustedRedirectUrl = (url) => {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' && TRUSTED_REDIRECT_DOMAINS.some(
-      (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d)
-    );
-  } catch {
-    return false;
-  }
-};
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -111,29 +98,11 @@ export default function Subscription() {
   const handleUpgrade = async (targetPlanId) => {
     setActionLoading(true);
     try {
-      const result = await createCheckoutSession(targetPlanId, billingCycle);
-      if (result.checkout_url && isTrustedRedirectUrl(result.checkout_url)) {
-        window.location.href = result.checkout_url;
-      } else if (result.checkout_url) {
-        showToast('error', 'Received an untrusted checkout URL. Please contact support.');
-      }
+      await createCheckoutSession(targetPlanId, billingCycle);
     } catch (error) {
       showToast('error', error.message || 'Failed to start checkout');
     } finally {
       setActionLoading(false);
-    }
-  };
-
-  const handleManageBilling = async () => {
-    try {
-      const result = await getBillingPortalUrl();
-      if (result.portal_url && isTrustedRedirectUrl(result.portal_url)) {
-        window.open(result.portal_url, '_blank');
-      } else if (result.portal_url) {
-        showToast('error', 'Received an untrusted billing URL. Please contact support.');
-      }
-    } catch (error) {
-      showToast('error', error.message || 'Failed to open billing portal');
     }
   };
 
@@ -239,15 +208,6 @@ export default function Subscription() {
                   <ArrowUpRight size={14} />
                   {isFreePlan ? 'Upgrade' : 'Change Plan'}
                 </button>
-                {!isFreePlan && (
-                  <button
-                    onClick={handleManageBilling}
-                    className="px-4 py-2 text-[13px] font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors flex items-center gap-1.5"
-                  >
-                    <CreditCard size={14} />
-                    Manage Billing
-                  </button>
-                )}
               </>
             )}
           </div>

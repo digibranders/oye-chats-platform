@@ -1044,7 +1044,6 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
         health["database"] = "unreachable"
         health["status"] = "degraded"
 
-    health["stripe"] = "connected" if getattr(settings, "STRIPE_ENABLED", False) else "disabled"
     health["razorpay"] = "connected" if getattr(settings, "RAZORPAY_ENABLED", False) else "disabled"
     health["storage"] = "connected" if getattr(settings, "R2_BUCKET_NAME", None) else "unknown"
     return health

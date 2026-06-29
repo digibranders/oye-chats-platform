@@ -1511,15 +1511,6 @@ export const resumeSubscription = async () => {
     }
 };
 
-export const getBillingPortalUrl = async () => {
-    try {
-        const response = await api.post('/subscriptions/portal');
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Failed to open billing portal');
-    }
-};
-
 // --- CREDITS & TOP-UPS ---
 
 export const getCreditBalance = async () => {
@@ -1552,17 +1543,16 @@ export const getTopupPacks = async () => {
 /**
  * Initiate a top-up purchase.
  *
- * Returns provider-specific payload:
- *   - Razorpay: { provider:'razorpay', order_id, amount, currency, key_id, name,
- *                 description, prefill, theme, credits, bonus_pct, receipt }
- *   - Stripe:   { provider:'stripe', checkout_url, session_id }
+ * Returns a Razorpay order payload:
+ *   { provider:'razorpay', order_id, amount, currency, key_id, name,
+ *     description, prefill, theme, credits, bonus_pct, receipt }
  *
- * The caller passes `amount` in the configured currency's major unit (rupees
- * for INR, dollars for USD). `pack_usd` is accepted as a legacy alias.
+ * The caller passes `amount` matching one of the configured packs.
+ * `pack_usd` is accepted as a legacy alias.
  */
-export const initiateTopup = async (amount, { provider, botId } = {}) => {
+export const initiateTopup = async (amount, { botId } = {}) => {
     try {
-        const response = await api.post('/credits/topup', { amount, provider, bot_id: botId ?? null });
+        const response = await api.post('/credits/topup', { amount, bot_id: botId ?? null });
         return response.data;
     } catch (error) {
         throw buildApiError(error, 'Failed to start top-up checkout');
@@ -1586,31 +1576,11 @@ export const verifyTopupPayment = async ({ razorpay_order_id, razorpay_payment_i
     }
 };
 
-/**
- * Self-redeem a Stripe Checkout top-up. Called from the success redirect
- * (Billing page picks up ``?session_id=…``) so credits land instantly even
- * when the Stripe webhook can't reach the API (local dev, in-flight delivery).
- * Backend confirms ``payment_status == paid`` + ``client_id`` match before
- * granting; safe to call on every success landing — idempotent server-side.
- */
-export const verifyStripeTopup = async (sessionId) => {
-    try {
-        const response = await api.post('/credits/topup/verify-stripe', { session_id: sessionId });
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Could not verify Stripe payment');
-    }
-};
 
 /**
- * Subscription billing geo / currency profile. Returns the country (from
- * edge headers, with a `?country=XX` override the caller can pass to flip
- * the display currency for travellers), the display currency the UI should
- * render against (INR for IN, USD elsewhere), the static USD→INR display
- * rate, and whether checkout is actually wired (Razorpay enabled AND either
- * the customer is Indian or International Payments has been unlocked).
- *
- * Cached at call sites — geo doesn't change mid-session.
+ * Subscription billing geo / currency profile. Returns the country and
+ * ``display_currency`` (always "USD"), and whether checkout is wired
+ * (Razorpay enabled). Cached at call sites — geo doesn't change mid-session.
  */
 export const getBillingGeo = async (overrideCountry) => {
     try {
@@ -1646,37 +1616,6 @@ export const verifyRazorpaySubscription = async ({
     }
 };
 
-/**
- * Subscription-side companion to ``verifyStripeTopup``. Reconciles a
- * successful Stripe subscription checkout when the webhook can't reach
- * the API (local dev) — links the local sub row to the Stripe sub id,
- * resets prior plan credits, grants the new plan's monthly allowance.
- * Idempotent; safe to call multiple times.
- */
-export const verifyStripeSubscription = async (sessionId) => {
-    try {
-        const response = await api.post('/subscriptions/verify-stripe', { session_id: sessionId });
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Could not verify Stripe subscription');
-    }
-};
-
-/**
- * Reconcile escape hatch — asks Stripe directly for the customer's most
- * recent paid subscription checkout and folds it into the local sub row.
- * Used by the "Sync billing" button when the customer paid but the
- * webhook never reached us (and they don't have a ``session_id`` in the
- * URL because they came back later). Idempotent.
- */
-export const reconcileStripeSubscription = async () => {
-    try {
-        const response = await api.post('/subscriptions/reconcile');
-        return response.data;
-    } catch (error) {
-        throw buildApiError(error, 'Could not sync billing');
-    }
-};
 
 export const changeOperatorSeats = async (delta) => {
     try {

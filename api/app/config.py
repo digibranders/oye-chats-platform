@@ -160,13 +160,8 @@ else:
     logger.info("Redis not configured — caching disabled, rate limiter uses in-memory backend (dev only)")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Billing (Stripe + Razorpay)
+# Billing (Razorpay)
 # ─────────────────────────────────────────────────────────────────────────────
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-STRIPE_ENABLED = bool(STRIPE_SECRET_KEY)
-
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
@@ -198,12 +193,7 @@ RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 #   production never accidentally references a test plan.
 RAZORPAY_SEAT_PLAN_ID: str = os.getenv("RAZORPAY_SEAT_PLAN_ID", "plan_T5rNFpt3vSkl4R")
 
-# Default billing provider for new subscriptions and top-ups. Customers on a
-# subscription continue to use whichever provider their record is tagged with;
-# this only affects new sign-ups and the admin checkout button.
-# Values: "razorpay" (default — INR + UPI + cards, the primary rail) or
-# "stripe" (retained only so existing Stripe subscribers can still renew /
-# cancel — new checkouts route through Razorpay).
+# Default billing provider for all subscriptions and top-ups.
 BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "razorpay").lower()
 
 # Display currency for the admin and landing pricing page. The provider sees
@@ -227,7 +217,7 @@ INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in (
 # per US dollar``: a plan priced at ₹1,499 displays as ~$18 at the default.
 DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "94.67"))
 
-# Frontend URL for checkout redirects (Stripe success/cancel, Razorpay return).
+# Frontend URL for Razorpay checkout redirects.
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -265,11 +255,6 @@ if GOOGLE_OAUTH_ENABLED:
     logger.info("Google OAuth enabled (redirect=%s)", GOOGLE_OAUTH_REDIRECT_URI)
 else:
     logger.info("Google OAuth disabled (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable)")
-
-if STRIPE_ENABLED:
-    logger.info("Stripe billing enabled")
-else:
-    logger.info("Stripe billing disabled (no STRIPE_SECRET_KEY)")
 
 if RAZORPAY_ENABLED:
     logger.info("Razorpay billing enabled")
