@@ -13,7 +13,6 @@ import {
   Loader2,
   AlertTriangle,
   RefreshCw,
-  ExternalLink,
   Activity,
   ListOrdered,
   ArrowUpRight,
@@ -27,10 +26,6 @@ import {
   getCreditHistory,
   getCurrentSubscription,
   changeOperatorSeats,
-  getBillingPortalUrl,
-  verifyStripeTopup,
-  verifyStripeSubscription,
-  reconcileStripeSubscription,
   cancelScheduledChange,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
@@ -46,48 +41,25 @@ import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
 import { cn } from '../lib/utils';
 
-const TRUSTED_REDIRECT_DOMAINS = ['checkout.stripe.com', 'billing.stripe.com'];
-function isTrustedRedirectUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return (
-      parsed.protocol === 'https:' &&
-      TRUSTED_REDIRECT_DOMAINS.some(
-        (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d),
-      )
-    );
-  } catch {
-    return false;
-  }
-}
-
 const fmtNumber = (n) => Number(n || 0).toLocaleString();
 
-// Pick the correct minor-unit price for a plan given the display currency.
-// INR prices live in monthly_price_cents/annual_price_cents (paise).
-// USD prices live in monthly_price_usd_cents/annual_price_usd_cents (cents).
-function planPriceCents(plan, currency, cycle = 'monthly') {
+// All prices are stored in USD cents (monthly_price_usd_cents / annual_price_usd_cents).
+function planPriceCents(plan, cycle = 'monthly') {
   if (!plan) return 0;
-  if (currency === 'USD') {
-    return cycle === 'annual'
-      ? (plan.annual_price_usd_cents ?? 0)
-      : (plan.monthly_price_usd_cents ?? 0);
-  }
-  return cycle === 'annual' ? (plan.annual_price_cents ?? 0) : (plan.monthly_price_cents ?? 0);
+  return cycle === 'annual'
+    ? (plan.annual_price_usd_cents ?? 0)
+    : (plan.monthly_price_usd_cents ?? 0);
 }
 
-function planSeatPriceCents(plan, currency) {
+function planSeatPriceCents(plan) {
   if (!plan) return 0;
-  return currency === 'USD'
-    ? (plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0)
-    : (plan.extra_seat_price_cents ?? 0);
+  return plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0;
 }
 
-function fmtCurrency(amountMinor, currency = 'USD') {
-  const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
+function fmtCurrency(amountMinor) {
+  const symbol = '$';
   const major = Number(amountMinor || 0) / 100;
-  // Hide decimals on round amounts (e.g. $19 not $19.00) for either currency
-  // so plan cards stay clean. Sub-dollar/sub-rupee fractions still show 2dp.
+  // Hide decimals on round amounts ($19 not $19.00). Sub-dollar fractions show 2dp.
   const useDecimals = !Number.isInteger(major);
   return `${symbol}${major.toLocaleString(undefined, {
     minimumFractionDigits: useDecimals ? 2 : 0,
@@ -295,8 +267,6 @@ export default function Billing() {
   // same modal handles both add (+1) and remove (-1) — surfaces price,
   // payment provider, and resulting seat count BEFORE the backend call.
   const [seatConfirmDelta, setSeatConfirmDelta] = useState(null);
-  const [portalBusy, setPortalBusy] = useState(false);
-  const [syncBusy, setSyncBusy] = useState(false);
   const [cancelScheduledBusy, setCancelScheduledBusy] = useState(false);
 
   // Persist tab choice in URL so refreshes / shares land on the right tab.
@@ -346,82 +316,25 @@ export default function Billing() {
     loadAll();
     const params = new URLSearchParams(window.location.search);
     if (params.get('topup') === 'success') {
-      const sessionId = params.get('session_id');
       const cleanUrl = window.location.pathname;
       window.history.replaceState({}, '', cleanUrl);
-
-      // Stripe webhooks can't reach localhost during development and may also
-      // lag in production. Self-redeem the session synchronously so credits
-      // appear the moment the user returns from checkout — the backend is
-      // the source of truth on whether the payment actually captured.
-      if (sessionId) {
-        showToast('Confirming your top-up…', 'info');
-        verifyStripeTopup(sessionId)
-          .then((res) => {
-            if (res?.granted) {
-              showToast('Top-up successful — credits added.', 'success');
-            } else if (res?.reason === 'Already granted') {
-              showToast('Top-up already credited.', 'info');
-            } else {
-              showToast(res?.reason || 'Top-up pending — credits will appear shortly.', 'info');
-            }
-            loadAll({ silent: true });
-          })
-          .catch((err) => {
-            showToast(err?.message || 'Could not confirm top-up — credits will appear shortly.', 'warning');
-            // Fall back to the original poll loop so a webhook-delivered grant
-            // still surfaces if our self-redeem failed for some other reason.
-            [1500, 4000, 8000].forEach((ms) => setTimeout(() => loadAll({ silent: true }), ms));
-          });
-        return undefined;
-      }
-
       showToast('Top-up successful — credits will appear shortly.', 'success');
       const timers = [800, 2500, 5000].map((ms) => setTimeout(() => loadAll({ silent: true }), ms));
       return () => timers.forEach((t) => clearTimeout(t));
     }
     if (params.get('topup') === 'cancel') {
       showToast('Top-up canceled — no charge.', 'info');
-      const cleanUrl = window.location.pathname;
-      window.history.replaceState({}, '', cleanUrl);
+      window.history.replaceState({}, '', window.location.pathname);
     }
-    // Subscription checkout return — mirror of the topup verify path.
-    // Stripe doesn't reach localhost so the local sub row + credits won't
-    // reconcile from the webhook; we self-verify against the session id.
     if (params.get('subscription') === 'success') {
-      const sessionId = params.get('session_id');
-      const cleanUrl = window.location.pathname;
-      window.history.replaceState({}, '', cleanUrl);
-      if (sessionId) {
-        showToast('Confirming your subscription…', 'info');
-        verifyStripeSubscription(sessionId)
-          .then((res) => {
-            if (res?.verified && res?.reason !== 'Already reconciled') {
-              showToast(
-                `You're now on the ${res.plan_slug?.charAt(0).toUpperCase() + res.plan_slug?.slice(1)} plan.`,
-                'success',
-              );
-            } else if (res?.reason === 'Already reconciled') {
-              showToast('Subscription already up to date.', 'info');
-            } else {
-              showToast(res?.reason || 'Subscription pending — it will appear shortly.', 'info');
-            }
-            loadAll({ silent: true });
-          })
-          .catch((err) => {
-            showToast(err?.message || 'Could not confirm subscription.', 'warning');
-            [1500, 4000, 8000].forEach((ms) => setTimeout(() => loadAll({ silent: true }), ms));
-          });
-        return undefined;
-      }
+      window.history.replaceState({}, '', window.location.pathname);
       showToast('Subscription confirmed — refreshing.', 'success');
       const timers = [800, 2500, 5000].map((ms) => setTimeout(() => loadAll({ silent: true }), ms));
       return () => timers.forEach((t) => clearTimeout(t));
     }
     if (params.get('subscription') === 'cancel') {
       showToast('Checkout canceled — your plan is unchanged.', 'info');
-      const cleanUrl = window.location.pathname;
-      window.history.replaceState({}, '', cleanUrl);
+      window.history.replaceState({}, '', window.location.pathname);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -430,8 +343,6 @@ export default function Billing() {
   const planRemaining = balance?.plan || 0;
   const topupRemaining = balance?.topup || 0;
   const totalRemaining = balance?.total || 0;
-  const currency = balance?.currency || plan?.currency || 'USD';
-
   const planUsedPct = useMemo(() => {
     if (!monthlyGrant) return 0;
     const used = Math.max(monthlyGrant - planRemaining, 0);
@@ -457,7 +368,7 @@ export default function Billing() {
   // Seat-fee fallback for an admin DB that hasn't picked up the new pricing
   // migration yet. Defaults to the current $5 / mo headline so the row reads
   // "+$5/mo" instead of falling back to a stale figure or a blank label.
-  const seatPriceLabel = fmtCurrency(planSeatPriceCents(plan, currency) || 500, currency);
+  const seatPriceLabel = fmtCurrency(planSeatPriceCents(plan) || 500);
 
   const usage = balance?.usage || {};
   // Merge per-key so a backend payload that hasn't been redeployed since a
@@ -504,29 +415,6 @@ export default function Billing() {
     }
   }
 
-  async function handleBillingPortal() {
-    setPortalBusy(true);
-    try {
-      const { portal_url } = await getBillingPortalUrl();
-      if (portal_url && isTrustedRedirectUrl(portal_url)) {
-        window.location.href = portal_url;
-      } else {
-        showToast('Billing portal is not available right now.', 'error');
-      }
-    } catch (err) {
-      showToast(err?.message || 'Failed to open billing portal', 'error');
-    } finally {
-      setPortalBusy(false);
-    }
-  }
-
-  /**
-   * Manual escape-hatch when the local sub didn't auto-reconcile after
-   * Stripe checkout (webhook didn't reach the API, success URL dropped
-   * the session_id, browser closed mid-redirect). Asks the backend to
-   * pull the customer's most recent paid checkout from Stripe and fold
-   * it in — idempotent so spamming this button is safe.
-   */
   /**
    * Clear a queued downgrade. The backend resets ``scheduled_*`` to NULL
    * but leaves ``cancel_at_period_end`` alone — the gateway mandate was
@@ -552,28 +440,6 @@ export default function Billing() {
       showToast(err?.message || 'Could not cancel the scheduled change.', 'error');
     } finally {
       setCancelScheduledBusy(false);
-    }
-  }
-
-  async function handleSyncBilling() {
-    setSyncBusy(true);
-    try {
-      const res = await reconcileStripeSubscription();
-      if (res?.reconciled) {
-        showToast(
-          res?.reason === 'Already reconciled (no changes).'
-            ? 'Billing already in sync.'
-            : `Billing synced — you're on the ${res.plan_slug?.charAt(0).toUpperCase()}${res.plan_slug?.slice(1)} plan.`,
-          'success',
-        );
-        loadAll({ silent: true });
-      } else {
-        showToast(res?.reason || 'Nothing to reconcile.', 'info');
-      }
-    } catch (err) {
-      showToast(err?.message || 'Could not sync billing', 'error');
-    } finally {
-      setSyncBusy(false);
     }
   }
 
@@ -638,7 +504,6 @@ export default function Billing() {
               balance={balance}
               plan={plan}
               subscription={subscription}
-              currency={currency}
               monthlyGrant={monthlyGrant}
               planRemaining={planRemaining}
               topupRemaining={topupRemaining}
@@ -664,7 +529,6 @@ export default function Billing() {
 
           {activeTab === 'topups' && (
             <TopupsTab
-              currency={currency}
               onTopup={() => setTopupOpen(true)}
               recentTopups={history.filter((h) => h.reason === 'topup').slice(0, 5)}
             />
@@ -674,18 +538,13 @@ export default function Billing() {
             <SeatsTab
               plan={plan}
               subscription={subscription}
-              currency={currency}
               seatLimit={seatLimit}
               includedSeats={includedSeats}
               seatPriceLabel={seatPriceLabel}
               seatBusy={seatBusy}
-              portalBusy={portalBusy}
-              syncBusy={syncBusy}
               onSeatChange={handleSeatChange}
-              onBillingPortal={handleBillingPortal}
               onChangePlan={() => setPlanOpen(true)}
               onCreateBot={() => navigate('/chatbot?create=true')}
-              onSyncBilling={handleSyncBilling}
             />
           )}
 
@@ -710,24 +569,15 @@ export default function Billing() {
         open={seatConfirmDelta !== null}
         onClose={() => setSeatConfirmDelta(null)}
         delta={seatConfirmDelta ?? 0}
-        seatPriceCents={plan?.extra_seat_price_cents ?? 500}
-        currency={currency}
+        seatPriceCents={plan?.extra_seat_price_usd_cents ?? plan?.extra_seat_price_cents ?? 500}
         paymentProvider={subscription?.payment_provider}
         currentSeatCount={
           subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1
         }
         includedSeats={plan?.included_operator_seats ?? 1}
-        // Only count subscriptions we can actually charge against — Razorpay
-        // or Stripe. Manual/seeded subs (``payment_provider='manual'``) have
-        // no upstream record to update, so the backend's
-        // ``subscription.edit`` call would no-op or fail. Falling through to
-        // the upgrade CTA here is the honest behavior — the user must pick
-        // a real plan before they can add billable seats.
         hasSubscription={
           (subscription?.status === 'active' || subscription?.status === 'trialing') &&
-          ['razorpay', 'stripe'].includes(
-            (subscription?.payment_provider || '').toLowerCase(),
-          )
+          subscription?.payment_provider === 'razorpay'
         }
         onConfirm={confirmSeatChange}
         onUpgradeClick={() => setPlanOpen(true)}
@@ -739,15 +589,9 @@ export default function Billing() {
         currentPlanSlug={plan?.slug || 'free'}
         currentSubscriptionStatus={subscription?.status || null}
         currentBillingCycle={subscription?.billing_cycle || 'monthly'}
-        // ``hasActiveSubscription`` is the "do they have any sub row at all"
-        // signal (covers manual seeds too); ``hasStripeSubscription`` is the
-        // narrower "do we have a real Stripe link we can modify in place"
-        // signal. Together they let the modal pick between three CTAs:
-        // Start trial / Upgrade (redirect) / Switch (silent prorate).
         hasActiveSubscription={
           subscription?.status === 'active' || subscription?.status === 'trialing'
         }
-        hasStripeSubscription={subscription?.payment_provider === 'stripe'}
         onSuccess={(evt) => {
           // Bust the cache immediately so feature gates unlock in the same
           // frame as the success toast — no refresh needed.
@@ -759,7 +603,7 @@ export default function Billing() {
           if (evt.kind === 'switched') {
             const credit = Number(evt.response?.proration_credit_cents || 0);
             toastMsg = credit > 0
-              ? `Switched to ${evt.plan.name}. Unused time credited (${fmtCurrency(credit, currency)}).`
+              ? `Switched to ${evt.plan.name}. Unused time credited (${fmtCurrency(credit)}).`
               : `Switched to ${evt.plan.name} — the new pricing is being prorated.`;
           } else if (evt.kind === 'downgraded') {
             toastMsg = `Downgrade to ${evt.plan.name} scheduled at period end.`;
@@ -773,7 +617,7 @@ export default function Billing() {
           } else if (evt.kind === 'subscribed') {
             const credit = Number(evt.response?.proration_credit_cents || 0);
             toastMsg = credit > 0
-              ? `Subscribed to ${evt.plan.name}. Unused previous-plan time credited (${fmtCurrency(credit, currency)}).`
+              ? `Subscribed to ${evt.plan.name}. Unused previous-plan time credited (${fmtCurrency(credit)}).`
               : `Subscribed to ${evt.plan.name}. Welcome aboard!`;
           }
           showToast(toastMsg, 'success');
@@ -855,7 +699,6 @@ function ScheduledChangeBanner({ scheduled, currentPlanName, busy, onCancel }) {
 function OverviewTab({
   plan,
   subscription,
-  currency,
   monthlyGrant,
   planRemaining,
   topupRemaining,
@@ -1104,8 +947,8 @@ function OverviewTab({
                 )}
               </div>
               <div className="mt-1 text-xs text-surface-500 dark:text-surface-400">
-                {plan?.monthly_price_cents > 0
-                  ? `${fmtCurrency(planPriceCents(plan, currency, 'monthly'), currency)} / month`
+                {plan?.monthly_price_usd_cents > 0
+                  ? `${fmtCurrency(planPriceCents(plan, 'monthly'))} / month`
                   : 'No paid subscription'}
                 {' · '}
                 {fmtNumber(dMonthlyGrant)} credits / month
@@ -1163,7 +1006,7 @@ function OverviewTab({
   );
 }
 
-function BotCreditCard({ bot, currency, onTopup }) {
+function BotCreditCard({ bot, onTopup }) {
   const planRemaining = Number(bot.plan || 0);
   const monthlyGrant = Number(bot.monthly_grant || 0);
   const usedThisPeriod = Math.max(0, monthlyGrant - planRemaining);
@@ -1227,7 +1070,7 @@ function BotCreditCard({ bot, currency, onTopup }) {
         </div>
         {bot.topup > 0 && (
           <div className="mt-2 text-[11px] text-surface-500 dark:text-surface-400">
-            + {fmtNumber(bot.topup)} top-up credits ({currency})
+            + {fmtNumber(bot.topup)} top-up credits (USD)
           </div>
         )}
 
@@ -1258,7 +1101,7 @@ function UsageRow({ label, credits, count }) {
   );
 }
 
-function TopupsTab({ currency, onTopup, recentTopups }) {
+function TopupsTab({ onTopup, recentTopups }) {
   return (
     <div className="space-y-6">
       <Card>
@@ -1323,7 +1166,7 @@ function TopupsTab({ currency, onTopup, recentTopups }) {
         </CardContent>
       </Card>
       <p className="text-[11px] text-surface-500 dark:text-surface-400 text-center">
-        Currency: {currency}. We accept UPI, cards, and NetBanking via Razorpay.
+        USD. We accept UPI, cards, and NetBanking via Razorpay.
       </p>
     </div>
   );
@@ -1332,18 +1175,13 @@ function TopupsTab({ currency, onTopup, recentTopups }) {
 function SeatsTab({
   plan,
   subscription,
-  currency,
   seatLimit,
   includedSeats,
   seatPriceLabel,
   seatBusy,
-  portalBusy,
-  syncBusy,
   onSeatChange,
-  onBillingPortal,
   onChangePlan,
   onCreateBot,
-  onSyncBilling,
 }) {
   return (
     <div className="space-y-6">
@@ -1362,8 +1200,8 @@ function SeatsTab({
                 {plan?.name || 'Free'}
               </div>
               <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
-                {plan?.monthly_price_cents > 0
-                  ? `${fmtCurrency(planPriceCents(plan, currency, 'monthly'), currency)} / month · ${fmtNumber(plan.credits_per_month)} credits / month`
+                {plan?.monthly_price_usd_cents > 0
+                  ? `${fmtCurrency(planPriceCents(plan, 'monthly'))} / month · ${fmtNumber(plan.credits_per_month)} credits / month`
                   : 'No paid subscription'}
                 {subscription?.payment_provider ? ` · billed via ${subscription.payment_provider}` : ''}
               </div>
@@ -1371,37 +1209,8 @@ function SeatsTab({
             <div className="flex items-center gap-2 flex-wrap">
               <Button onClick={onChangePlan} size="sm">
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                {plan?.monthly_price_cents > 0 ? 'Change plan' : 'Choose a plan'}
+                {plan?.monthly_price_usd_cents > 0 ? 'Change plan' : 'Choose a plan'}
               </Button>
-              {/* Sync billing — manual fallback for the rare case where the
-                  customer paid via Stripe but the local row didn't reconcile
-                  (webhook didn't reach us, success URL got mangled, browser
-                  closed mid-redirect). Asks Stripe for the latest paid
-                  checkout on this customer and folds it in. Idempotent. */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onSyncBilling}
-                disabled={syncBusy}
-                title="Refresh billing state from Stripe"
-              >
-                {syncBusy ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
-                )}
-                Sync billing
-              </Button>
-              {subscription?.payment_provider === 'stripe' && (
-                <Button variant="outline" size="sm" onClick={onBillingPortal} disabled={portalBusy}>
-                  {portalBusy ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  )}
-                  Stripe billing portal
-                </Button>
-              )}
             </div>
           </div>
         </CardContent>

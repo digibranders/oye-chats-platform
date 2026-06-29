@@ -1,36 +1,24 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Minus, Loader2, X, CreditCard, Smartphone, ArrowUpRight } from 'lucide-react';
+import { Plus, Minus, Loader2, X, Smartphone, ArrowUpRight } from 'lucide-react';
 import { useState } from 'react';
 
 /**
  * Confirmation step before adding or removing an operator seat.
  *
- * The backend ``POST /subscriptions/seats`` route already dispatches to the
- * customer's payment provider (Razorpay or Stripe) based on
- * ``Subscription.payment_provider``. Until this modal landed, the frontend
- * called that endpoint silently — a Razorpay customer had no idea their
- * subscription quantity was being edited and that the next invoice would
- * include the seat charge. That's poor UX and also a compliance smell for
- * INR customers (Razorpay expects an explicit user-driven action).
- *
- * The modal surfaces:
- *   • Net effect on seat count (so removing a seat shows the impact too).
- *   • The per-seat price in the right currency.
- *   • Which provider will be charged (Razorpay UPI/card vs Stripe card).
+ * The backend ``POST /subscriptions/seats`` route dispatches to Razorpay
+ * based on ``Subscription.payment_provider``. The modal surfaces:
+ *   • Net effect on seat count.
+ *   • The per-seat price in USD.
  *   • A clear CTA + cancel.
  *
- * It only handles existing-subscription seat edits. When ``hasSubscription``
- * is false (Free plan), the modal renders an upgrade CTA instead — adding
- * seats requires a paid subscription to charge against.
+ * When ``hasSubscription`` is false (Free plan), renders an upgrade CTA.
  */
 export default function AddSeatConfirmModal({
     open,
     onClose,
-    delta, // +1 or -1
+    delta,
     seatPriceCents,
-    currency,
-    paymentProvider, // 'razorpay' | 'stripe' | null
-    currentSeatCount, // includes already-paid extras
+    currentSeatCount,
     includedSeats,
     hasSubscription,
     onConfirm, // async () => void
@@ -40,9 +28,8 @@ export default function AddSeatConfirmModal({
     const [error, setError] = useState(null);
 
     const isAdd = delta > 0;
-    const provider = (paymentProvider || 'razorpay').toLowerCase();
     const newTotal = currentSeatCount + delta;
-    const seatPriceDisplay = formatMoney(seatPriceCents, currency);
+    const seatPriceDisplay = formatMoney(seatPriceCents);
 
     async function handleConfirm() {
         setSubmitting(true);
@@ -100,12 +87,9 @@ export default function AddSeatConfirmModal({
                                 </h2>
                             </div>
                             <p className="text-sm text-surface-500 dark:text-surface-400 ml-12">
-                                {isAdd
-                                    ? `You'll go from ${currentSeatCount} to ${newTotal} seats.`
-                                    : `You'll go from ${currentSeatCount} to ${newTotal} seats.`}
+                                {`You'll go from ${currentSeatCount} to ${newTotal} seats.`}
                             </p>
 
-                            {/* Body */}
                             {hasSubscription ? (
                                 <>
                                     <div className="mt-5 rounded-xl border border-surface-200 dark:border-surface-700 divide-y divide-surface-200 dark:divide-surface-700">
@@ -130,15 +114,16 @@ export default function AddSeatConfirmModal({
                                             <span className="text-sm text-surface-600 dark:text-surface-300">
                                                 Charged via
                                             </span>
-                                            <ProviderBadge provider={provider} />
+                                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
+                                                <Smartphone className="w-3 h-3" />
+                                                Razorpay
+                                            </span>
                                         </div>
                                     </div>
 
                                     <p className="mt-3 text-xs text-surface-500 dark:text-surface-400">
                                         {isAdd
-                                            ? provider === 'stripe'
-                                                ? `Your Stripe subscription will be updated immediately. The next invoice picks up the new seat amount — Stripe handles proration automatically.`
-                                                : `Your Razorpay subscription will be updated immediately. The next invoice picks up the new seat amount — Razorpay handles proration automatically.`
+                                            ? `Your Razorpay subscription will be updated immediately. The next invoice picks up the new seat amount — Razorpay handles proration automatically.`
                                             : `The removed seat stops billing at the end of the current period. The operator keeps access until then.`}
                                     </p>
 
@@ -212,35 +197,7 @@ export default function AddSeatConfirmModal({
     );
 }
 
-function ProviderBadge({ provider }) {
-    if (provider === 'razorpay') {
-        return (
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
-                <Smartphone className="w-3 h-3" />
-                Razorpay
-            </span>
-        );
-    }
-    if (provider === 'stripe') {
-        return (
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-500/30">
-                <CreditCard className="w-3 h-3" />
-                Stripe
-            </span>
-        );
-    }
-    return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400 border border-surface-200 dark:border-surface-700">
-            {provider || 'manual'}
-        </span>
-    );
-}
-
-// Currency formatter kept local so this modal doesn't drag in a sibling
-// helper that imports the geo context — keeps the bundle leaner and the
-// component drop-in usable from anywhere with (cents, currency).
-function formatMoney(amountMinor, currency = 'USD') {
-    const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
+function formatMoney(amountMinor) {
     const major = (Number(amountMinor) || 0) / 100;
-    return `${symbol}${Number.isInteger(major) ? major.toLocaleString() : major.toFixed(2)}`;
+    return `$${Number.isInteger(major) ? major.toLocaleString() : major.toFixed(2)}`;
 }

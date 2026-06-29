@@ -2,14 +2,8 @@
 
 Powers the admin dashboard's Credits page: balance, ledger history,
 top-up checkout, plan changes, operator-seat add-ons, invoices, and
-subscription cancellation. Stripe/Razorpay webhook handling lives in
-``webhook_billing_routes`` and ``billing_service`` / ``razorpay_service``.
-
-Provider selection — Razorpay is the default for new Indian customers; Stripe
-is available for international flows. The active provider for a single
-customer is pinned on ``Subscription.payment_provider`` (set when the
-checkout flow is initiated). For new flows where no subscription yet
-exists, ``BILLING_PROVIDER`` (env, default ``"razorpay"``) is used.
+subscription cancellation. Razorpay webhook handling lives in
+``webhook_billing_routes``; all billing logic is in ``razorpay_service``.
 """
 
 import logging
@@ -23,13 +17,11 @@ from app.api.auth import get_current_client_strict as get_current_client
 from app.config import (
     BILLING_PROVIDER,
     DISPLAY_USD_TO_INR,
-    INTL_PAYMENTS_ENABLED,
     RAZORPAY_ENABLED,
-    STRIPE_ENABLED,
 )
 from app.core.dates import add_months
 from app.core.geo import resolve_country
-from app.core.pricing import display_price, format_amount
+from app.core.pricing import format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service
@@ -84,45 +76,14 @@ def effective_resets_at(sub: Subscription | None) -> datetime | None:
     return candidate
 
 
-_KNOWN_PROVIDERS = frozenset({"razorpay", "stripe"})
-
-
-def _resolve_provider(requested: str | None, *, current_sub_provider: str | None = None) -> str:
-    """Pick a billing provider for this flow.
-
-    Priority order:
-      1. Explicit ``requested`` (from the route request body) if it's a known gateway.
-      2. The active subscription's existing provider, but only when it's a known
-         payment gateway — subscriptions seeded/upgraded manually may carry
-         ``payment_provider = 'manual'`` which must not propagate to checkout.
-      3. The configured default ``BILLING_PROVIDER``.
-
-    Raises 503 if the chosen provider is not configured (env keys missing).
-    """
-    requested_norm = (requested or "").lower()
-    sub_norm = (current_sub_provider or "").lower()
-
-    # Walk the priority chain, skipping any value that isn't a gateway we know.
-    candidate = next(
-        (p for p in [requested_norm, sub_norm, BILLING_PROVIDER.lower()] if p in _KNOWN_PROVIDERS),
-        None,
-    )
-
-    if candidate == "razorpay":
-        if not RAZORPAY_ENABLED:
-            raise HTTPException(
-                status_code=503,
-                detail="Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
-            )
-        return "razorpay"
-    if candidate == "stripe":
-        if not STRIPE_ENABLED:
-            raise HTTPException(
-                status_code=503,
-                detail="Stripe is not configured. Set STRIPE_SECRET_KEY.",
-            )
-        return "stripe"
-    raise HTTPException(status_code=400, detail=f"Unknown billing provider '{candidate}'")
+def _resolve_provider() -> str:
+    """Return the active billing provider (always razorpay)."""
+    if not RAZORPAY_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
+        )
+    return "razorpay"
 
 
 # ── Public: Pricing page ──
@@ -322,7 +283,6 @@ def get_current_subscription(client: Client = Depends(get_current_client)):
             "billing": {
                 "default_provider": BILLING_PROVIDER,
                 "razorpay_enabled": RAZORPAY_ENABLED,
-                "stripe_enabled": STRIPE_ENABLED,
             },
         }
 
@@ -342,26 +302,13 @@ def get_billing_geo(request: Request, _client: Client = Depends(get_current_clie
     from app.config import RAZORPAY_KEY_ID
 
     country = resolve_country(request)
-    indian = country == "IN"
-    # Allow checkout ONLY when the edge has confirmed the visitor is Indian
-    # (``CF-IPCountry: IN`` / ``x-vercel-ip-country: IN``). Unknown geo
-    # (localhost without override, requests bypassing the edge) and any
-    # non-Indian country code both route to Contact Sales until
-    # ``INTL_PAYMENTS_ENABLED`` is flipped. Devs needing a live Razorpay
-    # checkout on localhost can use the ``?country=IN`` query override
-    # that ``resolve_country`` honours.
     return {
         "country": country,
-        "display_currency": "INR" if indian else "USD",
+        "display_currency": "USD",
         "display_rate": DISPLAY_USD_TO_INR,
-        "intl_payments_enabled": INTL_PAYMENTS_ENABLED,
         "razorpay_enabled": RAZORPAY_ENABLED,
         "razorpay_key_id": RAZORPAY_KEY_ID if RAZORPAY_ENABLED else None,
-        # ``checkout_available`` is the headline boolean the UI flips its
-        # CTA on: True → render the live "Subscribe" button, False → render
-        # the "Contact sales" fallback. Keeping it server-side ensures both
-        # the modal and the marketing site agree on which path is live.
-        "checkout_available": RAZORPAY_ENABLED and (indian or INTL_PAYMENTS_ENABLED),
+        "checkout_available": RAZORPAY_ENABLED,
         "contact_sales_email": "developer@oyechats.com",
     }
 
@@ -504,8 +451,7 @@ def list_invoices(client: Client = Depends(get_current_client)):
 class CheckoutRequest(BaseModel):
     plan_id: int
     billing_cycle: str = "monthly"  # monthly|annual
-    provider: str | None = None  # "razorpay" | "stripe" — defaults to BILLING_PROVIDER
-    coupon_code: str | None = None  # future Stripe coupons; blocked when referral code is active
+    coupon_code: str | None = None
 
 
 # ── Checkout quote (currency + payment-method preview) ────────────────────────
@@ -568,12 +514,9 @@ def checkout_quote(
             raise HTTPException(status_code=400, detail="This plan is not available.")
 
         country = resolve_country(request)
-        indian = country == "IN"
-        inr_paise = _amount_for_cycle(plan, billing_cycle)
         usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
-        amount_minor, currency = display_price(
-            inr_paise=inr_paise, usd_cents=usd_minor, country=country, rate=DISPLAY_USD_TO_INR
-        )
+        amount_minor = int(usd_minor or 0)
+        currency = "USD"
         amount_display = format_amount(amount_minor, currency)
 
         # Free plan: render a quote but mark checkout as unsupported.
@@ -591,7 +534,7 @@ def checkout_quote(
                 "reason": "free_plan",
             }
 
-        # Enterprise is always contact-sales regardless of geography.
+        # Enterprise is always contact-sales.
         if plan.slug == "enterprise":
             return {
                 "country": country,
@@ -606,27 +549,9 @@ def checkout_quote(
                 "reason": "enterprise",
             }
 
-        # Allow only confirmed Indian visitors through to Razorpay. Unknown
-        # geo and any non-Indian country code both fall back to Contact
-        # Sales until international payments is enabled. Same Indian-only
-        # gate as ``/subscriptions/geo``.
-        if not indian and not INTL_PAYMENTS_ENABLED:
-            return {
-                "country": country,
-                "currency": currency,
-                "amount_minor": amount_minor,
-                "amount_display": amount_display,
-                "billing_cycle": billing_cycle,
-                "provider": None,
-                "methods": [],
-                "checkout_supported": False,
-                "contact_sales": "developer@oyechats.com",
-                "reason": "intl_payments_disabled",
-            }
-
         return {
             "country": country,
-            "currency": "INR" if indian else "USD",
+            "currency": currency,
             "amount_minor": amount_minor,
             "amount_display": amount_display,
             "billing_cycle": billing_cycle,
@@ -640,22 +565,12 @@ def checkout_quote(
 @router.post("/checkout")
 def create_checkout(
     request: CheckoutRequest,
-    http_request: Request,
     client: Client = Depends(get_current_client),
 ):
-    """Create a checkout session for a paid plan.
+    """Create a Razorpay checkout session for a paid plan.
 
-    Routes to Razorpay for Indian customers (and for international customers
-    once ``INTL_PAYMENTS_ENABLED`` is True). Until then, confirmed non-Indian
-    requests are rejected with HTTP 402 carrying a ``contact_sales`` body so
-    the UI can surface the sales CTA.
-
-    Returns provider-specific payload:
-      * Razorpay → ``{provider, subscription_id, key_id, name, description, prefill, theme}``
-        — frontend opens ``new Razorpay({subscription_id, ...}).open()``.
-      * Stripe   → ``{checkout_url, session_id}`` — frontend redirect.
-        Reachable only when an existing subscription is already pinned to
-        Stripe; new sign-ups never get this path.
+    Returns ``{provider, subscription_id, key_id, name, description, prefill, theme}``
+    — frontend opens ``new Razorpay({subscription_id, ...}).open()``.
     """
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
@@ -673,100 +588,30 @@ def create_checkout(
         if plan.monthly_price_cents == 0 and plan.slug != "enterprise":
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
-        existing_sub = get_client_subscription(session, client.id)
+        from app.db.models import ReferralConversion
+        from app.services import discount_service, razorpay_service
 
-        # Razorpay-only for new sign-ups. Existing Stripe subscribers keep
-        # their Stripe rail (so renewal / cancel still works) — this is the
-        # grandfather window, not a user-selectable option. Even if a request
-        # tries to force ``provider="stripe"``, we honour it only when the
-        # customer already has a Stripe-pinned sub; otherwise we silently
-        # route to Razorpay so no fresh Stripe customers can be created.
-        existing_provider = (existing_sub.payment_provider or "").lower() if existing_sub else ""
-        if existing_provider == "stripe" and existing_sub and existing_sub.stripe_subscription_id:
-            provider = "stripe"  # grandfathered — preserve their rail
-        else:
-            provider = "razorpay"
-
-        # Indian-only gating — let confirmed Indian visitors through to
-        # Razorpay; everyone else (unknown geo + non-Indian) gets a 402
-        # with ``contact_sales`` so the UI can surface the sales CTA.
-        # Flipping ``INTL_PAYMENTS_ENABLED=true`` opens the gateway for
-        # everyone once Razorpay International is activated.
-        ctry = resolve_country(http_request)
-        if ctry != "IN" and not INTL_PAYMENTS_ENABLED and provider == "razorpay":
-            raise HTTPException(
-                status_code=402,
-                detail={
-                    "code": "intl_payments_unavailable",
-                    "message": (
-                        "International checkout isn't live yet — please contact "
-                        "developer@oyechats.com to start a subscription."
-                    ),
-                    "contact_sales": "developer@oyechats.com",
-                },
+        discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
+        try:
+            result = razorpay_service.create_subscription(
+                session, client, plan, request.billing_cycle, discount_bps=discount_bps
             )
-
-        if provider == "razorpay":
-            from app.db.models import ReferralConversion
-            from app.services import discount_service, razorpay_service
-
-            discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
-            try:
-                result = razorpay_service.create_subscription(
-                    session, client, plan, request.billing_cycle, discount_bps=discount_bps
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except razorpay_service.RazorpayBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if disc_meta:
+            session.add(
+                ReferralConversion(
+                    client_id=client.id,
+                    referral_code_id=int(disc_meta["referral_code_id"]),
+                    affiliate_id=None,
+                    commission_bps=int(disc_meta["affiliate_commission_bps"]),
+                    customer_discount_bps=int(disc_meta["discount_bps"]),
                 )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except razorpay_service.RazorpayBillingError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            if disc_meta:
-                session.add(
-                    ReferralConversion(
-                        client_id=client.id,
-                        referral_code_id=int(disc_meta["referral_code_id"]),
-                        affiliate_id=None,
-                        commission_bps=int(disc_meta["affiliate_commission_bps"]),
-                        customer_discount_bps=int(disc_meta["discount_bps"]),
-                    )
-                )
-            session.commit()
-            return result
-
-        # Stripe path — only reachable for legacy subscribers pinned to Stripe.
-        from app.services.billing_service import create_checkout_session
-
-        # Honour the customer-facing referral discount on subscription
-        # checkout. Top-ups skip this on purpose — the discount is recurring
-        # so it fires every billing cycle, aligning the affiliate's reward
-        # with the customer's lifetime value.
-        discount_bps, discount_meta = _resolve_referral_discount(session, client)
-
-        result = create_checkout_session(
-            session,
-            client,
-            plan,
-            request.billing_cycle,
-            discount_bps=discount_bps,
-            extra_metadata=discount_meta or None,
-        )
-        result.setdefault("provider", "stripe")
+            )
         session.commit()
         return result
-
-
-@router.post("/portal")
-def billing_portal(client: Client = Depends(get_current_client)):
-    """Return a Stripe Billing Portal URL for self-service billing management."""
-    from app.config import STRIPE_ENABLED
-
-    if not STRIPE_ENABLED:
-        raise HTTPException(status_code=503, detail="Billing is not configured yet.")
-
-    with get_session() as session:
-        from app.services.billing_service import create_billing_portal_session
-
-        url = create_billing_portal_session(session, client)
-        return {"portal_url": url}
 
 
 class ChangePlanRequest(BaseModel):
@@ -782,32 +627,11 @@ def change_plan(
 ):
     """Upgrade or downgrade the client's subscription to a different plan.
 
-    Three branches:
-
-    * **Paid → Paid via Stripe** (``sub.stripe_subscription_id`` present, target
-      plan has a price) — modify the Stripe subscription in place. Stripe
-      prorates the difference automatically; we then sync the local row and
-      return a "switched" status with no redirect. This is the only path that
-      stays silent — the customer's card on file is charged on the next
-      invoice and they never leave the admin app.
-
-    * **No-Stripe-link → Paid** (manual / seeded sub OR no sub at all, target
-      plan is paid) — there is no Stripe subscription to modify and no
-      payment method on file we can charge silently. We have to create a
-      proper Stripe Checkout session and return its URL so the customer can
-      complete payment. On success the webhook handler will set up the
-      stripe-linked subscription row.
-
-    * **Anything → Free** (target plan is free) — no payment required. We
-      cancel the existing Stripe sub at period end (if any) and mark the
-      local row so the customer keeps their paid features through the end
-      of the billing period.
-
     Response shape — the frontend branches on which key is present:
 
-    * ``{"status": "checkout_required", "checkout_url": "...", "session_id": "..."}`` — redirect
-    * ``{"status": "switched", "message": "..."}``                                  — silent prorated swap
-    * ``{"status": "downgraded", "message": "..."}``                                — Free downgrade scheduled
+    * ``{"status": "checkout_required", ...}`` — Razorpay subscription auth required
+    * ``{"status": "downgrade_scheduled", ...}`` — scheduled for next cycle
+    * ``{"status": "downgraded", "message": "..."}`` — Free downgrade
     """
     with get_session() as session:
         from app.services.plan_service import get_client_subscription, get_plan_by_id
@@ -840,13 +664,7 @@ def change_plan(
                     status_code=400,
                     detail="You're already on Free — nothing to downgrade.",
                 )
-            if sub.stripe_subscription_id:
-                from app.services.billing_service import cancel_stripe_subscription
-
-                cancel_stripe_subscription(sub, at_period_end=True)
-                sub.cancel_at_period_end = True
-                msg = f"Scheduled downgrade to {new_plan.name} at the end of the current period."
-            elif sub.razorpay_subscription_id:
+            if sub.razorpay_subscription_id:
                 # Without this branch the local row would flip to Free while
                 # Razorpay's UPI mandate kept debiting the customer at the
                 # next cycle — real "still charging after cancellation"
@@ -885,9 +703,8 @@ def change_plan(
                 msg = f"Switched to {new_plan.name} immediately."
             session.commit()
             logger.info(
-                "Client %s downgraded to Free (had_stripe=%s, had_razorpay=%s)",
+                "Client %s downgraded to Free (had_razorpay=%s)",
                 client.id,
-                bool(sub.stripe_subscription_id),
                 bool(sub.razorpay_subscription_id),
             )
             return {"status": "downgraded", "message": msg}
@@ -978,131 +795,27 @@ def change_plan(
                 ),
             }
 
-        # ── Branch 2: real Stripe subscription → silent prorated swap ──
-        if sub is not None and sub.stripe_subscription_id:
-            billing_cycle = request.billing_cycle or sub.billing_cycle
-            from app.services.billing_service import change_stripe_plan
-
-            try:
-                change_stripe_plan(sub, new_plan, billing_cycle)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-            sub.plan_id = new_plan.id
-            sub.billing_cycle = billing_cycle
-            session.flush()
-
-            # Reset whatever's left of the old plan's monthly grant and
-            # immediately grant the new plan's allowance. Without this the
-            # customer keeps their previous tier's leftover balance under
-            # the new tier's denominator — the "268 / 2000" bug. Stripe
-            # also emits ``invoice.paid`` on the proration, but webhooks
-            # may not reach this server (local dev) so we do not rely
-            # on them to make the customer's balance correct.
-            credit_service.reset_monthly_plan_credits(session, client.id, bot_id=sub.bot_id)
-            credit_service.grant_for_subscription(session, sub)
-            session.commit()
-
-            logger.info(
-                "Client %s switched Stripe sub %s to %s (%s); credits reset + re-granted",
-                client.id,
-                sub.stripe_subscription_id,
-                new_plan.slug,
-                billing_cycle,
-            )
-            return {
-                "status": "switched",
-                "message": f"Plan changed to {new_plan.name}. Stripe will prorate the difference on your next invoice.",
-            }
-
-        # ── Branch 3: paid target with no Stripe link → first-time checkout ──
-        # Covers "no subscription at all" and "manual/seeded sub without a
-        # stripe_subscription_id" (the free-tier and post-trial cases that
-        # land here from the plan modal's Upgrade/Switch path). The
-        # customer must authorise a payment method before we flip them
-        # onto the paid plan. Provider routing mirrors ``/checkout``:
-        # honour an existing real provider, otherwise default to
-        # Razorpay (the configured primary).
+        # ── Branch 3: paid target → Razorpay checkout ──
         billing_cycle = request.billing_cycle or (sub.billing_cycle if sub else "monthly")
-        existing_provider = (sub.payment_provider if sub else None) or ""
-        if existing_provider.lower() in ("razorpay", "stripe"):
-            provider = _resolve_provider(None, current_sub_provider=existing_provider)
-        else:
-            provider = "razorpay" if RAZORPAY_ENABLED else _resolve_provider(None)
-
-        # Indian-only gating for Razorpay (same rule the /checkout path
-        # enforces). Flip ``INTL_PAYMENTS_ENABLED=true`` to open the
-        # gateway to non-IN customers once Razorpay International is
-        # active. Returns 402 with a ``contact_sales`` hint the frontend
-        # already knows how to surface as a sales-mail CTA.
-        if provider == "razorpay":
-            country = resolve_country(http_request)
-            if country != "IN" and not INTL_PAYMENTS_ENABLED:
-                raise HTTPException(
-                    status_code=402,
-                    detail={
-                        "code": "intl_payments_unavailable",
-                        "message": (
-                            "International checkout isn't live yet — please contact "
-                            "developer@oyechats.com to start a subscription."
-                        ),
-                        "contact_sales": "developer@oyechats.com",
-                    },
-                )
-
-            from app.services import razorpay_service
-
-            try:
-                result = razorpay_service.create_subscription(session, client, new_plan, billing_cycle)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except razorpay_service.RazorpayBillingError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-            session.commit()
-            logger.info(
-                "Client %s requires Razorpay subscription auth for plan %s (%s)",
-                client.id,
-                new_plan.slug,
-                billing_cycle,
-            )
-            # Razorpay path returns the full sheet-init payload so the
-            # frontend's ``openRazorpayCheckout`` can take over directly.
-            result.setdefault("provider", "razorpay")
-            result.setdefault("status", "checkout_required")
-            return result
-
-        # Stripe path — only when the customer is already pinned to Stripe.
-        from app.services.billing_service import create_checkout_session
-
-        discount_bps, discount_meta = _resolve_referral_discount(session, client)
+        from app.services import razorpay_service
 
         try:
-            result = create_checkout_session(
-                session,
-                client,
-                new_plan,
-                billing_cycle,
-                discount_bps=discount_bps,
-                extra_metadata=discount_meta or None,
-            )
+            result = razorpay_service.create_subscription(session, client, new_plan, billing_cycle)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except razorpay_service.RazorpayBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         session.commit()
         logger.info(
-            "Client %s requires Stripe checkout for plan %s (%s) — session %s",
+            "Client %s requires Razorpay subscription auth for plan %s (%s)",
             client.id,
             new_plan.slug,
             billing_cycle,
-            result.get("session_id"),
         )
-        return {
-            "status": "checkout_required",
-            "checkout_url": result["checkout_url"],
-            "session_id": result["session_id"],
-            "provider": "stripe",
-        }
+        result.setdefault("provider", "razorpay")
+        result.setdefault("status", "checkout_required")
+        return result
 
 
 # ── Cancellation ──
@@ -1173,10 +886,6 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
                 from app.services import razorpay_service
 
                 razorpay_service.cancel_subscription(sub, at_period_end=True)
-            elif provider == "stripe" and sub.stripe_subscription_id:
-                from app.services.billing_service import cancel_stripe_subscription
-
-                cancel_stripe_subscription(sub, at_period_end=True)
         except Exception as exc:
             logger.exception("Provider cancel failed for sub %s: %s", sub.id, exc)
             raise HTTPException(status_code=502, detail="Could not cancel with payment provider.") from exc
@@ -1191,298 +900,6 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         logger.info("Client %s canceled subscription %s (reason: %s)", client.id, sub.id, request.reason)
 
         return {"message": "Subscription will be canceled at the end of the current billing period."}
-
-
-def _reconcile_stripe_subscription(
-    session,
-    client: Client,
-    *,
-    stripe_module,
-    stripe_session,
-    sync_key: str,
-) -> dict:
-    """Idempotently fold a paid Stripe Checkout Session into the local sub row.
-
-    Shared core for both ``/verify-stripe`` (success-URL self-redemption) and
-    ``/reconcile`` (manual sync button). The caller has already validated:
-    that the session belongs to this client, that ``mode='subscription'``,
-    and that payment captured.
-
-    Behaviour:
-
-    1. **Already done by webhook?** — if a local Subscription row already
-       has this ``stripe_subscription_id`` on this client and is active +
-       on the right plan, return ``{verified: True, reason: 'Already
-       provisioned (webhook)'}`` without writing anything. This stops
-       duplicate ledger entries when the webhook and self-verify both
-       fire in production.
-    2. **Idempotency** — record a synthetic event id (``sync_key``) so
-       repeat calls within the same session are no-ops.
-    3. **Pull subscription period dates** from Stripe so the "Resets MMM
-       DD" label on the Overview tab is accurate.
-    4. **Update local sub row in place** (or create one), pin to Stripe.
-    5. **Reset prior plan grants + grant the new plan's allowance.**
-
-    Returns the JSON the route should serialize.
-    """
-    from app.services.billing_service import _record_or_skip_webhook
-    from app.services.plan_service import get_client_subscription, get_plan_by_id
-
-    metadata = (
-        dict(stripe_session["metadata"]._data) if "metadata" in stripe_session and stripe_session["metadata"] else {}
-    )
-    plan_id_str = metadata.get("oyechats_plan_id")
-    billing_cycle = metadata.get("billing_cycle", "monthly")
-    # noqa: SIM401 — Stripe's StripeObject has no .get(); use [] + in.
-    stripe_sub_id = (
-        stripe_session["subscription"] if "subscription" in stripe_session else None  # noqa: SIM401
-    )
-    stripe_customer_id = (
-        stripe_session["customer"] if "customer" in stripe_session else None  # noqa: SIM401
-    )
-    if not plan_id_str or not stripe_sub_id:
-        return {"verified": False, "reason": "Session missing plan or subscription id"}
-
-    new_plan = get_plan_by_id(session, int(plan_id_str))
-    if new_plan is None:
-        raise HTTPException(status_code=404, detail="Plan from session not found.")
-
-    # Webhook already handled it? Bail early — no need to re-reset +
-    # re-grant credits and write noise to the ledger.
-    already_provisioned = (
-        session.execute(
-            select(Subscription).where(
-                Subscription.client_id == client.id,
-                Subscription.stripe_subscription_id == stripe_sub_id,
-                Subscription.plan_id == new_plan.id,
-                Subscription.status.in_(("active", "trialing")),
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if already_provisioned is not None:
-        return {
-            "verified": True,
-            "plan_slug": new_plan.slug,
-            "reason": "Already provisioned (webhook handled it).",
-        }
-
-    # Synthetic-event-id idempotency — protects against the same client
-    # spamming the endpoint with the same session_id. Cleared in DB so
-    # later sessions for the same client are unaffected.
-    if not _record_or_skip_webhook(session, sync_key, "stripe"):
-        session.commit()
-        return {
-            "verified": True,
-            "plan_slug": new_plan.slug,
-            "reason": "Already reconciled (no changes).",
-        }
-
-    # Pull the live subscription so we can record period dates accurately.
-    # If retrieve fails the customer is still on a paid sub on Stripe's
-    # side — fall back to the dates that come down on the Checkout session
-    # rather than refusing to provision.
-    period_start = None
-    period_end = None
-    sub_status: str | None = None
-    trial_start = None
-    trial_end = None
-    try:
-        live_sub = stripe_module.Subscription.retrieve(stripe_sub_id)
-        if "current_period_start" in live_sub and live_sub["current_period_start"]:
-            period_start = datetime.fromtimestamp(live_sub["current_period_start"], tz=UTC)
-        if "current_period_end" in live_sub and live_sub["current_period_end"]:
-            period_end = datetime.fromtimestamp(live_sub["current_period_end"], tz=UTC)
-        if "status" in live_sub and live_sub["status"]:
-            sub_status = str(live_sub["status"])
-        if "trial_start" in live_sub and live_sub["trial_start"]:
-            trial_start = datetime.fromtimestamp(live_sub["trial_start"], tz=UTC)
-        if "trial_end" in live_sub and live_sub["trial_end"]:
-            trial_end = datetime.fromtimestamp(live_sub["trial_end"], tz=UTC)
-    except Exception as exc:
-        logger.warning("Stripe Subscription retrieve failed for %s: %s", stripe_sub_id, exc)
-
-    sub = get_client_subscription(session, client.id)
-    if sub is None:
-        sub = Subscription(
-            client_id=client.id,
-            plan_id=new_plan.id,
-            status=sub_status or "active",
-            billing_cycle=billing_cycle,
-        )
-        session.add(sub)
-        session.flush()
-
-    sub.plan_id = new_plan.id
-    sub.billing_cycle = billing_cycle
-    sub.payment_provider = "stripe"
-    sub.stripe_subscription_id = stripe_sub_id
-    if stripe_customer_id:
-        sub.stripe_customer_id = stripe_customer_id
-    if sub_status:
-        sub.status = sub_status
-    elif sub.status not in ("active", "trialing"):
-        sub.status = "active"
-    if period_start:
-        sub.current_period_start = period_start
-    if period_end:
-        sub.current_period_end = period_end
-    if trial_start:
-        sub.trial_start = trial_start
-    if trial_end:
-        sub.trial_end = trial_end
-    sub.cancel_at_period_end = False
-    sub.canceled_at = None
-    session.flush()
-
-    credit_service.reset_monthly_plan_credits(session, client.id, bot_id=sub.bot_id)
-    credit_service.grant_for_subscription(session, sub)
-    session.commit()
-
-    logger.info(
-        "Client %s reconciled Stripe subscription %s (plan=%s); credits reset + re-granted",
-        client.id,
-        stripe_sub_id,
-        new_plan.slug,
-    )
-    return {
-        "verified": True,
-        "plan_slug": new_plan.slug,
-        "billing_cycle": billing_cycle,
-    }
-
-
-class SubscriptionStripeVerifyRequest(BaseModel):
-    """Stripe Checkout success self-redemption for subscription mode."""
-
-    session_id: str
-
-
-@router.post("/verify-stripe")
-def verify_stripe_subscription(
-    body: SubscriptionStripeVerifyRequest,
-    client: Client = Depends(get_current_client),
-):
-    """Fallback subscription-sync path for when the Stripe webhook can't reach us.
-
-    Stripe Checkout in ``subscription`` mode normally lands its state via
-    ``checkout.session.completed`` + ``invoice.paid``. Local dev (and
-    occasionally production) doesn't always see those events, which is how
-    we end up with the "$19 Starter ACTIVE — but only 268 plan credits"
-    bug: the customer paid, Stripe knows it, but our DB still has the
-    Free-tier grant + an unlinked sub row.
-
-    This endpoint takes the ``session_id`` from the Stripe success redirect,
-    pulls the session from Stripe (the source of truth), confirms it's
-    paid + matches the caller, and idempotently:
-
-      * links the local subscription row to the Stripe sub id;
-      * pins ``payment_provider='stripe'`` so future change-plan calls
-        take the silent-swap branch instead of falling through to
-        another checkout;
-      * resets any leftover plan credits from the prior tier and grants
-        the new plan's monthly allowance.
-
-    Idempotency uses ``_record_or_skip_webhook`` keyed on a synthetic
-    event id derived from the checkout session id, so concurrent
-    webhook + self-verify never double-grant credits.
-    """
-    from app.config import STRIPE_ENABLED
-
-    if not STRIPE_ENABLED:
-        raise HTTPException(status_code=503, detail="Stripe is not configured.")
-
-    import stripe
-
-    from app.config import STRIPE_SECRET_KEY
-
-    stripe.api_key = STRIPE_SECRET_KEY
-
-    try:
-        sess = stripe.checkout.Session.retrieve(body.session_id)
-    except Exception as exc:
-        logger.warning("Stripe session retrieve failed for %s: %s", body.session_id, exc)
-        raise HTTPException(status_code=404, detail="Checkout session not found.") from exc
-
-    payment_status = sess["payment_status"]
-    if payment_status not in ("paid", "no_payment_required"):
-        return {"verified": False, "reason": f"Payment not captured (status={payment_status})"}
-
-    if sess["mode"] != "subscription":
-        return {"verified": False, "reason": "Session is not a subscription checkout"}
-
-    metadata = dict(sess["metadata"]._data) if "metadata" in sess and sess["metadata"] else {}
-    sess_client_id = metadata.get("oyechats_client_id")
-    if str(sess_client_id) != str(client.id):
-        # 404 (not 403) so attackers can't probe other customers' sessions.
-        raise HTTPException(status_code=404, detail="Checkout session not found.")
-
-    with get_session() as session:
-        return _reconcile_stripe_subscription(
-            session,
-            client,
-            stripe_module=stripe,
-            stripe_session=sess,
-            sync_key=f"cs_self_verify_{body.session_id}",
-        )
-
-
-@router.post("/reconcile")
-def reconcile_subscription(client: Client = Depends(get_current_client)):
-    """Walk the customer's recent Stripe sessions and self-verify the latest paid one.
-
-    Manual escape hatch for the "I upgraded but the dashboard still shows the
-    old plan" case. The /verify-stripe path requires a session_id from the
-    success redirect; this one does not — it asks Stripe directly for the
-    customer's most recent paid subscription checkout and reconciles it
-    against the local row. Idempotent.
-
-    Returns ``{ reconciled: bool, plan_slug?, reason? }``.
-    """
-    from app.config import STRIPE_ENABLED
-
-    if not STRIPE_ENABLED:
-        raise HTTPException(status_code=503, detail="Stripe is not configured.")
-
-    import stripe
-
-    from app.config import STRIPE_SECRET_KEY
-    from app.services.billing_service import get_or_create_stripe_customer
-
-    stripe.api_key = STRIPE_SECRET_KEY
-
-    with get_session() as session:
-        customer_id = get_or_create_stripe_customer(session, client)
-        session.commit()
-
-    sessions = stripe.checkout.Session.list(customer=customer_id, limit=20).data
-    paid_subscription_sessions = [
-        s
-        for s in sessions
-        if s["mode"] == "subscription"
-        and s["payment_status"] in ("paid", "no_payment_required")
-        and ("subscription" in s and s["subscription"])
-    ]
-    if not paid_subscription_sessions:
-        return {"reconciled": False, "reason": "No paid subscription checkout found for this account."}
-
-    latest = paid_subscription_sessions[0]
-    with get_session() as session:
-        result = _reconcile_stripe_subscription(
-            session,
-            client,
-            stripe_module=stripe,
-            stripe_session=latest,
-            sync_key=f"cs_self_verify_{latest['id']}",
-        )
-        # Normalise the reconcile route's response shape (keep the existing
-        # ``reconciled`` boolean for frontend compatibility).
-        return {
-            "reconciled": bool(result.get("verified")),
-            "plan_slug": result.get("plan_slug"),
-            "reason": result.get("reason"),
-        }
 
 
 @router.post("/resume")
@@ -1543,16 +960,10 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
                 detail=f"Cannot reduce below the {floor} included seat(s) on your plan.",
             )
 
-        provider = (sub.payment_provider or "razorpay").lower()
         try:
-            if provider == "razorpay":
-                from app.services import razorpay_service
+            from app.services import razorpay_service
 
-                razorpay_service.update_subscription_quantity(session, sub, new_total)
-            else:
-                from app.services.billing_service import update_seat_quantity
-
-                update_seat_quantity(session, sub, new_total)
+            razorpay_service.update_subscription_quantity(session, sub, new_total)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -1757,10 +1168,9 @@ def get_credit_history(
 class TopupRequest(BaseModel):
     """Top-up purchase request.
 
-    ``amount`` is the rupee amount (or USD for Stripe), matching one of the
-    configured packs in ``pricing_config.topup_packs``. ``pack_usd`` is kept
-    as a backward-compat alias for older admin builds — at least one of the
-    two must be provided.
+    ``amount`` is the pack amount matching one of the configured packs in
+    ``pricing_config.topup_packs``. ``pack_usd`` is kept as a backward-compat
+    alias for older admin builds — at least one of the two must be provided.
 
     ``bot_id`` scopes the purchase to a specific per-bot ledger. Omit
     (or pass null) to top up the account-level client pool — that's the
@@ -1769,9 +1179,8 @@ class TopupRequest(BaseModel):
     so the credits land in the right isolated bucket.
     """
 
-    amount: int | None = None  # rupees (Razorpay) or dollars (Stripe)
+    amount: int | None = None
     pack_usd: int | None = None  # legacy alias
-    provider: str | None = None  # "razorpay" | "stripe"
     bot_id: int | None = None
 
 
@@ -1834,33 +1243,23 @@ def _resolve_referral_discount(session, client: Client) -> tuple[int, dict[str, 
 
 @credits_router.post("/topup")
 def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_client)):
-    """Initiate a top-up purchase.
+    """Initiate a top-up purchase via Razorpay.
 
-    Returns provider-specific checkout payload:
-      * Razorpay (default): ``{provider, order_id, amount, currency, key_id, name, description, prefill, theme}``
-        — frontend opens ``new Razorpay({order_id, ...}).open()``.
-      * Stripe: ``{checkout_url, session_id}`` — frontend redirect.
+    Returns a Razorpay order payload:
+    ``{provider, order_id, amount, currency, key_id, name, description, prefill, theme}``
+    — frontend opens ``new Razorpay({order_id, ...}).open()``.
 
-    If the customer has a referral code applied (``client.referral_code_id``)
-    with a non-zero ``customer_discount_bps``, the discount is applied to the
-    pack amount before checkout — so the Stripe page shows the discounted
-    price and the customer is actually charged less for the same credits.
-
-    Credits are granted asynchronously via the provider's webhook on payment
-    capture; the frontend should also call ``/credits/topup/verify`` for
-    Razorpay flows so the success modal is signature-verified server-side
-    before showing confetti (defence-in-depth against tampered callbacks).
+    Credits are granted asynchronously via the Razorpay webhook on payment
+    capture; the frontend should also call ``/credits/topup/verify`` so the
+    success modal is signature-verified server-side before showing confetti
+    (defence-in-depth against tampered callbacks).
     """
     requested_amount = request.amount or request.pack_usd
     if not requested_amount:
         raise HTTPException(status_code=400, detail="amount is required.")
 
     with get_session() as session:
-        existing_sub = get_client_subscription(session, client.id)
-        provider = _resolve_provider(
-            request.provider,
-            current_sub_provider=existing_sub.payment_provider if existing_sub else None,
-        )
+        provider = _resolve_provider()
 
         pricing = credit_service.get_pricing(session)
         packs = pricing.get("topup_packs") or []
@@ -1902,13 +1301,6 @@ def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_c
             session.commit()
             return result
 
-        from app.services.billing_service import create_topup_checkout_session
-
-        result = create_topup_checkout_session(session, client, pack)
-        result.setdefault("provider", "stripe")
-        session.commit()
-        return result
-
 
 class TopupVerifyRequest(BaseModel):
     """Razorpay Checkout success callback verification.
@@ -1917,8 +1309,8 @@ class TopupVerifyRequest(BaseModel):
     we verify the HMAC server-side to make sure the success was genuinely
     signed by Razorpay (defence against tampered modal responses).
 
-    The credit grant itself happens via webhook for both Razorpay and
-    Stripe — this endpoint just confirms the modal closure to the user.
+    The credit grant itself happens via the Razorpay webhook — this
+    endpoint just confirms the modal closure to the user.
     """
 
     razorpay_order_id: str
@@ -1943,99 +1335,6 @@ def verify_topup_payment(
     except razorpay_service.SignatureMismatch as exc:
         raise HTTPException(status_code=400, detail="Signature verification failed.") from exc
     return {"status": "verified"}
-
-
-class StripeVerifyRequest(BaseModel):
-    """Stripe Checkout success self-redemption."""
-
-    session_id: str
-
-
-@credits_router.post("/topup/verify-stripe")
-def verify_stripe_topup(
-    body: StripeVerifyRequest,
-    client: Client = Depends(get_current_client),
-):
-    """Fallback grant path for Stripe top-ups when the webhook hasn't fired.
-
-    Stripe webhooks can't reach localhost during development, and even in
-    production a customer might land on the success page before the webhook
-    arrives. This endpoint takes the ``session_id`` from the success URL,
-    pulls the session via the Stripe API (which is authoritative), confirms
-    ``payment_status == "paid"`` and ``metadata.purpose == "topup"``, then
-    grants the credits idempotently via the same dispatcher the webhook uses.
-
-    Always returns 200. Returns ``{ granted: bool, balance: int }`` so the
-    frontend can show the new balance the moment the grant succeeds — no
-    poll-and-pray loop after the redirect.
-
-    Security: the session.metadata.client_id MUST match the caller. Without
-    that check, anyone could replay another customer's session_id to grant
-    themselves credits they didn't buy.
-    """
-    if not STRIPE_ENABLED:
-        raise HTTPException(status_code=503, detail="Stripe is not configured.")
-
-    import stripe
-
-    from app.config import STRIPE_SECRET_KEY
-    from app.services.billing_service import _handle_payment_intent_succeeded
-
-    stripe.api_key = STRIPE_SECRET_KEY
-
-    try:
-        sess = stripe.checkout.Session.retrieve(body.session_id)
-    except Exception as exc:
-        logger.warning("Stripe session retrieve failed for %s: %s", body.session_id, exc)
-        raise HTTPException(status_code=404, detail="Checkout session not found.") from exc
-
-    # Stripe's response object behaves like a dict for ``[]`` access but does
-    # NOT implement ``.get()`` — every read goes through ``[]`` + ``in``.
-    if sess["payment_status"] != "paid":
-        return {"granted": False, "reason": f"Payment not captured (status={sess['payment_status']})"}
-
-    metadata = dict(sess["metadata"]._data) if "metadata" in sess and sess["metadata"] else {}
-    if metadata.get("purpose") != "topup":
-        return {"granted": False, "reason": "Session is not a top-up"}
-
-    sess_client_id = metadata.get("client_id")
-    if str(sess_client_id) != str(client.id):
-        # Don't leak whether the session exists for someone else — 404.
-        raise HTTPException(status_code=404, detail="Checkout session not found.")
-
-    # Stripe's StripeObject does not implement ``.get()`` — every read must
-    # go through ``[]`` + ``in``. ruff's SIM401 would rewrite this to ``.get``
-    # which would crash at runtime.
-    pi_id = sess["payment_intent"] if "payment_intent" in sess else None  # noqa: SIM401
-    if not pi_id:
-        return {"granted": False, "reason": "No PaymentIntent on session"}
-
-    pi = stripe.PaymentIntent.retrieve(pi_id)
-    pi_metadata = dict(pi["metadata"]._data) if "metadata" in pi and pi["metadata"] else metadata
-    pi_data = {
-        "id": pi["id"],
-        "metadata": pi_metadata,
-        "amount": pi["amount"],
-    }
-
-    # Idempotency is enforced inside _record_or_skip_webhook keyed by event
-    # id — but this self-redemption path doesn't go through that. Use a
-    # synthetic event id derived from the PaymentIntent so repeat calls
-    # short-circuit instead of double-granting.
-    from app.services.billing_service import _record_or_skip_webhook
-
-    with get_session() as session:
-        synthetic_event_id = f"pi_self_verify_{pi_id}"
-        if not _record_or_skip_webhook(session, synthetic_event_id, "stripe"):
-            session.commit()
-            balance = credit_service.get_balance(session, client.id)
-            return {"granted": False, "reason": "Already granted", "balance": balance}
-
-        _handle_payment_intent_succeeded(session, pi_data)
-        session.commit()
-        balance = credit_service.get_balance(session, client.id)
-
-    return {"granted": True, "balance": balance}
 
 
 @credits_router.get("/packs")

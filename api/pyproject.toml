@@ -46,7 +46,6 @@ dependencies = [
     "arq>=0.26.0",
     "flashrank>=0.2.9",
     "trafilatura>=2.0.0",
-    "stripe>=11.0.0",
     "razorpay>=1.4.2",
     "python-jose[cryptography]>=3.5.0",
     "fastembed>=0.4.0",

@@ -13,21 +13,6 @@ import {
 import { openRazorpayCheckout } from '../../lib/razorpay';
 import { cn } from '../../lib/utils';
 
-const TRUSTED_REDIRECT_DOMAINS = ['checkout.stripe.com', 'billing.stripe.com'];
-function isTrustedRedirectUrl(url) {
-    try {
-        const parsed = new URL(url);
-        return (
-            parsed.protocol === 'https:' &&
-            TRUSTED_REDIRECT_DOMAINS.some(
-                (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d),
-            )
-        );
-    } catch {
-        return false;
-    }
-}
-
 // Override at build time via VITE_SALES_EMAIL when the sales address ever
 // changes — same env-driven pattern as VITE_API_URL elsewhere in the app.
 const SUPPORT_EMAIL = import.meta.env.VITE_SALES_EMAIL || 'support@oyechats.com';
@@ -76,14 +61,7 @@ const ACCENTS = {
  * tab. Renders a two-column layout: tier rail on the left, focus-pane on the
  * right with the selected plan's price, features, and a context-aware CTA.
  *
- * CTA behaviour decides itself from three signals:
- *   1. Is this the user's current active plan? → "Current plan" (disabled).
- *   2. Is the user on no paid sub yet?        → "Start free trial" /
- *                                                  "Get started" (free) /
- *                                                  "Contact sales" (enterprise)
- *      Hits POST /subscriptions/checkout → Stripe redirect.
- *   3. Already paying?                       → "Switch to <Plan>"
- *      Hits POST /subscriptions/change-plan (Stripe handles proration).
+ * All prices are shown in USD. All checkout flows go through Razorpay.
  *
  * Annual toggle persists in component state only — the prior selection on
  * close is discarded (intentional; re-opening from a clean slate prevents
@@ -96,12 +74,6 @@ export default function PlanModal({
     currentSubscriptionStatus = null,
     currentBillingCycle = 'monthly',
     hasActiveSubscription = false,
-    // True only when the local subscription row is linked to a real Stripe
-    // subscription (``subscription.payment_provider === 'stripe'``). Lets
-    // the CTA distinguish a silent prorated swap from a Checkout redirect:
-    // both look "active" on the surface, but only the Stripe-linked one
-    // can change in place without a payment screen.
-    hasStripeSubscription = false,
     onSuccess,
 }) {
     const [plans, setPlans] = useState([]);
@@ -111,19 +83,16 @@ export default function PlanModal({
     const [selectedSlug, setSelectedSlug] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
-    // Geo / currency profile from /subscriptions/geo. Drives both the
-    // displayed currency (INR for Indian customers, USD elsewhere) and the
-    // CTA path (live Razorpay checkout vs. Contact Sales). Null while the
-    // first fetch is in flight — components below fall back to plan-row
-    // currency until it lands.
+    // Geo profile from /subscriptions/geo. Always display_currency: "USD".
+    // Null while first fetch is in flight — components fall back to plan-row
+    // USD columns until it lands.
     const [geo, setGeo] = useState(null);
 
     // ── Referral discount state ──
     // ``referralStatus`` is a 4-state machine: idle (input empty / typing),
     // applying (round-trip in flight), applied (server confirmed it's a real
     // code), invalid (server rejected it). ``appliedCode`` / ``discountPct``
-    // mirror the server response so the strikethrough always matches what
-    // Stripe will actually charge after the user clicks the CTA.
+    // mirror the server response so the strikethrough matches the gateway charge.
     const [referralInput, setReferralInput] = useState('');
     const [referralStatus, setReferralStatus] = useState('idle');
     const [referralMessage, setReferralMessage] = useState('');
@@ -358,16 +327,6 @@ export default function PlanModal({
                 }
             }
 
-            // ── Stripe path (legacy — only existing Stripe subscribers) ──
-            const checkoutUrl = res?.checkout_url;
-            if (checkoutUrl || status === 'checkout_required') {
-                if (!checkoutUrl || !isTrustedRedirectUrl(checkoutUrl)) {
-                    throw new Error('Could not start checkout — invalid response.');
-                }
-                window.location.href = checkoutUrl;
-                return;
-            }
-
             if (status === 'switched') {
                 onSuccess?.({ kind: 'switched', plan: selected, response: res });
                 onClose();
@@ -398,20 +357,6 @@ export default function PlanModal({
             throw new Error(res?.message || 'Unexpected response from server.');
         } catch (err) {
             const detail = err?.response?.data?.detail;
-            // Backend returns 402 with {contact_sales} when intl payments
-            // are off — turn that into the same mailto path the geo check
-            // already takes, in case geo lookup raced or fell back to null.
-            if (detail && typeof detail === 'object' && detail.code === 'intl_payments_unavailable') {
-                const email = detail.contact_sales || geo?.contact_sales_email || SUPPORT_EMAIL;
-                window.open(
-                    `mailto:${email}?subject=${encodeURIComponent(
-                        `Subscription enquiry — ${selected.name} (${billingCycle})`,
-                    )}`,
-                    '_blank',
-                    'noopener,noreferrer',
-                );
-                return;
-            }
             // Seat-overflow on a downgrade — the customer has more active
             // operators than the target plan allows. The backend's payload
             // includes ``active_seats`` / ``allowed_seats`` / ``excess`` so
@@ -547,7 +492,6 @@ export default function PlanModal({
                                                 currentPlanSlug={currentPlanSlug}
                                                 currentSubscriptionStatus={currentSubscriptionStatus}
                                                 hasActiveSubscription={hasActiveSubscription}
-                                                hasStripeSubscription={hasStripeSubscription}
                                                 currentPlan={plans.find((p) => p.slug === currentPlanSlug) || null}
                                                 submitting={submitting}
                                                 submitError={submitError}
@@ -695,24 +639,21 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
 /** The right-hand "focused plan" detail pane. */
 function FocusedPlan({
     plan, billingCycle, geo, isCurrent, currentPlanSlug, currentSubscriptionStatus,
-    hasActiveSubscription, hasStripeSubscription, currentPlan,
+    hasActiveSubscription, currentPlan,
     submitting, submitError, onCta, referral,
 }) {
     const meta = TIER_META[plan.slug] || { icon: Sparkles, accent: 'slate', description: '' };
     const accent = ACCENTS[meta.accent] || ACCENTS.slate;
-    const features = useMemo(() => buildFeatureList(plan, geo), [plan, geo]);
+    const features = useMemo(() => buildFeatureList(plan), [plan]);
     const isFree = plan.slug === 'free';
     const isEnterprise = plan.slug === 'enterprise';
-    // Detect transition direction so the paid-path CTA can be labelled
-    // "Upgrade" vs "Downgrade" honestly. Free / Enterprise / new-customer
-    // paths fall through with both flags false — the generic copy applies.
-    const currentPrice = Number(currentPlan?.monthly_price_cents || 0);
-    const targetPrice = Number(plan.monthly_price_cents || 0);
+    const currentPrice = Number(currentPlan?.monthly_price_usd_cents || currentPlan?.monthly_price_cents || 0);
+    const targetPrice = Number(plan.monthly_price_usd_cents || plan.monthly_price_cents || 0);
     const isUpgradeFromPaid = hasActiveSubscription && currentPrice > 0 && targetPrice > currentPrice;
     const isDowngradeFromPaid = hasActiveSubscription && currentPrice > 0 && targetPrice < currentPrice && targetPrice > 0;
     const ctas = ctasFor({
         plan, isCurrent, currentPlanSlug, currentSubscriptionStatus,
-        hasActiveSubscription, hasStripeSubscription,
+        hasActiveSubscription,
         isUpgradeFromPaid, isDowngradeFromPaid,
     });
     const primary = ctas[0];
@@ -1015,9 +956,8 @@ function PriceBlock({ plan, billingCycle, geo, discountPct = 0, appliedCode = nu
             </div>
         );
     }
-    // Apply the discount in cents so the strikethrough matches what
-    // Stripe actually charges (10% off $19 = $17.10, not $18 — done in
-    // minor units to preserve sub-currency precision).
+    // Apply the discount in cents so the strikethrough is precise
+    // (10% off $19 = $17.10, not $18 — done in minor units).
     const hasDiscount = discountPct > 0 && appliedCode;
     const bps = Math.max(0, Math.min(10_000, Math.round((discountPct || 0) * 100)));
     const chargedCents = hasDiscount ? cents - Math.floor((cents * bps) / 10_000) : cents;
@@ -1159,7 +1099,7 @@ function canStartTrial({ plan, isCurrent, currentPlanSlug, currentSubscriptionSt
  */
 function ctasFor({
     plan, isCurrent, currentPlanSlug, currentSubscriptionStatus,
-    hasActiveSubscription, hasStripeSubscription, isUpgradeFromPaid, isDowngradeFromPaid,
+    hasActiveSubscription, isUpgradeFromPaid, isDowngradeFromPaid,
 }) {
     if (isCurrent) {
         return [{
@@ -1203,9 +1143,6 @@ function ctasFor({
         paidLabel = `Downgrade to ${plan.name}`;
         paidNote = 'You’ll keep your current plan until the end of this billing cycle, then switch to ' +
             `${plan.name}. We’ll email you the day before the change.`;
-    } else if (hasStripeSubscription) {
-        paidLabel = `Switch to ${plan.name}`;
-        paidNote = 'We prorate the difference between your current and new plan automatically. Credits reset to the new monthly grant on the next renewal.';
     } else if (isUpgradeFromPaid) {
         paidLabel = `Upgrade to ${plan.name}`;
         paidNote = `A secure Razorpay checkout will open. We credit your unused ${currentPlanSlug ?? 'current plan'} time back as bonus credits the moment the new mandate activates.`;
@@ -1257,16 +1194,13 @@ const CRAWL_FALLBACK_BY_SLUG = {
     enterprise: { pages: 10000, depth: 5 },
 };
 
-function buildFeatureList(plan, geo) {
+function buildFeatureList(plan) {
     const out = [];
     const credits = plan.credits_per_month;
     const seats = plan.included_operator_seats || 0;
-    const seatCents = plan.extra_seat_price_cents || 0;
-    // Seat add-on price needs to follow the same display currency as the
-    // headline plan price; pass through ``toDisplayPrice`` so an Indian
-    // visitor sees ₹1,199/mo and a US visitor sees ~$14/mo on the same row.
-    const seatDisplay = toDisplayPrice(seatCents, plan.currency || 'INR', geo);
-    const sym = seatDisplay.symbol;
+    // Prefer USD seat price; fall back to INR cents for legacy rows.
+    const seatCents = plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0;
+    const sym = '$';
 
     // Plan-aware crawl limits — read from ``plan.limits`` first (source of
     // truth once the migration has run), then fall back to the per-slug
@@ -1300,7 +1234,7 @@ function buildFeatureList(plan, geo) {
     if (seats > 0 && plan.slug !== 'free') {
         out.push(
             seatCents > 0
-                ? `${seats} operator seat${seats === 1 ? '' : 's'} included (+${sym}${(seatDisplay.cents / 100).toFixed(0)}/mo each extra)`
+                ? `${seats} operator seat${seats === 1 ? '' : 's'} included (+${sym}${(seatCents / 100).toFixed(0)}/mo each extra)`
                 : `${seats} operator seat${seats === 1 ? '' : 's'} included`,
         );
     }

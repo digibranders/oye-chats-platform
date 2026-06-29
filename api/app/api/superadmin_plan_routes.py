@@ -54,9 +54,6 @@ class UpdatePlanRequest(BaseModel):
     is_active: bool | None = None
     is_default: bool | None = None
     sort_order: int | None = None
-    stripe_product_id: str | None = None
-    stripe_monthly_price_id: str | None = None
-    stripe_annual_price_id: str | None = None
     razorpay_plan_id_monthly: str | None = None
     razorpay_plan_id_annual: str | None = None
 
@@ -105,9 +102,6 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
                 "is_active": p.is_active,
                 "is_default": p.is_default,
                 "sort_order": p.sort_order,
-                "stripe_product_id": p.stripe_product_id,
-                "stripe_monthly_price_id": p.stripe_monthly_price_id,
-                "stripe_annual_price_id": p.stripe_annual_price_id,
                 "razorpay_plan_id_monthly": p.razorpay_plan_id_monthly,
                 "razorpay_plan_id_annual": p.razorpay_plan_id_annual,
                 "active_subscriptions": sub_counts.get(p.id, 0),
@@ -212,28 +206,6 @@ def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
         logger.info(f"Superadmin {superadmin.id} deactivated plan {plan_id} ({plan.name})")
 
         return {"message": f"Plan '{plan.name}' deactivated successfully."}
-
-
-@router.post("/plans/{plan_id}/sync-stripe")
-def sync_plan_stripe(plan_id: int, superadmin: Client = Depends(get_superadmin)):
-    """Sync a plan to Stripe (creates Product + Prices). Requires Stripe to be configured."""
-    from app.config import STRIPE_ENABLED
-
-    if not STRIPE_ENABLED:
-        raise HTTPException(status_code=503, detail="Stripe is not configured. Set STRIPE_SECRET_KEY env var.")
-
-    with get_session() as session:
-        plan = session.execute(select(Plan).where(Plan.id == plan_id)).scalars().first()
-        if not plan:
-            raise HTTPException(status_code=404, detail="Plan not found.")
-
-        from app.services.billing_service import sync_plan_to_stripe
-
-        result = sync_plan_to_stripe(session, plan)
-        session.commit()
-
-        logger.info(f"Superadmin {superadmin.id} synced plan {plan_id} to Stripe")
-        return {"message": f"Plan '{plan.name}' synced to Stripe.", "stripe_ids": result}
 
 
 # ── Subscription Management ──
