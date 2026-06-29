@@ -63,6 +63,26 @@ function isTrustedRedirectUrl(url) {
 
 const fmtNumber = (n) => Number(n || 0).toLocaleString();
 
+// Pick the correct minor-unit price for a plan given the display currency.
+// INR prices live in monthly_price_cents/annual_price_cents (paise).
+// USD prices live in monthly_price_usd_cents/annual_price_usd_cents (cents).
+function planPriceCents(plan, currency, cycle = 'monthly') {
+  if (!plan) return 0;
+  if (currency === 'USD') {
+    return cycle === 'annual'
+      ? (plan.annual_price_usd_cents ?? 0)
+      : (plan.monthly_price_usd_cents ?? 0);
+  }
+  return cycle === 'annual' ? (plan.annual_price_cents ?? 0) : (plan.monthly_price_cents ?? 0);
+}
+
+function planSeatPriceCents(plan, currency) {
+  if (!plan) return 0;
+  return currency === 'USD'
+    ? (plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0)
+    : (plan.extra_seat_price_cents ?? 0);
+}
+
 function fmtCurrency(amountMinor, currency = 'USD') {
   const symbol = currency === 'USD' ? '$' : currency === 'INR' ? '₹' : `${currency} `;
   const major = Number(amountMinor || 0) / 100;
@@ -437,7 +457,7 @@ export default function Billing() {
   // Seat-fee fallback for an admin DB that hasn't picked up the new pricing
   // migration yet. Defaults to the current $5 / mo headline so the row reads
   // "+$5/mo" instead of falling back to a stale figure or a blank label.
-  const seatPriceLabel = fmtCurrency(plan?.extra_seat_price_cents ?? 500, currency);
+  const seatPriceLabel = fmtCurrency(planSeatPriceCents(plan, currency) || 500, currency);
 
   const usage = balance?.usage || {};
   // Merge per-key so a backend payload that hasn't been redeployed since a
@@ -1085,7 +1105,7 @@ function OverviewTab({
               </div>
               <div className="mt-1 text-xs text-surface-500 dark:text-surface-400">
                 {plan?.monthly_price_cents > 0
-                  ? `${fmtCurrency(plan.monthly_price_cents, currency)} / month`
+                  ? `${fmtCurrency(planPriceCents(plan, currency, 'monthly'), currency)} / month`
                   : 'No paid subscription'}
                 {' · '}
                 {fmtNumber(dMonthlyGrant)} credits / month
@@ -1343,7 +1363,7 @@ function SeatsTab({
               </div>
               <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
                 {plan?.monthly_price_cents > 0
-                  ? `${fmtCurrency(plan.monthly_price_cents, currency)} / month · ${fmtNumber(plan.credits_per_month)} credits / month`
+                  ? `${fmtCurrency(planPriceCents(plan, currency, 'monthly'), currency)} / month · ${fmtNumber(plan.credits_per_month)} credits / month`
                   : 'No paid subscription'}
                 {subscription?.payment_provider ? ` · billed via ${subscription.payment_provider}` : ''}
               </div>

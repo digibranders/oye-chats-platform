@@ -143,6 +143,9 @@ def list_plans():
                 "currency": p.currency,
                 "monthly_price_cents": p.monthly_price_cents,
                 "annual_price_cents": p.annual_price_cents,
+                "monthly_price_usd_cents": p.monthly_price_usd_cents,
+                "annual_price_usd_cents": p.annual_price_usd_cents,
+                "extra_seat_price_usd_cents": p.extra_seat_price_usd_cents,
                 "annual_discount_percent": p.annual_discount_percent,
                 "trial_days": p.trial_days,
                 "credits_per_month": p.credits_per_month,
@@ -1570,7 +1573,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
 
 
 @credits_router.get("/balance")
-def get_credit_balance(client: Client = Depends(get_current_client)):
+def get_credit_balance(http_request: Request, client: Client = Depends(get_current_client)):
     """Return everything the Billing page needs in one round-trip:
 
     * Current credit balance (plan + top-up + soonest expiry).
@@ -1688,12 +1691,9 @@ def get_credit_balance(client: Client = Depends(get_current_client)):
             "document_upload": int(pricing.get("credit_cost.document_upload", 3) or 0),
         }
 
-        currency_code = (plan.currency if plan else None) or pricing.get("billing.currency", "INR")
-        currency_symbol = (
-            pricing.get("billing.currency_symbol", "₹")
-            if currency_code == "INR"
-            else ("$" if currency_code == "USD" else currency_code + " ")
-        )
+        country = resolve_country(http_request)
+        currency_code = "INR" if country == "IN" else "USD"
+        currency_symbol = "₹" if currency_code == "INR" else "$"
 
         next_reset = effective_resets_at(sub)
         return {
