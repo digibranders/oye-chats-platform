@@ -45,10 +45,11 @@ from app.config import (
     RAZORPAY_ENABLED,
     RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET,
+    RAZORPAY_SEAT_PLAN_ID,
     RAZORPAY_TEST_PLAN_ID,
     RAZORPAY_WEBHOOK_SECRET,
 )
-from app.db.models import Client, Invoice, Plan, ProcessedWebhook, Subscription
+from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
 from app.services import credit_service
 
 if TYPE_CHECKING:
@@ -252,6 +253,7 @@ def create_subscription(
     seat_quantity: int | None = None,
     total_count: int | None = None,
     extra_notes: dict[str, str] | None = None,
+    discount_bps: int = 0,
 ) -> dict[str, Any]:
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
 
@@ -295,6 +297,11 @@ def create_subscription(
             "Create the plan in the Razorpay dashboard and set the id from super admin."
         )
 
+    # Apply a recurring customer discount by swapping in a discounted plan.
+    # Test-client override is excluded from discounts so QA flows stay clean.
+    if discount_bps and client.id not in CHECKOUT_TEST_CLIENT_IDS:
+        razorpay_plan_id = resolve_discounted_plan(session, plan, billing_cycle, discount_bps)
+
     # Razorpay rejects total_count > 100 for annual plans; monthly accepts
     # up to 120 (12 cycles × 10 years). Fall back to the cycle-specific
     # max when the caller didn't override.
@@ -317,7 +324,11 @@ def create_subscription(
                 continue
             notes[str(key)] = str(value)
 
-    quantity = max(int(seat_quantity or plan.included_operator_seats or 1), 1)
+    # Base subscription is always quantity 1 — the flat plan price already
+    # covers the bundled included seats. Extra seats are billed on a SEPARATE
+    # add-on subscription via create_seat_addon_subscription, because Razorpay
+    # quantity multiplies the WHOLE plan amount (₹4,599×2 = ₹9,198, not ₹4,599+₹499).
+    quantity = max(int(seat_quantity or 1), 1)
 
     try:
         subscription = rzp.subscription.create(
@@ -354,6 +365,136 @@ def create_subscription(
         "key_id": RAZORPAY_KEY_ID,
         "name": "OyeChats",
         "description": f"{plan.name} ({billing_cycle})",
+        "prefill": {
+            "name": client.name or "",
+            "email": client.email or "",
+        },
+        "theme": {"color": "#6366f1"},
+        # The plan actually billed — may differ from plan.razorpay_plan_id_*
+        # when a discount was applied. The route stores this on
+        # Subscription.razorpay_billing_plan_id for audit.
+        "billing_plan_id": razorpay_plan_id,
+    }
+
+
+def resolve_discounted_plan(
+    session: Session,
+    base_plan: Plan,
+    billing_cycle: str,
+    discount_bps: int,
+) -> str:
+    """Return a Razorpay plan_id for base_plan discounted by discount_bps.
+
+    Looks up the (base_plan_id, billing_cycle, discount_bps) cache first.
+    On a miss, creates a new Razorpay plan at the discounted paise amount,
+    inserts it into the cache, and returns the new plan_id.
+
+    Razorpay Offers have no create API, so recurring discounts are modelled
+    as discounted plans — a lower plan amount recurs automatically every
+    cycle with no per-cycle coupon redemption required.
+
+    Discount math: discounted = base - floor(base × bps / 10000).
+    Integer floor keeps paise whole; the tiny rounding difference (<₹1) is
+    in the customer's favour.
+    """
+    if not (0 < discount_bps < 10000):
+        raise ValueError(f"discount_bps must be 1–9999, got {discount_bps}")
+    if billing_cycle not in ("monthly", "annual"):
+        raise ValueError(f"billing_cycle must be 'monthly' or 'annual', got {billing_cycle!r}")
+
+    cached = session.scalars(
+        select(DiscountedPlanCache)
+        .where(DiscountedPlanCache.base_plan_id == base_plan.id)
+        .where(DiscountedPlanCache.billing_cycle == billing_cycle)
+        .where(DiscountedPlanCache.discount_bps == discount_bps)
+    ).first()
+    if cached is not None:
+        return cached.razorpay_plan_id
+
+    base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
+    discounted_paise = base_amount - (base_amount * discount_bps) // 10000
+    period = "yearly" if billing_cycle == "annual" else "monthly"
+
+    rzp = _get_razorpay()
+    plan = rzp.plan.create(
+        data={
+            "period": period,
+            "interval": 1,
+            "item": {
+                "name": f"{base_plan.name} {billing_cycle} -{discount_bps // 100}%",
+                "amount": discounted_paise,
+                "currency": "INR",
+            },
+            "notes": {
+                "base_plan_id": str(base_plan.id),
+                "discount_bps": str(discount_bps),
+            },
+        }
+    )
+
+    row = DiscountedPlanCache(
+        base_plan_id=base_plan.id,
+        billing_cycle=billing_cycle,
+        discount_bps=discount_bps,
+        razorpay_plan_id=plan["id"],
+        amount_paise=discounted_paise,
+    )
+    session.add(row)
+    session.flush()
+    return plan["id"]
+
+
+def create_seat_addon_subscription(
+    session: Session,
+    client: Client,
+    *,
+    extra_seats: int,
+) -> dict[str, Any]:
+    """Create a separate ₹499 × extra_seats Razorpay subscription for operator seats.
+
+    Must be a distinct subscription from the main plan. Razorpay `quantity`
+    multiplies the entire plan amount, which would make the main plan wrong
+    (₹4,599×2 instead of ₹4,599+₹499). The Extra-Seat plan's amount IS the
+    per-seat price (₹499), so ₹499 × extra_seats is exactly right here.
+    """
+    if extra_seats < 1:
+        raise ValueError(f"extra_seats must be >= 1, got {extra_seats}")
+
+    rzp = _get_razorpay()
+    try:
+        subscription = rzp.subscription.create(
+            data={
+                "plan_id": RAZORPAY_SEAT_PLAN_ID,
+                "total_count": 120,
+                "customer_notify": 1,
+                "quantity": int(extra_seats),
+                "notes": {
+                    "oyechats_client_id": str(client.id),
+                    "purpose": "seat_addon",
+                },
+            }
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay seat add-on subscription.create failed for client %s: %s",
+            client.id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not create seat add-on subscription. Please try again.") from exc
+
+    logger.info(
+        "Created Razorpay seat add-on subscription %s for client %s (%d extra seats)",
+        subscription["id"],
+        client.id,
+        extra_seats,
+    )
+
+    return {
+        "provider": "razorpay",
+        "subscription_id": subscription["id"],
+        "key_id": RAZORPAY_KEY_ID,
+        "name": "OyeChats operator seats",
+        "description": f"{extra_seats} extra seat(s) — ₹499/seat/month",
         "prefill": {
             "name": client.name or "",
             "email": client.email or "",
@@ -774,7 +915,7 @@ def _create_bot_from_subscription_notes(
         try:
             parsed = _json.loads(raw_domains) if isinstance(raw_domains, str) else raw_domains
             if isinstance(parsed, list):
-                allowed_domains = [str(d) for d in parsed if isinstance(d, (str, int))]
+                allowed_domains = [str(d) for d in parsed if isinstance(d, str | int)]
         except (ValueError, TypeError):
             logger.warning("Could not parse bot_allowed_domains from notes: %r", raw_domains)
 

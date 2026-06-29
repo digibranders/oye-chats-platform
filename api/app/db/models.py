@@ -1,6 +1,18 @@
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB, TSVECTOR
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -784,6 +796,15 @@ class Plan(Base):
     razorpay_plan_id_monthly = Column(String, nullable=True)
     razorpay_plan_id_annual = Column(String, nullable=True)
 
+    # Fixed USD headline pricing (cents). Independent of the INR columns —
+    # set deliberately, NEVER converted live. Shown to non-Indian visitors and
+    # charged by Stripe. NULL → caller falls back to a DISPLAY_USD_TO_INR
+    # conversion for legacy rows that predate these columns. See
+    # ``app.core.pricing.display_price`` and ADR D2/D3 in the billing plan.
+    monthly_price_usd_cents = Column(Integer, nullable=True)
+    annual_price_usd_cents = Column(Integer, nullable=True)
+    extra_seat_price_usd_cents = Column(Integer, nullable=True)
+
     # Display & ordering
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)  # auto-assigned to new clients
@@ -852,6 +873,12 @@ class Subscription(Base):
     canceled_at = Column(DateTime(timezone=True), nullable=True)
     cancel_reason = Column(Text, nullable=True)
     cancel_at_period_end = Column(Boolean, default=False, server_default="false", nullable=False)
+
+    # The Razorpay plan actually billed against — a discounted plan when a
+    # referral code applied, else identical to the base plan's razorpay id.
+    # Entitlements always follow plan_id (the base plan). NULL for Stripe /
+    # legacy rows that predate the discount engine.
+    razorpay_billing_plan_id = Column(String, nullable=True)
 
     # Payment provider IDs
     payment_provider = Column(
@@ -1375,3 +1402,59 @@ class AffiliateInvite(Base):
     )
 
     invited_by_client = relationship("Client", foreign_keys=[invited_by])
+
+
+# ── Discount engine ────────────────────────────────────────────────────────────
+
+
+class DiscountedPlanCache(Base):
+    """Reuse cache for API-created discounted Razorpay plans.
+
+    The UNIQUE (base_plan_id, billing_cycle, discount_bps) constraint is the
+    deduplication key: the same discount on the same base+cycle always resolves
+    to one Razorpay plan, shared across all affiliates and customers. This caps
+    the total number of Razorpay plans at base × cycle × distinct_discount_pcts
+    (~100 plans maximum even at millions of customers).
+    """
+
+    __tablename__ = "discounted_plan_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    base_plan_id = Column(Integer, ForeignKey("plans.id", ondelete="CASCADE"), nullable=False)
+    billing_cycle = Column(String, nullable=False)  # "monthly" | "annual"
+    discount_bps = Column(Integer, nullable=False)  # e.g. 1500 = 15 %
+    razorpay_plan_id = Column(String, nullable=False)
+    amount_paise = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "base_plan_id",
+            "billing_cycle",
+            "discount_bps",
+            name="uq_discounted_plan",
+        ),
+        CheckConstraint(
+            "discount_bps > 0 AND discount_bps < 10000",
+            name="chk_discount_bps_range",
+        ),
+    )
+
+
+class ReferralConversion(Base):
+    """Snapshot of commission/discount terms when a referral converts to paid.
+
+    Editing a referral code's percentages later must not retroactively change
+    what already-converted customers earn the affiliate — snapshotting at
+    subscribe time decouples live code edits from historical payouts.
+    """
+
+    __tablename__ = "referral_conversions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    referral_code_id = Column(Integer, ForeignKey("referral_codes.id", ondelete="SET NULL"), nullable=True)
+    affiliate_id = Column(Integer, ForeignKey("affiliates.id", ondelete="SET NULL"), nullable=True)
+    commission_bps = Column(Integer, nullable=False)
+    customer_discount_bps = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

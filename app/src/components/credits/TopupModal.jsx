@@ -110,7 +110,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
           key: result.key_id,
           order_id: result.order_id,
           amount: result.amount,
-          currency: result.currency || 'USD',
+          currency: result.currency || 'INR',
           name: result.name || 'OyeChats credits',
           description: result.description,
           prefill: result.prefill || {},

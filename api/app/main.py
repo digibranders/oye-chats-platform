@@ -78,6 +78,19 @@ _litellm.drop_params = True
 from app.config import LANGFUSE_ENABLED  # noqa: E402
 
 if LANGFUSE_ENABLED:
+    # LiteLLM's Langfuse integration accesses `langfuse.version.__version__` (v2/v3
+    # pattern). Langfuse v4 moved the version to `langfuse.__version__` and removed
+    # the `version` submodule. Inject a minimal shim so the callback initialises
+    # without AttributeError — this is safe and idempotent.
+    import types as _types
+
+    import langfuse as _langfuse_pkg
+
+    if not hasattr(_langfuse_pkg, "version"):
+        _ver_mod = _types.ModuleType("langfuse.version")
+        _ver_mod.__version__ = _langfuse_pkg.__version__
+        _langfuse_pkg.version = _ver_mod
+
     _existing = list(getattr(_litellm, "callbacks", []) or [])
     if "langfuse" not in _existing:
         _existing.append("langfuse")

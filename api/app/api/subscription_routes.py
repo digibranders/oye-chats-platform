@@ -29,6 +29,7 @@ from app.config import (
 )
 from app.core.dates import add_months
 from app.core.geo import resolve_country
+from app.core.pricing import display_price, format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service
@@ -348,7 +349,7 @@ def get_billing_geo(request: Request, _client: Client = Depends(get_current_clie
     # that ``resolve_country`` honours.
     return {
         "country": country,
-        "display_currency": "USD",
+        "display_currency": "INR" if indian else "USD",
         "display_rate": DISPLAY_USD_TO_INR,
         "intl_payments_enabled": INTL_PAYMENTS_ENABLED,
         "razorpay_enabled": RAZORPAY_ENABLED,
@@ -501,6 +502,7 @@ class CheckoutRequest(BaseModel):
     plan_id: int
     billing_cycle: str = "monthly"  # monthly|annual
     provider: str | None = None  # "razorpay" | "stripe" — defaults to BILLING_PROVIDER
+    coupon_code: str | None = None  # future Stripe coupons; blocked when referral code is active
 
 
 # ── Checkout quote (currency + payment-method preview) ────────────────────────
@@ -564,27 +566,12 @@ def checkout_quote(
 
         country = resolve_country(request)
         indian = country == "IN"
-        amount_minor = _amount_for_cycle(plan, billing_cycle)
-
-        # Indian buyers see the INR price stored on the plan row.
-        # Everyone else sees USD on the pricing page — which is purely
-        # informational until International Payments is live; the actual
-        # gateway call is gated below.
-        if indian:
-            currency = "INR"
-            display_amount = amount_minor / 100
-            amount_display = f"₹{display_amount:,.0f}" if display_amount.is_integer() else f"₹{display_amount:,.2f}"
-        else:
-            currency = "USD"
-            # USD display is informational only — non-Indian customers go
-            # through ``contact_sales`` until International Payments is live,
-            # so the gateway never sees this value. We convert the plan's INR
-            # paise amount via the env-tunable display rate; per-plan USD
-            # columns will replace this in the super-admin editor (Phase 4).
-            usd_cents = round((amount_minor / 100) / DISPLAY_USD_TO_INR * 100) if DISPLAY_USD_TO_INR > 0 else 0
-            amount_minor = int(usd_cents)
-            display_amount = amount_minor / 100
-            amount_display = f"${display_amount:,.0f}" if display_amount.is_integer() else f"${display_amount:,.2f}"
+        inr_paise = _amount_for_cycle(plan, billing_cycle)
+        usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
+        amount_minor, currency = display_price(
+            inr_paise=inr_paise, usd_cents=usd_minor, country=country, rate=DISPLAY_USD_TO_INR
+        )
+        amount_display = format_amount(amount_minor, currency)
 
         # Free plan: render a quote but mark checkout as unsupported.
         if amount_minor == 0 and plan.slug != "enterprise":
@@ -623,7 +610,7 @@ def checkout_quote(
         if not indian and not INTL_PAYMENTS_ENABLED:
             return {
                 "country": country,
-                "currency": "USD",
+                "currency": currency,
                 "amount_minor": amount_minor,
                 "amount_display": amount_display,
                 "billing_cycle": billing_cycle,
@@ -670,6 +657,8 @@ def create_checkout(
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
 
+    _assert_no_stacking(client, request.coupon_code)
+
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
 
@@ -715,14 +704,28 @@ def create_checkout(
             )
 
         if provider == "razorpay":
-            from app.services import razorpay_service
+            from app.db.models import ReferralConversion
+            from app.services import discount_service, razorpay_service
 
+            discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
             try:
-                result = razorpay_service.create_subscription(session, client, plan, request.billing_cycle)
+                result = razorpay_service.create_subscription(
+                    session, client, plan, request.billing_cycle, discount_bps=discount_bps
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except razorpay_service.RazorpayBillingError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
+            if disc_meta:
+                session.add(
+                    ReferralConversion(
+                        client_id=client.id,
+                        referral_code_id=int(disc_meta["referral_code_id"]),
+                        affiliate_id=None,
+                        commission_bps=int(disc_meta["affiliate_commission_bps"]),
+                        customer_discount_bps=int(disc_meta["discount_bps"]),
+                    )
+                )
             session.commit()
             return result
 
@@ -1783,6 +1786,21 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
         if int(pack.get("amount") or pack.get("usd") or 0) == requested_amount:
             return pack
     return None
+
+
+def _assert_no_stacking(client, coupon_code: str | None) -> None:
+    """Prevent a referral-code discount from being combined with a manual coupon.
+
+    A referral code already locks in the customer discount at subscription
+    creation. Layering a second coupon on top would double-discount the same
+    period and pay the affiliate commission twice on revenue we're not
+    collecting. Raise 400 so the frontend can surface a friendly message.
+    """
+    if getattr(client, "referral_code_id", None) and coupon_code:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot apply a coupon when a referral code is already active on your account.",
+        )
 
 
 def _resolve_referral_discount(session, client: Client) -> tuple[int, dict[str, str]]:

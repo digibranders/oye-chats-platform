@@ -184,6 +184,14 @@ CHECKOUT_TEST_CLIENT_IDS: frozenset[int] = frozenset(
 )
 RAZORPAY_TEST_PLAN_ID: str | None = os.getenv("RAZORPAY_TEST_PLAN_ID")
 
+# RAZORPAY_SEAT_PLAN_ID — Razorpay Plan ID for the ₹499/month extra-seat add-on.
+#   Extra operator seats are billed on a SEPARATE add-on subscription against
+#   this plan (quantity = number of extra seats); never as quantity on the main
+#   plan, which would multiply the whole plan price. The default is the LIVE
+#   plan; local/staging overrides it with the test-mode plan id via .env so
+#   production never accidentally references a test plan.
+RAZORPAY_SEAT_PLAN_ID: str = os.getenv("RAZORPAY_SEAT_PLAN_ID", "plan_T5rNFpt3vSkl4R")
+
 # Default billing provider for new subscriptions and top-ups. Customers on a
 # subscription continue to use whichever provider their record is tagged with;
 # this only affects new sign-ups and the admin checkout button.
@@ -211,7 +219,7 @@ INTL_PAYMENTS_ENABLED = os.getenv("INTL_PAYMENTS_ENABLED", "false").lower() in (
 # Plan row long-term (super-admin editor); until that column lands, this
 # fallback keeps the marketing site self-consistent. Treated as ``rupees
 # per US dollar``: a plan priced at ₹1,499 displays as ~$18 at the default.
-DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "83"))
+DISPLAY_USD_TO_INR = float(os.getenv("DISPLAY_USD_TO_INR", "94.67"))
 
 # Frontend URL for checkout redirects (Stripe success/cancel, Razorpay return).
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")

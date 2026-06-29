@@ -56,6 +56,26 @@ INVITE_TOKEN_BYTES = 32
 # range are also enforced at the DB layer via a CHECK constraint.
 MAX_COMMISSION_BPS = 10000
 
+# Codes that look like they belong to OyeChats itself or are too generic to
+# be owned by any single affiliate.
+_RESERVED_CODES: frozenset[str] = frozenset(
+    {
+        "OYECHATS",
+        "FREE",
+        "SALE",
+        "DISCOUNT",
+        "ADMIN",
+        "SUPPORT",
+        "TEST",
+        "OFFER",
+    }
+)
+
+
+def _assert_not_reserved(code: str) -> None:
+    if code.strip().upper() in _RESERVED_CODES:
+        raise InvalidCodeFormat(f"'{code}' is a reserved code and cannot be used.")
+
 
 # Re-export the canonical implementations from ``app.core.money`` so any
 # existing import (``from app.services.affiliate_service import pct_to_bps``)
@@ -342,6 +362,7 @@ def create_code(
     code = (code or "").strip()
     if not CODE_REGEX.match(code):
         raise InvalidCodeFormat("Code must be 3–20 characters of letters, digits, '_' or '-'.")
+    _assert_not_reserved(code)
 
     _validate_split(affiliate, affiliate_commission_bps, customer_discount_bps)
 
@@ -422,6 +443,7 @@ def update_code(
         if cleaned_code.lower() != str(row.code).lower():
             if not CODE_REGEX.match(cleaned_code):
                 raise InvalidCodeFormat("Code must be 3–20 characters of letters, digits, '_' or '-'.")
+            _assert_not_reserved(cleaned_code)
             row.code = cleaned_code
             try:
                 session.flush()
