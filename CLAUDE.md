@@ -318,7 +318,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Payments | Razorpay (primary, INR) + Stripe (fallback) | Webhook idempotency via `processed_webhooks` |
 | Real-time | WebSocket (`ws_routes.py`) | Live chat bidirectional messaging |
 | Rate limiting | SlowAPI on Redis | Per-route + IP/key |
-| Observability | Langfuse + Sentry | Langfuse enabled in prod; uses plain `langfuse` REST callback (not OTEL) — toggle via `LANGFUSE_FORCE_DISABLE=true` in `.env` if memory issues recur |
+| Observability | Langfuse + Sentry | **Two separate Langfuse projects**: "OyeChats Prod" (keys in GitHub Secrets) and "OyeChats Dev" (keys in local `.env`). Traces go to the matching project — no mixing. Toggle via `LANGFUSE_FORCE_DISABLE=true` if needed. |
 | CDN | Cloudflare R2 | `cdn.oyechats.com/oyechats-widget.js` |
 | CI/CD | GitHub Actions | `ci.yml`, `deploy-api.yml`, `deploy-widget.yml` |
 | Dependency Mgmt | uv (Python) + npm (JavaScript) | |
