@@ -312,6 +312,33 @@ TRIAL_DATA_RETENTION_DAYS = int(os.getenv("TRIAL_DATA_RETENTION_DAYS", "15"))
 # given the gateway time to recover the card, now stop bleeding LLM credits".
 PAYMENT_FAILED_GRACE_DAYS = int(os.getenv("PAYMENT_FAILED_GRACE_DAYS", "7"))
 
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    """Parse a boolean feature flag from the environment.
+
+    Accepts ``1/true/yes/on`` (case-insensitive) as true and
+    ``0/false/no/off`` as false. An unset/blank value resolves to ``default``.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ── Payment remediation feature flags (docs/billing/2026-06-29-remediation-plan.md) ──
+#
+# WEBHOOK_RETRY_ON_ERROR (default ON): when a verified webhook's processing
+# raises, return 5xx so the provider retries (safe — event-id idempotency makes
+# retries no-ops) and dead-letter the raw event instead of silently ACKing 200.
+# Default ON because the legacy "200 on error" behaviour drops paid events; the
+# flag is an emergency rollback switch only.
+WEBHOOK_RETRY_ON_ERROR = _env_flag("WEBHOOK_RETRY_ON_ERROR", default=True)
+
+# PRORATED_UPGRADES_ENABLED (default OFF): gates the Phase 6 prorated mid-cycle
+# upgrade flow. Until enabled, the existing cancel-and-recreate upgrade path
+# stays in effect.
+PRORATED_UPGRADES_ENABLED = _env_flag("PRORATED_UPGRADES_ENABLED", default=False)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler
 # ─────────────────────────────────────────────────────────────────────────────

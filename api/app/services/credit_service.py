@@ -649,44 +649,55 @@ def clawback_refund(
     charge_minor: int,
     refund_minor: int,
     note: str,
+    bot_id: int | None = None,
+    reasons: tuple[str, ...] = ("plan_grant", "topup"),
 ) -> tuple[int, int | None]:
     """Reverse credits on a refunded subscription / top-up invoice.
 
     Accounting rule, intentionally lenient: claw back only the UNCONSUMED
-    portion of the most recent grant for this client, scaled by the
-    fraction of the original charge that was refunded. Credits already
-    spent on chats are gone — we can't unscramble the LLM tokens that
-    bought them, so the customer keeps whatever they used before the
-    refund. The clawback caps at the grant's remaining balance so this
-    can never drive the customer's overall credit balance negative.
+    portion of the most recent matching grant **within the same ledger
+    scope** the payment credited, scaled by the fraction of the original
+    charge that was refunded. Credits already spent on chats are gone — we
+    can't unscramble the LLM tokens that bought them, so the customer keeps
+    whatever they used before the refund. The clawback caps at the grant's
+    remaining balance so this can never drive the balance negative.
 
-    Returns ``(amount_clawed_back, ledger_entry_id)``. The entry id is
-    ``None`` when nothing was clawed back — either because there is no
-    matching grant, the grant was already fully consumed, or the refund
-    fraction came out to zero. Callers use the tuple for the webhook
-    log line; nothing depends on the entry id.
+    Scoping (remediation C2):
+
+    * ``bot_id`` selects the ledger scope — the bot's isolated ledger when set,
+      else the client pool. The reversal lands in, and the advisory lock is
+      taken on, that same scope, so a per-bot refund no longer writes to the
+      client pool (which left bot credits un-reversed and could drive the pool
+      negative).
+    * ``reasons`` narrows which grant type to claw back: a subscription refund
+      passes ``("plan_grant",)`` and a top-up refund ``("topup",)`` so that,
+      when a client holds both, the refund reverses the grant the invoice
+      actually paid for rather than whichever was created most recently.
+
+    Returns ``(amount_clawed_back, ledger_entry_id)``; the entry id is ``None``
+    when nothing was clawed back (no matching grant, already consumed, or the
+    refund fraction rounded to zero).
     """
     if charge_minor <= 0 or refund_minor <= 0:
         return (0, None)
 
-    _acquire_client_lock(session, client_id)
+    _acquire_client_lock(session, client_id, bot_id)
 
     # Cap the fraction at 1.0 — a partial refund larger than the original
     # charge shouldn't happen, but if a webhook glitch ever sends one we
     # clamp instead of multiplying past the original grant.
     refund_fraction = min(1.0, float(refund_minor) / float(charge_minor))
 
-    # Pick the most recent positive plan / top-up grant for this client.
-    # We don't have a hard FK from invoice → ledger today, and a renewal
-    # cron runs at most once per period, so the latest grant is in
-    # practice the one this invoice paid for. Edge case (renewed twice
-    # in the same hour) is so unlikely it isn't worth a schema change.
+    # Pick the most recent positive matching grant in this (client, bot) scope.
+    # We don't have a hard FK from invoice → ledger today, and a renewal cron
+    # runs at most once per period, so the latest grant of the right type is in
+    # practice the one this invoice paid for.
     grant = (
         session.execute(
             select(CreditLedger)
             .where(
-                CreditLedger.client_id == client_id,
-                CreditLedger.reason.in_(("plan_grant", "topup")),
+                *_scope_clause(client_id, bot_id),
+                CreditLedger.reason.in_(reasons),
                 CreditLedger.delta > 0,
             )
             .order_by(CreditLedger.created_at.desc())
@@ -710,6 +721,7 @@ def clawback_refund(
 
     entry = CreditLedger(
         client_id=client_id,
+        bot_id=bot_id,
         delta=-clawback,
         reason="refund",
         grant_id=grant.id,

@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -1002,6 +1003,10 @@ class Invoice(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     subscription_id = Column(Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True)
+    # Ledger scope this payment credited: the bot's isolated ledger when set,
+    # else the client pool (NULL). Recorded so a refund claws credits back from
+    # the SAME scope it granted them to (remediation C2).
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Amount
     amount_cents = Column(Integer, nullable=False)
@@ -1141,6 +1146,36 @@ class ProcessedWebhook(Base):
     event_id = Column(Text, primary_key=True)
     provider = Column(Text, nullable=False, index=True)  # 'stripe' | 'razorpay'
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class FailedWebhook(Base):
+    """Dead-letter store for billing webhooks whose processing failed.
+
+    When a verified Razorpay/Stripe webhook raises during processing, the
+    handler's transaction is rolled back (including the ``processed_webhooks``
+    idempotency row), and the raw event is persisted here in a separate
+    transaction so it survives that rollback. The provider is then asked to
+    retry (5xx); this row is the backstop if every retry is exhausted.
+
+    ``raw_payload`` keeps the **exact signed bytes** (not parsed JSON) so the
+    ``X-Razorpay-Signature`` HMAC can be re-verified when the event is replayed.
+    """
+
+    __tablename__ = "failed_webhooks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(Text, nullable=False, index=True)  # 'razorpay' | 'stripe'
+    # Provider event id (``x-razorpay-event-id``); may be absent on some deliveries.
+    event_id = Column(Text, nullable=True, index=True)
+    event_type = Column(Text, nullable=True)  # e.g. 'payment.captured'
+    raw_payload = Column(LargeBinary, nullable=False)  # exact bytes, for signature re-verify
+    signature = Column(Text, nullable=True)  # X-Razorpay-Signature header at receipt time
+    headers = Column(JSONB, nullable=True)  # selected headers captured for replay/debug
+    error = Column(Text, nullable=True)  # repr of the exception that caused the failure
+    # 'pending' (awaiting replay) | 'replayed' (successfully reprocessed) | 'ignored'.
+    status = Column(Text, nullable=False, server_default="pending", default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    replayed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 # ── Super-admin audit & supporting tables ────────────────────────────────────

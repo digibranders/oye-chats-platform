@@ -33,6 +33,8 @@ References (Razorpay docs, validated against this implementation):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -697,18 +699,19 @@ def verify_webhook_signature(*, payload: bytes, signature: str) -> None:
     upstream changes if the algorithm ever evolves).
 
     ``RAZORPAY_WEBHOOK_SECRET`` must be set; we fail-closed if missing.
+
+    The HMAC is computed over the **exact raw bytes** Razorpay sent (never a
+    ``decode("utf-8")`` round-trip, which can diverge and raises outright on
+    non-UTF-8 bytes) and compared with :func:`hmac.compare_digest` (constant
+    time). This is byte-for-byte the algorithm the Razorpay SDK uses, so we
+    drop the SDK dependency on this trust-boundary hot path.
     """
     if not RAZORPAY_WEBHOOK_SECRET:
         raise RuntimeError("RAZORPAY_WEBHOOK_SECRET not configured")
-    rzp = _get_razorpay()
-    try:
-        rzp.utility.verify_webhook_signature(
-            payload.decode("utf-8") if isinstance(payload, bytes) else payload,
-            signature,
-            RAZORPAY_WEBHOOK_SECRET,
-        )
-    except Exception as exc:
-        raise SignatureMismatch("Razorpay webhook signature mismatch") from exc
+    body = payload if isinstance(payload, bytes) else str(payload).encode("utf-8")
+    expected = hmac.new(RAZORPAY_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature or ""):
+        raise SignatureMismatch("Razorpay webhook signature mismatch")
 
 
 def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
@@ -1167,6 +1170,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
                 Invoice(
                     client_id=local.client_id,
                     subscription_id=local.id,
+                    bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
                     amount_cents=int(pay_entity.get("amount", 0)),
                     currency=str(pay_entity.get("currency", "INR")).lower(),
                     status="paid",
@@ -1333,9 +1337,22 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     amount_paise = int((pay_entity or {}).get("amount") or (order_entity or {}).get("amount") or 0)
     amount_inr = int(notes.get("amount_inr") or (amount_paise // 100))
 
+    # Notes may carry ``bot_id`` for per-bot top-ups (set by
+    # ``create_topup_order(bot_id=...)``). Default to None → client pool.
+    # Resolved before the invoice insert so the invoice records the ledger
+    # scope this payment credited (remediation C2 — drives refund clawback).
+    target_bot_id_raw = notes.get("bot_id")
+    target_bot_id: int | None = None
+    if target_bot_id_raw is not None:
+        try:
+            target_bot_id = int(target_bot_id_raw)
+        except (TypeError, ValueError):
+            target_bot_id = None
+
     invoice = Invoice(
         client_id=client_id,
         subscription_id=None,
+        bot_id=target_bot_id,
         amount_cents=amount_paise,
         currency=str((pay_entity or {}).get("currency", "INR")).lower(),
         status="paid",
@@ -1345,16 +1362,6 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     )
     session.add(invoice)
     session.flush()
-
-    # Notes may carry ``bot_id`` for per-bot top-ups (set by
-    # ``create_topup_order(bot_id=...)``). Default to None → client pool.
-    target_bot_id_raw = notes.get("bot_id")
-    target_bot_id: int | None = None
-    if target_bot_id_raw is not None:
-        try:
-            target_bot_id = int(target_bot_id_raw)
-        except (TypeError, ValueError):
-            target_bot_id = None
 
     credit_service.grant_topup(
         session,
@@ -1423,12 +1430,19 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     if charge_minor <= 0:
         return f"Invoice {inv.id} has no recorded charge amount"
 
+    # Reverse credits from the SAME ledger scope and grant type the payment
+    # credited (remediation C2): the invoice records the bot scope, and a
+    # subscription invoice (subscription_id set) paid for a plan_grant while a
+    # one-off invoice paid for a topup.
+    reasons = ("plan_grant",) if inv.subscription_id is not None else ("topup",)
     clawed, entry_id = credit_service.clawback_refund(
         session,
         client_id=inv.client_id,
         charge_minor=charge_minor,
         refund_minor=refund_minor,
         note=f"Refund clawback for Razorpay refund {refund_entity.get('id', '?')}",
+        bot_id=inv.bot_id,
+        reasons=reasons,
     )
 
     # Razorpay refunds may be partial; mirror Stripe's distinction so the
