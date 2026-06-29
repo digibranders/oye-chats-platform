@@ -14,6 +14,7 @@ OyeChats is a SaaS chatbot platform where customers sign up, create chatbot inst
 | [Local Development Setup](./development-setup.md) | Environment setup, running services, and dev workflow |
 | [API Reference](./api-reference.md) | All REST endpoints, authentication, request/response schemas |
 | [Database Schema](./database-schema.md) | ORM models, relationships, indexes, and migrations |
+| [Timezone & Datetime Handling](./timezone-handling.md) | How time is stored (UTC), business-hours zones, and frontend display |
 | [RAG Pipeline & Ingestion](./rag-pipeline.md) | Document processing, embedding, hybrid search, and LLM generation |
 | [Widget Embedding Guide](./widget-embedding.md) | How the embeddable chat widget works, build process, and integration |
 | [Admin Dashboard](./admin-dashboard.md) | Bot management UI, analytics, and configuration |
