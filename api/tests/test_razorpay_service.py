@@ -384,6 +384,65 @@ def test_create_subscription_no_discount_uses_base_plan(monkeypatch):
     assert result["billing_plan_id"] == "plan_starter_inr_monthly"
 
 
+def test_create_subscription_auto_resolves_referral_discount(monkeypatch):
+    """Regression (bug B): when the caller passes no ``discount_bps``, a referred
+    customer's standing discount is auto-resolved and applied. This is what keeps
+    the discount on the change-plan, upgrade, downgrade-cutover and per-bot paths
+    (which all call create_subscription without an explicit discount), so a
+    referred customer keeps their discount on every future payment.
+    """
+    from app.services import razorpay_service as rs
+
+    rzp = MagicMock()
+    rzp.subscription.create.return_value = {"id": "sub_auto", "short_url": "u", "status": "created"}
+    monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
+    monkeypatch.setattr(rs, "resolve_discounted_plan", lambda *a, **kw: "plan_disc_auto")
+    monkeypatch.setattr(
+        "app.services.discount_service.resolve_customer_discount_bps",
+        lambda *a, **kw: (1500, {"referral_code": "PRIYA20"}),
+    )
+
+    referred = SimpleNamespace(id=55, name="Ref", email="r@e.com", referral_code_id=99)
+    # No discount_bps passed — mirrors the change-plan / upgrade / per-bot calls.
+    result = rs.create_subscription(MagicMock(), referred, _make_plan(), "monthly")
+
+    sent = rzp.subscription.create.call_args.kwargs["data"]
+    assert sent["plan_id"] == "plan_disc_auto"
+    assert result["billing_plan_id"] == "plan_disc_auto"
+
+
+def test_create_subscription_explicit_zero_skips_auto_discount(monkeypatch):
+    """An explicit ``discount_bps=0`` forces full price even for a referred
+    client — auto-resolution only triggers on the ``None`` default, so callers
+    can still opt out deliberately.
+    """
+    from app.services import razorpay_service as rs
+
+    rzp = MagicMock()
+    rzp.subscription.create.return_value = {"id": "sub_full", "short_url": "u", "status": "created"}
+    monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
+
+    called = {"resolve": False, "disc": False}
+    monkeypatch.setattr(
+        "app.services.discount_service.resolve_customer_discount_bps",
+        lambda *a, **kw: called.__setitem__("resolve", True) or (1500, {}),
+    )
+    monkeypatch.setattr(
+        rs,
+        "resolve_discounted_plan",
+        lambda *a, **kw: called.__setitem__("disc", True) or "plan_should_not_be_used",
+    )
+
+    referred = SimpleNamespace(id=55, name="Ref", email="r@e.com", referral_code_id=99)
+    result = rs.create_subscription(MagicMock(), referred, _make_plan(), "monthly", discount_bps=0)
+
+    assert called["resolve"] is False
+    assert called["disc"] is False
+    sent = rzp.subscription.create.call_args.kwargs["data"]
+    assert sent["plan_id"] == "plan_starter_inr_monthly"
+    assert result["billing_plan_id"] == "plan_starter_inr_monthly"
+
+
 # ── Webhook dispatcher ────────────────────────────────────────────────────────
 
 

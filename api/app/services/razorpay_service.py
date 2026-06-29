@@ -253,7 +253,7 @@ def create_subscription(
     seat_quantity: int | None = None,
     total_count: int | None = None,
     extra_notes: dict[str, str] | None = None,
-    discount_bps: int = 0,
+    discount_bps: int | None = None,
 ) -> dict[str, Any]:
     """Create a Razorpay Subscription for ``plan`` and return Checkout payload.
 
@@ -272,6 +272,14 @@ def create_subscription(
     metadata. The frontend opens ``new Razorpay({ subscription_id, ... })``;
     the customer authorises a UPI mandate (or pays with card) and Razorpay
     fires ``subscription.activated`` shortly after.
+
+    ``discount_bps`` controls the referral customer-discount:
+      * ``None`` (default) → auto-resolve the client's standing discount from
+        their attached referral code, so the discount applies to EVERY
+        subscription they ever create (checkout, plan change, upgrade,
+        downgrade cutover, per-bot) and recurs on all future charges.
+      * an explicit ``int`` (including ``0``) → use that value verbatim,
+        bypassing auto-resolution (e.g. to force full price).
     """
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"Invalid billing_cycle '{billing_cycle}'")
@@ -296,6 +304,16 @@ def create_subscription(
             f"Plan '{plan.name}' has no Razorpay plan id configured for {billing_cycle} billing. "
             "Create the plan in the Razorpay dashboard and set the id from super admin."
         )
+
+    # Auto-resolve the customer's standing referral discount when the caller
+    # didn't pass one explicitly. Centralising it here is what guarantees the
+    # discount follows the customer across ALL future payments — every
+    # subscription path (first checkout, change-plan, upgrade, downgrade
+    # cutover, per-bot) flows through here, so none can silently drop it.
+    if discount_bps is None:
+        from app.services.discount_service import resolve_customer_discount_bps
+
+        discount_bps, _ = resolve_customer_discount_bps(session, client)
 
     # Apply a recurring customer discount by swapping in a discounted plan.
     # Test-client override is excluded from discounts so QA flows stay clean.
