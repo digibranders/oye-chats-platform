@@ -116,6 +116,32 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
 };
 
 // Date separator — shown between messages from different days (Intercom/Crisp pattern)
+// Format an ISO timestamp ("next_available_at" from the backend availability
+// resolver) into a visitor-friendly "we're back at..." phrase. Uses the
+// browser's locale so a US visitor sees "Monday at 9:00 AM EST" while an
+// IST visitor sees "Monday at 6:30 PM IST" for the same instant. Returns
+// null if the timestamp is missing or unparseable so the caller can fall
+// back to generic copy.
+const formatNextAvailable = (iso) => {
+    if (!iso) return null;
+    const target = new Date(iso);
+    if (Number.isNaN(target.getTime())) return null;
+    const now = new Date();
+    const sameDay = target.toDateString() === now.toDateString();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow = target.toDateString() === tomorrow.toDateString();
+    const time = target.toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short',
+    });
+    if (sameDay) return `today at ${time}`;
+    if (isTomorrow) return `tomorrow at ${time}`;
+    const day = target.toLocaleDateString(undefined, { weekday: 'long' });
+    return `${day} at ${time}`;
+};
+
 const DateSeparator = ({ date }) => {
     const label = (() => {
         const d = new Date(date);
@@ -715,7 +741,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         const fallbackTimer = setTimeout(() => {
             if (cancelled) return;
             setChatMode('unavailable');
-        }, 10000);
+        }, 18000);
 
         return () => {
             cancelled = true;
@@ -2332,15 +2358,41 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             );
 
                             if (isCompact) {
+                                const isOutOfHours = liveChatState?.state === 'out_of_hours';
+                                const nextAvailableLabel = isOutOfHours
+                                    ? formatNextAvailable(liveChatState?.nextAvailableAt)
+                                    : null;
+                                const title = isOutOfHours
+                                    ? 'Our team is offline right now'
+                                    : 'We’ll be right back!';
                                 return (
                                     <>
                                         <div className="flex items-center gap-2 mb-1">
                                             <Mail className="w-4 h-4 flex-shrink-0" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
-                                            <p className="text-[13px] font-semibold text-[#16202C]">We&apos;ll be right back!</p>
+                                            <p className="text-[13px] font-semibold text-[#16202C]">{title}</p>
                                         </div>
                                         <p className="text-[12px] text-gray-500 mb-3">
-                                            Leave a message and we&apos;ll get back to you at{' '}
-                                            <strong className="text-gray-700">{offlineForm.email}</strong>.
+                                            {isOutOfHours && nextAvailableLabel ? (
+                                                <>
+                                                    Thanks for reaching out! Our team is back{' '}
+                                                    <strong className="text-gray-700">{nextAvailableLabel}</strong>.
+                                                    Leave a message and we&apos;ll reply at{' '}
+                                                    <strong className="text-gray-700">{offlineForm.email}</strong>{' '}
+                                                    within one business day.
+                                                </>
+                                            ) : isOutOfHours ? (
+                                                <>
+                                                    Thanks for reaching out! Our team isn&apos;t available right now.
+                                                    Leave a message and we&apos;ll reply at{' '}
+                                                    <strong className="text-gray-700">{offlineForm.email}</strong>{' '}
+                                                    within one business day.
+                                                </>
+                                            ) : (
+                                                <>
+                                                    Leave a message and we&apos;ll get back to you at{' '}
+                                                    <strong className="text-gray-700">{offlineForm.email}</strong>.
+                                                </>
+                                            )}
                                         </p>
                                         <form onSubmit={handleOfflineSubmit} className="space-y-2">
                                             <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 focus-within:border-blue-300 focus-within:bg-white transition-colors">

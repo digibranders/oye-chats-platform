@@ -165,3 +165,19 @@ def get_global_feedback(superadmin: Client = Depends(get_superadmin)):
     except Exception as e:
         logger.error(f"Failed to fetch global feedback logs: {e}")
         raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e
+
+
+@router.get("/platform-feedback")
+def get_platform_feedback(superadmin: Client = Depends(get_superadmin)):
+    """
+    Superadmin only: Get all free-text feedback submitted via the admin
+    dashboard "Feedback" side tab.
+    """
+    try:
+        from app.db.repository import get_all_platform_feedback
+
+        with get_session() as session:
+            return get_all_platform_feedback(session)
+    except Exception as e:
+        logger.error(f"Failed to fetch platform feedback: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load platform feedback.") from e

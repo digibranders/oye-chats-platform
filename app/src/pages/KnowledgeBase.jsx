@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye, ChevronsUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription } from '../services/api';
+import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription, discoverCrawlUrls } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -71,6 +71,14 @@ export default function KnowledgeBase() {
   const [url, setUrl] = useState(localStorage.getItem('company_website') || '');
   const [useJs, setUseJs] = useState(false);
 
+  // Pre-crawl discovery state
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoveredTotal, setDiscoveredTotal] = useState(null);
+  const [showCrawlConfirm, setShowCrawlConfirm] = useState(false);
+
+  // Dismiss the confirmation banner whenever the URL or JS-mode changes
+  const resetDiscovery = () => { setDiscoveredTotal(null); setShowCrawlConfirm(false); };
+
   // Plan-aware crawl ceiling — shown inline so the user knows their cap
   // before they kick off a crawl, and used to render an upgrade-CTA toast
   // when the backend rejects with 403 plan_limit_exceeded.
@@ -107,7 +115,11 @@ export default function KnowledgeBase() {
   // the whole admin app, so the floating indicator and this page agree on
   // state). These locals are derived from context — they're kept around so
   // the existing render JSX doesn't need to change shape.
-  const isCrawling = isCrawlActive;
+  // Only surface in-page crawl detail when the active crawl belongs to the
+  // currently selected bot. The global toast (GlobalCrawlIndicator) stays
+  // visible regardless — this guard only affects the detail panel here.
+  const isThisBotCrawl = crawl.botId === null || crawl.botId === selectedBot?.id;
+  const isCrawling = isCrawlActive && isThisBotCrawl;
   const scanningUrls = (crawl.urls || []).map((u, i, arr) => ({
     url: u,
     // The most-recently-discovered URL is the one actively being crawled;
@@ -165,21 +177,27 @@ export default function KnowledgeBase() {
   // so the Knowledge page can clear its URL input and refresh the document
   // list — UI side-effects that don't belong in the shared context.
   useEffect(() => {
-    if (crawl.status === 'done') {
+    // Only react to crawl terminal states that belong to the currently selected
+    // bot. If bot2's crawl finishes while the user is viewing bot1, we must not
+    // reset bot1's URL field, switch its tab, or re-fetch its document list.
+    const isOwnCrawl = crawl.botId === null || crawl.botId === selectedBot?.id;
+    if (crawl.status === 'done' && isOwnCrawl) {
       setUrl('');
       setRecrawlingDoc(null);
+      resetDiscovery();
       if (activeTab === 'list') {
         fetchDocuments();
       } else {
         setActiveTab('list');
       }
-    } else if (crawl.status === 'cancelled' || crawl.status === 'failed') {
+    } else if ((crawl.status === 'cancelled' || crawl.status === 'failed') && isOwnCrawl) {
       setRecrawlingDoc(null);
+      resetDiscovery();
       // Still refresh in case partial pages were ingested before cancel/fail.
       if (activeTab === 'list') fetchDocuments();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [crawl.status]);
+  }, [crawl.status, crawl.botId]);
 
   if (!botsLoading && bots.length === 0) {
     return <EmptyState title="Sources" description="Create a chatbot first, then upload documents and URLs to build its knowledge base." actionLabel="Create Chatbot" actionTo="/chatbot" />;
@@ -252,7 +270,7 @@ export default function KnowledgeBase() {
       setActiveTab('urls');
       // Delegate to CrawlContext — it owns the lifecycle, the global toast
       // follows the user across routes, and the page just observes state.
-      await startCrawl({ url: crawlUrl, botId: selectedBot?.id, useJs: false, replaceSource });
+      await startCrawl({ url: crawlUrl, botId: selectedBot?.id, botName: selectedBot?.name, useJs: false, replaceSource });
     } catch (err) {
       showToast('error', `Recrawl failed: ${err?.detail || err?.message || err}`);
       setActiveTab('list');
@@ -260,14 +278,38 @@ export default function KnowledgeBase() {
     }
   };
 
+  // Step 1: discover page count, then show confirmation banner
   const handleCrawlSubmit = async (e) => {
     e.preventDefault();
-    if (!url.trim()) return;
+    if (!url.trim() || isDiscovering) return;
+
+    setDiscoveredTotal(null);
+    setShowCrawlConfirm(false);
+    setIsDiscovering(true);
     try {
-      await startCrawl({ url, botId: selectedBot?.id, useJs });
+      const result = await discoverCrawlUrls(url, selectedBot?.id);
+      // Preserve 0 as a meaningful value: "sitemap found but empty / no sitemap"
+      // so the dialog can show a helpful note rather than the generic fallback.
+      setDiscoveredTotal(typeof result.total_found === 'number' ? result.total_found : null);
+    } catch (err) {
+      if (err?.status === 429) {
+        showToast('error', 'Too many scan requests — please wait a few minutes before scanning again.');
+        return; // don't show confirm dialog when rate-limited
+      }
+      // Other failures (network blip, auth) — still allow crawl without count.
+      setDiscoveredTotal(null);
+    } finally {
+      setIsDiscovering(false);
+      setShowCrawlConfirm(true);
+    }
+  };
+
+  // Step 2: user confirmed — actually start the crawl
+  const handleConfirmCrawl = async () => {
+    setShowCrawlConfirm(false);
+    try {
+      await startCrawl({ url, botId: selectedBot?.id, botName: selectedBot?.name, useJs, discoveredTotal });
     } catch (error) {
-      // 403 plan_limit_exceeded gets a distinct, action-oriented toast that
-      // points the user at /billing instead of the generic crawl-error text.
       const detail = error?.detail;
       if (detail && typeof detail === 'object' && detail.error === 'plan_limit_exceeded') {
         showToast(
@@ -509,7 +551,7 @@ export default function KnowledgeBase() {
                 <div className="relative group">
                   <LinkIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-surface-400 group-focus-within:text-primary-500 transition-colors" />
                   <input
-                    type="url" value={url} onChange={(e) => setUrl(e.target.value)} required
+                    type="url" value={url} onChange={(e) => { setUrl(e.target.value); resetDiscovery(); }} required
                     placeholder="https://example.com"
                     className={cn(
                       'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white dark:bg-surface-800 text-surface-900 dark:text-white',
@@ -551,7 +593,7 @@ export default function KnowledgeBase() {
               {/* JavaScript mode toggle */}
               <button
                 type="button"
-                onClick={() => setUseJs(prev => !prev)}
+                onClick={() => { setUseJs(prev => !prev); resetDiscovery(); }}
                 disabled={isCrawling}
                 className={cn(
                   'w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-sm',
@@ -584,10 +626,16 @@ export default function KnowledgeBase() {
               <div className="flex items-center gap-2">
                 <button
                   type="submit"
-                  disabled={isCrawling || !url}
+                  disabled={isCrawling || isDiscovering || !url}
                   className="flex-1 flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-70 shadow-sm"
                 >
-                  {isCrawling ? <><Loader2 size={16} className="animate-spin" /> Crawling...</> : <><Globe size={16} /> Start Crawl</>}
+                  {isCrawling
+                    ? <><Loader2 size={16} className="animate-spin" /> Crawling...</>
+                    : isDiscovering
+                      ? <><Loader2 size={16} className="animate-spin" /> Counting pages...</>
+                      : url
+                        ? <><Globe size={16} /> Scan Website</>
+                        : <><Globe size={16} /> Start Crawl</>}
                 </button>
                 {isCrawling && (
                   <button
@@ -651,8 +699,68 @@ export default function KnowledgeBase() {
               )}
             </AnimatePresence>
 
+            {/* Pre-crawl confirmation — shown after discovery, before the crawl starts */}
             <AnimatePresence>
-              {(isCrawling || scanningUrls.length > 0) && (
+              {showCrawlConfirm && !isCrawling && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="p-4 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="p-1.5 rounded-lg bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-400 shrink-0 mt-0.5">
+                      <Globe size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      {discoveredTotal > 0 ? (
+                        <p className="text-sm font-semibold text-primary-900 dark:text-primary-100">
+                          Found at least <span className="tabular-nums">{discoveredTotal.toLocaleString()}</span> page{discoveredTotal === 1 ? '' : 's'} — crawl may discover more
+                        </p>
+                      ) : discoveredTotal === 0 ? (
+                        <>
+                          <p className="text-sm font-semibold text-primary-900 dark:text-primary-100">
+                            No sitemap found — ready to crawl?
+                          </p>
+                          <p className="text-xs text-primary-700/60 dark:text-primary-300/60 mt-0.5">
+                            We&apos;ll follow links from the homepage to discover pages automatically.
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-sm font-semibold text-primary-900 dark:text-primary-100">
+                          Ready to crawl this website?
+                        </p>
+                      )}
+                      <p className="text-xs text-primary-700/80 dark:text-primary-300/80 mt-0.5 truncate">
+                        {url}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={handleConfirmCrawl}
+                      className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition-colors"
+                    >
+                      <Globe size={13} />
+                      {discoveredTotal > 0
+                        ? `Crawl ${discoveredTotal.toLocaleString()} page${discoveredTotal === 1 ? '' : 's'}`
+                        : 'Yes, crawl it'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowCrawlConfirm(false)}
+                      className="text-sm font-medium px-4 py-2 rounded-lg bg-white/60 dark:bg-white/5 hover:bg-white dark:hover:bg-white/10 text-primary-800 dark:text-primary-200 border border-primary-200 dark:border-primary-500/20 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {isThisBotCrawl && (isCrawling || scanningUrls.length > 0) && (
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -666,9 +774,12 @@ export default function KnowledgeBase() {
                     </span>
                     <span className={cn('text-[10px] ml-auto font-medium tabular-nums', isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500')}>
                       {isCrawling
-                        ? (crawl.maxPages
-                            ? `${scanningUrls.length}/${crawl.maxPages} pages`
-                            : (scanningUrls.length > 0 ? `${scanningUrls.length} pages` : 'in progress'))
+                        ? (() => {
+                            const denominator = crawl.discoveredTotal || crawl.maxPages;
+                            return denominator
+                              ? `${scanningUrls.length}/${denominator} pages`
+                              : scanningUrls.length > 0 ? `${scanningUrls.length} pages` : 'in progress';
+                          })()
                         : `${scanningUrls.filter(u => u.status === 'done').length} pages`}
                     </span>
                   </div>

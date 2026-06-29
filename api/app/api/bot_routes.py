@@ -331,7 +331,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
     if launcher_logo_url and not launcher_logo_url.startswith("http"):
         launcher_logo_url = f"{str(request.base_url).rstrip('/')}/files/{launcher_logo_url}"
 
-    owner_status = bot_subscription_status(bot.client_id)
+    owner_status = bot_subscription_status(bot.client_id, subscription_id=getattr(bot, "subscription_id", None))
     is_offline = owner_status not in ("trialing", "active", "past_due")
 
     # Plan-feature gate for live chat. Even if the bot has live_chat_enabled

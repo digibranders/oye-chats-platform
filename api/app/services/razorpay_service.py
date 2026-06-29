@@ -1049,7 +1049,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # free credits stacked on top of the new grant (e.g. 500 + 10,000
         # → 10,500 / 10,000). Mirrors the same reset → grant ordering used
         # by the Stripe change-plan path and ``start_trial_subscription``.
-        credit_service.reset_monthly_plan_credits(session, client_id)
+        credit_service.reset_monthly_plan_credits(session, client_id, bot_id=local.bot_id)
         credit_service.grant_for_subscription(session, local)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent —
@@ -1139,7 +1139,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         and abs((new_period_start - local.current_period_start).total_seconds()) < 86400
     )
     if not is_first_cycle:
-        credit_service.reset_monthly_plan_credits(session, local.client_id)
+        credit_service.reset_monthly_plan_credits(session, local.client_id, bot_id=local.bot_id)
         credit_service.grant_for_subscription(session, local)
         logger.info(
             "Renewed monthly credits for client %s from subscription.charged (%s)",

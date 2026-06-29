@@ -604,7 +604,7 @@ def _handle_invoice_paid(session: Session, data: dict) -> str:
         if period_start and sub.created_at and abs((period_start - sub.created_at).total_seconds()) < 86400:
             logger.info(f"Skipping grant for first invoice on sub {sub.id} (already granted at checkout)")
         else:
-            credit_service.reset_monthly_plan_credits(session, sub.client_id)
+            credit_service.reset_monthly_plan_credits(session, sub.client_id, bot_id=sub.bot_id)
             credit_service.grant_for_subscription(session, sub)
             logger.info(f"Renewed monthly credits for client {sub.client_id} from invoice {stripe_invoice_id}")
 

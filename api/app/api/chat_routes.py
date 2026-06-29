@@ -269,7 +269,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
     # message instead of a 4xx error. The visitor sees a polite "we're
     # away" reply; nothing on the customer's website breaks. Credits are
     # not deducted on this path.
-    owner_status = bot_subscription_status(bot.client_id)
+    owner_status = bot_subscription_status(bot.client_id, subscription_id=getattr(bot, "subscription_id", None))
     if owner_status not in ("trialing", "active", "past_due"):
         logger.info(
             "chat_blocked_inactive_subscription bot_id=%s client_id=%s status=%s",
@@ -379,7 +379,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
     # stream the offline message rather than running the RAG pipeline. No
     # credits are deducted; the SSE shape stays the same so the widget
     # renders the message exactly like a normal short reply.
-    owner_status = bot_subscription_status(bot.client_id)
+    owner_status = bot_subscription_status(bot.client_id, subscription_id=getattr(bot, "subscription_id", None))
     if owner_status not in ("trialing", "active", "past_due"):
         logger.info(
             "chat_stream_blocked_inactive_subscription bot_id=%s client_id=%s status=%s",

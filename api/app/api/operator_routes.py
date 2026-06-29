@@ -591,6 +591,34 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
                 bot.id,
                 availability.state.value,
             )
+
+            # Notify the team even when operators are offline — visitor tried
+            # to reach live support and couldn't. This is the most important
+            # case to alert on (no one was there to receive the request).
+            if bot and bot.email_on_handoff:
+                from app.services.email_service import get_notification_recipients
+
+                lead_info_fallback = get_lead_info_by_session(session, request.session_id)
+                recipients = get_notification_recipients(bot, "handoff_request")
+                if recipients:
+                    contact = None
+                    if lead_info_fallback:
+                        contact = {
+                            "name": lead_info_fallback.name,
+                            "email": lead_info_fallback.email,
+                            "phone": lead_info_fallback.phone,
+                        }
+                    reply_to = getattr(bot, "reply_to_email", None)
+                    fallback_reason = availability.state.value
+                    for recipient in recipients:
+                        send_handoff_request_email(
+                            recipient,
+                            bot.name,
+                            f"[{fallback_reason}] {request.reason or ''}".strip(" []"),
+                            contact,
+                            reply_to=reply_to,
+                        )
+
             return {
                 "success": True,
                 "state": availability.state.value,

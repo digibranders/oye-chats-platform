@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel, field_validator
 
 from app.api.auth import get_current_client
 from app.db.models import Bot, Client
@@ -104,6 +105,72 @@ def update_client_settings(
     except Exception as e:
         logger.error(f"Failed to update settings: {e}")
         raise HTTPException(status_code=500, detail="Failed to update settings.") from e
+
+
+class PlatformFeedbackCreate(BaseModel):
+    message: str
+    attachment_url: str | None = None
+    category: str | None = None
+
+    @field_validator("message")
+    @classmethod
+    def message_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("message must not be empty")
+        if len(v) > 5000:
+            raise ValueError("message must be 5000 characters or fewer")
+        return v
+
+
+@router.post("/feedback", status_code=201)
+def submit_platform_feedback(
+    body: PlatformFeedbackCreate,
+    client: Client = Depends(get_current_client),
+):
+    """Save free-text feedback from an admin dashboard user."""
+    try:
+        from app.db.repository import save_platform_feedback
+
+        with get_session() as session:
+            save_platform_feedback(
+                session,
+                client_id=client.id,
+                message=body.message,
+                attachment_url=body.attachment_url,
+                category=body.category,
+            )
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Failed to save platform feedback: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save feedback.") from e
+
+
+@router.post("/feedback/upload")
+async def upload_feedback_attachment(
+    request: Request,
+    file: UploadFile = File(...),
+    client: Client = Depends(get_current_client),
+):
+    """Upload a feedback attachment (max 10MB) to R2 and return the URL."""
+    # Max file size: 10MB
+    MAX_SIZE = 10 * 1024 * 1024
+    try:
+        content = await file.read()
+        if len(content) > MAX_SIZE:
+            raise HTTPException(status_code=400, detail="File size exceeds the 10MB limit.")
+
+        from app.services.r2_service import upload_chat_file
+
+        file_key = upload_chat_file(content, file.filename, file.content_type)
+        public_url = f"{str(request.base_url).rstrip('/')}/files/{file_key}"
+
+        return {"url": public_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Feedback attachment upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload attachment.") from e
 
 
 @router.post("/upload-logo")

@@ -88,7 +88,7 @@ export default function Settings() {
     //   Standard / Enterprise → fully interactive.
     const widgetBehaviorLocked = entitlements.isFree;
     const brandingLocked = !entitlements.hasFeature('branding_removable');
-    const [feedback, setFeedback] = useState('');
+    // const [feedback, setFeedback] = useState('');
 
     // Operator password change
     const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
@@ -300,12 +300,12 @@ export default function Settings() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [botId, brandTone, companyName, companyDescription, systemPrompt]);
 
-    const handleSendFeedback = (e) => {
-        e.preventDefault();
-        if (!feedback.trim()) return;
-        showToast('success', 'Your feedback has been recorded!');
-        setFeedback('');
-    };
+    // const handleSendFeedback = (e) => {
+    //     e.preventDefault();
+    //     if (!feedback.trim()) return;
+    //     showToast('success', 'Your feedback has been recorded!');
+    //     setFeedback('');
+    // };
 
     // Only show bot-config sections to client/bot-manager accounts
     const showBotConfig = !isOperator || isBotManager;
@@ -1059,7 +1059,7 @@ export default function Settings() {
             )}
 
             {/* ── Feedback ─────────────────────────────────────────────────── */}
-            <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
+            {/* <div className="bg-white dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
                 <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50 mb-1 flex items-center gap-2">
                     <MessageSquareWarning size={16} className="text-primary-600 dark:text-primary-400" />
                     Send Feedback
@@ -1090,7 +1090,7 @@ export default function Settings() {
                         Send Feedback
                     </button>
                 </form>
-            </div>
+            </div> */}
         </div>
     );
 }

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Users as UsersIcon, Loader2, Key, Mail, Building2 as BuildingIcon, Globe,
-    Copy, Check, Trash2, X, AlertCircle, Search
+    Copy, Check, Trash2, X, AlertCircle, Search, ChevronLeft, ChevronRight
 } from 'lucide-react';
+
+const PAGE_SIZE = 10;
 import { cn } from '../../lib/utils';
 import { getClients, deleteClient } from '../../services/api';
 
@@ -11,6 +13,7 @@ export default function SuperadminClients() {
     const [isLoading, setIsLoading] = useState(true);
     const [copiedField, setCopiedField] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [currentPage, setCurrentPage] = useState(1);
 
     // Client Details Modal State
     const [selectedClient, setSelectedClient] = useState(null);
@@ -73,11 +76,21 @@ export default function SuperadminClients() {
         }
     };
 
-    // Filter clients by search
+    // Filter clients by search — reset to page 1 on query change
     const filteredClients = clients.filter(c =>
         c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         c.email.toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+    const totalPages = Math.max(1, Math.ceil(filteredClients.length / PAGE_SIZE));
+    const safePage = Math.min(currentPage, totalPages);
+    const pageStart = (safePage - 1) * PAGE_SIZE;
+    const paginatedClients = filteredClients.slice(pageStart, pageStart + PAGE_SIZE);
+
+    const handleSearchChange = (e) => {
+        setSearchQuery(e.target.value);
+        setCurrentPage(1);
+    };
 
     return (
         <div className="space-y-8 animate-slide-up">
@@ -108,7 +121,7 @@ export default function SuperadminClients() {
                     <input
                         type="text"
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={handleSearchChange}
                         placeholder="Search clients..."
                         className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all placeholder:text-surface-400 dark:placeholder:text-surface-500"
                     />
@@ -143,7 +156,7 @@ export default function SuperadminClients() {
                                     </td>
                                 </tr>
                             ) : (
-                                filteredClients.map((client) => (
+                                paginatedClients.map((client) => (
                                     <tr
                                         key={client.id}
                                         className={cn(
@@ -215,6 +228,76 @@ export default function SuperadminClients() {
                         </tbody>
                     </table>
                 </div>
+
+                {/* Pagination footer */}
+                {!isLoading && filteredClients.length > 0 && (
+                    <div className="flex items-center justify-between px-6 py-3 border-t border-surface-100 dark:border-surface-800">
+                        <p className="text-xs text-surface-500 dark:text-surface-400">
+                            Showing{' '}
+                            <span className="font-medium text-surface-700 dark:text-surface-300">
+                                {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredClients.length)}
+                            </span>{' '}
+                            of{' '}
+                            <span className="font-medium text-surface-700 dark:text-surface-300">
+                                {filteredClients.length}
+                            </span>{' '}
+                            client{filteredClients.length === 1 ? '' : 's'}
+                        </p>
+
+                        <div className="flex items-center gap-1">
+                            {/* Prev */}
+                            <button
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                disabled={safePage === 1}
+                                className="w-8 h-8 rounded-lg flex items-center justify-center text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            >
+                                <ChevronLeft size={15} />
+                            </button>
+
+                            {/* Page numbers */}
+                            {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
+                                .reduce((acc, p, idx, arr) => {
+                                    if (idx > 0 && p - arr[idx - 1] > 1) {
+                                        acc.push('ellipsis-' + p);
+                                    }
+                                    acc.push(p);
+                                    return acc;
+                                }, [])
+                                .map((item) =>
+                                    typeof item === 'string' ? (
+                                        <span
+                                            key={item}
+                                            className="w-8 h-8 flex items-center justify-center text-xs text-surface-400 dark:text-surface-500"
+                                        >
+                                            …
+                                        </span>
+                                    ) : (
+                                        <button
+                                            key={item}
+                                            onClick={() => setCurrentPage(item)}
+                                            className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
+                                                item === safePage
+                                                    ? 'bg-primary-500 text-white shadow-sm'
+                                                    : 'text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800'
+                                            }`}
+                                        >
+                                            {item}
+                                        </button>
+                                    )
+                                )}
+
+                            {/* Next */}
+                            <button
+                                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                disabled={safePage === totalPages}
+                                className="w-8 h-8 rounded-lg flex items-center justify-center text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            >
+                                <ChevronRight size={15} />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Client Details Modal */}

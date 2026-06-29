@@ -39,7 +39,7 @@ def _allow_subscription(monkeypatch):
     """
     from app.api import chat_routes
 
-    monkeypatch.setattr(chat_routes, "bot_subscription_status", lambda _client_id: "active")
+    monkeypatch.setattr(chat_routes, "bot_subscription_status", lambda _client_id, subscription_id=None: "active")
 
 
 def _default_bot(**overrides):
@@ -63,6 +63,9 @@ def _default_bot(**overrides):
         notification_emails=None,
         meeting_booking_enabled=False,
         calendly_url=None,
+        subscription_id=None,
+        is_legacy_pooled=False,
+        _subscription_bot_id=None,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)

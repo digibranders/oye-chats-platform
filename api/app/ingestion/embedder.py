@@ -1,6 +1,12 @@
-"""Embedding via OpenAI text-embedding-3-small API.
+"""Embedding via FastEmbed (primary) with OpenAI as fallback.
 
-Zero local memory footprint — all inference happens server-side.
+FastEmbed runs BAAI/bge-base-en-v1.5 locally via ONNX Runtime — no network
+call, no per-token cost, ~10-30ms per query. The model (~420 MB RAM) is
+lazy-loaded on first use and stays resident for the process lifetime.
+
+OpenAI text-embedding-3-small is used when:
+  - EMBED_PROVIDER=openai is set explicitly in the environment
+  - FastEmbed fails to load or raises during inference (automatic fallback)
 """
 
 import asyncio
@@ -15,43 +21,69 @@ from openai import (
     RateLimitError,
 )
 
-from app.config import EMBED_DIMENSIONS, EMBED_MODEL, OPENAI_API_KEY
+from app.config import (
+    EMBED_DIMENSIONS,
+    EMBED_MODEL,
+    EMBED_PROVIDER,
+    FASTEMBED_MODEL,
+    OPENAI_API_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
-_client: OpenAI | None = None
 
-# OpenAI supports up to 2048 inputs per request, but we cap lower
-# to keep individual request payloads reasonable.
+# ── FastEmbed (primary) ────────────────────────────────────────────────────────
+
+_fastembed_model = None
+
+
+def _get_fastembed_model():
+    global _fastembed_model  # noqa: PLW0603
+    if _fastembed_model is None:
+        from fastembed import TextEmbedding
+
+        logger.info("Loading FastEmbed model: %s", FASTEMBED_MODEL)
+        _fastembed_model = TextEmbedding(model_name=FASTEMBED_MODEL)
+        logger.info("FastEmbed model ready")
+    return _fastembed_model
+
+
+def _fastembed_embed(texts: list[str]) -> list[list[float]]:
+    model = _get_fastembed_model()
+    return [e.tolist() for e in model.embed(texts)]
+
+
+# ── OpenAI (fallback) ──────────────────────────────────────────────────────────
+
+_openai_client: OpenAI | None = None
+
+# OpenAI supports up to 2048 inputs per request; cap lower to keep payloads manageable.
 _MAX_BATCH = 512
 
-# Retry policy for transient OpenAI failures (429, 5xx, timeouts, network).
-# A single 429 mid-ingestion previously aborted the whole transaction and
-# wasted every embedding paid for so far in the same crawl.
 _RETRYABLE_EXCEPTIONS = (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError)
 _RETRY_ATTEMPTS = 5
-_RETRY_BASE_DELAY = 1.0  # seconds
-_RETRY_MAX_DELAY = 30.0  # seconds
+_RETRY_BASE_DELAY = 1.0
+_RETRY_MAX_DELAY = 30.0
 
 
-def _get_client() -> OpenAI:
-    """Return a reusable OpenAI client (lazy-initialised)."""
-    global _client  # noqa: PLW0603
-    if _client is None:
-        _client = OpenAI(api_key=OPENAI_API_KEY)
-    return _client
+def _get_openai_client() -> OpenAI:
+    global _openai_client  # noqa: PLW0603
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    return _openai_client
 
 
-def _embed_batch_with_retry(client: OpenAI, batch: list[str]):
-    """Call the embeddings API with exponential backoff on transient errors."""
+def _openai_embed_batch_with_retry(client: OpenAI, batch: list[str]) -> list[list[float]]:
     last_exc: Exception | None = None
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
         try:
-            return client.embeddings.create(
+            response = client.embeddings.create(
                 input=batch,
                 model=EMBED_MODEL,
                 dimensions=EMBED_DIMENSIONS,
             )
+            sorted_data = sorted(response.data, key=lambda d: d.index)
+            return [d.embedding for d in sorted_data]
         except _RETRYABLE_EXCEPTIONS as exc:
             last_exc = exc
             if attempt == _RETRY_ATTEMPTS:
@@ -65,38 +97,44 @@ def _embed_batch_with_retry(client: OpenAI, batch: list[str]):
                 _RETRY_ATTEMPTS,
             )
             time.sleep(delay)
-    # Exhausted retries — re-raise so the caller can roll back.
     assert last_exc is not None
     raise last_exc
 
 
-def embed_chunks(chunk_content_list: list[str]) -> list[list[float]]:
-    """Embed text chunks via the OpenAI embeddings API.
+def _openai_embed(texts: list[str]) -> list[list[float]]:
+    client = _get_openai_client()
+    result: list[list[float]] = []
+    for i in range(0, len(texts), _MAX_BATCH):
+        result.extend(_openai_embed_batch_with_retry(client, texts[i : i + _MAX_BATCH]))
+    return result
 
-    Automatically batches large lists to stay within API limits and retries
-    transient failures (429 / 5xx / timeout / network) with exponential
-    backoff so a single API hiccup doesn't roll back an entire ingestion.
+
+# ── Public interface ───────────────────────────────────────────────────────────
+
+
+def embed_chunks(chunk_content_list: list[str]) -> list[list[float]]:
+    """Embed a list of text chunks, returning one float vector per chunk.
+
+    Uses FastEmbed (local ONNX) by default; falls back to OpenAI on any
+    FastEmbed failure. Set EMBED_PROVIDER=openai to skip FastEmbed entirely.
     """
     if not chunk_content_list:
         return []
 
-    client = _get_client()
-    all_embeddings: list[list[float]] = []
+    if EMBED_PROVIDER == "openai":
+        return _openai_embed(chunk_content_list)
 
-    for i in range(0, len(chunk_content_list), _MAX_BATCH):
-        batch = chunk_content_list[i : i + _MAX_BATCH]
-        response = _embed_batch_with_retry(client, batch)
-        # Response objects are sorted by index, but sort explicitly to be safe
-        sorted_data = sorted(response.data, key=lambda d: d.index)
-        all_embeddings.extend([d.embedding for d in sorted_data])
-
-    return all_embeddings
+    try:
+        return _fastembed_embed(chunk_content_list)
+    except Exception as exc:
+        logger.warning(
+            "FastEmbed failed (%s: %s) — falling back to OpenAI embeddings",
+            type(exc).__name__,
+            exc,
+        )
+        return _openai_embed(chunk_content_list)
 
 
 async def embed_chunks_async(chunk_content_list: list[str]) -> list[list[float]]:
-    """Async wrapper that runs the API call in a thread.
-
-    Keeps the event loop free for WebSocket heartbeats, SSE keepalives,
-    and concurrent requests while the HTTP round-trip completes.
-    """
+    """Async wrapper — runs embed_chunks in a thread to keep the event loop free."""
     return await asyncio.to_thread(embed_chunks, chunk_content_list)

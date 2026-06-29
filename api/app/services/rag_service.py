@@ -880,12 +880,16 @@ CORE PRINCIPLES (apply to EVERY dimension):
 DIMENSION-SPECIFIC GUIDANCE
 ═══════════════════════════════════════════════════════
 
-NEED — a stated PROBLEM or PAIN the user is trying to solve:
+NEED — a stated PROBLEM, PAIN, or SERVICE REQUIREMENT the user is trying to solve or acquire:
   POSITIVE (these ARE need signals):
     + "Our current chatbot can't answer pricing questions"      (tool failure)
     + "We're losing 10 hours a week to manual triage"           (quantified pain)
     + "We need SSO for SOC 2 compliance"                        (compliance pain)
     + "Customers complain about 24-hour response times"         (customer-facing problem)
+    + "I need to develop a website for my brand"               (stated service requirement)
+    + "We need a logo and SEO for our new product launch"       (explicit service objective)
+    + "I need help with social media marketing"                 (stated service need)
+    + "We're looking to redesign our website"                   (stated project goal)
   NEGATIVE (these are NOT need signals):
     - "I want to talk to a human"                               (routing action, not need)
     - "Connect me with support"                                 (routing action)
