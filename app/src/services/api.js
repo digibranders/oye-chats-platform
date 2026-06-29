@@ -31,12 +31,18 @@ const buildApiError = (error, fallbackMessage = 'Request failed') => {
         message = detail;
     } else if (detail && typeof detail === 'object' && typeof detail.message === 'string') {
         message = detail.message;
+    } else if (status === 429) {
+        // SlowAPI uses {"error": "Rate limit exceeded: ..."} — not FastAPI's {"detail": "..."}
+        message = (typeof data?.error === 'string' && data.error)
+            ? data.error
+            : 'Too many requests — please wait a moment and try again.';
     } else {
         message = error.message || fallbackMessage;
     }
 
     const apiError = new Error(message);
     apiError.status = status;
+    apiError.detail = data?.detail ?? null;
     apiError.data = data;
     return apiError;
 };
@@ -282,6 +288,24 @@ export const cancelCrawl = async (botId) => {
     } catch (error) {
         console.error('API Error cancelling crawl:', error);
         throw buildApiError(error, 'Failed to cancel crawl');
+    }
+};
+
+/**
+ * Discover how many pages a website has without ingesting content.
+ * Used for the pre-crawl confirmation step.
+ * @param {string} url - The root URL to probe
+ * @param {number|undefined} botId - Optional bot ID scope
+ * @returns {Promise<{url: string, total_found: number, capped: boolean, plan_max: number}>}
+ */
+export const discoverCrawlUrls = async (url, botId) => {
+    try {
+        const endpoint = botId ? `/crawl/discover?bot_id=${botId}` : '/crawl/discover';
+        const response = await api.post(endpoint, { url }, { timeout: 30000 });
+        return response.data;
+    } catch (error) {
+        console.error('API Error during URL discovery:', error);
+        throw buildApiError(error, 'Failed to discover pages');
     }
 };
 
@@ -651,6 +675,50 @@ export const getGlobalFeedbackData = async () => {
     } catch (error) {
         console.error('API Error fetching global feedback:', error);
         throw buildApiError(error, 'Failed to load feedback');
+    }
+};
+
+/**
+ * Client: Submit free-text feedback from the admin dashboard Feedback side tab.
+ * @param {string} message - The feedback text
+ */
+export const submitPlatformFeedback = async (message, category = null, attachmentUrl = null) => {
+    try {
+        const response = await api.post('/client/feedback', { message, category, attachment_url: attachmentUrl });
+        return response.data;
+    } catch (error) {
+        console.error('API Error submitting platform feedback:', error);
+        throw buildApiError(error, 'Failed to submit feedback');
+    }
+};
+
+export const uploadFeedbackAttachment = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const response = await api.post('/client/feedback/upload', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error uploading feedback attachment:', error);
+        throw buildApiError(error, 'Failed to upload attachment');
+    }
+};
+
+/**
+ * Superadmin: Fetches all platform feedback submitted via the admin dashboard.
+ * @returns {Promise<Array>} List of platform feedback objects
+ */
+export const getPlatformFeedback = async () => {
+    try {
+        const response = await api.get('/superadmin/platform-feedback');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching platform feedback:', error);
+        throw buildApiError(error, 'Failed to load platform feedback');
     }
 };
 

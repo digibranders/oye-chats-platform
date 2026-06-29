@@ -88,9 +88,7 @@ export default function ForgotPassword() {
           transition={{ duration: 0.5 }}
           className="relative z-10 flex items-center gap-3"
         >
-          <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-lg">
-            <Sparkles size={20} className="text-white" />
-          </div>
+          <img src="/logo-icon.png" alt="OyeChats" className="h-12 w-auto object-contain" />
           <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
         </motion.div>
 

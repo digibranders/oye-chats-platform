@@ -259,11 +259,10 @@ def list_subscriptions(
         client_ids = {s.client_id for s in subs}
         plan_ids = {s.plan_id for s in subs}
 
-        clients = (
-            {c.id: c.name for c in session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all()}
-            if client_ids
-            else {}
+        client_rows = (
+            session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
         )
+        clients = {c.id: {"name": c.name, "email": c.email} for c in client_rows}
 
         plans = (
             {p.id: p.name for p in session.execute(select(Plan).where(Plan.id.in_(plan_ids))).scalars().all()}
@@ -275,7 +274,8 @@ def list_subscriptions(
             {
                 "id": s.id,
                 "client_id": s.client_id,
-                "client_name": clients.get(s.client_id, "Unknown"),
+                "client_name": clients.get(s.client_id, {}).get("name", "Unknown"),
+                "client_email": clients.get(s.client_id, {}).get("email"),
                 "plan_id": s.plan_id,
                 "plan_name": plans.get(s.plan_id, "Unknown"),
                 "status": s.status,

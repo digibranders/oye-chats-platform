@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { MessageCircle } from 'lucide-react';
+import { submitPlatformFeedback } from '../services/api';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 import CommandPalette from '../components/CommandPalette';
 import OnboardingWizard from '../components/OnboardingWizard';
 import TrialBanner from '../components/TrialBanner';
+import FeedbackModal from '../components/FeedbackModal';
 import { BotProvider, useBotContext } from '../context/BotContext';
 
 const MD_BREAKPOINT = 768;
@@ -26,6 +29,11 @@ function AdminLayoutInner() {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < MD_BREAKPOINT);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+
+  const handleFeedbackSubmit = async (text, category, attachmentUrl) => {
+    await submitPlatformFeedback(text, category, attachmentUrl);
+  };
   const { bots, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const location = useLocation();
 
@@ -134,6 +142,32 @@ function AdminLayoutInner() {
           onRefreshBots={refreshBots}
         />
       )}
+
+      {/* Floating right-edge feedback tab */}
+      <button
+        onClick={() => setFeedbackOpen(true)}
+        aria-label="Send feedback"
+        title="Send feedback"
+        className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#6d6bfa] to-[#3b32b3] shadow-[-6px_0_30px_rgba(99,102,241,0.5)] z-40 cursor-pointer"
+      >
+        <MessageCircle size={20} className="text-white flex-shrink-0" />
+        <span
+          className="text-white font-semibold tracking-[0.08em] text-[13px] select-none"
+          style={{
+            writingMode: 'vertical-lr',
+            transform: 'rotate(360deg)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Feedback
+        </span>
+      </button>
+
+      <FeedbackModal
+        isOpen={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        onSubmit={handleFeedbackSubmit}
+      />
     </div>
   );
 }

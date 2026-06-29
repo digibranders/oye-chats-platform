@@ -300,6 +300,9 @@ def _bot_to_cache_dict(bot: Bot) -> dict:
         "bot_key": bot.bot_key,
         "name": bot.name,
         "system_prompt": bot.system_prompt,
+        "subscription_id": bot.subscription_id,
+        "is_legacy_pooled": getattr(bot, "is_legacy_pooled", False),
+        "_subscription_bot_id": getattr(bot, "_subscription_bot_id", None),
         "brand_tone": bot.brand_tone,
         "company_description": bot.company_description,
         "website": bot.website,
@@ -436,6 +439,15 @@ def get_current_bot(
                 _ = bot.primary_color, bot.header_color, bot.background_color
                 _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
                 _ = bot.allowed_domains, bot.domain_check_enabled
+                # Pre-resolve which ledger scope this bot drains. bot.subscription
+                # is a lazy relationship that can't be accessed after expunge(), so
+                # we pull subscription.bot_id here and stash it for credit routing.
+                if bot.subscription_id:
+                    bot._subscription_bot_id = session.scalar(
+                        select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
+                    )
+                else:
+                    bot._subscription_bot_id = None
                 # Cache for future requests
                 cache_set(bot_config_key(bot_key), _bot_to_cache_dict(bot), BOT_CONFIG_TTL)
                 session.expunge(bot)
@@ -460,6 +472,12 @@ def get_current_bot(
                     _ = bot.id, bot.name, bot.system_prompt, bot.client_id, bot.bot_key
                     _ = bot.primary_color, bot.header_color, bot.background_color
                     _ = bot.bot_logo, bot.launcher_name, bot.launcher_logo
+                    if bot.subscription_id:
+                        bot._subscription_bot_id = session.scalar(
+                            select(Subscription.bot_id).where(Subscription.id == bot.subscription_id)
+                        )
+                    else:
+                        bot._subscription_bot_id = None
                     session.expunge(bot)
                     return bot
                 # No bot exists — client hasn't created one yet (expected for new accounts)
@@ -627,7 +645,7 @@ def require_active_subscription_for_workspace(
         )
 
 
-def bot_subscription_status(client_id: int) -> str:
+def bot_subscription_status(client_id: int, subscription_id: int | None = None) -> str:
     """Return the bot owner's current subscription status as a string.
 
     Read-only helper for widget-facing code paths (chat, public settings)
@@ -637,8 +655,16 @@ def bot_subscription_status(client_id: int) -> str:
 
     Centralised so chat_routes.py and bot_routes.py share one source of
     truth for "is this bot allowed to serve traffic right now?".
+
+    Pass ``subscription_id=bot.subscription_id`` for per-bot billing bots so
+    we check that specific subscription rather than the latest for the client
+    (which could be a sibling bot's expired sub on multi-bot accounts).
     """
     with get_session() as session:
+        if subscription_id is not None:
+            # Per-bot path: check the exact subscription that funds this bot.
+            sub = session.get(Subscription, subscription_id)
+            return sub.status if sub else "missing"
         sub = (
             session.execute(
                 select(Subscription)

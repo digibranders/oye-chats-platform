@@ -24,12 +24,19 @@ const _FOLLOW_UP_OPENERS = [
     "If you'd like",
     "If you're interested",
     "Would you like",
+    "Would you",
     "Want me to",
     "Want to",
+    "Want a",
+    "Want",
     "Should I",
-    "Do you want",
-    "Do you need",
+    "Do you",
     "Can I",
+    "Is there",
+    "Are you",
+    "What would",
+    "What best",
+    "Which",
     "Let me know if",
     "Just let me know",
     "Happy to",
@@ -75,6 +82,29 @@ const _splitInlineBullets = (line) => {
     return parts.map((p) => prefix + p.trim());
 };
 
+// Regex to find inline bullet boundaries inside a non-list paragraph.
+// Matches a dash that is NOT preceded by whitespace (so it isn't a line-start
+// marker) and IS followed by a capital letter — the reliable LLM pattern for
+// run-on inline lists like "integration.- Custom Software- Application Dev…".
+// Does NOT fire on intra-word hyphens ("User-friendly", "well-known") because
+// those are followed by lowercase letters.
+const _PARA_INLINE_BULLET_RE = /(?<!\s)-[ \t]+(?=[A-Z])/;
+
+// Split a regular (non-list) paragraph that contains inline bullet separators
+// into a proper intro + indented list. Returns null when no bullets detected.
+const _splitParaInlineBullets = (line) => {
+    if (!_PARA_INLINE_BULLET_RE.test(line)) return null;
+    const parts = line.split(/(?<!\s)-[ \t]+(?=[A-Z])/);
+    if (parts.length < 2) return null;
+    const result = [];
+    const intro = parts[0].trim();
+    if (intro) { result.push(intro); result.push(''); }
+    for (const part of parts.slice(1)) {
+        if (part.trim()) result.push('- ' + part.trim());
+    }
+    return result;
+};
+
 // Reformat bot markdown so the LLM's terse "list + follow-up paragraph"
 // output renders with clear separation:
 //   1. Always insert a blank line between a list and a subsequent paragraph
@@ -95,7 +125,12 @@ const formatBotMarkdown = (text) => {
         if (_LIST_ITEM_RE.test(raw)) {
             for (const split of _splitInlineBullets(raw)) lines.push(split);
         } else {
-            lines.push(raw);
+            const paraSplit = _splitParaInlineBullets(raw);
+            if (paraSplit) {
+                for (const split of paraSplit) lines.push(split);
+            } else {
+                lines.push(raw);
+            }
         }
     }
     const out = [];
@@ -113,6 +148,11 @@ const formatBotMarkdown = (text) => {
     }
 
     return out.join('\n')
+        // Ensure a space before **Bold** when the LLM glues it directly after a
+        // word: "communicationKey benefits:" → "communication **Key benefits:"
+        // Only fires when a lowercase letter precedes ** and an uppercase follows,
+        // so it won't touch closing ** or intra-word patterns like "re**start**".
+        .replace(/([a-z])\*\*(?=[A-Z])/g, '$1 **')
         .replace(_FOLLOW_UP_REGEX, '$1\n\n')
         .replace(_FOLLOW_UP_INLINE_REGEX, '$1\n\n');
 };

@@ -371,7 +371,7 @@ class Document(Base):
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)
-    embedding = Column(Vector(1536), nullable=False)
+    embedding = Column(Vector(768), nullable=True)  # nullable during re-embed; NOT NULL restored after backfill
     search_vector = Column(TSVECTOR)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -1458,3 +1458,27 @@ class ReferralConversion(Base):
     commission_bps = Column(Integer, nullable=False)
     customer_discount_bps = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlatformFeedback(Base):
+    """
+    Free-text feedback submitted by admin dashboard users about the OyeChats
+    platform itself (the floating "Feedback" side tab in the admin panel).
+    Distinct from ChatMessage.feedback (visitor thumbs-up/down on bot replies).
+    """
+
+    __tablename__ = "platform_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    message = Column(Text, nullable=False)
+    attachment_url = Column(String, nullable=True)
+    category = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+    client = relationship("Client", foreign_keys=[client_id])
