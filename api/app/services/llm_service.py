@@ -311,7 +311,9 @@ async def _stream_from_model(
                 except StopAsyncIteration:
                     break
                 except TimeoutError as exc:
-                    raise TimeoutError(f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled") from exc
+                    raise TimeoutError(
+                        f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled"
+                    ) from exc
                 content = chunk.choices[0].delta.content
                 if content:
                     _output += content
