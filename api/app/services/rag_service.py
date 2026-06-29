@@ -2846,8 +2846,36 @@ async def rag_pipeline_stream(
         bid = None
     logger.info(f"RAG stream started | client_id={cid} | bot_id={bid}")
 
+    # Langfuse v4: enter chain span + attribute propagation for the full stream
+    # lifetime so all nested generation spans inherit user_id / session_id.
+    # We use explicit __enter__/__exit__ (rather than `with`) because Python
+    # async generators support context managers spanning yields, but the
+    # outer-try/finally pattern is clearer here given the early-exit paths below.
+    _lf = get_langfuse()
+    _lf_attr_mgr = None
+    _lf_obs_mgr = None
+    _lf_trace = None
+    if _lf:
+        from langfuse import propagate_attributes as _propagate_attributes
+
+        _lf_attr_mgr = _propagate_attributes(
+            user_id=str(cid) if cid else None,
+            session_id=session_id,
+            metadata={"bot_id": bid, "question": question, "device": device, "location": location},
+            tags=["rag", f"bot:{bid}"] if bid else ["rag"],
+        )
+        _lf_obs_mgr = _lf.start_as_current_observation(
+            name="rag-pipeline-stream",
+            as_type="chain",
+            input=question,
+            metadata={"bot_id": bid, "session_id": session_id},
+        )
+        _lf_attr_mgr.__enter__()
+        _lf_trace = _lf_obs_mgr.__enter__()
+
     full_answer = ""
-    with get_session() as session:
+    try:
+      with get_session() as session:
         bot = (
             session.query(Bot).options(joinedload(Bot.client)).get(bid)
             if bid
@@ -3389,10 +3417,9 @@ async def rag_pipeline_stream(
                     session, session_id, client_id=cid, role="bot", content=full_answer, bot_id=bid
                 )
 
-                lf = get_langfuse()
-                if lf and hasattr(bot_msg, "trace_id"):
+                if _lf and hasattr(bot_msg, "trace_id"):
                     with contextlib.suppress(Exception):
-                        bot_msg.trace_id = lf.get_current_trace_id()
+                        bot_msg.trace_id = _lf.get_current_trace_id()
 
                 # Flush first to execute the INSERT and populate bot_msg.id.
                 # This lets us capture the id before commit so FINAL_METADATA
@@ -3479,3 +3506,13 @@ async def rag_pipeline_stream(
             yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
 
         logger.info(f"Hybrid RAG stream finished for session: {session_id}")
+    finally:
+        if _lf_trace is not None:
+            with contextlib.suppress(Exception):
+                _lf_trace.update(output=full_answer)
+        if _lf_obs_mgr is not None:
+            with contextlib.suppress(Exception):
+                _lf_obs_mgr.__exit__(None, None, None)
+        if _lf_attr_mgr is not None:
+            with contextlib.suppress(Exception):
+                _lf_attr_mgr.__exit__(None, None, None)

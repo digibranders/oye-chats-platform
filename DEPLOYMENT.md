@@ -288,6 +288,16 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key |
 | `CF_API_TOKEN` | Cloudflare API token (R2 write access, for widget deploy) |
 | `CF_ACCOUNT_ID` | Cloudflare account ID (for widget deploy) |
+| `GOOGLE_CLIENT_ID` | Google OAuth web client ID (Sign in with Google) |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth web client secret |
+| `OAUTH_STATE_SECRET` | Stable random string signing the OAuth state cookie; shared across Gunicorn workers |
+
+> **Google OAuth note:** `GOOGLE_REDIRECT_URI` (`https://api.oyechats.com/auth/google/callback`)
+> and `OAUTH_SUCCESS_REDIRECT_URL` (`https://app.oyechats.com/auth/callback`) are
+> non-secret and hardcoded in `deploy-api.yml`. The redirect URI must also be
+> registered as an Authorized redirect URI on the OAuth client in Google Cloud
+> Console, or token exchange fails with `redirect_uri_mismatch`. Verify with
+> `curl -s https://api.oyechats.com/auth/google/status` → expect `{"enabled":true}`.
 
 ---
 
