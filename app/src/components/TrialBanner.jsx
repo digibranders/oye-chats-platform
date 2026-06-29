@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { AlertCircle, Clock, Sparkles, X } from 'lucide-react';
 import { useTrialStatus } from '../hooks/useTrialStatus';
 import { markBannerDismissed, readBannerDismissed } from '../utils/trialBanner';
+import { trialDaysLeft } from '../utils/trial';
 
 /**
  * Persistent trial-status banner shown at the top of every authenticated
@@ -61,7 +62,7 @@ function useBannerDismissal(status) {
 }
 
 export default function TrialBanner() {
-    const { status, daysRemaining, isTrialing, isTrialExpired, loading } = useTrialStatus();
+    const { status, daysRemaining, trialEndAt, isTrialing, isTrialExpired, loading } = useTrialStatus();
     const { dismissed, dismiss } = useBannerDismissal(status);
 
     if (loading) return null;
@@ -103,7 +104,10 @@ export default function TrialBanner() {
     }
 
     if (isTrialing) {
-        const remaining = Number(daysRemaining ?? 0);
+        // Derive the count from the trial_end timestamp via the same ceil
+        // helper the Billing badge uses, so the two surfaces always agree.
+        // Fall back to the backend's value only if the timestamp is absent.
+        const remaining = trialDaysLeft(trialEndAt) ?? Number(daysRemaining ?? 0);
         const isUrgent = remaining <= 3;
 
         if (isUrgent) {

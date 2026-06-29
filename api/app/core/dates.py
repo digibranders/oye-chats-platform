@@ -6,7 +6,33 @@ Keeping these in ``app.core`` (not in ``app.api.subscription_routes`` or
 same helper up without dragging in FastAPI dependencies.
 """
 
-from datetime import datetime, timedelta
+import math
+from datetime import UTC, datetime, timedelta
+
+
+def trial_days_remaining(trial_end: datetime | None, now: datetime | None = None) -> int | None:
+    """Whole days left until ``trial_end``, rounded UP (customer-facing).
+
+    The single source of truth for every "N days left" surface so the API,
+    the dashboard banner, the billing badge, and the day-N reminder cron can
+    never disagree. ``ceil`` — a trial ending in 2 hours still reads as
+    "1 day left", which is how customers count remaining time and matches
+    :func:`app.worker.tasks` reminder cadence. The truncating
+    ``timedelta.days`` is wrong here: it under-counts by one for any partial
+    day (10.4 days left → 10, not 11).
+
+    Returns ``None`` when there is no trial end, and ``0`` once the trial has
+    lapsed. Naive datetimes are assumed UTC.
+    """
+    if trial_end is None:
+        return None
+    if trial_end.tzinfo is None:
+        trial_end = trial_end.replace(tzinfo=UTC)
+    now = now or datetime.now(UTC)
+    seconds_left = (trial_end - now).total_seconds()
+    if seconds_left <= 0:
+        return 0
+    return math.ceil(seconds_left / 86400)
 
 
 def add_months(dt: datetime, months: int) -> datetime:

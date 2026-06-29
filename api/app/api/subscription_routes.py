@@ -19,7 +19,7 @@ from app.config import (
     DISPLAY_USD_TO_INR,
     RAZORPAY_ENABLED,
 )
-from app.core.dates import add_months
+from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
 from app.core.pricing import format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
@@ -210,7 +210,7 @@ def start_trial_endpoint(body: StartTrialRequest, client: Client = Depends(get_c
             mail_err,
         )
 
-    days_remaining = max(0, (trial_end - datetime.now(UTC)).days) if trial_end else None
+    days_remaining = trial_days_remaining(trial_end)
     return {
         "status": sub_status,
         "plan_slug": body.plan_slug,
