@@ -123,10 +123,10 @@ def main() -> None:
         if not plan:
             _bail("No active paid plan found. Seed one or pass --plan-id.")
 
-        rzp_plan_id = plan.razorpay_monthly_plan_id
+        rzp_plan_id = plan.razorpay_plan_id_monthly
         if not rzp_plan_id:
             _bail(
-                f"Plan '{plan.name}' (id={plan.id}) has no razorpay_monthly_plan_id. "
+                f"Plan '{plan.name}' (id={plan.id}) has no razorpay_plan_id_monthly. "
                 "Run scripts/set_razorpay_plan_ids.py first, or pass --plan-id for a plan that already has one."
             )
         plan_db_id = plan.id
@@ -160,6 +160,9 @@ def main() -> None:
     raw_payload, signature = _make_webhook_payload(sub, event_id=event_id)
 
     with Session(engine) as session:
+        from sqlalchemy import func
+        max_credit_id = session.query(func.max(CreditLedger.id)).scalar() or 0
+
         from app.services.razorpay_service import handle_webhook_event
 
         event = json.loads(raw_payload)
@@ -178,8 +181,9 @@ def main() -> None:
         credit_rows = (
             session.query(CreditLedger)
             .filter(
+                CreditLedger.id > max_credit_id,
                 CreditLedger.client_id == local_sub.client_id,
-                CreditLedger.description.like(f"%{sub_id}%"),
+                CreditLedger.delta > 0,
             )
             .all()
         )
@@ -199,8 +203,9 @@ def main() -> None:
         credit_rows2 = (
             session.query(CreditLedger)
             .filter(
+                CreditLedger.id > max_credit_id,
                 CreditLedger.client_id == args.client_id,
-                CreditLedger.description.like(f"%{sub_id}%"),
+                CreditLedger.delta > 0,
             )
             .all()
         )
