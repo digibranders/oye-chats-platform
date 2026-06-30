@@ -19,8 +19,8 @@ const SettingsDropup = ({ isOpen: sidebarOpen }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleFeedbackSubmit = async (text, category, attachmentUrl) => {
-    await submitPlatformFeedback(text, category, attachmentUrl);
+  const handleFeedbackSubmit = async (payload) => {
+    await submitPlatformFeedback(payload);
   };
 
   return (

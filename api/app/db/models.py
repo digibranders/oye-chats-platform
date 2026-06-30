@@ -1537,9 +1537,25 @@ class PlatformFeedback(Base):
         index=True,
     )
     message = Column(Text, nullable=False)
-    attachment_url = Column(String, nullable=True)
-    category = Column(String, nullable=True)
+    attachment_url = Column(String, nullable=True)  # legacy single attachment (= attachments[0])
+    category = Column(String, nullable=True)  # deprecated free-string; superseded by ``type``
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+    # ── Taxonomy ─────────────────────────────────────────────────────────
+    # Structured classification that replaces the free-string ``category``.
+    type = Column(
+        String(20),
+        nullable=False,
+        default="other",
+        server_default="other",
+        index=True,
+    )  # bug | feature_request | question | other
+    area = Column(
+        String(20), nullable=True, index=True
+    )  # billing | bots | knowledge | live_chat | dashboard | widget | other
+    severity = Column(String(10), nullable=True)  # low | medium | high | critical — bug-only
+    context = Column(JSONB, nullable=True)  # {page_url, app_version, plan_tier, user_agent}
+    attachments = Column(JSONB, nullable=True)  # [{url, name?, content_type?}]
 
     # ── Resolution loop ──────────────────────────────────────────────────
     # A superadmin can triage and resolve customer-submitted feedback; the

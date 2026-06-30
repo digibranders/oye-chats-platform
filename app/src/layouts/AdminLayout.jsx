@@ -45,8 +45,8 @@ function AdminLayoutInner() {
   // render. See usePushNotifications.js for the full lifecycle.
   const push = usePushNotifications();
 
-  const handleFeedbackSubmit = async (text, category, attachmentUrl) => {
-    await submitPlatformFeedback(text, category, attachmentUrl);
+  const handleFeedbackSubmit = async (payload) => {
+    await submitPlatformFeedback(payload);
   };
   const { bots, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const location = useLocation();

@@ -24,24 +24,35 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 
 from app.api.auth import get_superadmin
 from app.api.superadmin_plan_routes import _to_usd_cents
 from app.api.superadmin_routes_v2 import _require_write
 from app.db.models import (
+    Affiliate,
     BANTSignal,
     Bot,
+    BotGrowthEvent,
     ChatMessage,
     ChatSession,
     Client,
     Document,
+    FailedWebhook,
     Invoice,
     LeadInfo,
+    LLMCallLog,
     MeetingBooking,
+    Notification,
+    OAuthAccount,
     OfflineMessage,
     Operator,
+    OperatorPushSubscription,
+    PaymentMethod,
     Plan,
+    ProcessedWebhook,
+    ReferralCode,
+    ReferralConversion,
     Subscription,
     UsageRecord,
     VisitorEvent,
@@ -1237,3 +1248,605 @@ def test_webhook_registration(
         )
         session.commit()
         return {"ok": True, "message": "Test event dispatched"}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# P2 — Tier 3
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# ── Payment methods (stored card / UPI / bank refs) ──────────────────────────
+
+
+@router.get("/payment-methods")
+def list_payment_methods(
+    client_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Stored payment methods across clients (card / UPI / bank).
+
+    Newest first, capped at 500, filterable by ``client_id``. Provider token
+    references (``stripe_payment_method_id`` / ``razorpay_token_id``) are never
+    returned — only the non-sensitive display fields. Client names batch-loaded.
+    """
+    with get_session() as session:
+        stmt = select(PaymentMethod).order_by(PaymentMethod.created_at.desc())
+        if client_id:
+            stmt = stmt.where(PaymentMethod.client_id == client_id)
+        methods = session.execute(stmt.limit(500)).scalars().all()
+
+        client_ids = {m.client_id for m in methods}
+        clients = {
+            c.id: c.name
+            for c in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+
+        return [
+            {
+                "id": m.id,
+                "client_id": m.client_id,
+                "client_name": clients.get(m.client_id),
+                "provider": m.provider,
+                "type": m.type,
+                "last4": m.last4,
+                "brand": m.brand,
+                "expiry_month": m.expiry_month,
+                "expiry_year": m.expiry_year,
+                "is_default": m.is_default,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in methods
+        ]
+
+
+# ── Meeting bookings (Calendly / Zcal confirmations) ─────────────────────────
+
+
+@router.get("/meeting-bookings")
+def list_meeting_bookings(
+    bot_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Meeting bookings captured during chat sessions.
+
+    Newest first, capped at 500, filterable by ``bot_id``. Bot/client names
+    are batch-loaded (Bot → client_id → Client) to avoid N+1 lookups.
+    """
+    with get_session() as session:
+        stmt = select(MeetingBooking).order_by(MeetingBooking.created_at.desc())
+        if bot_id:
+            stmt = stmt.where(MeetingBooking.bot_id == bot_id)
+        bookings = session.execute(stmt.limit(500)).scalars().all()
+
+        bot_ids = {b.bot_id for b in bookings}
+        bots = {
+            b.id: (b.name, b.client_id)
+            for b in (session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else [])
+        }
+        client_ids = {cid for _, cid in bots.values()}
+        clients = {
+            c.id: c.name
+            for c in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+
+        result = []
+        for b in bookings:
+            bot_name, client_id = bots.get(b.bot_id, (None, None))
+            result.append(
+                {
+                    "id": b.id,
+                    "session_id": b.session_id,
+                    "bot_id": b.bot_id,
+                    "bot_name": bot_name,
+                    "client_name": clients.get(client_id) if client_id else None,
+                    "booking_url": b.booking_url,
+                    "meeting_time": b.meeting_time.isoformat() if b.meeting_time else None,
+                    "attendee_email": b.attendee_email,
+                    "status": b.status,
+                    "created_at": b.created_at.isoformat() if b.created_at else None,
+                }
+            )
+        return result
+
+
+# ── OAuth accounts (external identity links) ─────────────────────────────────
+
+
+@router.get("/oauth-accounts")
+def list_oauth_accounts(
+    client_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Linked external identity provider accounts (Google, etc.).
+
+    Newest first, capped at 500, filterable by ``client_id``. Only the
+    provider-reported, non-secret fields are returned. Client names batch-loaded.
+    """
+    with get_session() as session:
+        stmt = select(OAuthAccount).order_by(OAuthAccount.created_at.desc())
+        if client_id:
+            stmt = stmt.where(OAuthAccount.client_id == client_id)
+        accounts = session.execute(stmt.limit(500)).scalars().all()
+
+        client_ids = {a.client_id for a in accounts}
+        clients = {
+            c.id: c.name
+            for c in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+
+        return [
+            {
+                "id": a.id,
+                "client_id": a.client_id,
+                "client_name": clients.get(a.client_id),
+                "provider": a.provider,
+                "provider_user_id": a.provider_user_id,
+                "email": a.email,
+                "picture_url": a.picture_url,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "last_login_at": a.last_login_at.isoformat() if a.last_login_at else None,
+            }
+            for a in accounts
+        ]
+
+
+@router.delete("/oauth-accounts/{account_id}")
+def unlink_oauth_account(
+    account_id: int,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Unlink an external identity provider account from its client. Audit-logged."""
+    _require_write(admin)
+    with get_session() as session:
+        account = session.get(OAuthAccount, account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="OAuth account not found")
+
+        before = {"client_id": account.client_id, "provider": account.provider}
+        session.delete(account)
+        session.flush()
+
+        record_audit(
+            session,
+            actor=admin,
+            action="oauth_account.unlink",
+            target_type="oauth_account",
+            target_id=account_id,
+            before=before,
+            request=request,
+        )
+        session.commit()
+        return {"ok": True}
+
+
+# ── Failed webhooks (billing dead-letter store) ──────────────────────────────
+
+
+@router.get("/failed-webhooks")
+def list_failed_webhooks(
+    status_filter: str | None = Query(default=None, alias="status"),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Dead-lettered billing webhooks whose processing failed.
+
+    Newest first, capped at 500, filterable by ``status`` (pending|replayed|
+    ignored). The raw signed payload, signature, and captured headers are never
+    returned — only the non-sensitive metadata needed to triage and replay.
+    """
+    with get_session() as session:
+        stmt = select(FailedWebhook).order_by(FailedWebhook.created_at.desc())
+        if status_filter:
+            stmt = stmt.where(FailedWebhook.status == status_filter)
+        rows = session.execute(stmt.limit(500)).scalars().all()
+
+        return [
+            {
+                "id": row.id,
+                "provider": row.provider,
+                "event_id": row.event_id,
+                "event_type": row.event_type,
+                "error": row.error,
+                "status": row.status,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "replayed_at": row.replayed_at.isoformat() if row.replayed_at else None,
+            }
+            for row in rows
+        ]
+
+
+@router.post("/failed-webhooks/{failed_webhook_id}/replay")
+def replay_failed_webhook(
+    failed_webhook_id: int,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Re-verify and reprocess a dead-lettered Razorpay billing webhook.
+
+    Mirrors the inbound ``/webhooks/razorpay`` handler: the stored raw signed
+    bytes are re-verified against ``RAZORPAY_WEBHOOK_SECRET`` (signature mismatch
+    → 400), parsed, and dispatched to ``razorpay_service.handle_webhook_event``.
+    Idempotency on the provider event id makes a successful replay safe even if
+    the original eventually processed. On success the row is marked ``replayed``;
+    on a handler error the row is left untouched and a 502 is returned.
+    """
+    _require_write(admin)
+    import json
+
+    from app.services import razorpay_service
+
+    with get_session() as session:
+        row = session.get(FailedWebhook, failed_webhook_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Failed webhook not found")
+        if row.provider != "razorpay":
+            raise HTTPException(
+                status_code=400,
+                detail="Only Razorpay failed webhooks can be replayed.",
+            )
+        if row.status == "replayed":
+            raise HTTPException(status_code=400, detail="Webhook has already been replayed.")
+
+        try:
+            razorpay_service.verify_webhook_signature(payload=row.raw_payload, signature=row.signature or "")
+        except razorpay_service.SignatureMismatch as exc:
+            raise HTTPException(status_code=400, detail="Invalid webhook signature.") from exc
+
+        try:
+            event = json.loads(row.raw_payload)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON payload.") from exc
+
+        try:
+            razorpay_service.handle_webhook_event(session, event, row.event_id)
+        except Exception as exc:
+            logger.error(
+                "Failed-webhook replay error for id=%s event_id=%s: %s",
+                failed_webhook_id,
+                row.event_id,
+                exc,
+                exc_info=True,
+            )
+            raise HTTPException(status_code=502, detail=f"Replay failed: {exc}") from exc
+
+        row.status = "replayed"
+        row.replayed_at = datetime.now(UTC)
+        session.flush()
+
+        record_audit(
+            session,
+            actor=admin,
+            action="failed_webhook.replay",
+            target_type="failed_webhook",
+            target_id=failed_webhook_id,
+            after={"status": "replayed", "event_id": row.event_id},
+            request=request,
+        )
+        session.commit()
+        return {"ok": True, "message": "Replayed"}
+
+
+# ── Referral conversions (affiliate attribution snapshots) ───────────────────
+
+
+@router.get("/referral-conversions")
+def list_referral_conversions(
+    affiliate_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Snapshots of commission/discount terms at the moment a referral converted.
+
+    Newest first, capped at 500, filterable by ``affiliate_id``. ``*_pct`` are
+    the basis-point columns expressed as percentages (bps / 100). The referral
+    code, customer client name, and affiliate's own client name are batch-loaded
+    to avoid N+1 lookups.
+    """
+    with get_session() as session:
+        stmt = select(ReferralConversion).order_by(ReferralConversion.created_at.desc())
+        if affiliate_id:
+            stmt = stmt.where(ReferralConversion.affiliate_id == affiliate_id)
+        conversions = session.execute(stmt.limit(500)).scalars().all()
+
+        # Customer client names.
+        client_ids = {c.client_id for c in conversions}
+        clients = {
+            cl.id: cl.name
+            for cl in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+
+        # Referral code strings.
+        code_ids = {c.referral_code_id for c in conversions if c.referral_code_id}
+        codes = {
+            rc.id: rc.code
+            for rc in (
+                session.execute(select(ReferralCode).where(ReferralCode.id.in_(code_ids))).scalars().all()
+                if code_ids
+                else []
+            )
+        }
+
+        # Affiliate → owning client name.
+        affiliate_ids = {c.affiliate_id for c in conversions if c.affiliate_id}
+        affiliate_client_ids = {
+            aff.id: aff.client_id
+            for aff in (
+                session.execute(select(Affiliate).where(Affiliate.id.in_(affiliate_ids))).scalars().all()
+                if affiliate_ids
+                else []
+            )
+        }
+        aff_client_ids = set(affiliate_client_ids.values())
+        affiliate_clients = {
+            cl.id: cl.name
+            for cl in (
+                session.execute(select(Client).where(Client.id.in_(aff_client_ids))).scalars().all()
+                if aff_client_ids
+                else []
+            )
+        }
+
+        result = []
+        for c in conversions:
+            aff_client_id = affiliate_client_ids.get(c.affiliate_id) if c.affiliate_id else None
+            result.append(
+                {
+                    "id": c.id,
+                    "client_id": c.client_id,
+                    "client_name": clients.get(c.client_id),
+                    "referral_code_id": c.referral_code_id,
+                    "referral_code": codes.get(c.referral_code_id) if c.referral_code_id else None,
+                    "affiliate_id": c.affiliate_id,
+                    "affiliate_name": affiliate_clients.get(aff_client_id) if aff_client_id else None,
+                    "commission_bps": c.commission_bps,
+                    "commission_pct": c.commission_bps / 100,
+                    "customer_discount_bps": c.customer_discount_bps,
+                    "customer_discount_pct": c.customer_discount_bps / 100,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+            )
+        return result
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# P2 — Tier 4
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# ── In-app notifications ─────────────────────────────────────────────────────
+
+
+@router.get("/notifications")
+def list_notifications(
+    type_filter: str | None = Query(default=None, alias="type"),
+    _admin: Client = Depends(get_superadmin),
+):
+    """In-app dashboard notifications across workspaces.
+
+    Newest first, capped at 500, filterable by ``type``.
+    """
+    with get_session() as session:
+        stmt = select(Notification).order_by(Notification.created_at.desc())
+        if type_filter:
+            stmt = stmt.where(Notification.type == type_filter)
+        rows = session.execute(stmt.limit(500)).scalars().all()
+
+        return [
+            {
+                "id": n.id,
+                "client_id": n.client_id,
+                "operator_id": n.operator_id,
+                "type": n.type,
+                "title": n.title,
+                "body": n.body,
+                "link": n.link,
+                "is_read": n.is_read,
+                "read_at": n.read_at.isoformat() if n.read_at else None,
+                "created_at": n.created_at.isoformat() if n.created_at else None,
+            }
+            for n in rows
+        ]
+
+
+# ── Web Push subscriptions ───────────────────────────────────────────────────
+
+
+def _mask_push_endpoint(endpoint: str | None) -> str:
+    """Mask a Web Push endpoint to its host (or trailing chars); never the full URL.
+
+    Push endpoints embed a per-device secret token in their path; returning the
+    full URL would leak it. We surface the provider host so an operator can tell
+    Chrome (FCM) from Safari (Apple) devices apart, falling back to the trailing
+    ~12 chars when the host can't be parsed.
+    """
+    if not endpoint:
+        return "—"
+    from urllib.parse import urlparse
+
+    try:
+        host = urlparse(endpoint).hostname
+    except ValueError:
+        host = None
+    if host:
+        return f"{host}/…{endpoint[-12:]}"
+    return "…" + endpoint[-12:]
+
+
+@router.get("/push-subscriptions")
+def list_push_subscriptions(_admin: Client = Depends(get_superadmin)):
+    """Web Push device subscriptions for operators / workspace owners.
+
+    Newest first, capped at 500. The endpoint is masked to its host (the path
+    carries a per-device secret); ``p256dh`` and ``auth`` keys are never returned.
+    """
+    with get_session() as session:
+        rows = (
+            session.execute(
+                select(OperatorPushSubscription).order_by(OperatorPushSubscription.created_at.desc()).limit(500)
+            )
+            .scalars()
+            .all()
+        )
+
+        return [
+            {
+                "id": s.id,
+                "operator_id": s.operator_id,
+                "client_id": s.client_id,
+                "endpoint_masked": _mask_push_endpoint(s.endpoint),
+                "user_agent": s.user_agent,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "last_used_at": s.last_used_at.isoformat() if s.last_used_at else None,
+            }
+            for s in rows
+        ]
+
+
+# ── Processed webhooks (inbound provider idempotency log) ─────────────────────
+
+
+@router.get("/processed-webhooks")
+def list_processed_webhooks(
+    provider: str | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Inbound provider webhook idempotency log (event ids already processed).
+
+    Newest first by ``processed_at``, capped at 500, filterable by ``provider``.
+    """
+    with get_session() as session:
+        stmt = select(ProcessedWebhook).order_by(desc(ProcessedWebhook.processed_at))
+        if provider:
+            stmt = stmt.where(ProcessedWebhook.provider == provider)
+        rows = session.execute(stmt.limit(500)).scalars().all()
+
+        return [
+            {
+                "event_id": p.event_id,
+                "provider": p.provider,
+                "processed_at": p.processed_at.isoformat() if p.processed_at else None,
+            }
+            for p in rows
+        ]
+
+
+# ── Bot growth events ────────────────────────────────────────────────────────
+
+
+@router.get("/bot-growth-events")
+def list_bot_growth_events(
+    bot_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Per-bot growth events (demo-link distribution telemetry).
+
+    Newest first, capped at 500, filterable by ``bot_id``. Bot names batch-loaded.
+    """
+    with get_session() as session:
+        stmt = select(BotGrowthEvent).order_by(BotGrowthEvent.created_at.desc())
+        if bot_id:
+            stmt = stmt.where(BotGrowthEvent.bot_id == bot_id)
+        events = session.execute(stmt.limit(500)).scalars().all()
+
+        bot_ids = {e.bot_id for e in events}
+        bot_names = {
+            b.id: b.name
+            for b in (session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else [])
+        }
+
+        return [
+            {
+                "id": e.id,
+                "bot_id": e.bot_id,
+                "bot_name": bot_names.get(e.bot_id),
+                "event_type": e.event_type,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in events
+        ]
+
+
+# ── LLM cost breakdown ───────────────────────────────────────────────────────
+
+_LLM_BREAKDOWN_DIMENSIONS = ("model", "client")
+
+
+@router.get("/llm/cost-breakdown")
+def llm_cost_breakdown(
+    days: int = Query(default=30, ge=1, le=365),
+    by: str = Query(default="model"),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Aggregate LLM call metering over a trailing window, grouped by model or client.
+
+    Each row totals calls, prompt/completion tokens, cost (USD cents), and the
+    number of errored calls, ordered by ``cost_cents`` descending. For
+    ``by=model`` the key and label are the model name; for ``by=client`` the key
+    is the stringified client id and the label is the client name (NULL client →
+    ``"—"``). Client names are batch-loaded to avoid N+1.
+    """
+    if by not in _LLM_BREAKDOWN_DIMENSIONS:
+        raise HTTPException(status_code=400, detail=f"by must be one of {_LLM_BREAKDOWN_DIMENSIONS}")
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    group_col = LLMCallLog.model if by == "model" else LLMCallLog.client_id
+
+    with get_session() as session:
+        rows = session.execute(
+            select(
+                group_col.label("key"),
+                func.count(LLMCallLog.id).label("calls"),
+                func.coalesce(func.sum(LLMCallLog.prompt_tokens), 0).label("prompt_tokens"),
+                func.coalesce(func.sum(LLMCallLog.completion_tokens), 0).label("completion_tokens"),
+                func.coalesce(func.sum(LLMCallLog.cost_cents), 0).label("cost_cents"),
+                func.coalesce(
+                    func.sum(case((LLMCallLog.error.isnot(None), 1), else_=0)),
+                    0,
+                ).label("error_count"),
+            )
+            .where(LLMCallLog.created_at >= cutoff)
+            .group_by(group_col)
+            .order_by(desc("cost_cents"))
+        ).all()
+
+        labels: dict[Any, str | None] = {}
+        if by == "client":
+            client_ids = {row.key for row in rows if row.key is not None}
+            labels = {
+                c.id: c.name
+                for c in (
+                    session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all()
+                    if client_ids
+                    else []
+                )
+            }
+
+        result = []
+        for row in rows:
+            if by == "model":
+                key = row.key
+                label = row.key
+            else:
+                key = str(row.key) if row.key is not None else None
+                label = labels.get(row.key) if row.key is not None else None
+                if not label:
+                    label = "—"
+            result.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "calls": int(row.calls),
+                    "prompt_tokens": int(row.prompt_tokens),
+                    "completion_tokens": int(row.completion_tokens),
+                    "cost_cents": int(row.cost_cents),
+                    "error_count": int(row.error_count),
+                }
+            )
+        return result

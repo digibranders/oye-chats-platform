@@ -3,8 +3,7 @@ import {
   X,
   Bug,
   Lightbulb,
-  Monitor,
-  Gauge,
+  HelpCircle,
   MoreHorizontal,
   Paperclip,
   AlertCircle,
@@ -17,9 +16,42 @@ import {
   Archive,
   Inbox,
   RefreshCw,
+  ImagePlus,
 } from 'lucide-react';
 import { uploadFeedbackAttachment, getMyFeedback } from '../services/api';
+import useEntitlements from '../hooks/useEntitlements';
 import { cn } from '../lib/utils';
+
+const MAX_ATTACHMENTS = 5;
+const MAX_SIZE = 10 * 1024 * 1024;
+
+const TYPES = [
+  { id: 'bug', label: 'Bug', icon: Bug },
+  { id: 'feature_request', label: 'Feature', icon: Lightbulb },
+  { id: 'question', label: 'Question', icon: HelpCircle },
+  { id: 'other', label: 'Other', icon: MoreHorizontal },
+];
+
+const AREAS = [
+  { id: 'billing', label: 'Billing' },
+  { id: 'bots', label: 'Bots' },
+  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'live_chat', label: 'Live chat' },
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'widget', label: 'Widget' },
+  { id: 'other', label: 'Other' },
+];
+
+const SEVERITIES = [
+  { id: 'low', label: 'Low' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'high', label: 'High' },
+  { id: 'critical', label: 'Critical' },
+];
+
+const TYPE_LABELS = Object.fromEntries(TYPES.map((t) => [t.id, t.label]));
+const AREA_LABELS = Object.fromEntries(AREAS.map((a) => [a.id, a.label]));
+const SEVERITY_LABELS = Object.fromEntries(SEVERITIES.map((s) => [s.id, s.label]));
 
 const STATUS_META = {
   open: { label: 'Open', icon: Clock, className: 'bg-amber-500/10 border-amber-500/30 text-amber-300' },
@@ -28,12 +60,11 @@ const STATUS_META = {
   closed: { label: 'Closed', icon: Archive, className: 'bg-zinc-500/10 border-zinc-500/30 text-zinc-400' },
 };
 
-const CATEGORY_LABELS = {
-  bug: 'Bug',
-  feature: 'Feature Request',
-  ui_ux: 'UI / UX',
-  performance: 'Performance',
-  other: 'Other',
+const SEVERITY_TONE = {
+  low: 'bg-zinc-500/10 border-zinc-500/30 text-zinc-300',
+  medium: 'bg-sky-500/10 border-sky-500/30 text-sky-300',
+  high: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
+  critical: 'bg-red-500/10 border-red-500/30 text-red-300',
 };
 
 function formatDate(iso) {
@@ -55,6 +86,34 @@ function StatusBadge({ status }) {
       <Icon size={11} className={status === 'in_progress' ? 'animate-spin' : ''} />
       {meta.label}
     </span>
+  );
+}
+
+function MetaPill({ children }) {
+  return (
+    <span className="text-[11px] text-[#8f8f9e] px-2 py-0.5 rounded-full bg-[#1b1b29] border border-[#27273b]">
+      {children}
+    </span>
+  );
+}
+
+function AttachmentThumbs({ attachments }) {
+  if (!attachments?.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {attachments.map((att, i) => (
+        <a
+          key={att.url || i}
+          href={att.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={att.name || 'Attachment'}
+          className="group relative w-16 h-16 rounded-lg overflow-hidden border border-[#27273b] bg-[#161622]"
+        >
+          <img src={att.url} alt={att.name || 'attachment'} className="w-full h-full object-cover" loading="lazy" />
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -132,9 +191,16 @@ function MyFeedbackList({ highlightId }) {
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <StatusBadge status={item.status} />
-              {item.category && (
-                <span className="text-[11px] text-[#8f8f9e] px-2 py-0.5 rounded-full bg-[#1b1b29] border border-[#27273b]">
-                  {CATEGORY_LABELS[item.category] || item.category}
+              {item.type && <MetaPill>{TYPE_LABELS[item.type] || item.type}</MetaPill>}
+              {item.area && <MetaPill>{AREA_LABELS[item.area] || item.area}</MetaPill>}
+              {item.severity && (
+                <span
+                  className={cn(
+                    'inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border',
+                    SEVERITY_TONE[item.severity] || SEVERITY_TONE.low
+                  )}
+                >
+                  {SEVERITY_LABELS[item.severity] || item.severity}
                 </span>
               )}
             </div>
@@ -143,16 +209,7 @@ function MyFeedbackList({ highlightId }) {
 
           <p className="mt-3 text-[13px] text-[#d6d6de] whitespace-pre-wrap leading-relaxed">{item.message}</p>
 
-          {item.attachment_url && (
-            <a
-              href={item.attachment_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-2.5 inline-flex items-center gap-1.5 text-[12px] text-[#817bfb] hover:text-[#9a94ff] transition-colors"
-            >
-              <Paperclip size={12} /> View attachment
-            </a>
-          )}
+          <AttachmentThumbs attachments={item.attachments} />
 
           {item.admin_response && (
             <div className="mt-3 rounded-lg border border-[#6366f1]/25 bg-[#6366f1]/[0.07] p-3">
@@ -173,96 +230,146 @@ function MyFeedbackList({ highlightId }) {
 
 const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlightId = null }) => {
   const [activeTab, setActiveTab] = useState(defaultTab);
-  const [feedback, setFeedback] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState(null);
-  const [attachment, setAttachment] = useState(null);
+  const [message, setMessage] = useState('');
+  const [type, setType] = useState(null);
+  const [area, setArea] = useState('');
+  const [severity, setSeverity] = useState(null);
+  const [attachments, setAttachments] = useState([]); // {id,name,content_type,previewUrl,url,status,error}
   const [attachmentError, setAttachmentError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef(null);
+  const uidRef = useRef(0);
+  const { entitlements } = useEntitlements();
+
+  // Upload one File: optimistic entry with a local preview, then swap in the
+  // hosted URL when the upload resolves (or flag the entry on failure).
+  const addFiles = useCallback((files) => {
+    const incoming = Array.from(files || []);
+    if (!incoming.length) return;
+    setAttachmentError('');
+
+    setAttachments((prev) => {
+      const slots = MAX_ATTACHMENTS - prev.length;
+      if (slots <= 0) {
+        setAttachmentError(`You can attach up to ${MAX_ATTACHMENTS} screenshots.`);
+        return prev;
+      }
+      const accepted = [];
+      for (const file of incoming.slice(0, slots)) {
+        if (file.size > MAX_SIZE) {
+          setAttachmentError('Each file must be 10MB or smaller.');
+          continue;
+        }
+        const id = ++uidRef.current;
+        const entry = {
+          id,
+          name: file.name,
+          content_type: file.type,
+          previewUrl: URL.createObjectURL(file),
+          url: null,
+          status: 'uploading',
+        };
+        accepted.push(entry);
+        uploadFeedbackAttachment(file)
+          .then((res) => {
+            setAttachments((cur) =>
+              cur.map((a) => (a.id === id ? { ...a, url: res.url, status: 'done' } : a))
+            );
+          })
+          .catch(() => {
+            setAttachments((cur) => cur.map((a) => (a.id === id ? { ...a, status: 'error' } : a)));
+          });
+      }
+      return [...prev, ...accepted];
+    });
+  }, []);
+
+  const removeAttachment = useCallback((id) => {
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
+
+  const handleFileChange = (e) => {
+    addFiles(e.target.files);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Paste-anywhere: a document-level listener active only while the modal is
+  // open and on the compose tab catches screenshots regardless of focus.
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'send') return undefined;
+    const onPaste = (e) => {
+      const imageFiles = Array.from(e.clipboardData?.items || [])
+        .filter((it) => it.type.startsWith('image/'))
+        .map((it) => it.getAsFile())
+        .filter(Boolean)
+        .map((f, i) => new File([f], f.name || `screenshot_${Date.now()}_${i}.png`, { type: f.type }));
+      if (imageFiles.length) {
+        e.preventDefault();
+        addFiles(imageFiles);
+      }
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [isOpen, activeTab, addFiles]);
+
+  // Revoke any object URLs still held when the modal unmounts.
+  useEffect(() => {
+    return () => {
+      attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!isOpen) return null;
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const uploading = attachments.some((a) => a.status === 'uploading');
+  const canSubmit = !!message.trim() && !!type && !isSubmitting && !uploading;
 
-    if (file.size > 10 * 1024 * 1024) {
-      setAttachmentError('File size exceeds the 10MB limit.');
-      setAttachment(null);
-    } else {
-      setAttachmentError('');
-      setAttachment(file);
-    }
-  };
+  const captureContext = () => ({
+    page_url: `${window.location.pathname}${window.location.search}`,
+    app_version: import.meta.env.VITE_APP_VERSION || 'unknown',
+    plan_tier: entitlements?.planName || undefined,
+    user_agent: navigator.userAgent,
+  });
 
-  const handlePaste = (e) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) {
-          const pastedFile = new File([file], `screenshot_${Date.now()}.png`, { type: file.type });
-          if (pastedFile.size > 10 * 1024 * 1024) {
-            setAttachmentError('Pasted screenshot size exceeds 10MB.');
-          } else {
-            setAttachment(pastedFile);
-            setAttachmentError('');
-          }
-          e.preventDefault();
-        }
-      }
-    }
-  };
-
-  const handleRemoveAttachment = () => {
-    setAttachment(null);
-    setAttachmentError('');
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const formatBytes = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  const resetForm = () => {
+    attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
+    setMessage('');
+    setType(null);
+    setArea('');
+    setSeverity(null);
+    setAttachments([]);
   };
 
   const handleSubmit = async () => {
-    if (!feedback.trim()) return;
+    if (!canSubmit) return;
     setIsSubmitting(true);
     setAttachmentError('');
     try {
-      let attachmentUrl = null;
-      if (attachment) {
-        const uploadRes = await uploadFeedbackAttachment(attachment);
-        attachmentUrl = uploadRes.url;
-      }
-      await onSubmit(feedback, selectedCategory || 'other', attachmentUrl);
-      setFeedback('');
-      setAttachment(null);
-      setSelectedCategory(null);
-      // Drop the user on their history so they can see the submission landed.
+      const payload = {
+        message,
+        type,
+        area: area || null,
+        severity: type === 'bug' ? severity : null,
+        context: captureContext(),
+        attachments: attachments
+          .filter((a) => a.status === 'done' && a.url)
+          .map((a) => ({ url: a.url, name: a.name, content_type: a.content_type })),
+      };
+      await onSubmit(payload);
+      resetForm();
       setActiveTab('mine');
     } catch (error) {
-      console.error("Failed to submit feedback:", error);
-      setAttachmentError('Failed to upload attachment or submit feedback. Please try again.');
+      console.error('Failed to submit feedback:', error);
+      setAttachmentError('Failed to submit feedback. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const categories = [
-    { id: 'bug', label: 'Bug', icon: Bug },
-    { id: 'feature', label: 'Feature Request', icon: Lightbulb },
-    { id: 'ui_ux', label: 'UI / UX', icon: Monitor },
-    { id: 'performance', label: 'Performance', icon: Gauge },
-    { id: 'other', label: 'Other', icon: MoreHorizontal },
-  ];
 
   const tabs = [
     { id: 'send', label: 'Send Feedback' },
@@ -314,9 +421,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                 onClick={() => setActiveTab(t.id)}
                 className={cn(
                   'px-3.5 h-8 rounded-lg text-[13px] font-medium transition-all cursor-pointer',
-                  activeTab === t.id
-                    ? 'bg-[#1f1f2e] text-white shadow-sm'
-                    : 'text-[#8f8f9e] hover:text-white'
+                  activeTab === t.id ? 'bg-[#1f1f2e] text-white shadow-sm' : 'text-[#8f8f9e] hover:text-white'
                 )}
               >
                 {t.label}
@@ -329,85 +434,152 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
         <div className="flex-1 px-6 py-4 space-y-5 overflow-y-auto">
           {activeTab === 'send' ? (
             <>
-              {/* Category Selector */}
+              {/* Type (required) */}
               <div className="space-y-2.5">
                 <label className="block text-[13px] font-semibold text-[#efeff1]">
-                  What type of feedback is this?
+                  What type of feedback is this? <span className="text-[#8f8f9e] font-normal">(required)</span>
                 </label>
                 <div className="flex flex-wrap gap-2">
-                  {categories.map((cat) => {
-                    const Icon = cat.icon;
-                    const isSelected = selectedCategory === cat.id;
+                  {TYPES.map((t) => {
+                    const Icon = t.icon;
+                    const selected = type === t.id;
                     return (
                       <button
-                        key={cat.id}
+                        key={t.id}
                         type="button"
-                        onClick={() => setSelectedCategory(cat.id)}
+                        onClick={() => setType(t.id)}
                         className={cn(
-                          "flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-medium border transition-all cursor-pointer",
-                          isSelected
-                            ? "bg-[#6366f1]/10 border-[#6366f1] text-white ring-1 ring-[#6366f1]/30"
-                            : "bg-[#13131c]/50 hover:bg-[#181826] border-[#232335] text-[#a0a0b0]"
+                          'flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-medium border transition-all cursor-pointer',
+                          selected
+                            ? 'bg-[#6366f1]/10 border-[#6366f1] text-white ring-1 ring-[#6366f1]/30'
+                            : 'bg-[#13131c]/50 hover:bg-[#181826] border-[#232335] text-[#a0a0b0]'
                         )}
                       >
-                        <Icon size={14} className={isSelected ? "text-[#817bfb]" : "text-[#707080]"} />
-                        {cat.label}
+                        <Icon size={14} className={selected ? 'text-[#817bfb]' : 'text-[#707080]'} />
+                        {t.label}
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Feedback Input Card */}
+              {/* Area (optional) + Severity (bug-only) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label htmlFor="fb-area" className="block text-[13px] font-semibold text-[#efeff1]">
+                    Area <span className="text-[#8f8f9e] font-normal">(optional)</span>
+                  </label>
+                  <select
+                    id="fb-area"
+                    value={area}
+                    onChange={(e) => setArea(e.target.value)}
+                    className="w-full h-10 rounded-xl bg-[#13131c] border border-[#232335] px-3 text-[13px] text-white outline-none focus:border-[#6366f1] focus:ring-1 focus:ring-[#6366f1]/20"
+                  >
+                    <option value="">Not sure / unspecified</option>
+                    {AREAS.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {type === 'bug' && (
+                  <div className="space-y-2">
+                    <label className="block text-[13px] font-semibold text-[#efeff1]">
+                      Severity <span className="text-[#8f8f9e] font-normal">(optional)</span>
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SEVERITIES.map((s) => {
+                        const selected = severity === s.id;
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => setSeverity(selected ? null : s.id)}
+                            className={cn(
+                              'px-2.5 h-8 rounded-lg text-[12px] font-medium border transition-all cursor-pointer',
+                              selected
+                                ? 'bg-[#6366f1]/10 border-[#6366f1] text-white'
+                                : 'bg-[#13131c]/50 hover:bg-[#181826] border-[#232335] text-[#a0a0b0]'
+                            )}
+                          >
+                            {s.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Message + attachments */}
               <div className="space-y-2">
                 <label className="block text-[13px] font-semibold text-[#efeff1]">
                   Describe your feedback <span className="text-[#8f8f9e] font-normal">(required)</span>
                 </label>
                 <div className="group bg-[#13131c] border border-[#232335] rounded-xl focus-within:border-[#6366f1] focus-within:ring-1 focus-within:ring-[#6366f1]/20 transition-all duration-200 flex flex-col overflow-hidden">
                   <textarea
-                    value={feedback}
-                    onChange={(e) => setFeedback(e.target.value)}
-                    onPaste={handlePaste}
-                    placeholder="What could we improve? Tell us what happened or what you'd like to see..."
-                    className="w-full h-36 bg-transparent border-0 p-4 pb-2 text-white placeholder-[#585868] focus:outline-none resize-none text-sm leading-relaxed"
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="What happened or what would you like to see? Paste a screenshot anywhere in this dialog to attach it."
+                    className="w-full h-32 bg-transparent border-0 p-4 pb-2 text-white placeholder-[#585868] focus:outline-none resize-none text-sm leading-relaxed"
                     autoFocus
                   />
 
-                  {/* Attachment bar */}
-                  <div className="flex items-center justify-between px-4 py-2.5 border-t border-[#1f1f2e]/60 bg-[#161622]/40">
-                    <div className="flex items-center gap-2 min-w-0">
+                  {/* Attachment toolbar + thumbnails */}
+                  <div className="px-4 py-2.5 border-t border-[#1f1f2e]/60 bg-[#161622]/40 space-y-2.5">
+                    <div className="flex items-center gap-2">
                       <input
                         type="file"
                         ref={fileInputRef}
                         onChange={handleFileChange}
+                        accept="image/*"
+                        multiple
                         className="hidden"
                       />
-
-                      {!attachment ? (
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="p-1.5 rounded-lg hover:bg-[#20202e] text-[#707080] hover:text-white transition-colors cursor-pointer"
-                          title="Attach file or paste screenshot (max 10MB)"
-                        >
-                          <Paperclip size={18} />
-                        </button>
-                      ) : (
-                        <div className="flex items-center gap-1.5 px-3 py-1 bg-[#6366f1]/10 border border-[#6366f1]/30 rounded-full text-xs text-[#817bfb] max-w-[320px]">
-                          <Paperclip size={12} className="flex-shrink-0" />
-                          <span className="truncate max-w-[160px] font-medium">{attachment.name}</span>
-                          <span className="text-[10px] text-[#707080] flex-shrink-0">({formatBytes(attachment.size)})</span>
-                          <button
-                            type="button"
-                            onClick={handleRemoveAttachment}
-                            className="p-0.5 rounded-full hover:bg-[#6366f1]/20 text-[#707080] hover:text-[#ff6b6b] transition-colors cursor-pointer flex-shrink-0"
-                            title="Remove attachment"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={attachments.length >= MAX_ATTACHMENTS}
+                        className="inline-flex items-center gap-1.5 px-2.5 h-8 rounded-lg hover:bg-[#20202e] text-[#a0a0b0] hover:text-white transition-colors cursor-pointer text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Attach screenshots or paste from clipboard (max 5, 10MB each)"
+                      >
+                        <ImagePlus size={15} /> Add screenshot
+                      </button>
+                      <span className="text-[11px] text-[#707080]">or paste from clipboard</span>
                     </div>
+
+                    {attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {attachments.map((att) => (
+                          <div
+                            key={att.id}
+                            className="group/att relative w-16 h-16 rounded-lg overflow-hidden border border-[#27273b] bg-[#0e0e14]"
+                          >
+                            <img src={att.previewUrl} alt={att.name} className="w-full h-full object-cover" />
+                            {att.status === 'uploading' && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                                <Loader2 size={16} className="animate-spin text-white" />
+                              </div>
+                            )}
+                            {att.status === 'error' && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-red-950/60" title="Upload failed">
+                                <AlertCircle size={16} className="text-red-300" />
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeAttachment(att.id)}
+                              className="absolute top-0.5 right-0.5 p-0.5 rounded-full bg-black/60 text-white opacity-0 group-hover/att:opacity-100 transition-opacity hover:bg-red-600"
+                              title="Remove"
+                            >
+                              <X size={11} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -424,7 +596,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                 <Info size={16} className="text-[#707080] mt-0.5 shrink-0" />
                 <p className="text-xs text-[#8f8f9e] leading-relaxed">
                   Don&apos;t include passwords, API keys, or any sensitive information.<br />
-                  Your feedback is private and helps us improve.
+                  We attach your current page, app version, plan, and browser to help us triage.
                 </p>
               </div>
             </>
@@ -444,7 +616,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
             </button>
             <button
               onClick={handleSubmit}
-              disabled={!feedback.trim() || isSubmitting}
+              disabled={!canSubmit}
               className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#594fe2] to-[#4036cb] hover:from-[#6b62eb] hover:to-[#4e43dc] disabled:from-[#1b1b26] disabled:to-[#1b1b26] disabled:text-[#585868] text-white text-sm font-semibold shadow-lg hover:shadow-[#4f46e5]/10 disabled:shadow-none transition-all flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
@@ -452,6 +624,8 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                   <div className="w-3.5 h-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                   Sending...
                 </>
+              ) : uploading ? (
+                <>Uploading…</>
               ) : (
                 <>
                   Send Feedback
