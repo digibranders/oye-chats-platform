@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
+from app.core.feedback import FEEDBACK_RESOLVED_STATES, FEEDBACK_STATUSES
 from app.core.security import get_password_hash
 from app.db.models import ChatMessage, ChatSession, Client, PlatformFeedback
 from app.db.session import get_session
@@ -15,11 +16,6 @@ from app.services.audit_service import record_audit
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/superadmin", tags=["superadmin"])
-
-# Allowed resolution states for platform feedback.
-FEEDBACK_STATUSES = ("open", "in_progress", "resolved", "closed")
-# States that "close the loop" — they stamp resolved_at/by and notify the client.
-FEEDBACK_RESOLVED_STATES = ("resolved", "closed")
 
 
 class CreateClientRequest(BaseModel):
