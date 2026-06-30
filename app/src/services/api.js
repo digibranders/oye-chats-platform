@@ -320,7 +320,10 @@ export const discoverCrawlUrls = async (url, botId) => {
 export const diffRecrawl = async (url, replaceSource, botId) => {
     try {
         const endpoint = botId ? `/crawl/diff?bot_id=${botId}` : '/crawl/diff';
-        const response = await api.post(endpoint, { url, replace_source: replaceSource }, { timeout: 30000 });
+        // The backend caps HEAD-liveness + sitemap discovery at ~22s each and
+        // runs them concurrently, so ~45s gives headroom for TLS + auth +
+        // serialization without the client tripping on its own timeout.
+        const response = await api.post(endpoint, { url, replace_source: replaceSource }, { timeout: 60000 });
         return response.data;
     } catch (error) {
         console.error('API Error during recrawl diff:', error);
@@ -335,11 +338,18 @@ export const diffRecrawl = async (url, replaceSource, botId) => {
  * @param {boolean} useJs - Enable JavaScript mode for Next.js / React / SPA sites
  * @returns {Promise<Object>} The API response with crawling results
  */
-export const crawlWebsite = async (url, botId, useJs = false, replaceSource = null) => {
+export const crawlWebsite = async (url, botId, useJs = false, replaceSource = null, expectedNewPages = null) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
         const body = { url, use_js: useJs };
         if (replaceSource) body.replace_source = replaceSource;
+        // Recrawls send the diff's new-page count so the backend pre-flight
+        // sizes the credit reservation to (new_pages + buffer) instead of the
+        // plan's full max-pages ceiling. Per-page atomic deduction inside the
+        // pipeline still enforces the real spend.
+        if (replaceSource && Number.isFinite(expectedNewPages) && expectedNewPages >= 0) {
+            body.expected_new_pages = expectedNewPages;
+        }
         const response = await api.post(endpoint, body, { timeout: 300000 });
         return response.data;
     } catch (error) {
