@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 
 from app.api.auth import get_superadmin
@@ -37,8 +38,11 @@ from app.db.models import (
     Invoice,
     LeadInfo,
     MeetingBooking,
+    OfflineMessage,
     Operator,
+    Plan,
     Subscription,
+    UsageRecord,
     VisitorEvent,
     Webhook,
     WebhookDelivery,
@@ -874,3 +878,165 @@ def rotate_client_api_key(
         )
         session.commit()
         return {"ok": True, "api_key_masked": new_masked}
+
+
+# ── Offline messages (visitor messages left while operators offline) ──────────
+
+
+_OFFLINE_STATUSES = ("new", "read", "replied")
+
+
+@router.get("/offline-messages")
+def list_offline_messages(
+    status: str | None = None,
+    bot_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Visitor contact-form submissions captured while the team was offline.
+
+    Newest first, capped at 500. Filterable by ``status`` (new|read|replied)
+    and ``bot_id``. Bot/client names are batch-loaded to avoid N+1.
+    """
+    with get_session() as session:
+        stmt = select(OfflineMessage).order_by(OfflineMessage.created_at.desc())
+        if status:
+            stmt = stmt.where(OfflineMessage.status == status)
+        if bot_id:
+            stmt = stmt.where(OfflineMessage.bot_id == bot_id)
+        messages = session.execute(stmt.limit(500)).scalars().all()
+
+        bot_ids = {m.bot_id for m in messages}
+        bots = {
+            b.id: (b.name, b.client_id)
+            for b in (session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else [])
+        }
+        client_ids = {cid for _, cid in bots.values()}
+        clients = {
+            c.id: c.name
+            for c in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+
+        result = []
+        for m in messages:
+            bot_name, client_id = bots.get(m.bot_id, (None, None))
+            result.append(
+                {
+                    "id": m.id,
+                    "bot_id": m.bot_id,
+                    "bot_name": bot_name,
+                    "client_name": clients.get(client_id) if client_id else None,
+                    "visitor_name": m.visitor_name,
+                    "visitor_email": m.visitor_email,
+                    "visitor_phone": m.visitor_phone,
+                    "message_body": m.message_body,
+                    "status": m.status,
+                    "fallback_reason": m.fallback_reason,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                    "read_at": m.read_at.isoformat() if m.read_at else None,
+                    "replied_at": m.replied_at.isoformat() if m.replied_at else None,
+                }
+            )
+        return result
+
+
+class OfflineMessagePatch(BaseModel):
+    status: str
+
+
+@router.patch("/offline-messages/{message_id}")
+def update_offline_message(
+    message_id: int,
+    body: OfflineMessagePatch,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Update an offline message's status (new|read|replied), stamping the
+    matching timestamp. Audit-logged."""
+    _require_write(admin)
+    if body.status not in _OFFLINE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {_OFFLINE_STATUSES}")
+    with get_session() as session:
+        msg = session.get(OfflineMessage, message_id)
+        if not msg:
+            raise HTTPException(status_code=404, detail="Offline message not found")
+
+        before = {"status": msg.status}
+        msg.status = body.status
+        now = datetime.now(UTC)
+        if body.status == "read" and msg.read_at is None:
+            msg.read_at = now
+        elif body.status == "replied":
+            msg.replied_at = now
+            if msg.read_at is None:
+                msg.read_at = now
+        session.flush()
+
+        record_audit(
+            session,
+            actor=admin,
+            action="offline_message.update",
+            target_type="offline_message",
+            target_id=message_id,
+            before=before,
+            after={"status": msg.status},
+            request=request,
+        )
+        session.commit()
+        return {"ok": True}
+
+
+# ── Usage records (per-period consumption vs plan limits) ─────────────────────
+
+
+@router.get("/usage-records")
+def list_usage_records(
+    client_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Per-period usage vs plan limits across clients. Newest period first,
+    capped at 500. Filterable by ``client_id``. Names batch-loaded."""
+    with get_session() as session:
+        stmt = select(UsageRecord).order_by(UsageRecord.period_start.desc())
+        if client_id:
+            stmt = stmt.where(UsageRecord.client_id == client_id)
+        records = session.execute(stmt.limit(500)).scalars().all()
+
+        client_ids = {r.client_id for r in records}
+        clients = {
+            c.id: c.name
+            for c in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+        plan_ids = {r.plan_id for r in records if r.plan_id}
+        plans = {
+            p.id: p.name
+            for p in (session.execute(select(Plan).where(Plan.id.in_(plan_ids))).scalars().all() if plan_ids else [])
+        }
+
+        return [
+            {
+                "id": r.id,
+                "client_id": r.client_id,
+                "client_name": clients.get(r.client_id),
+                "plan_id": r.plan_id,
+                "plan_name": plans.get(r.plan_id) if r.plan_id else None,
+                "period_start": r.period_start.isoformat() if r.period_start else None,
+                "period_end": r.period_end.isoformat() if r.period_end else None,
+                "ai_messages_used": r.ai_messages_used,
+                "ai_messages_limit": r.ai_messages_limit,
+                "live_chat_messages_used": r.live_chat_messages_used,
+                "live_chat_messages_limit": r.live_chat_messages_limit,
+                "url_scans_used": r.url_scans_used,
+                "url_scans_limit": r.url_scans_limit,
+                "storage_used_mb": r.storage_used_mb,
+                "storage_limit_mb": r.storage_limit_mb,
+                "bots_count": r.bots_count,
+                "operators_count": r.operators_count,
+                "overage_messages": r.overage_messages,
+                "overage_amount_cents": _to_usd_cents(r.overage_amount_cents, None),
+            }
+            for r in records
+        ]
