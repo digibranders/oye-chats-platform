@@ -73,12 +73,13 @@ const VARIANTS = {
         iconBg: 'bg-amber-100 dark:bg-amber-500/15',
         iconColor: 'text-amber-600 dark:text-amber-300',
         accentRing: 'ring-amber-200/60 dark:ring-amber-400/15',
-        buttonClass: null,
+        buttonClass:
+            'bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white shadow-sm shadow-amber-600/20',
         title: 'Notifications are blocked in your browser',
         // Two-sentence explanation with the recovery path concrete enough
         // that the user can complete it without bouncing to a help article.
-        body: 'Click the lock icon next to the URL → Notifications → Allow, then reload this page. We will then ping you the instant a visitor needs help.',
-        actionLabel: null,
+        body: 'Click the lock icon next to the URL → Notifications → Allow, then click below. We will then ping you the instant a visitor needs help.',
+        actionLabel: 'Re-check permission',
     },
     error: {
         Icon: ShieldAlert,
@@ -99,6 +100,10 @@ export default function PushPermissionBanner({ push }) {
     // mount so the from/to CSS transition kicks in cleanly. No further state
     // changes after that — the animation runs once and stays put.
     const [mounted, setMounted] = useState(false);
+    // Set when a permission request resolves to "denied" — browsers won't show
+    // the prompt once blocked, so we surface the manual lock-icon path instead
+    // of leaving the click feeling broken.
+    const [stillBlocked, setStillBlocked] = useState(false);
 
     useEffect(() => {
         const id = requestAnimationFrame(() => setMounted(true));
@@ -110,8 +115,29 @@ export default function PushPermissionBanner({ push }) {
         setDismissed(true);
     }, []);
 
+    // Whole-card activation: ask the browser for permission. On the `default`
+    // state this shows the OS prompt; on `denied` the browser resolves to
+    // "denied" without prompting (no JS re-prompt is allowed), so we flag
+    // `stillBlocked` to keep the lock-icon recovery path visible. Must run from
+    // this click handler — the user-gesture requirement is satisfied here.
+    const onActivate = useCallback(async () => {
+        if (!push?.request) return;
+        const result = await push.request();
+        setStillBlocked(result === 'denied');
+    }, [push]);
+
+    const onKeyActivate = useCallback(
+        (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onActivate();
+            }
+        },
+        [onActivate],
+    );
+
     if (!push) return null;
-    const { supported, isAuthenticated, permission, subscribed, error, initializing, request } = push;
+    const { supported, isAuthenticated, permission, subscribed, error, initializing } = push;
 
     if (!isAuthenticated) return null;
     if (!supported) return null;
@@ -157,7 +183,18 @@ export default function PushPermissionBanner({ push }) {
                     <X size={14} strokeWidth={2.25} />
                 </button>
 
-                <div className="flex items-start gap-3 pr-6">
+                <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={onActivate}
+                    onKeyDown={onKeyActivate}
+                    aria-label={
+                        permission === 'denied'
+                            ? 'Re-check browser notification permission'
+                            : 'Enable browser notifications'
+                    }
+                    className="group flex items-start gap-3 pr-6 w-full text-left cursor-pointer rounded-xl -m-1 p-1 transition hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/60 dark:focus-visible:ring-indigo-400/40"
+                >
                     <div className={`shrink-0 w-9 h-9 rounded-full grid place-items-center ${variant.iconBg}`}>
                         <variant.Icon size={17} className={variant.iconColor} strokeWidth={2} />
                     </div>
@@ -170,23 +207,17 @@ export default function PushPermissionBanner({ push }) {
                                 {body}
                             </p>
                         ) : null}
+                        {stillBlocked && permission === 'denied' ? (
+                            <p className="mt-1.5 text-[12px] leading-relaxed font-medium text-amber-600 dark:text-amber-400">
+                                Still blocked — set it to Allow via the lock icon, then click again (or reload).
+                            </p>
+                        ) : null}
                         {variant.actionLabel ? (
-                            <div className="mt-3 flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={request}
-                                    className={`inline-flex items-center justify-center h-8 px-3 rounded-lg text-[12.5px] font-medium tracking-tight transition ${variant.buttonClass}`}
-                                >
-                                    {variant.actionLabel}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={onDismiss}
-                                    className="inline-flex items-center justify-center h-8 px-2 rounded-lg text-[12.5px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition"
-                                >
-                                    Not now
-                                </button>
-                            </div>
+                            <span
+                                className={`mt-3 inline-flex items-center justify-center h-8 px-3 rounded-lg text-[12.5px] font-medium tracking-tight transition ${variant.buttonClass} group-hover:brightness-110`}
+                            >
+                                {variant.actionLabel}
+                            </span>
                         ) : null}
                     </div>
                 </div>
