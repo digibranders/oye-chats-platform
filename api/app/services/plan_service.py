@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.db.models import Bot, Operator, Plan, Subscription, UsageRecord
@@ -12,6 +12,29 @@ logger = logging.getLogger(__name__)
 
 # Sentinel value: -1 in a limit field means "unlimited"
 UNLIMITED = -1
+
+
+def lock_client_for_billing(session: Session, client_id: int) -> None:
+    """Serialize a client's subscription / credit mutations (remediation H1).
+
+    Takes a transaction-scoped PostgreSQL advisory lock keyed on the client, so
+    concurrent billing mutations — a double-clicked "start trial", racing
+    change-plan / seats / cancel — run one at a time. Without it, two requests
+    can both pass the read-side checks (TOCTOU) and double-grant credits or
+    clobber each other's writes. Released automatically at COMMIT / ROLLBACK.
+
+    The 64-bit key is hashed from a namespaced string so it cannot collide with
+    the per-(client, bot) advisory locks ``credit_service`` takes inside the
+    grant/deduct path. No-op on non-PostgreSQL binds (e.g. mocked unit-test
+    sessions); the lock is a concurrency guard, not a single-thread invariant.
+    """
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+        {"k": f"oyechats:billing:{int(client_id)}"},
+    )
 
 
 def get_active_plans(session: Session) -> list[Plan]:
@@ -231,6 +254,10 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
     monthly cron tick. Paid plans get their grant from the payment webhook;
     trial / free plans need it inline because no payment ever arrives.
     """
+    # Serialize concurrent signup retries so a client can't get two default
+    # subscriptions (and two credit grants) from a double-fired request.
+    lock_client_for_billing(session, client_id)
+
     default_plan = get_default_plan(session) or get_plan_by_slug(session, "free")
     if not default_plan:
         raise RuntimeError("No default plan found. Run the seed migration.")
@@ -340,6 +367,11 @@ def start_trial(session: Session, client_id: int, plan_slug: str) -> Subscriptio
     from datetime import timedelta
 
     from app.db.models import Plan
+
+    # Serialize concurrent start-trial requests for this client BEFORE the
+    # read-side eligibility checks, so a double-click can't pass the
+    # already-trialed / current-subscription guards twice and double-grant.
+    lock_client_for_billing(session, client_id)
 
     plan = get_plan_by_slug(session, plan_slug)
     if plan is None or not plan.is_active:

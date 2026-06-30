@@ -1,13 +1,68 @@
 """Shared test fixtures for OyeChats API tests."""
 
+import os
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import create_engine, make_url
+from sqlalchemy import text as _sa_text
+from sqlalchemy.orm import Session as _Session
 
 from app.api.auth import get_current_bot, get_current_client, get_current_client_or_operator
+from app.db.models import Base as _Base
+
+# ── Real-Postgres throwaway DB (for DB-layer tests: locks, ledger, clawback) ──
+#
+# Mirrors the throwaway-database pattern in test_affiliate_service.py. Requires a
+# reachable Postgres at ``DB_URL``; tests that request these fixtures must guard
+# with ``pytestmark = skipif(no DB_URL)`` so they skip cleanly when none exists.
+
+
+def _pg_base_url():
+    raw = os.getenv("DB_URL")
+    return make_url(raw) if raw else None
+
+
+@pytest.fixture(scope="module")
+def pg_engine():
+    base = _pg_base_url()
+    if base is None:
+        pytest.skip("needs a reachable Postgres at DB_URL")
+    test_db = (base.database or "postgres") + "_pytest"
+    admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}"')
+        conn.exec_driver_sql(f'CREATE DATABASE "{test_db}"')
+    admin.dispose()
+
+    engine = create_engine(base.set(database=test_db))
+    with engine.connect() as conn:
+        conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS citext")
+        conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+        conn.commit()
+    _Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
+
+    admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.exec_driver_sql(f'DROP DATABASE IF EXISTS "{test_db}"')
+    admin.dispose()
+
+
+@pytest.fixture()
+def db(pg_engine):
+    session = _Session(pg_engine)
+    yield session
+    session.rollback()
+    names = ", ".join(f'"{t.name}"' for t in _Base.metadata.sorted_tables)
+    session.execute(_sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+    session.commit()
+    session.close()
+
 
 # ── Mock DB session ──────────────────────────────────────────────────────────
 
