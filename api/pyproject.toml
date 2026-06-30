@@ -49,6 +49,7 @@ dependencies = [
     "razorpay>=1.4.2",
     "python-jose[cryptography]>=3.5.0",
     "fastembed>=0.4.0",
+    "pywebpush>=2.0.0",
 ]
 
 [dependency-groups]

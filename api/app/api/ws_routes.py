@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 
+from app.config import PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS
 from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Bot, ChatSession, Client, Operator
 from app.db.repository import add_chat_message, get_lead_info_by_session
@@ -17,6 +18,43 @@ from app.services.live_chat_service import manager
 from app.services.plan_service import get_client_subscription
 
 logger = logging.getLogger(__name__)
+
+# Per-process debounce for "visitor sent a message in a waiting session" emails.
+# Maps ``session_id`` → last-sent timestamp. The window is short (default 60s)
+# so a chatty visitor doesn't flood the operator inbox while still ensuring a
+# follow-up message *does* re-ping if the operator never picked up the first.
+# In a multi-worker deployment each worker has its own dict — worst case is N
+# emails per window where N = uvicorn worker count, which is acceptable for
+# this signal class. Bounded at 1000 entries; oldest are evicted FIFO.
+_visitor_msg_email_dedup: dict[str, datetime] = {}
+_VISITOR_MSG_EMAIL_DEDUP_MAX = 1000
+
+# Fallback queue-timeout when an unattended waiting session needs a push but
+# no per-bot setting is in scope (e.g. the visitor messaged after the WS
+# became the only context). Matches the same default as
+# ``Bot.live_chat_queue_timeout_seconds``.
+DEFAULT_QUEUE_TIMEOUT_SECONDS = 20
+
+
+def _should_email_visitor_message(session_id: str) -> bool:
+    """Returns True if a visitor-message email may fire for this session now.
+
+    Updates the debounce marker as a side-effect when it returns True.
+    """
+    now = datetime.now(UTC)
+    last = _visitor_msg_email_dedup.get(session_id)
+    if last is not None and (now - last).total_seconds() < PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS:
+        return False
+    _visitor_msg_email_dedup[session_id] = now
+    # Bounded eviction — drop oldest half when we hit the cap. This is cheap
+    # compared to maintaining a true LRU and the cap is hit only under unusual
+    # traffic patterns.
+    if len(_visitor_msg_email_dedup) > _VISITOR_MSG_EMAIL_DEDUP_MAX:
+        cutoff = sorted(_visitor_msg_email_dedup.values())[len(_visitor_msg_email_dedup) // 2]
+        for sid, ts in list(_visitor_msg_email_dedup.items()):
+            if ts < cutoff:
+                _visitor_msg_email_dedup.pop(sid, None)
+    return True
 
 
 def _is_safe_file_url(url: str) -> bool:
@@ -224,12 +262,47 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 # delivered → read).
                 client_msg_id = data.get("client_msg_id")
 
+                cs_status: str | None = None
+                cs_bot_id: int | None = None
                 with get_session() as session:
                     persisted = add_chat_message(session, session_id, role="user", content=content, bot_id=bot_id)
                     session.commit()
                     db_id = persisted.id
+                    cs = session.execute(
+                        select(ChatSession.status, ChatSession.bot_id).where(ChatSession.id == session_id)
+                    ).one_or_none()
+                    if cs is not None:
+                        cs_status, cs_bot_id = cs
 
                 delivered = await manager.route_visitor_message(session_id, content, db_id=db_id)
+
+                # Operator alert ladder for the "visitor sent a message in an
+                # unattended waiting session" case. We deliberately removed the
+                # email that fired on initial handoff; this is the *real* signal
+                # an operator needs to see: the visitor is actively typing into
+                # an empty queue slot. Push fans out immediately to every
+                # eligible operator who is off-WS; email follows as the
+                # debounced fallback so a chatty visitor doesn't flood the
+                # inbox but a long-waiting one still pings repeatedly.
+                if not delivered and cs_status == "waiting" and cs_bot_id is not None:
+                    from app.worker.enqueue import enqueue_sync
+
+                    enqueue_sync(
+                        "task_dispatch_handoff_push",
+                        session_id,
+                        cs_bot_id,
+                        None,  # department resolved at dispatch time from session
+                        None,  # visitor name irrelevant here — preview already in content
+                        content[:140],
+                        DEFAULT_QUEUE_TIMEOUT_SECONDS,
+                    )
+                    if _should_email_visitor_message(session_id):
+                        enqueue_sync(
+                            "task_send_visitor_message_email",
+                            session_id,
+                            cs_bot_id,
+                            content[:500],
+                        )
 
                 await ws.send_json(
                     {
@@ -370,6 +443,24 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                                     message_preview=message[:200],
                                     reply_to=reply_to,
                                 )
+
+                    # Drop a workspace-scoped notification into the bell so it survives a
+                    # reload + reaches operators on any page in the admin dashboard.
+                    try:
+                        from app.services.notification_service import notify_offline_message
+
+                        if ws_bot is not None:
+                            notify_offline_message(
+                                session,
+                                client_id=ws_bot.client_id,
+                                visitor_name=name,
+                                visitor_email=email,
+                                message_preview=message,
+                                offline_message_id=offline_msg.id,
+                                bot_name=ws_bot.name,
+                            )
+                    except Exception:
+                        logger.exception("Failed to record offline_message notification via WS")
 
                 await ws.send_json({"type": "offline_form_submitted"})
                 logger.info(

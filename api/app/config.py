@@ -143,6 +143,34 @@ else:
     logger.info("Email notifications disabled (no BREVO_API_KEY)")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Web Push (VAPID) — operator notifications when their dashboard tab is closed
+# ─────────────────────────────────────────────────────────────────────────────
+# Generate a keypair locally:
+#     uv run python -m app.scripts.generate_vapid_keys
+# Then paste the public key into VAPID_PUBLIC_KEY and the PEM into
+# VAPID_PRIVATE_KEY (single-line, escape newlines as \n) or store the PEM in a
+# file and point VAPID_PRIVATE_KEY_FILE at it.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "").strip()
+VAPID_PRIVATE_KEY_FILE = os.getenv("VAPID_PRIVATE_KEY_FILE", "").strip()
+# Required by the Web Push protocol — push providers use this to contact you
+# if a subscription misbehaves. Must be a `mailto:` URL or an HTTPS site root.
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", f"mailto:{SUPPORT_EMAIL}").strip()
+# How long after the operator's last WS heartbeat we still consider them
+# "actively watching the dashboard" (and therefore skip push, since the
+# in-dashboard toast covers them). Tunable; 30s matches the WS ping cadence.
+PUSH_WS_GRACE_SECONDS = int(os.getenv("PUSH_WS_GRACE_SECONDS", "30"))
+# Visitor-message email debounce — if a visitor in a waiting/unattended session
+# sends multiple messages in quick succession, only one email per window.
+PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(os.getenv("PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS", "60"))
+
+PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and (VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_FILE))
+if PUSH_ENABLED:
+    logger.info("Web Push notifications enabled (VAPID configured)")
+else:
+    logger.info("Web Push notifications disabled (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY missing)")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Redis (required in production — enables distributed rate limiting + caching)
 # ─────────────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL")

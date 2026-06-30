@@ -1482,3 +1482,125 @@ class PlatformFeedback(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
 
     client = relationship("Client", foreign_keys=[client_id])
+
+
+# ── Web Push subscriptions (operator notifications) ──────────────────────────
+
+
+class OperatorPushSubscription(Base):
+    """Web Push subscription for a dashboard user's browser/device.
+
+    Despite the legacy table name (``operator_push_subscriptions``), this row
+    can belong to either an **operator** (``operator_id`` set) or a workspace
+    **owner / client** (``client_id`` set). Small teams where the owner takes
+    chats themselves get push without needing a separate operator account.
+    A DB-level CHECK constraint enforces that exactly one of the two FKs is
+    populated; both branches are pruned on the same ``410 Gone`` rule.
+
+    One subscriber can have many rows — one per browser/device they've
+    granted permission on (laptop + work desktop + phone). The fan-out at
+    handoff time sends to every row for every eligible recipient; first
+    accept wins, the rest get a tagged follow-up that updates the on-device
+    notification to "Claimed by X."
+    """
+
+    __tablename__ = "operator_push_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    operator_id = Column(
+        Integer,
+        ForeignKey("operators.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(String, nullable=False)
+    auth = Column(String, nullable=False)
+    # Optional device hint surfaced from the User-Agent at subscribe time.
+    # Purely cosmetic (lets the user distinguish "Laptop Chrome" from
+    # "iPhone Safari" when managing devices); not used in routing.
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Updated on every successful push send. A long-stale ``last_used_at``
+    # without a 410 isn't itself reason to prune (most providers keep
+    # subscriptions valid for months), but it's useful telemetry.
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("endpoint", name="uq_operator_push_endpoint"),
+        CheckConstraint(
+            "((operator_id IS NULL)::int + (client_id IS NULL)::int) = 1",
+            name="chk_push_subscription_owner_xor",
+        ),
+    )
+
+    operator = relationship("Operator", foreign_keys=[operator_id])
+    client = relationship("Client", foreign_keys=[client_id])
+
+
+# ── In-app notifications (admin dashboard bell + dropdown) ──────────────────
+
+
+class Notification(Base):
+    """Persistent in-app notification surfaced in the admin dashboard.
+
+    Scoped to a ``client_id`` (workspace owner) so every operator in the
+    workspace sees the same feed. ``operator_id`` is reserved for future
+    per-operator notifications (e.g. "you were @mentioned") and is NULL for
+    the three workspace-wide types currently in use:
+
+      * ``plan_purchased``           — billing webhook activated a paid plan
+      * ``bot_created``              — a new bot was created in the workspace
+      * ``offline_message_received`` — visitor submitted the offline form
+      * ``handoff_request``          — visitor pressed "Talk to a human"
+        (also drives the in-app banner; persisted so a missed handoff still
+        shows up in the bell when the operator returns to the dashboard)
+
+    ``data`` is a free-form JSON blob carrying type-specific payload (bot_id,
+    plan name, message preview, session_id, etc.). ``link`` is an optional
+    in-app route to navigate to on click. Both are validated in the service
+    layer, not at the DB level — schema-on-read keeps adding new types cheap.
+    """
+
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    operator_id = Column(
+        Integer,
+        ForeignKey("operators.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    type = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=True)
+    link = Column(String, nullable=True)
+    data = Column(JSONB, nullable=True)
+    is_read = Column(Boolean, nullable=False, server_default=sqlalchemy.text("false"))
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
+    )
+
+    __table_args__ = (
+        Index("ix_notifications_client_created", "client_id", "created_at"),
+        Index("ix_notifications_client_unread", "client_id", "is_read"),
+    )
+
+    client = relationship("Client", foreign_keys=[client_id])
+    operator = relationship("Operator", foreign_keys=[operator_id])

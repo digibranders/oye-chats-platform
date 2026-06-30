@@ -155,18 +155,18 @@ export default function OfflineMessages({ embedded = false }) {
             )}
 
             {/* Stats bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
                 {[
-                    { label: 'Total', value: stats.total, icon: MessageSquare, color: 'text-surface-700 dark:text-surface-200' },
-                    { label: 'Unread', value: stats.unread, icon: Inbox, color: 'text-blue-600 dark:text-blue-400' },
-                    { label: 'Replied', value: stats.replied, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400' },
-                    { label: 'Reply Rate', value: `${stats.replyRate}%`, icon: TrendingUp, color: 'text-primary-600 dark:text-primary-400' },
+                    { label: 'Total', value: stats.total, icon: MessageSquare, color: 'text-surface-900 dark:text-white', iconColor: 'text-surface-400 dark:text-surface-500' },
+                    { label: 'Unread', value: stats.unread, icon: Inbox, color: 'text-blue-600 dark:text-blue-400', iconColor: 'text-blue-600 dark:text-blue-400' },
+                    { label: 'Replied', value: stats.replied, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400', iconColor: 'text-emerald-600 dark:text-emerald-400' },
+                    { label: 'Reply Rate', value: `${stats.replyRate}%`, icon: TrendingUp, color: 'text-primary-600 dark:text-primary-400', iconColor: 'text-primary-600 dark:text-primary-400' },
                 ].map(s => (
-                    <div key={s.label} className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-800 p-4 flex items-center gap-3">
-                        <s.icon size={18} className={cn('shrink-0', s.color)} />
-                        <div>
-                            <p className="text-[11px] text-surface-400 dark:text-surface-500">{s.label}</p>
-                            <p className={cn('text-xl font-bold', s.color)}>{s.value}</p>
+                    <div key={s.label} className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-800 p-4 md:p-5 flex items-center gap-3.5 transition-all hover:shadow-sm">
+                        <s.icon size={20} className={cn('shrink-0', s.iconColor)} />
+                        <div className="flex flex-col justify-center min-w-0">
+                            <p className="text-[11px] font-medium text-surface-400 dark:text-surface-500 leading-none mb-1.5">{s.label}</p>
+                            <p className={cn('text-[22px] font-extrabold leading-none tracking-tight', s.color)}>{s.value}</p>
                         </div>
                     </div>
                 ))}

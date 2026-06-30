@@ -7,21 +7,45 @@ logger = logging.getLogger(__name__)
 
 # Compiled regex for fast keyword-based handoff detection.
 # Used as a fallback when the LLM intent call times out or fails.
+#
+# Two design notes:
+#   • Use \s+ (not literal spaces) so noisy whitespace / typos like
+#     "iw  th" — extra spaces between tokens — still match.
+#   • Cover both "live connection" intents (talk to a human now) AND
+#     "leave a message" intents (send/leave/drop a message). Both flows
+#     funnel through the same handoff form on the widget; the form then
+#     decides between live-queue vs offline-message based on operator
+#     availability.
 _HANDOFF_KEYWORDS_RE = re.compile(
     r"(?i)\b("
-    r"talk to (?:a |an |the )?(?:human|person|someone|agent|representative|rep|operator|support)"
-    r"|speak (?:to|wit[h]?) (?:a |an |the )?(?:human|person|someone|agent|representative|rep|operator|support|team|your team)"
-    r"|connect (?:me |us )?(?:to|wit[h]?) (?:a |an |the )?(?:human|person|someone|agent|representative|support|team|your team|support team)"
-    r"|real person"
-    r"|get (?:me |us )?(?:a |an )?(?:human|agent|operator|representative)"
-    r"|let me talk"
-    r"|need (?:a )?(?:human|real person|actual person)"
-    r"|(?:contact|reach|get in touch wit[h]?) (?:the )?(?:support|team|your team|support team)"
-    r"|(?:can|could) I (?:talk|speak|chat) (?:to|wit[h]?)"
-    r"|(?:i want|i need|i'd like) (?:a |to talk to |to speak (?:to|wit[h]?) )?(?:a )?(?:human|person|agent|representative|support)"
+    # talk/speak/chat/connect/transfer to a human / agent / team / support
+    r"(?:talk|speak|chat|connect|transfer)\s+(?:me\s+|us\s+)?(?:to|wit[h]?)\s+(?:a\s+|an\s+|the\s+)?"
+    r"(?:human|person|someone|anybody|anyone|agent|representative|rep|operator|support|team|your\s+team|support\s+team|customer\s+(?:support|service|care))"
+    # real / actual / live human|person|agent
+    r"|(?:real|actual|live)\s+(?:human|person|agent)"
+    # get me a human / agent / operator / representative
+    r"|get\s+(?:me\s+|us\s+)?(?:a\s+|an\s+)?(?:human|agent|operator|representative)"
+    # let me talk / speak / chat
+    r"|let\s+me\s+(?:talk|speak|chat)"
+    # need a human / real person / actual person
+    r"|need\s+(?:a\s+)?(?:human|real\s+person|actual\s+person)"
+    # contact / reach / message / email / get in touch with (the|your)? support|team|...
+    r"|(?:contact|reach|message|email|get\s+in\s+touch\s+wit[h]?)\s+(?:the\s+|your\s+|a\s+)?"
+    r"(?:support|team|your\s+team|support\s+team|customer\s+(?:support|service|care))"
+    # can / could I talk|speak|chat|connect to|with
+    r"|(?:can|could)\s+i\s+(?:talk|speak|chat|connect)\s+(?:to|wit[h]?)"
+    # I want / need / would like / wanna [to] talk|speak|chat|connect|contact|reach|message|email
+    r"|(?:i\s+(?:want|need|wanna|would\s+like|'?d\s+like))\s+(?:to\s+)?"
+    r"(?:talk|speak|chat|connect|contact|reach|message|email)"
+    # send / leave / drop / write a message / note / email (to someone)
+    r"|(?:send|leave|drop|write)\s+(?:me\s+|us\s+|you\s+)?(?:a\s+|an\s+)?"
+    r"(?:message|note|email|mail)"
+    # escalate
     r"|escalate"
-    r"|transfer (?:me |us )?to"
-    r"|how (?:can|do) (?:i|we) (?:connect|talk|speak|chat) (?:to|wit[h]?)"
+    # transfer me / us to (someone)
+    r"|transfer\s+(?:me\s+|us\s+)?to"
+    # how can / do I|we connect|talk|speak|chat|contact|reach
+    r"|how\s+(?:can|do)\s+(?:i|we)\s+(?:connect|talk|speak|chat|contact|reach)"
     r")\b"
 )
 

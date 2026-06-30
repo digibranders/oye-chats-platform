@@ -134,7 +134,7 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
 
         logger.info(f"Offline message saved: {msg.id} from {request.email} for bot {bot.id}")
 
-    # Notify connected operators about new offline message
+    # Notify connected operators about new offline message (live-chat console).
     from app.services.live_chat_service import manager
 
     notification = {
@@ -144,6 +144,28 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
     }
     for operator_id in list(manager.operator_connections.keys()):
         await manager._send_to_operator(operator_id, notification)
+
+    # Drop a workspace-scoped notification into the bell so it survives a
+    # reload + reaches operators on any page in the admin dashboard.
+    try:
+        from app.services.notification_service import notify_offline_message
+
+        with get_session() as ns_session:
+            # Re-read bot inside this session so the relationship is live for
+            # the notification factory (the previous `bot` object is detached).
+            bot_row = ns_session.execute(select(Bot).where(Bot.bot_key == request.bot_key)).scalar_one_or_none()
+            if bot_row is not None:
+                notify_offline_message(
+                    ns_session,
+                    client_id=bot_row.client_id,
+                    visitor_name=request.name.strip(),
+                    visitor_email=request.email.strip(),
+                    message_preview=request.message.strip(),
+                    offline_message_id=msg.id,
+                    bot_name=bot_row.name,
+                )
+    except Exception:
+        logger.exception("Failed to record offline_message notification")
 
     return {"success": True, "message": "Your message has been sent. We'll get back to you soon!"}
 

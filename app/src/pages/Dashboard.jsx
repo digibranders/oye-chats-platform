@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Users, CheckCircle, MessageSquare, BarChart3, Upload, Palette, Code2, ArrowRight, TrendingUp, Clock, ThumbsUp, ThumbsDown, Inbox, Target, Activity, Link2, Check, Lock, Crown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Sector } from 'recharts';
 import { getDashboardStats, getTopQuestions, getLeadStats, getFeedbackData, getOfflineMessages, getBotDemoUrl, trackDemoShareClick } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -46,6 +46,108 @@ export default function Dashboard() {
   const [copiedDemo, setCopiedDemo] = useState(false);
   const copyResetTimeoutRef = useRef(null);
   const navigate = useNavigate();
+
+  const [activePieIndex, setActivePieIndex] = useState(null);
+  const [activeTooltip, setActiveTooltip] = useState(null);
+
+  const onPieEnter = useCallback((data, index) => {
+    setActivePieIndex(index);
+
+    const RADIAN = Math.PI / 180;
+    const midAngle = data.midAngle;
+    const sin = Math.sin(-RADIAN * midAngle);
+    const cos = Math.cos(-RADIAN * midAngle);
+
+    const cx = data.cx;
+    const cy = data.cy;
+    const outerRadius = data.outerRadius;
+
+    // Set space to 0 so slices stay perfectly attached
+    const space = 0;
+    const mx = cx + space * cos;
+    const my = cy + space * sin;
+
+    const tx = mx + (outerRadius + 2) * cos;
+    const ty = my + (outerRadius + 2) * sin;
+
+    const total = (leadStats?.total || 0) || 1;
+    const pct = Math.round((data.value / total) * 100);
+
+    setActiveTooltip({
+      name: data.name,
+      value: data.value,
+      pct,
+      fill: data.fill,
+      fallbackColor: data.fallbackColor,
+      tx,
+      ty,
+      cos,
+      sin,
+    });
+  }, [leadStats]);
+
+  const onPieLeave = useCallback(() => {
+    setActivePieIndex(null);
+    setActiveTooltip(null);
+  }, []);
+
+  const pieData = useMemo(() => {
+    if (!leadStats) return [];
+    return [
+      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'url(#gray-gradient)', fallbackColor: '#A6AFBC' },
+      { name: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'url(#blue-gradient)', fallbackColor: '#2EA8FF' },
+      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'url(#orange-gradient)', fallbackColor: '#FF7A00' },
+    ].filter(d => d.value > 0);
+  }, [leadStats]);
+
+
+
+  const renderActiveShape = useCallback((props) => {
+    const {
+      cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill
+    } = props;
+
+    const RADIAN = Math.PI / 180;
+    const midAngle = (startAngle + endAngle) / 2;
+    const sin = Math.sin(-RADIAN * midAngle);
+    const cos = Math.cos(-RADIAN * midAngle);
+
+    // Keep active segment attached (no translation)
+    const space = 0;
+    const mx = cx + space * cos;
+    const my = cy + space * sin;
+
+    return (
+      <g>
+        {/* Glow backdrop behind the sector */}
+        <Sector
+          cx={mx}
+          cy={my}
+          innerRadius={innerRadius}
+          outerRadius={outerRadius}
+          startAngle={startAngle}
+          endAngle={endAngle}
+          fill={fill}
+          filter="url(#pie-glow)"
+          style={{
+            opacity: 0.85,
+          }}
+        />
+        {/* Active segment with thin white highlight on rim */}
+        <Sector
+          cx={mx}
+          cy={my}
+          innerRadius={innerRadius}
+          outerRadius={outerRadius}
+          startAngle={startAngle}
+          endAngle={endAngle}
+          fill={fill}
+          stroke="#ffffff"
+          strokeWidth={1.5}
+        />
+      </g>
+    );
+  }, []);
 
   const adminName = getAuthItem('admin_name') || 'there';
 
@@ -360,7 +462,7 @@ export default function Dashboard() {
         {/* Lead Funnel Mini — locked on Free; renders the real chart on
             paid plans. The card chrome (icon, title) is reused so a plan
             upgrade visually swaps the body without a layout shift. */}
-        <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
+        <div className="bg-white dark:bg-[#040B18] rounded-2xl border border-surface-200 dark:border-white/10 shadow-sm p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className={cn(
               'w-9 h-9 rounded-xl flex items-center justify-center',
@@ -430,64 +532,185 @@ export default function Dashboard() {
             </button>
           ) : leadStats ? (
             <div className="flex items-center gap-6">
-              <div className="w-28 h-28 shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={[
-                      { name: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: '#94a3b8' },
-                      { name: 'MQL', value: leadStats.warm || leadStats.mql || 0, color: '#38bdf8' },
-                      { name: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: '#f97316' },
-                      { name: 'SQL', value: leadStats.qualified || leadStats.sql || 0, color: '#22c55e' },
-                    ].filter(d => d.value > 0)} cx="50%" cy="50%" innerRadius={28} outerRadius={50} paddingAngle={2} dataKey="value">
-                      {['#94a3b8', '#38bdf8', '#f97316', '#22c55e'].map((color, i) => (
-                        <Cell key={i} fill={color} />
-                      ))}
-                    </Pie>
-                    <ReTooltip
-                      cursor={{ fill: 'rgba(148, 163, 184, 0.08)' }}
-                      content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null;
-                        const { name, value, payload: p } = payload[0];
-                        const total = (leadStats.total || 0) || 1;
-                        const pct = Math.round((value / total) * 100);
-                        const accent = p.color || '#6366f1';
+              <div className="w-44 h-44 shrink-0 relative outline-none select-none">
+                <ResponsiveContainer width="100%" height="100%" style={{ overflow: 'visible', outline: 'none' }}>
+                  <PieChart style={{ overflow: 'visible', outline: 'none' }} wrapperStyle={{ overflow: 'visible', outline: 'none' }} className="!overflow-visible outline-none focus:outline-none">
+                    <defs>
+                      <filter id="pie-glow" x="-30%" y="-30%" width="160%" height="160%">
+                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feMerge>
+                          <feMergeNode in="blur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                      <radialGradient id="blue-gradient" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stopColor="#2EA8FF" />
+                        <stop offset="100%" stopColor="#007ecc" />
+                      </radialGradient>
+                      <radialGradient id="orange-gradient" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stopColor="#FF7A00" />
+                        <stop offset="100%" stopColor="#cc6200" />
+                      </radialGradient>
+                      <radialGradient id="gray-gradient" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stopColor="#A6AFBC" />
+                        <stop offset="100%" stopColor="#7a8491" />
+                      </radialGradient>
+                    </defs>
+                    <Pie
+                      activeIndex={activePieIndex !== null ? activePieIndex : -1}
+                      activeShape={renderActiveShape}
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={36}
+                      outerRadius={60}
+                      dataKey="value"
+                      onMouseEnter={onPieEnter}
+                      onMouseLeave={onPieLeave}
+                      style={{ outline: 'none' }}
+                    >
+                      {pieData.map((entry, index) => {
+                        const isHovered = activePieIndex !== null;
+                        const isSelf = activePieIndex === index;
+                        const opacity = isHovered ? (isSelf ? 1.0 : 0.85) : 1.0;
                         return (
-                          <div
-                            className="rounded-xl px-3 py-2 shadow-2xl backdrop-blur-md"
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={entry.color}
                             style={{
-                              background: 'rgba(255, 255, 255, 0.98)',
-                              border: `1px solid ${accent}`,
-                              boxShadow: `0 10px 30px -10px ${accent}66, 0 0 0 1px ${accent}33`,
+                              opacity,
+                              transition: 'opacity 150ms ease-out',
+                              outline: 'none',
                             }}
-                          >
-                            <div className="flex items-center gap-2">
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
-                              />
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                                {name}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex items-baseline gap-1.5">
-                              <span className="text-base font-bold text-slate-900">{value}</span>
-                              <span className="text-[11px] font-medium text-slate-500">
-                                lead{value === 1 ? '' : 's'} · {pct}%
-                              </span>
-                            </div>
-                          </div>
+                          />
                         );
-                      }}
-                    />
+                      })}
+                    </Pie>
                   </PieChart>
                 </ResponsiveContainer>
+
+                {/* Absolute Speech-bubble HTML Tooltip outside SVG */}
+                {activeTooltip && (
+                  <div
+                    className="absolute pointer-events-none z-30 select-none"
+                    style={{
+                      left: `${activeTooltip.tx}px`,
+                      top: `${activeTooltip.ty}px`,
+                      transform: activeTooltip.cos >= 0 ? 'translate(8px, -50%)' : 'translate(-50%, -108%)',
+                    }}
+                  >
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.15, ease: 'easeOut' }}
+                      className={cn(
+                        "flex items-center",
+                        activeTooltip.cos >= 0 ? "flex-row" : "flex-col"
+                      )}
+                    >
+                      {activeTooltip.cos < 0 && (
+                        <div
+                          className="rounded-xl border border-white/10 bg-[#040B18]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
+                          style={{
+                            boxShadow: '0 8px 20px rgba(0, 0, 0, 0.5)',
+                          }}
+                        >
+                          {/* Category Row */}
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span
+                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              style={{
+                                background: activeTooltip.fallbackColor || activeTooltip.fill,
+                                boxShadow: `0 0 4px ${activeTooltip.fallbackColor || activeTooltip.fill}`,
+                              }}
+                            />
+                            <span className="text-[10px] font-bold text-white uppercase tracking-widest leading-none">
+                              {activeTooltip.name}
+                            </span>
+                          </div>
+
+                          {/* Stats Row */}
+                          <div className="flex items-baseline gap-1 font-sans">
+                            <span className="text-[25px] font-extrabold text-white leading-none">
+                              {activeTooltip.value}
+                            </span>
+                            <span className="text-[10px] text-white/40 font-medium leading-none">
+                              lead{activeTooltip.value === 1 ? '' : 's'}
+                            </span>
+                            <span className="text-[10px] text-white/30 font-light leading-none">•</span>
+                            <span
+                              className="text-[10px] font-bold leading-none"
+                              style={{ color: activeTooltip.fallbackColor || activeTooltip.fill }}
+                            >
+                              {activeTooltip.pct}%
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Speech-bubble Arrow */}
+                      {activeTooltip.cos >= 0 ? (
+                        /* Arrow on the Left pointing Left */
+                        <div 
+                          className="w-0 h-0 border-t-[5px] border-t-transparent border-b-[5px] border-b-transparent border-r-[6px] shrink-0"
+                          style={{ borderRightColor: '#040B18' }}
+                        />
+                      ) : (
+                        /* Arrow on the Bottom pointing Down */
+                        <div 
+                          className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[6px] shrink-0"
+                          style={{ borderTopColor: '#040B18' }}
+                        />
+                      )}
+
+                      {activeTooltip.cos >= 0 && (
+                        <div
+                          className="rounded-xl border border-white/10 bg-[#040B18]/85 backdrop-blur-md shadow-2xl px-4 py-3 min-w-[110px] flex flex-col justify-center animate-fade-in"
+                          style={{
+                            boxShadow: '0 8px 20px rgba(0, 0, 0, 0.5)',
+                          }}
+                        >
+                          {/* Category Row */}
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span
+                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              style={{
+                                background: activeTooltip.fallbackColor || activeTooltip.fill,
+                                boxShadow: `0 0 4px ${activeTooltip.fallbackColor || activeTooltip.fill}`,
+                              }}
+                            />
+                            <span className="text-[10px] font-bold text-white uppercase tracking-widest leading-none">
+                              {activeTooltip.name}
+                            </span>
+                          </div>
+
+                          {/* Stats Row */}
+                          <div className="flex items-baseline gap-1 font-sans">
+                            <span className="text-[25px] font-extrabold text-white leading-none">
+                              {activeTooltip.value}
+                            </span>
+                            <span className="text-[10px] text-white/40 font-medium leading-none">
+                              lead{activeTooltip.value === 1 ? '' : 's'}
+                            </span>
+                            <span className="text-[10px] text-white/30 font-light leading-none">•</span>
+                            <span
+                              className="text-[10px] font-bold leading-none"
+                              style={{ color: activeTooltip.fallbackColor || activeTooltip.fill }}
+                            >
+                              {activeTooltip.pct}%
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  </div>
+                )}
               </div>
               <div className="space-y-2 flex-1">
                 {[
-                  { label: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'bg-surface-400' },
-                  { label: 'MQL', value: leadStats.warm || leadStats.mql || 0, color: 'bg-sky-400' },
-                  { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'bg-orange-400' },
-                  { label: 'SQL', value: leadStats.qualified || leadStats.sql || 0, color: 'bg-emerald-500' },
+                  { label: 'Unqualified', value: leadStats.cold || leadStats.unqualified || 0, color: 'bg-[#A6AFBC]' },
+                  { label: 'MQL', value: (leadStats.warm || leadStats.mql || 0) + (leadStats.qualified || leadStats.sql || 0), color: 'bg-[#2EA8FF]' },
+                  { label: 'SAL', value: leadStats.hot || leadStats.sal || 0, color: 'bg-[#FF7A00]' },
                 ].map(item => (
                   <div key={item.label} className="flex items-center gap-2">
                     <div className={cn('w-2 h-2 rounded-full shrink-0', item.color)} />

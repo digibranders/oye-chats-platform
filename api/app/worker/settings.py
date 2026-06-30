@@ -25,9 +25,11 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_crawl_and_ingest,
     task_delete_expired_trial_data,
     task_deliver_webhook,
+    task_dispatch_handoff_push,
     task_expire_old_topups,
     task_expire_past_due_subscriptions,
     task_expire_trials,
+    task_handoff_escalation,
     task_ingest_documents,
     task_ingest_web_batch,
     task_process_webhook_retries,
@@ -35,6 +37,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_renew_due_subscriptions,
     task_send_email,
     task_send_template_email,
+    task_send_visitor_message_email,
     task_trial_reminder_emails,
     task_worker_heartbeat,
 )
@@ -123,6 +126,9 @@ class WorkerSettings:
         task_trial_reminder_emails,
         task_delete_expired_trial_data,
         task_expire_past_due_subscriptions,
+        task_dispatch_handoff_push,
+        task_handoff_escalation,
+        task_send_visitor_message_email,
     ]
 
     # Cron jobs:

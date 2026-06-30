@@ -953,6 +953,32 @@ def _create_bot_from_subscription_notes(
     return bot
 
 
+def _emit_plan_purchased_notification(session: Session, client_id: int, plan_id: int, billing_cycle: str) -> None:
+    """Best-effort: drop a ``plan_purchased`` row into the in-app bell.
+
+    Wrapped in a broad try/except so a notification failure can never break
+    subscription activation — the bell is a UX nicety, the activation is
+    the business-critical path.
+    """
+    try:
+        from app.db.models import Plan
+        from app.services.notification_service import notify_plan_purchased
+
+        plan = session.get(Plan, plan_id)
+        notify_plan_purchased(
+            session,
+            client_id=client_id,
+            plan_name=plan.name if plan else "Plan",
+            billing_cycle=billing_cycle,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to record plan_purchased notification (razorpay) for client %s plan %s",
+            client_id,
+            plan_id,
+        )
+
+
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
     """First mandate-authentication or restart after a paused state.
 
@@ -1059,6 +1085,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 client_id,
                 new_bot.id,
             )
+            _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
             return f"Per-bot subscription activated: client {client_id}, bot {new_bot.id}"
 
         # Expire any unused plan_grant from the prior subscription before
@@ -1082,6 +1109,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             local.id,
             client_id,
         )
+        _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
         return f"Subscription activated for client {client_id}"
 
     # Existing local row — update fields and ensure first-month credits exist.

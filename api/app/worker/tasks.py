@@ -888,3 +888,268 @@ async def task_expire_past_due_subscriptions(ctx: dict) -> int:
     if count:
         logger.info("task_expire_past_due_subscriptions: expired %d subscription(s)", count)
     return count
+
+
+# ── Web Push (operator notifications) ───────────────────────────────────────
+#
+# Two tasks drive the push pipeline:
+#
+# * ``task_dispatch_handoff_push`` — runs immediately when a visitor enters
+#   the live-chat queue. Picks eligible operators (right department + under
+#   max_concurrent_chats) who are NOT currently watching the dashboard via
+#   WebSocket, and fans out a "new chat waiting" push to every subscription
+#   they own. Also schedules its own ``task_handoff_escalation`` so a
+#   black-holed chat doesn't leave the visitor staring at a spinner forever.
+#
+# * ``task_handoff_escalation`` — runs deferred (e.g. +20s). If the session
+#   is still in ``waiting`` (no operator accepted), it cancels remaining
+#   notifications on the operators' devices (tag-replace with "Chat ended")
+#   so they don't tap a stale alert later. The visitor's queue-timeout
+#   handler (``LiveChatService._start_timeout``) drives the actual fallback
+#   UX; this task is purely cleanup.
+#
+# * ``task_send_visitor_message_email`` — fires when a visitor messages a
+#   session that has no operator assigned (status="waiting"). Debounced by a
+#   per-session marker in Redis so a chatty visitor doesn't flood the inbox.
+
+
+async def task_dispatch_handoff_push(
+    ctx: dict,
+    session_id: str,
+    bot_id: int,
+    department_id: int | None,
+    visitor_name: str | None,
+    reason: str | None,
+    queue_timeout_seconds: int,
+) -> int:
+    """Fan out a Web Push to every eligible operator who isn't currently on WS.
+
+    Returns the total number of push deliveries (across all operators × all
+    their subscribed devices). Zero is a valid outcome and just means no
+    eligible operator had a subscription.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.db.models import Bot, Operator
+    from app.db.session import SessionLocal
+    from app.services.live_chat_service import manager
+    from app.services.push_service import send_push_to_client, send_push_to_operator
+
+    logger.info(
+        "task_dispatch_handoff_push: session=%s bot=%d dept=%s",
+        session_id,
+        bot_id,
+        department_id,
+    )
+
+    def _run() -> int:
+        if SessionLocal is None:
+            return 0
+        connected = set(manager.operator_connections.keys())
+        with SessionLocal() as db:
+            bot = db.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
+            if bot is None:
+                return 0
+
+            q = select(Operator).where(
+                Operator.client_id == bot.client_id,
+                Operator.is_accepting_chats.is_(True),
+            )
+            if department_id is not None:
+                # Department-scoped: only operators in that department, plus
+                # ones with no department (fallback pool, matches the WS
+                # routing rule in live_chat_service._should_notify_operator).
+                q = q.where((Operator.department_id == department_id) | (Operator.department_id.is_(None)))
+            operators = db.execute(q).scalars().all()
+
+            # Skip operators actively watching the dashboard — they got the
+            # in-dashboard toast already. Push is the *fallback* channel.
+            operator_targets = [op for op in operators if op.id not in connected]
+
+            payload = {
+                "type": "handoff_request",
+                "title": f"New chat from {visitor_name or 'a visitor'}",
+                "body": (reason or "Visitor wants to talk to your team.")[:140],
+                "session_id": session_id,
+                "bot_id": bot_id,
+                "bot_name": bot.name,
+                "department_id": department_id,
+            }
+            tag = f"handoff:{session_id}"
+
+            total = 0
+            for op in operator_targets:
+                total += send_push_to_operator(db, op.id, payload, tag=tag)
+            # Also fan out to the workspace owner — small teams where the
+            # client login is the primary chat-taker rely on this to get
+            # notified at all. The owner isn't tracked in ``operator_connections``
+            # the same way operators are; we always push and let the SW's
+            # tag-replace semantics handle the case where they happen to be
+            # watching the dashboard in another tab.
+            total += send_push_to_client(db, bot.client_id, payload, tag=tag)
+            db.commit()
+            if total == 0:
+                logger.info(
+                    "Handoff push delivered nothing for session=%s — no subscribers off-WS",
+                    session_id,
+                )
+            return total
+
+    loop = asyncio.get_running_loop()
+    delivered = await loop.run_in_executor(None, _run)
+    logger.info(
+        "task_dispatch_handoff_push: delivered=%d session=%s",
+        delivered,
+        session_id,
+    )
+    return delivered
+
+
+async def task_handoff_escalation(ctx: dict, session_id: str) -> bool:
+    """Cleanup pass after the visitor queue-timeout window has elapsed.
+
+    Asymmetric-timeout design (visitor 30s / operator no-hard-limit):
+
+    The visitor's wait is capped at ~30s — they either get an operator or fall
+    through to the offline form. The operator's on-device notification, by
+    contrast, is allowed to **persist** (``requireInteraction=true`` in the SW)
+    so a late-arriving operator can still tap it minutes later. This task
+    fires at t≈timeout+1 to **upgrade** the original "new chat" notification
+    into one of two helpful follow-ups based on what the visitor did:
+
+    * Visitor submitted the offline form → "Chat moved to offline message"
+      with ``click_url`` pointing the operator to ``/support?tab=messages``
+      so a late tap lands them on the just-arrived message, not an empty
+      chat that no longer exists.
+
+    * Visitor cancelled / closed without leaving a message → "Chat no longer
+      waiting" with ``click_url=/support`` so the operator at least lands on
+      the right dashboard tab. The original session row is left intact for
+      audit purposes; nothing to act on.
+
+    Returns True when cleanup fired, False when the chat was already accepted
+    (operator beat the timeout — no notification update needed).
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.db.models import ChatSession, OfflineMessage, Operator
+    from app.db.session import SessionLocal
+    from app.services.push_service import send_push_to_client, send_push_to_operators
+
+    def _run() -> bool:
+        if SessionLocal is None:
+            return False
+        with SessionLocal() as db:
+            cs = db.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+            if cs is None or cs.status not in {"waiting", "closed"}:
+                # Operator accepted (status="live") or the session reverted to
+                # bot mode — nothing to clean up.
+                return False
+
+            # Did the visitor end up leaving an offline message? The widget
+            # creates an OfflineMessage row when the queue timeout fires and
+            # the visitor submits the fallback form. If we find one, the
+            # late-operator notification should route to /support?tab=messages
+            # so they land on the message instead of an empty chat.
+            offline_msg = db.execute(
+                select(OfflineMessage)
+                .where(OfflineMessage.session_id == session_id)
+                .order_by(OfflineMessage.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if offline_msg is not None:
+                payload = {
+                    "type": "handoff_moved_to_offline",
+                    "title": f"Offline message from {offline_msg.visitor_name}",
+                    "body": (offline_msg.message_body or "Visitor left a message.")[:140],
+                    "session_id": session_id,
+                    "offline_message_id": offline_msg.id,
+                    # SW reads ``click_url`` and navigates here on tap. Same
+                    # origin only — the SW's notificationclick handler validates
+                    # this is a relative path before opening / focusing a tab.
+                    "click_url": f"/support?tab=messages&message_id={offline_msg.id}",
+                }
+            else:
+                payload = {
+                    "type": "handoff_expired",
+                    "title": "Chat no longer waiting",
+                    "body": "The visitor left before an operator joined.",
+                    "session_id": session_id,
+                    "click_url": "/support",
+                }
+
+            tag = f"handoff:{session_id}"
+            if cs.bot is not None:
+                operators = db.execute(select(Operator).where(Operator.client_id == cs.bot.client_id)).scalars().all()
+                send_push_to_operators(db, [op.id for op in operators], payload, tag=tag)
+                send_push_to_client(db, cs.bot.client_id, payload, tag=tag)
+            db.commit()
+            return True
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)
+
+
+async def task_send_visitor_message_email(
+    ctx: dict,
+    session_id: str,
+    bot_id: int,
+    preview: str,
+) -> bool:
+    """Email the operator team when a waiting visitor sends a message.
+
+    Caller is expected to have already debounced this — we don't re-check.
+    Recipients come from the bot's ``handoff_request`` notification list, the
+    same routing used previously for handoff emails. If the session has been
+    accepted (status != "waiting") by the time this runs, we skip — the
+    operator's already in the conversation.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.db.models import Bot, ChatSession, LeadInfo
+    from app.db.session import SessionLocal
+    from app.services.email_service import (
+        get_notification_recipients,
+        send_handoff_request_email,
+    )
+
+    def _run() -> bool:
+        if SessionLocal is None:
+            return False
+        with SessionLocal() as db:
+            cs = db.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+            if cs is None or cs.status != "waiting":
+                return False
+            bot = db.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
+            if bot is None or not getattr(bot, "email_on_handoff", True):
+                return False
+            recipients = get_notification_recipients(bot, "handoff_request")
+            if not recipients:
+                return False
+            lead = db.execute(select(LeadInfo).where(LeadInfo.session_id == session_id)).scalar_one_or_none()
+            contact = None
+            if lead is not None:
+                contact = {"name": lead.name, "email": lead.email, "phone": lead.phone}
+            reply_to = getattr(bot, "reply_to_email", None)
+            # Reuse the existing handoff-request template but with the visitor's
+            # *actual message* as the reason — that's the whole signal a real
+            # human is waiting to talk, not a stalled queue entry.
+            for recipient in recipients:
+                send_handoff_request_email(
+                    recipient,
+                    bot.name,
+                    preview,
+                    contact,
+                    reply_to=reply_to,
+                )
+            return True
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)
