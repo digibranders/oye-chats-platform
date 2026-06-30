@@ -1,6 +1,12 @@
 # OyeChats Payment & Credit System — End-to-End Review Report
 
-**Date:** 2026-06-29
+> ## ✅ Remediation status — ALL DEFECTS FIXED 2026-06-30
+> **Phase 0–2 (verified earlier):** C1, C2 (scope+lock), L1, N2, H1, H2, H3, H4, H5, H6.
+> **Defect-remediation pass (this session, commits `a444aa5 → 68e86cf`, full suite 718 passed):** every remaining correctness/security/hardening finding is now fixed, tested, and committed — **C3** (caps/expiry/floor), **C2-precision** (`reference_id` invoice→grant link), **N1, N3, N4, N5, N6, N7**, **L2, L3, L5**, **M1–M8**, **T1/N9**, **M5/N8**, and the six new findings surfaced in the verification pass (**NV1–NV6**). Two additive migrations (`e1c3a5f7b9d2`, `f2d4b6a8c0e1`) verified up/down; single head.
+> **Deferred (net-new features, not defects):** **F1** prorated upgrades, **R1** reconciliation cron, **INV-1…INV-10** GST invoicing/tax (incl. the INV-6 frontend currency display bug) — these need design/finance decisions and are tracked separately.
+> Full per-finding → commit mapping in the [remediation plan §0a](2026-06-29-remediation-plan.md#0a-defect-remediation-pass--complete-2026-06-30).
+
+**Date:** 2026-06-29 (status updated 2026-06-30)
 **Reviewers (roles played):** Senior Software Engineer · Senior QA · CTO
 **Scope:** Razorpay (primary, INR) + Stripe (fallback) billing, subscriptions, top-ups, the event-sourced credit ledger, discounts, affiliate/referral, plan entitlements, inbound/outbound webhooks, and the full money lifecycle (quote → checkout → capture → grant → consume → renew → refund → expire).
 **Method:** Full reads of the critical files + parallel specialist audits + web research on known Razorpay/payment bug classes. Every "Confirmed" finding below was verified by direct code read; agent-reported items are marked and severity-adjusted for real exploitability.
@@ -66,7 +72,7 @@ Plus a systemic **lack of row-level locking on subscription mutation endpoints**
 ## 2. Critical findings
 
 ### C1 — Webhook handler swallows all exceptions and returns HTTP 200 → permanent silent loss of paid events
-**Location:** `api/app/api/webhook_billing_routes.py:61-69` · **Confirmed**
+**Location:** `api/app/api/webhook_billing_routes.py:61-69` · **Confirmed** · ✅ **RESOLVED 2026-06-30** (`webhook_billing_routes.py:79-127`: raw-bytes verify → `_dead_letter` to `FailedWebhook` → 5xx when `WEBHOOK_RETRY_ON_ERROR`)
 
 ```python
 try:
@@ -93,7 +99,7 @@ except Exception as exc:
 ---
 
 ### C2 — `clawback_refund` reverses credits from the wrong grant and the wrong ledger scope
-**Location:** `api/app/services/credit_service.py:645-720`, called from `razorpay_service.py:1363-1419` · **Confirmed**
+**Location:** `api/app/services/credit_service.py:645-720`, called from `razorpay_service.py:1363-1419` · **Confirmed** · ✅ **RESOLVED 2026-06-30 (scope + lock); ⚠️ invoice→grant link deferred** — `clawback_refund` now scopes by `(client_id, bot_id, reason)` and locks the correct pool (`credit_service.py:684-730`), so per-bot refunds land in the right ledger and no pool goes negative. **Residual (tracked C2-precision):** grant selection is still most-recent-of-type, not linked via `reference_id`; refunding the older of two same-bot top-ups claws the newer (NV5 is the period-scope variant). Fix = stamp `reference_id = invoice.id` at grant time and select on it.
 
 Two distinct defects in the same function:
 
@@ -125,7 +131,7 @@ The clawback acquires `_acquire_client_lock(session, client_id)` (bot_id default
 ---
 
 ### C3 — Referral codes: no redemption cap, no expiry, and no minimum-price floor
-**Location:** `affiliate_service.py` (`_validate_split` 298-324, `attribute_signup`), `discount_service.py:44`, `razorpay_service.py:418,433` · **Verified** (model gap & floor confirmed; "₹0 at 100%" corrected)
+**Location:** `affiliate_service.py` (`_validate_split` 298-324, `attribute_signup`), `discount_service.py:44`, `razorpay_service.py:418,433` · **Verified** (model gap & floor confirmed; "₹0 at 100%" corrected) · ✅ **RESOLVED 2026-06-30** (commit `1027ffe`) — `ReferralCode` gains `max_redemptions`/`redeemed_count`/`valid_until` (migration `e1c3a5f7b9d2`); `attribute_signup` atomically claims a redemption slot (cap+expiry re-checked in the UPDATE, released on race-loss); `_validate_split` caps customer discount at 50% independent of pool; `resolve_discounted_plan` enforces a ₹1 floor.
 
 - **Confirmed — no redemption cap / no expiry.** `ReferralCode` (`models.py:1292-1340`) has **no `max_redemptions`, no `redeemed_count`, no `valid_until`/`expires_at`**. `attribute_signup` enforces only *first-touch per new client* (`affiliate_service.py:275-285`). A leaked code is redeemable by unlimited signups, forever; the only kill switch is `active=False` (all-or-nothing). *(The `max_redemptions`/`valid_until` columns that exist on the unrelated `Coupon` model do not apply to referral codes.)*
 - **Confirmed — data layer permits a 100% pool→customer allocation.** `_validate_split` (298-324) permits `customer_discount_bps` up to `MAX_COMMISSION_BPS` (10000) as long as `commission + discount ≤ pool`, and the admin-set pool is DB-capped at 0–10000. `resolve_customer_discount_bps` (`discount_service.py:44`) returns it verbatim.
@@ -142,7 +148,7 @@ The clawback acquires `_acquire_client_lock(session, client_id)` (bot_id default
 ## 3. High findings
 
 ### H1 — No row-level locking on subscription mutation endpoints (TOCTOU double-grant / provider divergence)
-**Location:** `subscription_routes.py` (`change-plan`, `seats`, `cancel`, free-downgrade grant ~701-711); `plan_service.py` trial/default-plan grant · *Confirmed pattern; route specifics agent-reported*
+**Location:** `subscription_routes.py` (`change-plan`, `seats`, `cancel`, free-downgrade grant ~701-711); `plan_service.py` trial/default-plan grant · *Confirmed pattern; route specifics agent-reported* · ✅ **MOSTLY RESOLVED 2026-06-30; ⚠️ one gap** — `lock_client_for_billing` (txn-scoped advisory lock) wired into change-plan/cancel-scheduled/cancel/resume/seats (`subscription_routes.py:650,852,891,925,965`) + `start_trial`/`assign_default_plan`. **GAP (NV1, High):** `create_checkout` (`:592`) takes **no** lock → concurrent checkouts double-subscribe. Must finish H1.
 
 Every mutating handler does `get_client_subscription(...)` → mutate → `commit()` with **no `with_for_update()`**. Concurrent requests (double-clicked "Start trial", two seat changes, upgrade+cancel) both read the same row and last-writer-wins:
 - **Double credit grant**: two trial/free-downgrade requests both call `reset_monthly_plan_credits` + `grant_for_subscription` → 2× credits. The credit-service advisory lock serializes the *ledger writes* but not the *decision* to grant, so both still grant.
@@ -153,7 +159,7 @@ Every mutating handler does `get_client_subscription(...)` → mutate → `commi
 ---
 
 ### H2 — `get_client_subscription` resolves account entitlements to the newest-created subscription → silent feature downgrade
-**Location:** `plan_service.py:38-49`, consumed by `get_client_plan` (52-71) and `plan_entitlements_service` · **Confirmed**
+**Location:** `plan_service.py:38-49`, consumed by `get_client_plan` (52-71) and `plan_entitlements_service` · **Confirmed** · ✅ **RESOLVED 2026-06-30** — now `ORDER BY Plan.monthly_price_cents DESC, created_at DESC` (inner-joins Plan) at `plan_service.py:72-81`; Standard + later Free bot stays Standard.
 
 ```python
 .where(Subscription.status.in_(("active","trialing","past_due")))
@@ -168,7 +174,7 @@ The per-bot model explicitly allows **multiple active subscriptions per client**
 ---
 
 ### H3 — `session.commit()` inside `accept_invite_for_existing_client` breaks caller transaction atomicity
-**Location:** `affiliate_service.py:1075-1078` · *Agent-reported; pattern high-confidence*
+**Location:** `affiliate_service.py:1075-1078` · *Agent-reported; pattern high-confidence* · ✅ **RESOLVED 2026-06-30** — consumed-mark now written in a separate `Session(session.get_bind())` (`affiliate_service.py:1069-1083`); caller's txn no longer hijacked. *(Minor follow-up: wrap the side-session in try/except so a side-commit failure still raises the clean `AlreadyAffiliate`.)*
 
 The function calls `session.commit()` then `raise AlreadyAffiliate(...)`. Every other service here uses `flush()` and lets the route own the transaction. Committing mid-service flushes **all** other pending work in the unit-of-work (possibly half-finished), and breaks the "raise → outer rollback" contract.
 
@@ -177,7 +183,7 @@ The function calls `session.commit()` then `raise AlreadyAffiliate(...)`. Every 
 ---
 
 ### H4 — `subscription.charged` first-cycle de-dupe is a fragile 24h time-window heuristic
-**Location:** `razorpay_service.py:1153-1166` · **Confirmed**
+**Location:** `razorpay_service.py:1153-1166` · **Confirmed** · ✅ **RESOLVED 2026-06-30** — 24h heuristic removed; `Subscription.last_granted_period_end` + idempotent `_grant_subscription_period()` (`razorpay_service.py:991-1019`, used at activation `:1139` and charged `:1227`).
 
 ```python
 is_first_cycle = (
@@ -196,7 +202,7 @@ This guards against the activation grant + first charged grant double-counting b
 ---
 
 ### H5 — Top-up credit granting depends on `order.paid` carrying notes; `payment.captured` alone is a no-op
-**Location:** `razorpay_service.py:1267-1346` (`_handle_payment_captured`) · **Confirmed (behavioral)**
+**Location:** `razorpay_service.py:1267-1346` (`_handle_payment_captured`) · **Confirmed (behavioral)** · ✅ **RESOLVED 2026-06-30** — `payment.captured` now fetches the order for its notes when absent (`razorpay_service.py:1352-1358`), so top-ups grant without `order.paid`. *(See NV2: still no money-vs-credits reconciliation on the grant.)*
 
 Top-up `notes` (`purpose`, `client_id`, `credits`) are set on the **order** (`order.create`), not the payment. In a `payment.captured` webhook the payload is `payload.payment.entity`, whose `notes` are empty → `purpose != "topup"` → **ignored**. The grant therefore relies on the **`order.paid`** event (which carries the order entity + notes). Both event names map to the same handler, so this is fine **only if `order.paid` is enabled** in the Razorpay dashboard. If it isn't, top-ups capture money and **never credit**.
 
@@ -205,7 +211,7 @@ Top-up `notes` (`purpose`, `client_id`, `credits`) are set on the **order** (`or
 ---
 
 ### H6 — No dispute / chargeback handler (`payment.dispute.*` not dispatched)
-**Location:** `razorpay_service.py:772-790` (dispatch table) · **Confirmed**
+**Location:** `razorpay_service.py:772-790` (dispatch table) · **Confirmed** · ✅ **RESOLVED 2026-06-30** — `payment.dispute.created` (flag invoice `disputed`), `.lost` (claw via C2 scope, deduped on `dispute_lost:{id}`), `.won` (clear flag) at `razorpay_service.py:796-798,1530-1593`. *(Pairs with still-open N1 `refund.failed` re-grant.)*
 
 The webhook dispatch table handles `subscription.*`, `payment.captured`, `payment.failed`, `order.paid`, `refund.created`, `refund.processed` — but **no `payment.dispute.created` / `.lost` / `.won` / `.closed`**. A dispute event hits `handlers.get(event_name) → None` → `"Unhandled event type"`. So a customer can charge back a top-up or subscription payment and **retain the credits** (unlike `refund.*`, which at least attempts a clawback).
 
@@ -248,7 +254,7 @@ Surfaced while verifying the above against current source. IDs are `N#`.
 ### N1 — No `refund.failed` reversal → initiated-then-failed refund permanently strips credits  · 🟠 High
 `razorpay_service.py:772-790,1374-1378`. `refund.created` claws back credits on *initiation*, but there is **no `refund.failed` handler** to re-grant if the refund is later rejected/reversed by the gateway. Combined with H6, the refund/dispute lifecycle is only half-modeled (claw on initiate, never restore). **Fix:** add `refund.failed` (re-grant the clawed amount) and only finalize on `refund.processed`.
 
-### N2 — Double-clawback when a new grant lands between `refund.created` and `refund.processed`  · 🟡 Medium
+### N2 — Double-clawback when a new grant lands between `refund.created` and `refund.processed`  · 🟡 Medium · ✅ **RESOLVED 2026-06-30** (`razorpay_service.py:1475-1477` dedups on `refund:{refund_id}`)
 `razorpay_service.py:788-789` routes both `refund.created` and `refund.processed` to the same handler; they carry **different `x-razorpay-event-id`s**, so both pass event-id dedup. Because the clawback target is "newest positive grant" (C2a), if a renewal/top-up grant is created between the two refund events, the second event claws a **different (newer) grant** → double reversal. **Fix:** ties to C2 — claw the invoice-linked grant idempotently (key on refund id), so repeated refund events for one refund are a no-op.
 
 ### N3 — `cancel` / `resume` / `seats` target the wrong subscription under the per-bot model  · 🟠 High (functional)
@@ -274,9 +280,40 @@ There is **no `api/app/services/billing_service.py`** (referenced by `discount_s
 
 ---
 
+## 4c. Newly identified findings (2026-06-30 verification pass) — ✅ ALL FIXED
+
+Surfaced while verifying the Phase 0–2 fixes; all six were fixed in the same-day defect-remediation pass (commits `a444aa5`, `b521ffd`, `fdba33e`). Status per finding: **NV1** ✅ (`a444aa5`), **NV2** ✅ (`a444aa5`), **NV3** ✅ (`b521ffd`), **NV4** ✅ (`1027ffe`), **NV5** ✅ (`fdba33e`), **NV6** ✅ (`b521ffd`). IDs are `NV#`.
+
+### NV1 — `create_checkout` is the one mutating money endpoint with no billing lock · 🟠 High
+`subscription_routes.py:592`. Every other mutation (`change-plan`, `cancel`, `resume`, `seats`, `start_trial`) acquires `lock_client_for_billing`, but `create_checkout` does not. Two concurrent/double-clicked checkouts both create a Razorpay subscription **and** insert a `ReferralConversion` row → duplicate subscription + duplicate affiliate attribution for one client. **This is the unfinished tail of H1.** **Fix:** `lock_client_for_billing(session, client.id)` as the first statement inside the `with get_session()` block.
+
+### NV2 — Top-up grant trusts `notes["credits"]`, never reconciles against captured amount · 🟠 High
+`razorpay_service.py:1367,1383-1412`. The grant reads `credits`/`amount_inr` straight from order notes and grants them without asserting the captured `payment.amount` (paise) matches the pack price. Notes are server-set at `create_topup_order` today, so it's not directly exploitable — but there is zero defense-in-depth: any future order-create path or a mismatched note grants credits regardless of money received. **Fix:** assert `amount_paise == pack_price_paise` (modulo the documented test override) before granting; reject on mismatch.
+
+### NV3 — `get_plan_limit` fail-opens to UNLIMITED on an unknown metric · 🟡 Medium (security-adjacent)
+`plan_service.py:107-113` returns `UNLIMITED (-1)` for an unrecognized metric while `PlanEntitlements.limit_for` (`plan_entitlements_service.py:161-176`) fail-closes to `0`. A typo'd or renamed metric name silently grants unlimited quota through the `plan_service` gate. **Fix:** make both deny-by-default (return 0) for unknown metrics.
+
+### NV4 — Magic-link-invited affiliates land with a 0% commission pool · 🟡 Medium
+`affiliate_service.py:923-929,1016-1020,1093-1097`. `commission_bps` is set on the `Affiliate` only on the direct path; `AffiliateInvite` never captures it, so both accept paths create the affiliate with `commission_bps = 0`. Every earning split then fails `_validate_split` against a 0 pool — an invited affiliate can't create a single earning code. **Fix:** persist `commission_bps` on `AffiliateInvite` and thread it through both accept paths.
+
+### NV5 — Refund of an old invoice claws the current period's `plan_grant` · 🟡 Medium
+`credit_service.py:651-653,717`. `clawback_refund` selects the most-recent `plan_grant` in the pool with no period scoping, so refunding an old subscription invoice reverses the **current** month's credits. The period-scoped variant of the C2(a) residual; folds into the same `reference_id`-link precision fix.
+
+### NV6 — `get_or_create_usage_record` resolves the period non-deterministically · 🟡 Medium
+`plan_service.py:178-190`. Under the multi-subscription per-bot model, two active subscriptions can both satisfy `period_start <= now < period_end`; the query is `.limit(1)` with **no `ORDER BY`**, so it returns an arbitrary period row. **Fix:** add a deterministic `ORDER BY period_start DESC` and/or scope usage records per subscription. *(Also still open here: M4 — no `IntegrityError` catch around the insert.)*
+
+### NV-misc — Low-severity cleanups found this pass
+- Dead code: `_resolve_referral_discount` (`subscription_routes.py:1233-1259`) superseded by `discount_service` — and the two disagree on the active-code check. Remove it.
+- `FailedWebhook.headers` column is defined but never populated by `_dead_letter` (`webhook_billing_routes.py:36-45`) → debug context lost; replay still works off raw payload.
+- `delete_affiliate` reads `aff.client_id` **after** `session.delete(aff)` (`affiliate_service.py:1311-1315`) → possible `DetachedInstanceError`.
+- `leads`/`operators` usage counters diverge between the live entitlements view (`is_active` filtered) and the persisted snapshot (unfiltered) — and `leads` still counts lifetime, not period (M6).
+- N2 refund dedup is skipped when `refund_entity["id"]` is falsy — reject such refunds rather than processing un-deduped.
+
+---
+
 ## 5. Low / hardening
 
-- **L1 — Pass raw bytes to the SDK in `verify_webhook_signature`** (`razorpay_service.py:705-706`). It currently `.decode("utf-8")`s before the SDK re-encodes. For valid-UTF-8 JSON this round-trips losslessly, so it is **not an exploitable bypass today**, but pass `bytes` directly (or compute HMAC manually with `hmac.compare_digest`) to remove the edge case. *(Downgraded from an agent's "Critical" — verified non-exploitable for normal payloads.)*
+- **L1 — Pass raw bytes to the SDK in `verify_webhook_signature`** (`razorpay_service.py:705-706`). · ✅ **RESOLVED 2026-06-30** — HMAC computed over raw `bytes` with `hmac.compare_digest` (`razorpay_service.py:711-713`). It currently `.decode("utf-8")`s before the SDK re-encodes. For valid-UTF-8 JSON this round-trips losslessly, so it is **not an exploitable bypass today**, but pass `bytes` directly (or compute HMAC manually with `hmac.compare_digest`) to remove the edge case. *(Downgraded from an agent's "Critical" — verified non-exploitable for normal payloads.)*
 - **L2 — Reconcile-on-verify defense-in-depth** (`subscription_routes.py` verify endpoint): assert `notes.oyechats_client_id == caller.id` before upserting. The Razorpay signature already gates this (an attacker can't forge `HMAC(payment|subscription, secret)`), so it's hardening, not an open hole.
 - **L3 — Add an idempotent top-up reconcile-on-verify** mirroring `reconcile_subscription_from_razorpay`, so a dropped top-up webhook still credits when the browser calls `/credits/topup/verify`. Compounds C1/H5.
 - **L4 — Outbound webhook SSRF re-validation — ~~missing~~ already present** *(corrected)*. Original claim ("delivery worker does not re-validate") is **withdrawn**: `_deliver_webhook` calls `_is_safe_webhook_url` (`webhook_service.py:103`, docstring "Re-validate webhook URL at delivery time to block DNS rebinding SSRF") which runs a **fresh `getaddrinfo`** and blocks private/loopback/link-local at send time. The create→deliver rebind window is closed. Only a narrow residual remains (see §4b **N7**: TOCTOU between the `getaddrinfo` check and `urlopen`'s own resolution).
@@ -344,14 +381,27 @@ There is **no `api/app/services/billing_service.py`** (referenced by `discount_s
 > **Full phase-wise execution plan:** [`2026-06-29-remediation-plan.md`](2026-06-29-remediation-plan.md) — consolidates every finding below (plus the prorated-upgrades feature and timezone fixes) into a dependency-ordered, 8-phase plan with acceptance criteria, tests, flags, and rollback.
 
 
-1. **C1** — return 5xx on processing error + add a dead-letter table. *(blocks revenue loss)*
-2. **C2** — link refund → originating grant; thread `bot_id`. *(money correctness)*
-3. **C3** — add `max_redemptions`/`expires_at` + cap customer discount < 100% and assert price > 0.
-4. **H1** — `SELECT FOR UPDATE` + period-idempotent grants on all subscription/trial mutations.
-5. **H2** — resolve account entitlements by highest tier, not `created_at`.
-6. **H3, H4, H5** — remove mid-service commit; deterministic period-grant marker; order-notes fetch + top-up reconcile.
-7. **Mediums** — money formatting/rounding, FX fallback, usage-period filters, superadmin input bounds.
-8. **Lows** — SSRF re-validation, raw-bytes HMAC, alerting, timing oracle.
+**✅ Done — ALL defects (Phase 0–2 + the 2026-06-30 defect-remediation pass):** C1, C2 (+`reference_id` precision), C3, L1, L2, L3, L5, N1–N9, M1–M8, T1, H1–H6, NV1–NV6 — fixed, tested (718 passed), committed (`a444aa5 → 68e86cf`). Per-finding → commit table in the [remediation plan §0a](2026-06-29-remediation-plan.md#0a-defect-remediation-pass--complete-2026-06-30).
+
+**🔜 Remaining — net-new feature tracks only (deferred; need design/finance decisions):**
+1. **F1** prorated upgrades · **R1** reconciliation cron · **INV-1…10** GST invoicing/tax (incl. the INV-6 frontend currency-display fix).
+
+<details><summary>Original priority-ordered plan (now all complete)</summary>
+
+1. **NV1** — add the missing `lock_client_for_billing` to `create_checkout` *(finishes H1; cheap, High)*.
+2. **NV2** — reconcile top-up credits vs captured amount before granting *(defense-in-depth, High)*.
+3. **C3** — add `max_redemptions`/`redeemed_count`/`expires_at` to `ReferralCode` + min-price floor + business cap on customer discount *(only remaining Critical)*.
+4. **N1, N3** — `refund.failed` re-grant; per-bot targeting (`bot_id`) on cancel/resume/seats.
+5. **C2-precision / NV5** — stamp `reference_id = invoice.id` at grant time, select on it (kills the wrong-grant clawback and period mis-attribution).
+6. **L2, L3** — assert `notes.client_id == caller` on reconcile-on-verify; add idempotent top-up reconcile.
+7. **NV3, NV4, NV6** — fail-closed `get_plan_limit`; affiliate `commission_bps` propagation; deterministic usage-record period.
+8. **N4, N5, N6** — gate discount behind live provider; `create_plan` literal defaults; populate `ReferralConversion.affiliate_id`.
+9. **Mediums** — money formatting/rounding (M1, M2), usage-period filters (M4, M6, M7), superadmin bounds (M8), FX (M3).
+10. **Time hardening** — M5/N8 `add_months` DST + anchor drift; T1/N9 naive datetimes.
+11. **Hardening** — N7 SSRF TOCTOU, L5 alerting, NV-misc cleanups.
+12. **Features (separate tracks):** F1 prorated upgrades; R1 settlement reconciliation; INV-1…INV-10 invoicing/tax.
+
+</details>
 
 ### Related design doc — prorated upgrades
 The mid-cycle upgrade flow (e.g. Starter $19 → Standard $49) today charges the **full** new-plan price with no monetary proration, restarts the billing anchor, only rolls over credits, shows misleading "your unused time will be credited" copy, and cancels the old mandate before the new payment is confirmed (ties to H1/H2). The industry-standard fix — bill only the prorated difference, preserve the anchor, flip entitlements on capture, and make the checkout abandonment-safe — is specified in [`2026-06-29-prorated-upgrades-design.md`](2026-06-29-prorated-upgrades-design.md) (Option A). It depends on the **C2** and **H1** fixes landing first.

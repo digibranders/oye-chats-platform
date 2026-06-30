@@ -67,6 +67,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -479,21 +480,17 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
         logger.debug("entitlements: operator usage query failed", exc_info=True)
 
     try:
-        # ``documents`` is the *uploaded file* count — not the total of
-        # every Document row, which would also include crawled web pages
-        # (one row per page). Crawled pages live in the same table with
-        # ``document_name`` set to the URL by ``pipeline._ingest_url`` at
-        # line 374; uploaded files set it to the filename at line 154.
-        # Filtering by ``NOT LIKE 'http%'`` separates the two without a
-        # schema change. Crawl volume is governed by its own
-        # ``page_scraping`` limit (tracked via the credit ledger), so the
-        # split here is purely about what the customer sees in the
-        # Sources → Documents counter.
+        # ``documents`` is the *uploaded file* count, not the total of every
+        # Document row (which also includes one row per crawled web page).
+        # Uploads vs crawls are now distinguished by the explicit ``source``
+        # column (M7) instead of sniffing ``document_name LIKE 'http%'``, so a
+        # file literally named ``https-notes.pdf`` is counted correctly. Crawl
+        # volume is governed by its own ``page_scraping`` credit limit.
         usage["documents"] = int(
             db_session.execute(
                 select(func.count(distinct(Document.document_name))).where(
                     Document.client_id == client_id,
-                    ~Document.document_name.like("http%"),
+                    Document.source == "upload",
                 )
             ).scalar_one()
             or 0
@@ -502,9 +499,29 @@ def _build_usage(client_id: int, db_session: Session, limits: dict[str, Any]) ->
         logger.debug("entitlements: document usage query failed", exc_info=True)
 
     try:
+        # ``leads`` is scoped to the CURRENT billing period (M6) — counting all
+        # leads ever would permanently over-report on any finite-leads plan.
+        from app.db.models import Subscription
+
+        period_start = db_session.execute(
+            select(Subscription.current_period_start)
+            .where(
+                Subscription.client_id == client_id,
+                Subscription.status.in_(("active", "trialing", "past_due")),
+                Subscription.current_period_start.is_not(None),
+            )
+            .order_by(Subscription.current_period_start.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if period_start is None:
+            now = datetime.now(UTC)
+            period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
         usage["leads"] = int(
             db_session.execute(
-                select(func.count(LeadInfo.id)).join(Bot, LeadInfo.bot_id == Bot.id).where(Bot.client_id == client_id)
+                select(func.count(LeadInfo.id))
+                .join(Bot, LeadInfo.bot_id == Bot.id)
+                .where(Bot.client_id == client_id, LeadInfo.created_at >= period_start)
             ).scalar_one()
             or 0
         )

@@ -20,7 +20,7 @@ import re
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -55,6 +55,12 @@ INVITE_TOKEN_BYTES = 32
 # negative commission or one that exceeds the gross. Both ends of the
 # range are also enforced at the DB layer via a CHECK constraint.
 MAX_COMMISSION_BPS = 10000
+
+# Business ceiling on the *customer-facing* discount, independent of the
+# affiliate's pool (remediation C3). Even if a super-admin set a 100% pool, a
+# single code may not discount a recurring plan by more than this — it stops a
+# near-free (e.g. 99.99%) plan being mintable. 5000 bps = 50%.
+MAX_CUSTOMER_DISCOUNT_BPS = 5000
 
 # Codes that look like they belong to OyeChats itself or are too generic to
 # be owned by any single affiliate.
@@ -190,10 +196,19 @@ def validate_code(session: Session, code: str) -> ReferralCode | None:
     """
     if not code:
         return None
+    # A code is usable only while active, not past ``valid_until``, and with
+    # redemptions remaining (remediation C3). The atomic redemption claim in
+    # ``attribute_signup`` is the race-safe enforcement; this filter keeps the
+    # /validate UI and click logging honest.
     return session.execute(
         select(ReferralCode).where(
             ReferralCode.code == code,
             ReferralCode.active.is_(True),
+            or_(ReferralCode.valid_until.is_(None), ReferralCode.valid_until >= func.now()),
+            or_(
+                ReferralCode.max_redemptions.is_(None),
+                ReferralCode.redeemed_count < ReferralCode.max_redemptions,
+            ),
         )
     ).scalar_one_or_none()
 
@@ -269,6 +284,29 @@ def attribute_signup(session: Session, client_id: int, code: str | None) -> bool
         )
         return False
 
+    # Atomically claim a redemption slot (remediation C3). The cap + expiry are
+    # re-checked inside the UPDATE so two concurrent signups can't both take the
+    # last slot. A NULL ``max_redemptions`` means unlimited.
+    claim = session.execute(
+        update(ReferralCode)
+        .where(
+            ReferralCode.id == code_row.id,
+            ReferralCode.active.is_(True),
+            or_(ReferralCode.valid_until.is_(None), ReferralCode.valid_until >= func.now()),
+            or_(
+                ReferralCode.max_redemptions.is_(None),
+                ReferralCode.redeemed_count < ReferralCode.max_redemptions,
+            ),
+        )
+        .values(redeemed_count=ReferralCode.redeemed_count + 1)
+    )
+    if claim.rowcount != 1:
+        logger.info(
+            "referral_attribute_skip_cap_or_expired",
+            extra={"client_id": client_id, "code_id": code_row.id},
+        )
+        return False
+
     # Atomic first-touch: only set ``referral_code_id`` if it is currently
     # NULL. If a second call arrives (different code, race, retry), the
     # WHERE clause is false → 0 rows updated → no-op.
@@ -284,12 +322,21 @@ def attribute_signup(session: Session, client_id: int, code: str | None) -> bool
         )
     )
     attributed = result.rowcount == 1
-    if attributed:
-        logger.info(
-            "referral_attributed",
-            extra={"client_id": client_id, "code_id": code_row.id, "code": code},
+    if not attributed:
+        # Client was already attributed (race / retry) — release the slot we
+        # just claimed so the redemption count stays exact.
+        session.execute(
+            update(ReferralCode)
+            .where(ReferralCode.id == code_row.id)
+            .values(redeemed_count=ReferralCode.redeemed_count - 1)
         )
-    return attributed
+        return False
+
+    logger.info(
+        "referral_attributed",
+        extra={"client_id": client_id, "code_id": code_row.id, "code": code},
+    )
+    return True
 
 
 # ─── Code CRUD (affiliate-scoped) ───────────────────────────────────────
@@ -310,6 +357,11 @@ def _validate_split(
         raise CommissionSplitExceedsPool("Commission and reward must each be ≥ 0%.")
     if affiliate_commission_bps > MAX_COMMISSION_BPS or customer_discount_bps > MAX_COMMISSION_BPS:
         raise CommissionSplitExceedsPool("Commission and reward must each be ≤ 100%.")
+    if customer_discount_bps > MAX_CUSTOMER_DISCOUNT_BPS:
+        raise CommissionSplitExceedsPool(
+            f"Customer reward must be ≤ {bps_to_pct(MAX_CUSTOMER_DISCOUNT_BPS)}% "
+            "(a single code can't discount the plan further than that)."
+        )
     total = affiliate_commission_bps + customer_discount_bps
     pool = affiliate.commission_bps or 0
     if total > pool:
@@ -727,9 +779,14 @@ def list_code_referrals(
         if full_cents > 0:
             distribution_currency = distribution_currency or currency
 
-        aff_cents = int(full_cents * aff_share)
-        cust_saved_cents = int(full_cents * cust_share)
-        platform_cents = int(full_cents * platform_share) if include_platform else 0
+        # Round half-up to the nearest cent rather than truncating (M1) — these
+        # are display-only earnings estimates, and flooring each independently
+        # dropped up to a cent per bucket. (The three shares intentionally do
+        # NOT partition the whole: ``platform_share`` is the unallocated pool
+        # remainder, so they are not forced to sum to ``full_cents``.)
+        aff_cents = int(full_cents * aff_share + 0.5)
+        cust_saved_cents = int(full_cents * cust_share + 0.5)
+        platform_cents = int(full_cents * platform_share + 0.5) if include_platform else 0
         paid_cents = full_cents - cust_saved_cents
 
         if full_cents > 0:
@@ -924,6 +981,7 @@ def invite_affiliate(
         email=email_norm,
         token_hash=token_hash,
         max_active_codes=max_active_codes,
+        commission_bps=commission_bps,  # carry the pool to the accept paths (NV4)
         invited_by=invited_by_client_id,
         expires_at=datetime.now(UTC) + timedelta(days=INVITE_TTL_DAYS),
     )
@@ -1017,6 +1075,7 @@ def accept_invite(
         client_id=client.id,
         invited_by=invite.invited_by,
         max_active_codes=invite.max_active_codes,
+        commission_bps=invite.commission_bps,  # honour the pool set at invite time (NV4)
     )
     session.add(affiliate)
     invite.accepted_at = datetime.now(UTC)
@@ -1094,6 +1153,7 @@ def accept_invite_for_existing_client(
         client_id=client.id,
         invited_by=invite.invited_by,
         max_active_codes=invite.max_active_codes,
+        commission_bps=invite.commission_bps,  # honour the pool set at invite time (NV4)
     )
     session.add(affiliate)
     invite.accepted_at = datetime.now(UTC)
@@ -1306,10 +1366,13 @@ def delete_affiliate(session: Session, affiliate_id: int) -> None:
     if aff is None:
         raise NotAffiliate("Affiliate not found.")
 
+    # Capture before delete — reading aff.client_id after session.delete can
+    # raise ObjectDeletedError / return None once the row is expired.
+    client_id = aff.client_id
     # Wipe codes (cascade fans out to clicks; nulls out clients).
     session.execute(delete(ReferralCode).where(ReferralCode.affiliate_id == affiliate_id))
     session.delete(aff)
     logger.info(
         "affiliate_deleted",
-        extra={"affiliate_id": affiliate_id, "client_id": aff.client_id},
+        extra={"affiliate_id": affiliate_id, "client_id": client_id},
     )

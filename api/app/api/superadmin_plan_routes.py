@@ -8,16 +8,57 @@ and can be modified at runtime without code changes.
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
+from app.config import DISPLAY_USD_TO_INR
+from app.core.pricing import display_price
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/superadmin", tags=["superadmin-plans"])
+
+
+def _to_usd_cents(amount_minor: int | None, currency: str | None) -> int:
+    """Normalise a stored minor-unit amount to USD cents.
+
+    Mirrors the customer-app display rule (``core.pricing.display_price``):
+    INR-stored amounts are converted at the fixed ``DISPLAY_USD_TO_INR`` rate,
+    USD amounts pass through unchanged. The super-admin dashboard reports a
+    single canonical currency (USD), matching what international customers see.
+    """
+    minor = int(amount_minor or 0)
+    if (currency or "usd").lower() == "inr":
+        usd_cents, _ = display_price(inr_paise=minor, usd_cents=None, country=None, rate=DISPLAY_USD_TO_INR)
+        return usd_cents
+    return minor
+
+
+def _plan_monthly_usd_cents(plan: Plan, billing_cycle: str) -> int:
+    """Monthly-equivalent USD cents for a plan on a given billing cycle.
+
+    Prefers the plan's stored USD column (the exact gateway price) and falls
+    back to converting the INR column only for legacy rows with no USD price —
+    identical precedence to ``PlanModal``'s ``PriceBlock`` on the frontend.
+    """
+    if billing_cycle == "annual" and (plan.annual_price_cents or plan.annual_price_usd_cents):
+        annual_usd, _ = display_price(
+            inr_paise=plan.annual_price_cents,
+            usd_cents=plan.annual_price_usd_cents,
+            country=None,
+            rate=DISPLAY_USD_TO_INR,
+        )
+        return round(annual_usd / 12)  # round, not floor, so MRR isn't understated (M8)
+    monthly_usd, _ = display_price(
+        inr_paise=plan.monthly_price_cents,
+        usd_cents=plan.monthly_price_usd_cents,
+        country=None,
+        rate=DISPLAY_USD_TO_INR,
+    )
+    return monthly_usd
 
 
 # ── Request Models ──
@@ -28,8 +69,11 @@ class CreatePlanRequest(BaseModel):
     slug: str
     description: str | None = None
     pricing_model: str = "per_operator"
+    currency: str = "INR"
     monthly_price_cents: int = 0
     annual_price_cents: int = 0
+    monthly_price_usd_cents: int | None = None
+    annual_price_usd_cents: int | None = None
     annual_discount_percent: int = 30
     trial_days: int = 14
     limits: dict | None = None
@@ -44,8 +88,11 @@ class UpdatePlanRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     pricing_model: str | None = None
+    currency: str | None = None
     monthly_price_cents: int | None = None
     annual_price_cents: int | None = None
+    monthly_price_usd_cents: int | None = None
+    annual_price_usd_cents: int | None = None
     annual_discount_percent: int | None = None
     trial_days: int | None = None
     limits: dict | None = None
@@ -61,9 +108,11 @@ class UpdatePlanRequest(BaseModel):
 class UpdateSubscriptionRequest(BaseModel):
     plan_id: int | None = None
     status: str | None = None
-    operator_quantity: int | None = None
+    # Bounds (M8): a negative quantity yields negative MRR; a negative
+    # extend_trial_days silently back-dates/shortens the trial.
+    operator_quantity: int | None = Field(default=None, ge=0, le=1000)
     billing_cycle: str | None = None
-    extend_trial_days: int | None = None
+    extend_trial_days: int | None = Field(default=None, ge=0, le=365)
 
 
 # ── Plan CRUD ──
@@ -92,8 +141,11 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
                 "slug": p.slug,
                 "description": p.description,
                 "pricing_model": p.pricing_model,
+                "currency": p.currency,
                 "monthly_price_cents": p.monthly_price_cents,
                 "annual_price_cents": p.annual_price_cents,
+                "monthly_price_usd_cents": p.monthly_price_usd_cents,
+                "annual_price_usd_cents": p.annual_price_usd_cents,
                 "annual_discount_percent": p.annual_discount_percent,
                 "trial_days": p.trial_days,
                 "limits": p.limits,
@@ -123,7 +175,6 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
 
         # If this plan is marked as default, unset current default
         if request.is_default:
-            session.execute(select(Plan).where(Plan.is_default.is_(True)))
             for p in session.execute(select(Plan).where(Plan.is_default.is_(True))).scalars().all():
                 p.is_default = False
 
@@ -132,12 +183,18 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
             slug=request.slug,
             description=request.description,
             pricing_model=request.pricing_model,
+            currency=request.currency,
             monthly_price_cents=request.monthly_price_cents,
             annual_price_cents=request.annual_price_cents,
+            monthly_price_usd_cents=request.monthly_price_usd_cents,
+            annual_price_usd_cents=request.annual_price_usd_cents,
             annual_discount_percent=request.annual_discount_percent,
             trial_days=request.trial_days,
-            limits=request.limits or Plan.limits.default.arg,
-            features=request.features or Plan.features.default.arg,
+            # Explicit literals (N5): reaching into the SQLAlchemy Column.default
+            # internals (``Plan.limits.default.arg``) breaks if the default is a
+            # callable or server_default — ``or {}`` is correct and safe.
+            limits=request.limits or {},
+            features=request.features or {},
             overage_rate_cents=request.overage_rate_cents,
             is_active=request.is_active,
             is_default=request.is_default,
@@ -311,7 +368,12 @@ def update_subscription(
 
 @router.get("/revenue")
 def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
-    """Calculate MRR, total revenue, and subscription counts."""
+    """Calculate MRR, total revenue, and subscription counts.
+
+    All monetary figures are reported in **USD cents** (the dashboard's
+    canonical currency). Plan prices and invoices stored in INR are converted
+    via the same fixed-rate rule the customer app uses for non-Indian visitors.
+    """
     with get_session() as session:
         # Active subscriptions breakdown
         active_subs = (
@@ -327,17 +389,14 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
                     plan_cache[sub.plan_id] = plan
 
             plan = plan_cache.get(sub.plan_id)
-            if plan and plan.monthly_price_cents > 0:
-                if sub.billing_cycle == "annual" and plan.annual_price_cents > 0:
-                    # Monthly equivalent of annual price
-                    mrr_cents += (plan.annual_price_cents * sub.operator_quantity) // 12
-                else:
-                    mrr_cents += plan.monthly_price_cents * sub.operator_quantity
+            if plan:
+                mrr_cents += _plan_monthly_usd_cents(plan, sub.billing_cycle) * sub.operator_quantity
 
-        # Total paid invoices
-        total_revenue_cents = (
-            session.execute(select(func.sum(Invoice.amount_cents)).where(Invoice.status == "paid")).scalar() or 0
-        )
+        # Total paid invoices, normalised to USD cents.
+        paid_invoices = session.execute(
+            select(Invoice.amount_cents, Invoice.currency).where(Invoice.status == "paid")
+        ).all()
+        total_revenue_cents = sum(_to_usd_cents(amount, currency) for amount, currency in paid_invoices)
 
         # Subscription status counts
         status_counts = dict(
@@ -347,6 +406,7 @@ def get_revenue_metrics(superadmin: Client = Depends(get_superadmin)):
         )
 
         return {
+            "currency": "USD",
             "mrr_cents": mrr_cents,
             "arr_cents": mrr_cents * 12,
             "total_revenue_cents": total_revenue_cents,

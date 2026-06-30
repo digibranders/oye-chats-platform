@@ -49,3 +49,19 @@ def test_format_amount_keeps_cents_when_present():
 
 def test_format_amount_unknown_currency_prefixes_code():
     assert format_amount(1000, "EUR") == "EUR 10"
+
+
+def test_format_amount_inr_uses_indian_lakh_grouping():
+    # M2 — INR groups by lakh (1,23,456), not the Western 123,456.
+    assert format_amount(12345670, "INR") == "₹1,23,456.70"
+    assert format_amount(100000000, "INR") == "₹10,00,000"
+
+
+def test_format_amount_large_paise_is_exact_no_float_error():
+    # M2 — computed via divmod, so large totals don't lose a paise to float.
+    assert format_amount(1234567899, "INR") == "₹1,23,45,678.99"
+
+
+def test_format_amount_handles_negative():
+    assert format_amount(-1900, "USD") == "-$19"
+    assert format_amount(-15050, "INR") == "-₹150.50"

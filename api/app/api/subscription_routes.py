@@ -29,6 +29,7 @@ from app.services.plan_service import (
     get_active_plans,
     get_client_plan,
     get_client_subscription,
+    get_subscription_for_bot,
     lock_client_for_billing,
 )
 
@@ -36,6 +37,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
+
+
+def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
+    """Resolve the subscription a mutation should act on (remediation N3).
+
+    When ``bot_id`` is given, target that bot's own subscription so a client with
+    several per-bot subscriptions can cancel/resume/reseat a specific one. When
+    omitted, fall back to the account's highest-tier subscription (legacy
+    behaviour for single-subscription clients).
+    """
+    if bot_id is not None:
+        return get_subscription_for_bot(session, client_id, bot_id)
+    return get_client_subscription(session, client_id)
 
 
 def effective_resets_at(sub: Subscription | None) -> datetime | None:
@@ -380,7 +394,9 @@ def verify_razorpay_subscription(
         )
         if sub is None:
             try:
-                sub = razorpay_service.reconcile_subscription_from_razorpay(session, payload.razorpay_subscription_id)
+                sub = razorpay_service.reconcile_subscription_from_razorpay(
+                    session, payload.razorpay_subscription_id, expected_client_id=client.id
+                )
                 session.commit()
             except razorpay_service.RazorpayBillingError:
                 # Reconcile failed — the webhook may still arrive. Don't fail
@@ -592,6 +608,11 @@ def create_checkout(
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
 
+        # Serialize billing mutations for this client (NV1, finishes H1). Without
+        # this a double-clicked / concurrent checkout creates two Razorpay
+        # subscriptions and two ReferralConversion rows for one client.
+        lock_client_for_billing(session, client.id)
+
         plan = get_plan_by_id(session, request.plan_id)
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found.")
@@ -603,7 +624,16 @@ def create_checkout(
         from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service
 
-        discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
+        # Only resolve/apply the referral discount on a provider that can realise
+        # it (N4). Today only Razorpay is live; gating here means that if the
+        # Stripe path is ever re-enabled before its coupon realiser exists, the
+        # discount is not silently dropped (customer over-charged) — it's simply
+        # not resolved until the provider can honour it.
+        provider = _resolve_provider()
+        if provider == "razorpay":
+            discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
+        else:
+            discount_bps, disc_meta = 0, None
         try:
             result = razorpay_service.create_subscription(
                 session, client, plan, request.billing_cycle, discount_bps=discount_bps
@@ -617,7 +647,9 @@ def create_checkout(
                 ReferralConversion(
                     client_id=client.id,
                     referral_code_id=int(disc_meta["referral_code_id"]),
-                    affiliate_id=None,
+                    # Snapshot the affiliate so payout reconciliation can attribute
+                    # the conversion without re-joining the mutable code row (N6).
+                    affiliate_id=int(disc_meta["affiliate_id"]),
                     commission_bps=int(disc_meta["affiliate_commission_bps"]),
                     customer_discount_bps=int(disc_meta["discount_bps"]),
                 )
@@ -877,6 +909,7 @@ def cancel_scheduled_change_endpoint(client: Client = Depends(get_current_client
 
 class CancelSubscriptionRequest(BaseModel):
     reason: str | None = None
+    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/cancel")
@@ -885,11 +918,12 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
 
     Calls the upstream provider's cancel-at-cycle-end API; the local row is
     only marked ``cancel_at_period_end=True`` until the provider's webhook
-    fires the actual cancellation.
+    fires the actual cancellation. Pass ``bot_id`` to cancel a specific bot's
+    subscription under the per-bot model (N3); omit it to act on the account.
     """
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
-        sub = get_client_subscription(session, client.id)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
 
@@ -918,12 +952,23 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         return {"message": "Subscription will be canceled at the end of the current billing period."}
 
 
+class ResumeSubscriptionRequest(BaseModel):
+    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
+
+
 @router.post("/resume")
-def resume_subscription(client: Client = Depends(get_current_client)):
-    """Resume a subscription that was scheduled for cancellation."""
+def resume_subscription(
+    request: ResumeSubscriptionRequest = ResumeSubscriptionRequest(),
+    client: Client = Depends(get_current_client),
+):
+    """Resume a subscription that was scheduled for cancellation.
+
+    Pass ``bot_id`` to resume a specific bot's subscription (N3); omit to act on
+    the account's highest-tier subscription.
+    """
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
-        sub = get_client_subscription(session, client.id)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
 
@@ -945,6 +990,7 @@ def resume_subscription(client: Client = Depends(get_current_client)):
 
 class SeatChangeRequest(BaseModel):
     delta: int  # +1 to add a seat, -1 to remove. Must keep total >= included floor.
+    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/seats")
@@ -963,7 +1009,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
 
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
-        sub = get_client_subscription(session, client.id)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
         plan = sub.plan
@@ -1230,35 +1276,6 @@ def _assert_no_stacking(client, coupon_code: str | None) -> None:
         )
 
 
-def _resolve_referral_discount(session, client: Client) -> tuple[int, dict[str, str]]:
-    """Return ``(discount_bps, audit_meta)`` for this client's active referral.
-
-    Returns ``(0, {})`` when:
-      * the client isn't attributed to any code
-      * the attributed code carries no customer discount (commission-only)
-
-    The discount is applied later, inside each provider service, against
-    the minor unit (cents/paise) so we retain sub-currency precision —
-    e.g. 10% off $19 yields $17.10, not $18 (which whole-unit flooring
-    would produce).
-    """
-    from app.db.models import ReferralCode
-
-    if not getattr(client, "referral_code_id", None):
-        return 0, {}
-
-    code_row = session.get(ReferralCode, client.referral_code_id)
-    if code_row is None or not code_row.customer_discount_bps:
-        return 0, {}
-
-    bps = int(code_row.customer_discount_bps)
-    return bps, {
-        "referral_code_id": str(code_row.id),
-        "referral_code": code_row.code,
-        "discount_bps": str(bps),
-    }
-
-
 @credits_router.post("/topup")
 def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_client)):
     """Initiate a top-up purchase via Razorpay.
@@ -1339,9 +1356,15 @@ class TopupVerifyRequest(BaseModel):
 @credits_router.post("/topup/verify")
 def verify_topup_payment(
     body: TopupVerifyRequest,
-    _: Client = Depends(get_current_client),
+    client: Client = Depends(get_current_client),
 ):
-    """Verify a Razorpay Checkout success callback. Returns 204 on success."""
+    """Verify a Razorpay Checkout success callback and reconcile the grant.
+
+    The credit grant normally lands via the ``payment.captured`` / ``order.paid``
+    webhook. This endpoint signature-verifies the modal callback and then runs
+    an idempotent reconcile (L3) so a dropped webhook still credits the customer
+    instead of leaving them paid-but-no-credits.
+    """
     from app.services import razorpay_service
 
     try:
@@ -1352,6 +1375,26 @@ def verify_topup_payment(
         )
     except razorpay_service.SignatureMismatch as exc:
         raise HTTPException(status_code=400, detail="Signature verification failed.") from exc
+
+    # Idempotent safety net for a dropped capture webhook. The webhook remains
+    # the canonical path; this reconcile is gated so the two can't double-grant.
+    with get_session() as session:
+        try:
+            razorpay_service.reconcile_topup_from_razorpay(
+                session,
+                body.razorpay_order_id,
+                body.razorpay_payment_id,
+                expected_client_id=client.id,
+            )
+            session.commit()
+        except razorpay_service.RazorpayBillingError:
+            # Reconcile failed (e.g. Razorpay fetch blip) — the webhook may still
+            # arrive. Don't fail verify; the UI polls /credits/balance.
+            logger.warning(
+                "Top-up reconcile failed for client %s, order %s — falling back to webhook",
+                client.id,
+                body.razorpay_order_id,
+            )
     return {"status": "verified"}
 
 

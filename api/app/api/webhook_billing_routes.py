@@ -25,6 +25,7 @@ def _dead_letter(
     event_id: str | None,
     event_type: str | None,
     error: BaseException,
+    headers: dict[str, str] | None = None,
 ) -> None:
     """Persist a failed webhook in its own transaction so it survives the
     handler's rollback. Best-effort: a dead-letter write failure must never
@@ -40,6 +41,7 @@ def _dead_letter(
                     event_type=event_type,
                     raw_payload=raw_payload,
                     signature=signature,
+                    headers=headers,
                     error=repr(error),
                 )
             )
@@ -80,6 +82,12 @@ async def razorpay_webhook(request: Request):
     signature = request.headers.get("x-razorpay-signature", "")
     event_id = request.headers.get("x-razorpay-event-id")
 
+    # L5 — alert on event-id-less deliveries. A missing X-Razorpay-Event-Id means
+    # idempotency dedup can't key on it; in bulk it usually signals a dashboard
+    # misconfiguration that would silently drop billing events. Surface loudly.
+    if not event_id:
+        logger.warning("razorpay_webhook_missing_event_id signature_present=%s", bool(signature))
+
     from app.services import razorpay_service
 
     try:
@@ -116,6 +124,12 @@ async def razorpay_webhook(request: Request):
             event_id=event_id,
             event_type=event_type,
             error=exc,
+            # Capture just the headers useful for replay/debug, not the whole set.
+            headers={
+                k: request.headers.get(k)
+                for k in ("x-razorpay-event-id", "x-razorpay-signature", "content-type")
+                if request.headers.get(k) is not None
+            },
         )
         if WEBHOOK_RETRY_ON_ERROR:
             raise HTTPException(

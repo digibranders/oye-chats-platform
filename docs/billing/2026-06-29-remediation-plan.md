@@ -1,7 +1,86 @@
 # Payment, Credit & Platform — Remediation Plan
 
-**Status:** Proposed · **Date:** 2026-06-29 · **Owner:** Engineering
+**Status:** All defects fixed — feature tracks (F1, R1, INV) deferred · **Date:** 2026-06-29 (status updated 2026-06-30) · **Owner:** Engineering
 **Consolidates everything identified in the 2026-06-29 review session.**
+
+---
+
+## 0a. Defect-remediation pass — COMPLETE 2026-06-30
+
+> Every correctness/security/hardening finding below is now **fixed, tested, and committed** on `development` (8 commits `a444aa5 → 68e86cf`). Full suite **718 passed** (was 697; +21 regression tests), `ruff check`/`format` clean. Two additive migrations (`e1c3a5f7b9d2` referral caps, `f2d4b6a8c0e1` `documents.source`) verified up/down on a fresh DB; single Alembic head `f2d4b6a8c0e1`.
+
+| Finding | Fix | Commit |
+|---|---|---|
+| NV1 | `lock_client_for_billing` added to `create_checkout` (finishes H1) | `a444aa5` |
+| NV2 | top-up grant reconciles captured paise vs notes before granting | `a444aa5` |
+| L2 | `reconcile_subscription_from_razorpay` rejects foreign-client notes | `a444aa5` |
+| L3 | idempotent `reconcile_topup_from_razorpay` on `topup/verify` | `a444aa5` |
+| C2(a)/NV5 | grants stamp `reference_id=Invoice.id`; clawback selects the linked grant | `fdba33e` |
+| N1 | `refund.failed` handler re-grants clawed credits (idempotent) | `fdba33e` |
+| C3 | `ReferralCode` max_redemptions/redeemed_count/valid_until + atomic claim + 50% discount cap + ₹1 price floor | `1027ffe` |
+| NV4 | `AffiliateInvite.commission_bps` threaded through both accept paths | `1027ffe` |
+| N4 | discount resolved only on the live (Razorpay) provider | `1027ffe` |
+| N6 | `ReferralConversion.affiliate_id` populated from audit_meta | `1027ffe` |
+| NV3 | `get_plan_limit` denies-by-default on unknown metric | `b521ffd` |
+| NV6 | `get_current_usage_record` deterministic `ORDER BY period_start` | `b521ffd` |
+| M4 | usage-record insert savepoint + re-select on `IntegrityError` | `b521ffd` |
+| M6 | leads counter scoped to current period | `b521ffd` |
+| M7 | explicit `Document.source` column + backfill; quota counts uploads | `b521ffd` |
+| N3 | `get_subscription_for_bot` + `bot_id` on cancel/resume/seats | `b6c3a38` |
+| M1 | affiliate split rounds half-up (display) | `e0e43ea` |
+| M2 | `format_amount` integer divmod + Indian lakh grouping | `e0e43ea` |
+| M3 | pricing docstring corrected (FX is static, display-only) | `e0e43ea` |
+| M8 | superadmin `operator_quantity`/`extend_trial_days` bounds; MRR rounds | `e0e43ea` |
+| N5 | `create_plan` literal `{}` defaults; dead SELECT removed | `e0e43ea` |
+| M5/N8 | `add_months` fold-preserving + anchor/UTC contract documented | `98e5f0e` |
+| T1/N9 | ingestion uses aware-UTC datetimes | `98e5f0e` |
+| N7 | webhook delivery pins a re-validated public IP (closes DNS-rebind TOCTOU) | `98e5f0e` |
+| L5 | alert on event-id-less webhook deliveries | `98e5f0e` |
+| cleanups | `FailedWebhook.headers` populated; falsy-refund-id rejected; `delete_affiliate` ordering; operator `is_active` consistency; dead `_resolve_referral_discount` removed | `a444aa5`,`98e5f0e` |
+
+**Still deferred (net-new features, not defects — own design docs / decision gates):**
+- **F1** prorated upgrades ([design doc](2026-06-29-prorated-upgrades-design.md)) — flag `PRORATED_UPGRADES_ENABLED` already in place.
+- **R1** daily settlement reconciliation cron.
+- **INV-1…INV-10** GST invoicing/tax system ([invoicing plan](2026-06-29-invoicing-implementation-plan.md)) — needs company GSTIN + tax-policy + CA sign-off. Includes the **INV-6** frontend `formatCents` currency bug (`app/src/pages/Subscription.jsx:42`), a quick win bundled with that track.
+
+---
+
+## 0. Implementation status — verified 2026-06-30
+
+> Verified by a line-by-line re-read of current source on branch `development` (commits `f1296dd → feb8172`) plus the full API test suite: **697 passed**. Each ✅ below was confirmed in code at the cited location, not merely claimed.
+
+**✅ Resolved & committed (Phase 0–2):**
+
+| ID | What landed | Verified at |
+|----|-------------|-------------|
+| P0 | `WEBHOOK_RETRY_ON_ERROR` (default-on) + `PRORATED_UPGRADES_ENABLED` (default-off) flags; `FailedWebhook` dead-letter table | `config.py:335,340`; `models.py:1156`; migration `a7f3c9d1e2b4` |
+| L1 | HMAC over **raw bytes** + `hmac.compare_digest` | `razorpay_service.py:711-713` |
+| C1 | Raw-bytes verify before parse → dead-letter + **5xx** (flag-gated) on failure | `webhook_billing_routes.py:79-127` |
+| C2 | `Invoice.bot_id`; clawback threads `bot_id` + `reason` scope + locks the correct pool | `models.py:1014`; `credit_service.py:684-730`; migration `b8e4d2f1a6c3` |
+| N2 | Refund clawback idempotent on `refund:{id}` (created+processed can't double-claw) | `razorpay_service.py:1475-1477` |
+| H1 | Txn-scoped advisory lock on 5 subscription-mutation sites + `start_trial` + `assign_default_plan` | `plan_service.py:17-37,384,269`; `subscription_routes.py:650,852,891,925,965` |
+| H2 | Account entitlements resolve by **highest tier** (plan price), then recency | `plan_service.py:72-81` |
+| H3 | `accept_invite_for_existing_client` writes the consumed-mark in its **own** session — no caller-txn commit | `affiliate_service.py:1069-1083` |
+| H4 | `Subscription.last_granted_period_end` + idempotent `_grant_subscription_period()`; 24h heuristic **gone** | `models.py:856`; `razorpay_service.py:991-1019,1139,1227`; migration `c4d9e2f7a1b8` |
+| H5 | `payment.captured` fetches the order for notes (top-up no longer depends on `order.paid`) | `razorpay_service.py:1352-1358` |
+| H6 | `payment.dispute.created/.lost/.won` handlers; `.lost` claws (C2 scope, deduped on dispute id) | `razorpay_service.py:796-798,1530-1593` |
+| — | Single Alembic head (`d7f1a9c3e5b2` merge unites billing + notifications chains) | migrations dir |
+
+**⚠️ Partial / documented residual:**
+- **C2(a)** — the clawback scopes by `(client_id, bot_id, reason)` but still selects the grant by *most-recent-of-type*, **not** an invoice→grant link. Accepted, documented residual: two top-ups in the same bot → refunding the older claws the newer. Precision fix = thread `invoice.id` into the grant's `reference_id` and select on it. Tracked under **C2-precision** (Phase 7 cleanup).
+
+**🔴 Newly found during the 2026-06-30 verification pass (NOT yet fixed):**
+- **NV1 (High)** — `create_checkout` (`subscription_routes.py:592`) is the **one mutating money endpoint with no `lock_client_for_billing`**. Two concurrent/double-clicked checkouts race → two Razorpay subscriptions + two `ReferralConversion` rows. Finishes H1. *(Fix: add the lock as the first statement in the `with get_session()` block.)*
+- **NV2 (High)** — top-up grant trusts `notes["credits"]` and never reconciles it against the **captured** `payment.amount` (`razorpay_service.py:1367,1383-1412`). Notes are server-set today so not directly exploitable, but zero defense-in-depth. *(Fix: assert `amount_paise == credits-pack price` before granting.)*
+- **NV3 (Med, security-adjacent)** — `get_plan_limit` fail-**opens** to UNLIMITED on an unknown metric while `PlanEntitlements.limit_for` fail-**closes** to 0 (`plan_service.py:107-113` vs `plan_entitlements_service.py:161-176`). A typo'd metric name grants unlimited. *(Fix: make both deny-by-default.)*
+- **NV4 (Med)** — magic-link-invited affiliates land with a **0% commission pool**: `commission_bps` isn't persisted on `AffiliateInvite`, so both accept paths default it to 0 (`affiliate_service.py:923-929,1016-1020,1093-1097`). Every earning split then fails `_validate_split`. *(Fix: carry `commission_bps` on the invite.)*
+- **NV5 (Med)** — a refund of an **old** subscription invoice claws the **current** period's `plan_grant` (no period scoping in `clawback_refund`) (`credit_service.py:651-653,717`). Folds into the C2-precision fix.
+- **NV6 (Med)** — `get_or_create_usage_record` resolves the period with `.limit(1)` and **no `ORDER BY`** under the multi-subscription per-bot model → arbitrary period row (`plan_service.py:178-190`).
+- **Low cleanup:** dead `_resolve_referral_discount` (`subscription_routes.py:1233-1259`); `FailedWebhook.headers` column never populated; `delete_affiliate` reads `aff.client_id` after `session.delete`; `leads`/`operators` usage counters diverge between live view and snapshot; N2 dedup skipped when refund id is falsy.
+
+**Open from the original register (next steps, priority-ordered):** NV1, NV2 → then **C3** (still Critical — no cap/expiry/floor), N1, N3, L2, L3, N4, N6, NV3–NV6 → then M-series (M1, M2, M4, M6, M7, M8, N5), time hardening (M5, T1, N9, N8), N7, L5 → then **F1** (prorated upgrades, not started), **R1** (reconciliation), and the separate **INV-1…INV-10** invoicing/tax track. Detail per phase below.
+
+---
 
 Source docs:
 - [Payment system review report](2026-06-29-payment-system-review-report.md) (findings C1–C3, H1–H5, M1–M8, L1–L6)

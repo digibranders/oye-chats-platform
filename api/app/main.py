@@ -34,6 +34,7 @@ from app.api.offline_message_routes import router as offline_message_router
 from app.api.operator_routes import router as operator_router
 from app.api.subscription_routes import credits_router
 from app.api.subscription_routes import router as subscription_router
+from app.api.superadmin_ops_routes import router as superadmin_ops_router
 from app.api.superadmin_plan_routes import router as superadmin_plan_router
 from app.api.superadmin_routes import router as superadmin_router
 from app.api.superadmin_routes_v2 import router as superadmin_v2_router
@@ -139,6 +140,7 @@ app.include_router(subscription_router)
 app.include_router(credits_router)
 app.include_router(superadmin_plan_router)
 app.include_router(superadmin_v2_router)
+app.include_router(superadmin_ops_router)
 app.include_router(webhook_billing_router)
 # Affiliate program v1 — money-free referral codes + attribution.
 # Two routers: public/affiliate self-serve, and super-admin management.

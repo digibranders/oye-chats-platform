@@ -34,6 +34,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_ingest_web_batch,
     task_process_webhook_retries,
     task_promote_scheduled_downgrades,
+    task_reembed_document,
     task_renew_due_subscriptions,
     task_send_email,
     task_send_template_email,
@@ -129,6 +130,7 @@ class WorkerSettings:
         task_dispatch_handoff_push,
         task_handoff_escalation,
         task_send_visitor_message_email,
+        task_reembed_document,
     ]
 
     # Cron jobs:

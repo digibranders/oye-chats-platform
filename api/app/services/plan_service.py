@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import Bot, Operator, Plan, Subscription, UsageRecord
@@ -82,6 +83,27 @@ def get_client_subscription(session: Session, client_id: int) -> Subscription | 
     return session.execute(stmt).scalars().first()
 
 
+def get_subscription_for_bot(session: Session, client_id: int, bot_id: int) -> Subscription | None:
+    """Return the active subscription funding a specific bot (remediation N3).
+
+    Under per-bot billing, mutation endpoints (cancel/resume/seats) must be able
+    to target a chosen bot's subscription rather than always acting on the
+    account's highest-tier one. Scoped by ``client_id`` so a bot owned by another
+    client never resolves. Ties break on most-recent.
+    """
+    stmt = (
+        select(Subscription)
+        .where(
+            Subscription.client_id == client_id,
+            Subscription.bot_id == bot_id,
+            Subscription.status.in_(("active", "trialing", "past_due")),
+        )
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+    return session.execute(stmt).scalars().first()
+
+
 def get_client_plan(session: Session, client_id: int) -> Plan:
     """Resolve the client's current plan. Falls back to the default (free) plan."""
     sub = get_client_subscription(session, client_id)
@@ -107,10 +129,13 @@ def get_client_plan(session: Session, client_id: int) -> Plan:
 def get_plan_limit(plan: Plan, metric: str) -> int:
     """Extract a specific limit value from the plan's JSONB limits field.
 
-    Returns UNLIMITED (-1) if the metric is not found (fail-open for unknown metrics).
+    Deny-by-default (NV3): an unknown metric returns 0, not UNLIMITED. A typo'd
+    or renamed metric name must never silently grant unlimited quota — this now
+    matches ``PlanEntitlements.limit_for``, which also fails closed. A plan that
+    genuinely wants a metric unlimited stores ``-1`` (UNLIMITED) explicitly.
     """
     limits: dict = plan.limits or {}
-    return limits.get(metric, UNLIMITED)
+    return limits.get(metric, 0)
 
 
 # Free-tier crawl floor — used when a plan row is missing the crawl-limit
@@ -185,6 +210,10 @@ def get_current_usage_record(session: Session, client_id: int) -> UsageRecord | 
             UsageRecord.period_start <= now,
             UsageRecord.period_end > now,
         )
+        # Deterministic pick (NV6): under the per-bot model two active
+        # subscriptions can both straddle ``now``; without an explicit order the
+        # "current period" was arbitrary. Prefer the most recently started one.
+        .order_by(UsageRecord.period_start.desc())
         .limit(1)
     )
     return session.execute(stmt).scalars().first()
@@ -219,9 +248,13 @@ def get_or_create_usage_record(session: Session, client_id: int) -> UsageRecord:
 
     limits = plan.limits or {}
 
-    # Count current bots and operators for snapshot fields
+    # Count current bots and operators for snapshot fields. Both filter on
+    # ``is_active`` so the snapshot matches the live entitlements view (which
+    # also counts only active operators) rather than over-counting deactivated.
     bots_count = session.execute(select(Bot.id).where(Bot.client_id == client_id, Bot.is_active.is_(True))).all()
-    operators_count = session.execute(select(Operator.id).where(Operator.client_id == client_id)).all()
+    operators_count = session.execute(
+        select(Operator.id).where(Operator.client_id == client_id, Operator.is_active.is_(True))
+    ).all()
 
     record = UsageRecord(
         client_id=client_id,
@@ -237,8 +270,20 @@ def get_or_create_usage_record(session: Session, client_id: int) -> UsageRecord:
         bots_count=len(bots_count),
         operators_count=len(operators_count),
     )
-    session.add(record)
-    session.flush()
+    # M4 — the (client_id, period_start) unique index blocks a concurrent
+    # double-create at the DB layer; catch the loser's IntegrityError in a
+    # savepoint and return the winner's row instead of bubbling a 500.
+    sp = session.begin_nested()
+    try:
+        session.add(record)
+        session.flush()
+        sp.commit()
+    except IntegrityError:
+        sp.rollback()
+        existing = get_current_usage_record(session, client_id)
+        if existing is None:
+            raise
+        return existing
     return record
 
 

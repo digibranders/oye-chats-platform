@@ -369,6 +369,11 @@ class Document(Base):
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True)
 
     document_name = Column(String, nullable=False)
+    # Explicit ingestion source (remediation M7): "upload" for a file the
+    # customer uploaded, "crawl" for a page ingested from a URL. Replaces the
+    # fragile ``document_name LIKE 'http%'`` heuristic for the documents quota —
+    # a file literally named ``https-notes.pdf`` is no longer mis-classified.
+    source = Column(String, nullable=False, default="upload", server_default="upload")
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)
@@ -1356,6 +1361,13 @@ class ReferralCode(Base):
     # below only enforces the individual ranges + the absolute 100% ceiling.
     affiliate_commission_bps = Column(Integer, nullable=False, default=0, server_default="0")
     customer_discount_bps = Column(Integer, nullable=False, default=0, server_default="0")
+    # Redemption controls (remediation C3). ``max_redemptions`` NULL = unlimited;
+    # ``redeemed_count`` is incremented atomically on each successful attribution;
+    # ``valid_until`` NULL = no expiry. Without these a leaked code is an
+    # unbounded, never-expiring discount liability.
+    max_redemptions = Column(Integer, nullable=True)
+    redeemed_count = Column(Integer, nullable=False, default=0, server_default="0")
+    valid_until = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     deactivated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -1369,6 +1381,10 @@ class ReferralCode(Base):
             "AND customer_discount_bps >= 0 AND customer_discount_bps <= 10000 "
             "AND (affiliate_commission_bps + customer_discount_bps) <= 10000",
             name="chk_code_split_range",
+        ),
+        CheckConstraint(
+            "redeemed_count >= 0 AND (max_redemptions IS NULL OR max_redemptions >= 0)",
+            name="chk_referral_redemption_counts",
         ),
     )
 
@@ -1424,6 +1440,10 @@ class AffiliateInvite(Base):
     email = Column(String, nullable=False)
     token_hash = Column(Text, nullable=False, unique=True, index=True)
     max_active_codes = Column(Integer, nullable=False, default=10, server_default="10")
+    # Commission pool (bps) the super-admin set at invite time. Carried here so
+    # the accept paths grant the affiliate the intended pool — without it an
+    # invited affiliate landed at 0% and could create no earning code (NV4).
+    commission_bps = Column(Integer, nullable=False, default=0, server_default="0")
     invited_by = Column(
         Integer,
         ForeignKey("clients.id", ondelete="SET NULL"),

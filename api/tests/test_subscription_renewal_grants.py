@@ -85,7 +85,10 @@ def test_charged_grants_once_per_period(db, monkeypatch):
     monkeypatch.setattr(
         rzp.credit_service,
         "grant_for_subscription",
-        lambda session, subscription: (calls.append(subscription.id), original(session, subscription))[1],
+        lambda session, subscription, reference_id=None: (
+            calls.append(subscription.id),
+            original(session, subscription, reference_id=reference_id),
+        )[1],
     )
 
     # Charged for the already-granted period E1 → no grant.

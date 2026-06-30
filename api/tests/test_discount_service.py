@@ -17,11 +17,14 @@ def _make_client(referral_code_id=None):
     return SimpleNamespace(referral_code_id=referral_code_id)
 
 
-def _make_code(*, active=True, customer_discount_bps=1500, affiliate_commission_bps=500, code="PARTNER15"):
+def _make_code(
+    *, active=True, customer_discount_bps=1500, affiliate_commission_bps=500, code="PARTNER15", affiliate_id=7
+):
     return SimpleNamespace(
         id=9,
         code=code,
         active=active,
+        affiliate_id=affiliate_id,
         customer_discount_bps=customer_discount_bps,
         affiliate_commission_bps=affiliate_commission_bps,
     )
@@ -50,6 +53,7 @@ def test_active_code_with_discount_returns_bps_and_meta():
     assert meta["referral_code"] == "PARTNER15"
     assert meta["discount_bps"] == "1500"
     assert meta["affiliate_commission_bps"] == "500"
+    assert meta["affiliate_id"] == "7"  # N6 — snapshot affiliate for payout attribution
 
 
 def test_inactive_code_returns_zero():
