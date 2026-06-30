@@ -105,7 +105,14 @@ class TestCreateBot:
         data = response.json()
         assert "bot_id" in data
         assert data["name"] == "My Bot"
-        assert len(added) == 1
+        # Two rows are persisted on a successful create: the Bot itself and
+        # an in-app ``bot_created`` Notification dropped into the
+        # workspace's notification feed.
+        from app.db.models import Bot, Notification
+
+        assert len(added) == 2
+        assert any(isinstance(r, Bot) for r in added)
+        assert any(isinstance(r, Notification) for r in added)
 
     def test_operator_without_permission_rejected(self, monkeypatch):
         from app.api import bot_routes

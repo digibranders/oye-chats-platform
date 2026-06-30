@@ -317,13 +317,19 @@ export default function TeamManagement() {
                                             {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                                         </button>
                                     </div>
-                                    <select value={operatorForm.role} onChange={(e) => setOperatorForm(p => ({ ...p, role: e.target.value }))} className={inputCls}>
-                                        {ROLES.map(r => <option key={r} value={r} className="capitalize">{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
-                                    </select>
-                                    <select value={operatorForm.department_id} onChange={(e) => setOperatorForm(p => ({ ...p, department_id: e.target.value }))} className={inputCls}>
-                                        <option value="">No department</option>
-                                        {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                    </select>
+                                    <div className="relative">
+                                        <select value={operatorForm.role} onChange={(e) => setOperatorForm(p => ({ ...p, role: e.target.value }))} className={cn(inputCls, 'appearance-none pr-9 cursor-pointer')}>
+                                            {ROLES.map(r => <option key={r} value={r} className="capitalize">{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
+                                        </select>
+                                        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                                    </div>
+                                    <div className="relative">
+                                        <select value={operatorForm.department_id} onChange={(e) => setOperatorForm(p => ({ ...p, department_id: e.target.value }))} className={cn(inputCls, 'appearance-none pr-9 cursor-pointer')}>
+                                            <option value="">No department</option>
+                                            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                        </select>
+                                        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                                    </div>
                                     <button type="submit" className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium transition-colors">
                                         Create Operator
                                     </button>
@@ -450,16 +456,22 @@ export default function TeamManagement() {
                                                                     </div>
                                                                     <div>
                                                                         <label className="text-[11px] text-surface-500 dark:text-surface-400 mb-1 block">Role</label>
-                                                                        <select value={editOpForm.role} onChange={(e) => setEditOpForm(p => ({ ...p, role: e.target.value }))} className={inputCls}>
-                                                                            {ROLES.map(r => <option key={r} value={r} className="capitalize">{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
-                                                                        </select>
+                                                                        <div className="relative">
+                                                                            <select value={editOpForm.role} onChange={(e) => setEditOpForm(p => ({ ...p, role: e.target.value }))} className={cn(inputCls, 'appearance-none pr-9 cursor-pointer')}>
+                                                                                {ROLES.map(r => <option key={r} value={r} className="capitalize">{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
+                                                                            </select>
+                                                                            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                                                                        </div>
                                                                     </div>
                                                                     <div>
                                                                         <label className="text-[11px] text-surface-500 dark:text-surface-400 mb-1 block">Department</label>
-                                                                        <select value={editOpForm.department_id ?? ''} onChange={(e) => setEditOpForm(p => ({ ...p, department_id: e.target.value }))} className={inputCls}>
-                                                                            <option value="">No department</option>
-                                                                            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                                                        </select>
+                                                                        <div className="relative">
+                                                                            <select value={editOpForm.department_id ?? ''} onChange={(e) => setEditOpForm(p => ({ ...p, department_id: e.target.value }))} className={cn(inputCls, 'appearance-none pr-9 cursor-pointer')}>
+                                                                                <option value="">No department</option>
+                                                                                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                                                            </select>
+                                                                            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400 dark:text-surface-500" />
+                                                                        </div>
                                                                     </div>
                                                                     <div>
                                                                         <label className="text-[11px] text-surface-500 dark:text-surface-400 mb-1 block">Max concurrent chats</label>

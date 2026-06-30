@@ -293,6 +293,12 @@ export default function LiveChat({ embedded = false }) {
         });
     }, []);
 
+    // Sync operator online status to localStorage and dispatch custom window event for other components (like TopBar)
+    useEffect(() => {
+        localStorage.setItem('operator_is_online', isOnline ? 'true' : 'false');
+        window.dispatchEvent(new CustomEvent('oyechats:operator-online-changed', { detail: { isOnline } }));
+    }, [isOnline]);
+
     // Load the client's current plan so we can gate Live Chat behind the
     // plan.features.live_chat flag. The backend also enforces this on the
     // toggle endpoint — this fetch is purely so we can show a clean upgrade

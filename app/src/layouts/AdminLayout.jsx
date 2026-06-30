@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MessageCircle } from 'lucide-react';
 import { submitPlatformFeedback } from '../services/api';
@@ -8,8 +8,12 @@ import TopBar from './TopBar';
 import CommandPalette from '../components/CommandPalette';
 import OnboardingWizard from '../components/OnboardingWizard';
 import TrialBanner from '../components/TrialBanner';
+import PushPermissionBanner from '../components/PushPermissionBanner';
 import FeedbackModal from '../components/FeedbackModal';
+import usePushNotifications from '../hooks/usePushNotifications';
 import { BotProvider, useBotContext } from '../context/BotContext';
+import { NotificationProvider } from '../context/NotificationContext';
+import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
 
 const MD_BREAKPOINT = 768;
 const LG_BREAKPOINT = 1024;
@@ -31,11 +35,45 @@ function AdminLayoutInner() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
+  // Push notifications — registers the service worker, surfaces the
+  // permission state, and re-subscribes the operator on every mount when
+  // permission is already granted. Returns null-shaped state for clients,
+  // unsupported browsers, and operators who haven't enabled push yet — the
+  // PushPermissionBanner inspects all three to decide what (if anything) to
+  // render. See usePushNotifications.js for the full lifecycle.
+  const push = usePushNotifications();
+
   const handleFeedbackSubmit = async (text, category, attachmentUrl) => {
     await submitPlatformFeedback(text, category, attachmentUrl);
   };
   const { bots, loading: botsLoading, error: botsError, refreshBots } = useBotContext();
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // When the operator clicks a push notification while the dashboard is
+  // already open in another tab, the service worker focuses the existing
+  // tab and posts a navigation hint. The hint carries a fully-resolved
+  // ``target_path`` so the same listener handles all three notification
+  // variants without duplicating routing logic here:
+  //   - handoff_request          → /support?session=<id>     (open the chat)
+  //   - handoff_moved_to_offline → /support?tab=messages&... (open the message)
+  //   - handoff_expired          → /support                  (lands on the tab)
+  // ``target_path`` is validated same-origin in the SW; the legacy
+  // ``session_id`` fallback is kept for rolling deploys where the new SW
+  // hasn't activated yet on the operator's browser.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const handler = (event) => {
+      if (event.data?.type !== 'oyechats:push-navigate') return;
+      const target = event.data.target_path
+        || (event.data.session_id
+            ? `/support?session=${encodeURIComponent(event.data.session_id)}`
+            : '/support');
+      navigate(target);
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, [navigate]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -108,6 +146,12 @@ function AdminLayoutInner() {
             operators, or while /auth/me is in flight — see TrialBanner.jsx. */}
         <TrialBanner />
 
+        {/* Web Push status banner — only renders for operators on a supported
+            browser whose permission is "default" (offer to enable), "denied"
+            (recovery instructions), or "granted" with a subscription error
+            (offer retry). Returns null on the happy path. */}
+        <PushPermissionBanner push={push} />
+
         {/* `scrollbar-gutter: stable` reserves the scrollbar track even
             when the page isn't scrollable, so switching between tabs
             whose content height differs (e.g. Avatar → Messages in the
@@ -168,14 +212,21 @@ function AdminLayoutInner() {
         onClose={() => setFeedbackOpen(false)}
         onSubmit={handleFeedbackSubmit}
       />
+
+      {/* Floating in-app banner for incoming live-chat handoffs. Suppresses
+          itself on /support so the live-chat console isn't covered by a
+          redundant alert. */}
+      <LiveChatRequestBanner />
     </div>
   );
 }
 
 export default function AdminLayout() {
   return (
-    <BotProvider>
-      <AdminLayoutInner />
-    </BotProvider>
+    <NotificationProvider>
+      <BotProvider>
+        <AdminLayoutInner />
+      </BotProvider>
+    </NotificationProvider>
   );
 }

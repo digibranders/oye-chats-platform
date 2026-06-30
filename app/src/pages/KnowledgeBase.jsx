@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye, ChevronsUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription, discoverCrawlUrls } from '../services/api';
+import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription, discoverCrawlUrls, diffRecrawl } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
@@ -150,8 +150,14 @@ export default function KnowledgeBase() {
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
   const [deletingDoc, setDeletingDoc] = useState(null);
   const [confirmingDelete, setConfirmingDelete] = useState(null);
-  const [confirmingRecrawl, setConfirmingRecrawl] = useState(null);
   const [recrawlingDoc, setRecrawlingDoc] = useState(null);
+  // Pre-recrawl diff state: while loading we show a spinner on the recrawl button;
+  // once loaded we show a banner with exact unchanged / new / removed page counts so
+  // the user can decide whether the recrawl is worth the credit spend.
+  const [recrawlDiffLoading, setRecrawlDiffLoading] = useState(null);
+  const [recrawlDiff, setRecrawlDiff] = useState(null);
+  // Which diff bucket's URL list is currently expanded ('unchanged' | 'new' | 'removed' | null)
+  const [recrawlDiffViewing, setRecrawlDiffViewing] = useState(null);
   const [drawerSource, setDrawerSource] = useState(null);
 
   const fetchDocuments = async () => {
@@ -257,6 +263,45 @@ export default function KnowledgeBase() {
     } catch (err) {
       showToast('error', `Failed to delete: ${err?.detail || err}`);
     } finally { setDeletingDoc(null); setConfirmingDelete(null); }
+  };
+
+  // Step 1 of recrawl: fetch the URL-level diff (unchanged / new / removed)
+  // and surface it in a confirmation banner. Falls back to a plain confirm if
+  // the diff endpoint fails so the user is never blocked from recrawling.
+  const handleRequestRecrawl = async (docName) => {
+    const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
+    const replaceSource = docName.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+
+    setRecrawlDiffLoading(docName);
+    setRecrawlDiff(null);
+    try {
+      const diff = await diffRecrawl(crawlUrl, replaceSource, selectedBot?.id);
+      setRecrawlDiff({ docName, crawlUrl, replaceSource, ...diff });
+      setActiveTab('urls');
+    } catch (err) {
+      if (err?.status === 429) {
+        showToast('error', 'Too many scan requests — please wait a few minutes before scanning again.');
+        return;
+      }
+      // Network/auth failure — still let the user proceed with a plain confirm.
+      setRecrawlDiff({ docName, crawlUrl, replaceSource, error: true });
+      setActiveTab('urls');
+    } finally {
+      setRecrawlDiffLoading(null);
+    }
+  };
+
+  const handleConfirmRecrawl = async () => {
+    if (!recrawlDiff) return;
+    const { docName } = recrawlDiff;
+    setRecrawlDiff(null);
+    setRecrawlDiffViewing(null);
+    await handleRecrawl(docName);
+  };
+
+  const dismissRecrawlDiff = () => {
+    setRecrawlDiff(null);
+    setRecrawlDiffViewing(null);
   };
 
   const handleRecrawl = async (docName) => {
@@ -699,6 +744,204 @@ export default function KnowledgeBase() {
               )}
             </AnimatePresence>
 
+            {/* Pre-recrawl confirmation — shown after the diff endpoint returns,
+                before the actual recrawl starts. Surfaces exact URL-level diff
+                so the user knows what they're spending credits on. */}
+            <AnimatePresence>
+              {recrawlDiff && !isCrawling && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  className="p-6 rounded-2xl border border-slate-200 dark:border-[#1F2C47]/50 bg-slate-50 dark:bg-[#0B1329] shadow-sm"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-[#20274B] text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                      <RefreshCw size={22} className="text-[#6366F1] dark:text-[#818CF8]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-base font-semibold text-slate-900 dark:text-white leading-tight">
+                        Re-crawl this website?
+                      </h3>
+                      <p className="text-sm text-surface-500 dark:text-[#8F9BB3] mt-1">
+                        This will update your website data with the latest content.
+                      </p>
+                      <a
+                        href={recrawlDiff.crawlUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-primary-600 dark:text-[#4E75E5] hover:text-primary-700 dark:hover:text-[#5B85FC] font-medium mt-3 transition-colors"
+                      >
+                        <Globe size={15} />
+                        <span className="truncate max-w-[240px] sm:max-w-md">{recrawlDiff.crawlUrl}</span>
+                        <ExternalLink size={13} className="opacity-80" />
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-slate-200 dark:bg-slate-800/80 my-5" />
+
+                  {recrawlDiff.error ? (
+                    <div className="p-4 rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/50 dark:bg-rose-500/5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm">
+                      Couldn&apos;t fetch the page diff. You can still proceed — only
+                      changed pages will be re-embedded.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        {[
+                          {
+                            key: 'unchanged',
+                            label: 'Unchanged',
+                            sublabel: 'Pages unchanged',
+                            count: recrawlDiff.unchanged,
+                            urls: recrawlDiff.unchanged_urls || [],
+                            labelClass: 'text-slate-400 dark:text-[#8F9BB3]',
+                            borderClass: 'border-slate-200 dark:border-[#1E2B4B]',
+                            bgClass: 'bg-slate-100/50 dark:bg-[#0C152B]/40',
+                            ringClass: 'ring-slate-300 dark:ring-[#2E3D63]',
+                          },
+                          {
+                            key: 'new',
+                            label: 'New',
+                            sublabel: 'New pages found',
+                            count: recrawlDiff.new_pages,
+                            urls: recrawlDiff.new_urls || [],
+                            labelClass: 'text-[#34D399]',
+                            borderClass: 'border-emerald-200 dark:border-[#143224]',
+                            bgClass: 'bg-emerald-50/30 dark:bg-[#0A1F16]/40',
+                            ringClass: 'ring-emerald-300 dark:ring-[#22573D]',
+                          },
+                          {
+                            key: 'removed',
+                            label: 'Removed',
+                            sublabel: 'Pages removed',
+                            count: recrawlDiff.removed_pages,
+                            urls: recrawlDiff.removed_urls || [],
+                            labelClass: 'text-[#F87171]',
+                            borderClass: 'border-rose-200 dark:border-[#3B1922]',
+                            bgClass: 'bg-rose-50/30 dark:bg-[#240C12]/40',
+                            ringClass: 'ring-rose-300 dark:ring-[#5C2030]',
+                          },
+                        ].map((tile) => {
+                          const isActive = recrawlDiffViewing === tile.key;
+                          const isDisabled = tile.count === 0;
+                          return (
+                            <div
+                              key={tile.key}
+                              className={cn(
+                                'relative border rounded-xl p-5 flex flex-col justify-between min-h-[120px] transition-all',
+                                tile.borderClass,
+                                tile.bgClass,
+                                isActive && `ring-2 ${tile.ringClass}`,
+                              )}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setRecrawlDiffViewing(isActive ? null : tile.key)}
+                                disabled={isDisabled}
+                                className={cn(
+                                  'absolute top-3 right-3 p-1 rounded-md text-slate-400 dark:text-[#6B7C9B] transition-colors',
+                                  isDisabled
+                                    ? 'opacity-40 cursor-not-allowed'
+                                    : 'hover:text-slate-700 dark:hover:text-white hover:bg-white/60 dark:hover:bg-white/5 cursor-pointer',
+                                )}
+                                aria-label={`View ${tile.label.toLowerCase()} pages`}
+                                aria-expanded={isActive}
+                              >
+                                <Eye size={13} />
+                              </button>
+                              <div className={cn('text-xs font-semibold uppercase tracking-wider pr-7', tile.labelClass)}>
+                                {tile.label}
+                              </div>
+                              <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums my-1">
+                                {tile.count.toLocaleString()}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-[#6B7C9B]">
+                                {tile.sublabel}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {recrawlDiffViewing && (() => {
+                        const buckets = {
+                          unchanged: { label: 'Unchanged pages', urls: recrawlDiff.unchanged_urls || [], count: recrawlDiff.unchanged },
+                          new: { label: 'New pages', urls: recrawlDiff.new_urls || [], count: recrawlDiff.new_pages },
+                          removed: { label: 'Removed pages', urls: recrawlDiff.removed_urls || [], count: recrawlDiff.removed_pages },
+                        };
+                        const active = buckets[recrawlDiffViewing];
+                        const truncated = active.count > active.urls.length;
+                        return (
+                          <div className="mt-4 rounded-xl border border-slate-200 dark:border-[#1E2B4B] bg-white/60 dark:bg-[#0C152B]/40 overflow-hidden">
+                            <div className="px-4 py-2.5 border-b border-slate-200 dark:border-[#1E2B4B] flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-slate-900 dark:text-white">
+                                {active.label}
+                                <span className="text-slate-500 dark:text-[#6B7C9B] font-normal ml-1.5">
+                                  ({active.count.toLocaleString()})
+                                </span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setRecrawlDiffViewing(null)}
+                                className="p-1 rounded text-slate-400 dark:text-[#6B7C9B] hover:text-slate-700 dark:hover:text-white transition-colors"
+                                aria-label="Close page list"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                            <ul className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-[#1E2B4B]/60">
+                              {active.urls.map((u) => (
+                                <li key={u} className="px-4 py-1.5 text-xs">
+                                  <a
+                                    href={u}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-primary-600 dark:hover:text-primary-300 hover:underline truncate"
+                                  >
+                                    <ExternalLink size={11} className="shrink-0 opacity-60" />
+                                    <span className="truncate">{u}</span>
+                                  </a>
+                                </li>
+                              ))}
+                              {active.urls.length === 0 && (
+                                <li className="px-4 py-3 text-xs text-slate-500 dark:text-[#6B7C9B] text-center">
+                                  No pages in this bucket.
+                                </li>
+                              )}
+                            </ul>
+                            {truncated && (
+                              <div className="px-4 py-1.5 border-t border-slate-200 dark:border-[#1E2B4B] text-[10px] text-slate-500 dark:text-[#6B7C9B]">
+                                Showing first {active.urls.length.toLocaleString()} of {active.count.toLocaleString()} pages.
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </>
+                  )}
+
+                  <div className="flex items-center gap-3 mt-6">
+                    <button
+                      type="button"
+                      onClick={handleConfirmRecrawl}
+                      className="flex items-center justify-center bg-primary-600 hover:bg-primary-700 dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] text-white font-medium px-4 py-2 rounded-xl transition-all text-sm shadow-sm"
+                    >
+                      Re-crawl
+                    </button>
+                    <button
+                      type="button"
+                      onClick={dismissRecrawlDiff}
+                      className="flex items-center justify-center border border-slate-300 dark:border-slate-700 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-200 font-medium px-4 py-2 rounded-xl transition-all text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Pre-crawl confirmation — shown after discovery, before the crawl starts */}
             <AnimatePresence>
               {showCrawlConfirm && !isCrawling && (
@@ -715,7 +958,7 @@ export default function KnowledgeBase() {
                     <div className="flex-1 min-w-0">
                       {discoveredTotal > 0 ? (
                         <p className="text-sm font-semibold text-primary-900 dark:text-primary-100">
-                          Found at least <span className="tabular-nums">{discoveredTotal.toLocaleString()}</span> page{discoveredTotal === 1 ? '' : 's'} — crawl may discover more
+                          <span className="tabular-nums">{discoveredTotal.toLocaleString()}</span> page{discoveredTotal === 1 ? '' : 's'} found in sitemap
                         </p>
                       ) : discoveredTotal === 0 ? (
                         <>
@@ -913,23 +1156,7 @@ export default function KnowledgeBase() {
                           </td>
                           <td className="px-5 py-3.5 text-sm text-surface-400">{dateStr}</td>
                           <td className="px-5 py-3.5 text-right">
-                            {confirmingRecrawl === doc.name ? (
-                              <div className="flex items-center justify-end gap-1.5">
-                                <span className="text-[10px] text-surface-400">Re-crawl?</span>
-                                <button
-                                  onClick={() => { setConfirmingRecrawl(null); handleRecrawl(doc.name); }}
-                                  className="p-1.5 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors"
-                                >
-                                  <Check size={12} />
-                                </button>
-                                <button
-                                  onClick={() => setConfirmingRecrawl(null)}
-                                  className="p-1.5 rounded-lg bg-surface-100 dark:bg-surface-800 text-surface-500 transition-colors"
-                                >
-                                  <X size={12} />
-                                </button>
-                              </div>
-                            ) : confirmingDelete === doc.name ? (
+                            {confirmingDelete === doc.name ? (
                               <div className="flex items-center justify-end gap-1.5">
                                 <span className="text-[10px] text-surface-400">Sure?</span>
                                 <button onClick={() => handleDelete(doc.name)} disabled={deletingDoc === doc.name} className="p-1.5 rounded-lg bg-rose-500 text-white hover:bg-rose-600 transition-colors">
@@ -957,11 +1184,11 @@ export default function KnowledgeBase() {
                                 {isUrl && (
                                   <div className="relative group">
                                     <button
-                                      onClick={() => setConfirmingRecrawl(doc.name)}
-                                      disabled={recrawlingDoc === doc.name}
-                                      className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
+                                      onClick={() => handleRequestRecrawl(doc.name)}
+                                      disabled={recrawlingDoc === doc.name || recrawlDiffLoading === doc.name}
+                                      className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors disabled:opacity-50"
                                     >
-                                      {recrawlingDoc === doc.name
+                                      {recrawlingDoc === doc.name || recrawlDiffLoading === doc.name
                                         ? <Loader2 size={14} className="animate-spin text-primary-500" />
                                         : <RefreshCw size={14} />}
                                     </button>

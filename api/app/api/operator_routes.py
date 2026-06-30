@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, or_, select, update
 
@@ -13,7 +13,6 @@ from app.core.security import get_password_hash
 from app.db.models import BANTSignal, Bot, ChatAuditLog, ChatMessage, ChatSession, Department, Operator
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
-from app.services.email_service import send_handoff_request_email
 from app.services.live_chat_service import manager
 
 logger = logging.getLogger(__name__)
@@ -566,67 +565,88 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
         # (Sales 9-6 vs Support 24/7 in the same workspace).
         availability = availability_svc.resolve_live_chat_state(db_bot, session, department_id=request.department_id)
 
-        # When the state machine says "show the offline form", we short-circuit
-        # WITHOUT marking the session as waiting and WITHOUT firing operator
-        # notifications. The widget gets the reason as fallback metadata so it
-        # can render the right copy (no_operators vs out_of_hours vs ...).
+        # When the state machine says "show the offline form", we used to
+        # short-circuit straight to the offline form. With Web Push enabled
+        # that's the wrong call in the most important case — "nobody on WS,
+        # but the workspace has push subscribers" is exactly the scenario push
+        # was built for. So before falling back, ask the DB whether anyone in
+        # this workspace can be reached via push; if so, promote the request
+        # to a real waiting queue + fire push + tell the widget to show the
+        # queue UI (it will fall back to the offline form on its own when the
+        # ``queue_timeout_seconds`` window elapses without an accept).
         if availability.suggested_action == availability_svc.SuggestedAction.OFFLINE_FORM:
-            # Audit the fallback so admins can see why visitors fell back.
-            # Distinct action from "handoff_requested" so analytics can split
-            # successful queue entries from instant fallbacks.
-            session.add(
-                ChatAuditLog(
-                    session_id=request.session_id,
-                    action="handoff_fell_back",
-                    details={
-                        "reason": availability.state.value,
-                        "requested_department_id": request.department_id,
-                    },
-                )
+            from sqlalchemy import exists, or_
+
+            from app.db.models import Operator as _OperatorModel
+            from app.db.models import OperatorPushSubscription as _PushSub
+
+            workspace_operator_ids = (
+                session.execute(select(_OperatorModel.id).where(_OperatorModel.client_id == db_bot.client_id))
+                .scalars()
+                .all()
             )
-            session.commit()
+            has_push_subscriber = session.execute(
+                select(
+                    exists().where(
+                        or_(
+                            _PushSub.client_id == db_bot.client_id,
+                            _PushSub.operator_id.in_(workspace_operator_ids) if workspace_operator_ids else False,
+                        )
+                    )
+                )
+            ).scalar()
+
+            from app.services.notification_broadcaster import broadcaster
+
+            has_active_ws = broadcaster.connection_count(db_bot.client_id) > 0
+
+            if not has_push_subscriber and not has_active_ws:
+                # Original behaviour — no realtime channel reaches anyone, so
+                # the visitor's only useful action is the offline form.
+                session.add(
+                    ChatAuditLog(
+                        session_id=request.session_id,
+                        action="handoff_fell_back",
+                        details={
+                            "reason": availability.state.value,
+                            "requested_department_id": request.department_id,
+                        },
+                    )
+                )
+                session.commit()
+                logger.info(
+                    "Handoff fell back to offline form (no active push/WS subscribers): session=%s bot=%s reason=%s",
+                    request.session_id,
+                    bot.id,
+                    availability.state.value,
+                )
+                return {
+                    "success": True,
+                    "state": availability.state.value,
+                    "suggested_action": "offline_form",
+                    "fallback_reason": availability.state.value,
+                    "message_key": availability.message_key,
+                    "next_available_at": availability.next_available_at,
+                }
+
+            # Push/WS-promotion path — at least one subscriber/connection exists, so push/WS
+            # has a meaningful chance of waking someone. Fall through into
+            # the standard "queue + notify" flow below; the existing code
+            # there marks the session waiting, fires the audit + webhook,
+            # enqueues the push dispatch, and returns the wait UI metadata.
+            # The ``promoted_from_offline_form`` flag tells the response
+            # builder to override the state machine's lingering OFFLINE_FORM
+            # suggested_action — otherwise the widget would still render the
+            # form instead of the queue UI.
+            promoted_from_offline_form = True
             logger.info(
-                "Handoff fell back to offline form: session=%s bot=%s reason=%s",
+                "Handoff offline_form promoted to wait+push/WS: session=%s bot=%s reason=%s",
                 request.session_id,
                 bot.id,
                 availability.state.value,
             )
-
-            # Notify the team even when operators are offline — visitor tried
-            # to reach live support and couldn't. This is the most important
-            # case to alert on (no one was there to receive the request).
-            if bot and bot.email_on_handoff:
-                from app.services.email_service import get_notification_recipients
-
-                lead_info_fallback = get_lead_info_by_session(session, request.session_id)
-                recipients = get_notification_recipients(bot, "handoff_request")
-                if recipients:
-                    contact = None
-                    if lead_info_fallback:
-                        contact = {
-                            "name": lead_info_fallback.name,
-                            "email": lead_info_fallback.email,
-                            "phone": lead_info_fallback.phone,
-                        }
-                    reply_to = getattr(bot, "reply_to_email", None)
-                    fallback_reason = availability.state.value
-                    for recipient in recipients:
-                        send_handoff_request_email(
-                            recipient,
-                            bot.name,
-                            f"[{fallback_reason}] {request.reason or ''}".strip(" []"),
-                            contact,
-                            reply_to=reply_to,
-                        )
-
-            return {
-                "success": True,
-                "state": availability.state.value,
-                "suggested_action": "offline_form",
-                "fallback_reason": availability.state.value,
-                "message_key": availability.message_key,
-                "next_available_at": availability.next_available_at,
-            }
+        else:
+            promoted_from_offline_form = False
 
         # State is AVAILABLE or ALL_BUSY → proceed with the existing queue +
         # notify flow. ALL_BUSY still queues (visitor will wait for capacity);
@@ -679,22 +699,60 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             }
         fire_webhook(bot.id, "handoff_requested", webhook_data)
 
-        # Trigger email notification (multi-recipient)
-        if bot and bot.email_on_handoff:
-            from app.services.email_service import get_notification_recipients
-
-            recipients = get_notification_recipients(bot, "handoff_request")
-            if recipients:
-                contact = None
-                if lead_info:
-                    contact = {"name": lead_info.name, "email": lead_info.email, "phone": lead_info.phone}
-                reply_to = getattr(bot, "reply_to_email", None)
-                for recipient in recipients:
-                    send_handoff_request_email(recipient, bot.name, request.reason, contact, reply_to=reply_to)
-
         # Cache queue timeout for the response — read BEFORE the session
         # closes so the value travels out cleanly.
         queue_timeout = db_bot.live_chat_queue_timeout_seconds or 20
+
+        # Fan-out Web Push to any eligible operator who isn't already
+        # watching the dashboard via WebSocket. The "user is trying to
+        # connect" email has been deliberately removed in favour of push —
+        # email now only fires when the visitor actually *sends a message*
+        # in a waiting/unattended session (handled in ws_routes).
+        from app.worker.enqueue import enqueue_sync
+
+        enqueue_sync(
+            "task_dispatch_handoff_push",
+            request.session_id,
+            bot.id,
+            request.department_id,
+            visitor_name,
+            request.reason,
+            queue_timeout,
+        )
+        # Schedule a cleanup pass for after the visitor's queue-timeout window
+        # so stale on-device notifications get tag-replaced with "chat ended"
+        # if no operator accepted. ARQ honours ``_defer_by`` natively.
+        from datetime import timedelta as _td
+
+        enqueue_sync(
+            "task_handoff_escalation",
+            request.session_id,
+            _defer_by=_td(seconds=queue_timeout + 1),
+        )
+
+        # In-app bell + global banner. Persisted so an operator who was on
+        # /knowledge when the handoff arrived can still see the request
+        # waiting for them when they switch tabs.
+        try:
+            from app.services.notification_service import notify_handoff_request
+
+            dept_name = None
+            if request.department_id:
+                from app.db.models import Department
+
+                dept = session.get(Department, request.department_id)
+                dept_name = dept.name if dept else None
+            notify_handoff_request(
+                session,
+                client_id=bot.client_id,
+                session_id=request.session_id,
+                visitor_name=visitor_name,
+                bot_name=bot.name,
+                department_id=request.department_id,
+                department_name=dept_name,
+            )
+        except Exception:
+            logger.exception("Failed to record handoff_request notification")
 
     # Schedule in-memory queue update as a background task so the REST response
     # is not held up by WebSocket sends. asyncio.create_task() is safe here
@@ -712,12 +770,16 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
     )
 
     # Echo the resolved state so the widget can pick its UI mode without
-    # waiting for the first WebSocket status push.
+    # waiting for the first WebSocket status push. When we promoted from
+    # OFFLINE_FORM (push subscribers exist), tell the widget to render the
+    # queue UI — "wait" matches the ALL_BUSY suggestion and renders the same
+    # "Finding an available operator…" copy with the queue-timeout fallback.
+    suggested_action_value = "wait" if promoted_from_offline_form else availability.suggested_action.value
     return {
         "success": True,
         "status": "waiting",
         "state": availability.state.value,
-        "suggested_action": availability.suggested_action.value,
+        "suggested_action": suggested_action_value,
         "message_key": availability.message_key,
         "queue_position": availability.queue_position,
         "eta_seconds": availability.eta_seconds,
@@ -1101,7 +1163,7 @@ class SetStatusRequest(BaseModel):
 
 
 @router.post("/status")
-def set_operator_status(
+async def set_operator_status(
     request: SetStatusRequest | None = None,
     auth=Depends(get_current_client_or_operator),
 ):
@@ -1109,39 +1171,61 @@ def set_operator_status(
 
     Accepts ``{"is_online": true/false}`` in the request body.
     Falls back to toggle behavior (backward compat) when no body is provided.
+
+    When an operator transitions to offline, any sessions still assigned to
+    them are immediately re-queued and the affected visitors are notified —
+    otherwise the visitor's widget would stay glued to a dead live session.
     """
+    operator_id_to_release: int | None = None
+
     with get_session() as session:
         if auth["type"] == "operator":
             operator = session.execute(select(Operator).where(Operator.id == auth["operator_id"])).scalar_one_or_none()
             if not operator:
                 raise HTTPException(status_code=404, detail="Operator not found.")
-            operator.is_online = request.is_online if request is not None else (not operator.is_online)
+            previously_online = operator.is_online
+            new_online = request.is_online if request is not None else (not operator.is_online)
+            operator.is_online = new_online
             session.commit()
-            return {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
+            if previously_online and not new_online:
+                operator_id_to_release = operator.id
+            response = {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
+        else:
+            # Client: find or create the owner's operator record.
+            client = auth["entity"]
+            operator = session.execute(
+                select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
+            ).scalar_one_or_none()
 
-        # Client: find or create the owner's operator record.
-        client = auth["entity"]
-        operator = session.execute(
-            select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
-        ).scalar_one_or_none()
+            if not operator:
+                operator = Operator(
+                    client_id=client.id,
+                    name=client.name,
+                    email=client.email,
+                    is_online=True,
+                    role="owner",
+                    operator_api_key=uuid.uuid4().hex,
+                )
+                session.add(operator)
+                session.commit()
+                session.refresh(operator)
+                return {"is_online": True, "operator_name": operator.name, "operator_id": operator.id}
 
-        if not operator:
-            operator = Operator(
-                client_id=client.id,
-                name=client.name,
-                email=client.email,
-                is_online=True,
-                role="owner",
-                operator_api_key=uuid.uuid4().hex,
-            )
-            session.add(operator)
+            previously_online = operator.is_online
+            new_online = request.is_online if request is not None else (not operator.is_online)
+            operator.is_online = new_online
             session.commit()
-            session.refresh(operator)
-            return {"is_online": True, "operator_name": operator.name, "operator_id": operator.id}
+            if previously_online and not new_online:
+                operator_id_to_release = operator.id
+            response = {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
 
-        operator.is_online = request.is_online if request is not None else (not operator.is_online)
-        session.commit()
-        return {"is_online": operator.is_online, "operator_name": operator.name, "operator_id": operator.id}
+    if operator_id_to_release is not None:
+        try:
+            await manager.mark_operator_offline_now(operator_id_to_release)
+        except Exception:
+            logger.exception("Failed to release sessions for operator %s going offline", operator_id_to_release)
+
+    return response
 
 
 # ── Session Details Endpoint ──
@@ -1773,3 +1857,135 @@ async def takeover_bot_session(
         "operator_name": operator_name,
         "visitor_name": visitor_name,
     }
+
+
+# ── Web Push subscriptions (operator notifications) ──────────────────────────
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+    @field_validator("endpoint")
+    @classmethod
+    def _validate_endpoint(cls, v: str) -> str:
+        v = v.strip()
+        # Web Push endpoints are always https:// — provider-issued URLs.
+        if not v.startswith("https://"):
+            raise ValueError("endpoint must be an https:// URL")
+        if len(v) > 2048:
+            raise ValueError("endpoint too long")
+        return v
+
+
+@router.get("/push/vapid-public-key")
+def get_vapid_public_key():
+    """Return the server's VAPID public key (URL-safe base64).
+
+    Public information — the frontend uses it as ``applicationServerKey`` when
+    calling ``pushManager.subscribe()``. Safe to expose without auth, but we
+    keep it on the operator router so the SDK call lives next to the rest of
+    the push surface.
+    """
+    from app.config import PUSH_ENABLED, VAPID_PUBLIC_KEY
+
+    return {"public_key": VAPID_PUBLIC_KEY if PUSH_ENABLED else "", "enabled": PUSH_ENABLED}
+
+
+@router.post("/push/subscribe")
+def push_subscribe(
+    body: PushSubscribeRequest,
+    request: Request,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Register a Web Push subscription for the calling user.
+
+    Accepts both operator and workspace-owner (client) logins. The row's
+    ``operator_id`` or ``client_id`` is set depending on the auth type — a DB
+    CHECK constraint guarantees exactly one is populated. Upsert by
+    ``endpoint`` so the same browser re-subscribing simply re-binds to the
+    current account (e.g. after re-login from the same machine, possibly as
+    a different role).
+    """
+    from app.db.models import OperatorPushSubscription
+
+    is_operator = auth["type"] == "operator"
+    subscriber_id = auth["entity"].id
+    # Capture UA at subscribe-time so the user can later distinguish "Laptop
+    # Chrome" from "iPhone Safari" if they ever manage devices. Truncated to
+    # a safe length; browsers produce UAs in the 100-400 char range.
+    ua = (request.headers.get("user-agent") or "")[:512] or None
+
+    with get_session() as session:
+        existing = session.execute(
+            select(OperatorPushSubscription).where(OperatorPushSubscription.endpoint == body.endpoint)
+        ).scalar_one_or_none()
+        if existing is not None:
+            # Re-bind the endpoint to whichever account is logged in *now*.
+            # The browser reuses the same endpoint after a clean re-subscribe,
+            # so an operator → owner role switch on the same device surfaces
+            # correctly. Clear the other FK to satisfy the XOR check.
+            if is_operator:
+                existing.operator_id = subscriber_id
+                existing.client_id = None
+            else:
+                existing.client_id = subscriber_id
+                existing.operator_id = None
+            existing.p256dh = body.keys.p256dh
+            existing.auth = body.keys.auth
+            existing.user_agent = ua
+        else:
+            session.add(
+                OperatorPushSubscription(
+                    operator_id=subscriber_id if is_operator else None,
+                    client_id=None if is_operator else subscriber_id,
+                    endpoint=body.endpoint,
+                    p256dh=body.keys.p256dh,
+                    auth=body.keys.auth,
+                    user_agent=ua,
+                )
+            )
+        session.commit()
+
+    return {"success": True}
+
+
+@router.delete("/push/subscribe")
+def push_unsubscribe(
+    body: PushSubscribeRequest,
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Remove a Web Push subscription previously registered for this user.
+
+    The frontend calls this when the user manually disables notifications or
+    after ``pushManager.unsubscribe()`` returns. Idempotent: a delete on a
+    non-existent endpoint is a no-op. Scoped to the calling user's own row —
+    a subscriber cannot delete another account's subscription even if they
+    happen to know the endpoint.
+    """
+    from sqlalchemy import delete as sa_delete
+
+    from app.db.models import OperatorPushSubscription
+
+    is_operator = auth["type"] == "operator"
+    subscriber_id = auth["entity"].id
+    scope = (
+        OperatorPushSubscription.operator_id == subscriber_id
+        if is_operator
+        else OperatorPushSubscription.client_id == subscriber_id
+    )
+    with get_session() as session:
+        session.execute(
+            sa_delete(OperatorPushSubscription).where(
+                scope,
+                OperatorPushSubscription.endpoint == body.endpoint,
+            )
+        )
+        session.commit()
+
+    return {"success": True}

@@ -25,19 +25,25 @@ export default function Avatar({ src, name, size = 'md', status, className }) {
           src={src}
           alt={name || ''}
           className={cn(
-            'rounded-full object-cover ring-2 ring-white dark:ring-surface-900',
+            'rounded-full object-cover',
+            status === 'online'
+              ? 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-white dark:ring-offset-surface-900'
+              : 'ring-2 ring-white dark:ring-surface-900',
             sizes[size]
           )}
         />
       ) : (
         <div className={cn(
-          'rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center font-bold ring-2 ring-white dark:ring-surface-900',
+          'rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-white flex items-center justify-center font-bold',
+          status === 'online'
+            ? 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-white dark:ring-offset-surface-900'
+            : 'ring-2 ring-white dark:ring-surface-900',
           sizes[size]
         )}>
           {initials}
         </div>
       )}
-      {status && (
+      {status && status !== 'online' && (
         <span className={cn(
           'absolute bottom-0 right-0 rounded-full border-2 border-white dark:border-surface-900',
           statusColors[status] || statusColors.offline,

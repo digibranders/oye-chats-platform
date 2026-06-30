@@ -49,21 +49,21 @@ jobs:
           RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
           # Frontend URL for Stripe success/cancel and Razorpay return redirects.
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
-          # Google OAuth — "Sign in with Google" for the admin dashboard.
-          # OAUTH_STATE_SECRET must be a stable value shared across all
-          # Gunicorn workers: the state cookie is issued on
-          # /auth/google/login and validated on /auth/google/callback —
-          # two separate requests that may hit different workers. Without a
-          # shared secret each worker's process-local random fallback
-          # (config.py) would cause intermittent oauth_state_invalid errors.
+          # Google OAuth (Sign in with Google). All five are required — the
+          # frontend probes /auth/google/status on every page load and hides
+          # the button when the backend isn't configured. Missing any of
+          # these in the secrets set silently breaks production OAuth on
+          # the next deploy because this workflow rewrites .env in full.
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI: ${{ secrets.GOOGLE_REDIRECT_URI }}
+          OAUTH_SUCCESS_REDIRECT_URL: ${{ secrets.OAUTH_SUCCESS_REDIRECT_URL }}
           OAUTH_STATE_SECRET: ${{ secrets.OAUTH_STATE_SECRET }}
         with:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,FRONTEND_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,OAUTH_STATE_SECRET
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,FRONTEND_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -132,8 +132,8 @@ jobs:
               "FRONTEND_URL=${FRONTEND_URL}" \
               "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}" \
               "GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}" \
-              "GOOGLE_REDIRECT_URI=https://api.oyechats.com/auth/google/callback" \
-              "OAUTH_SUCCESS_REDIRECT_URL=https://app.oyechats.com/auth/callback" \
+              "GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}" \
+              "OAUTH_SUCCESS_REDIRECT_URL=${OAUTH_SUCCESS_REDIRECT_URL}" \
               "OAUTH_STATE_SECRET=${OAUTH_STATE_SECRET}" \
               > api/.env
 

@@ -214,6 +214,40 @@ function KpiInfoButton({ text, label }) {
     );
 }
 
+function AnimatedCounter({ value, duration = 800 }) {
+    const [count, setCount] = useState(0);
+
+    useEffect(() => {
+        let start = count;
+        const end = Math.round(value);
+        if (start === end) return;
+
+        const startTime = performance.now();
+        let animationFrameId;
+
+        const animate = (currentTime) => {
+            const elapsedTime = currentTime - startTime;
+            const progress = Math.min(elapsedTime / duration, 1);
+            // Ease out quad
+            const easeProgress = progress * (2 - progress);
+            const currentVal = Math.round(start + (end - start) * easeProgress);
+
+            setCount(currentVal);
+
+            if (progress < 1) {
+                animationFrameId = requestAnimationFrame(animate);
+            }
+        };
+
+        animationFrameId = requestAnimationFrame(animate);
+
+        return () => cancelAnimationFrame(animationFrameId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [value]);
+
+    return <span className="tabular-nums">{count}</span>;
+}
+
 function ScoreGauge({ score }) {
     const clamped = Math.max(0, Math.min(100, score));
     const radius = 78;
@@ -255,7 +289,9 @@ function ScoreGauge({ score }) {
                 />
             </svg>
             <div className="absolute inset-x-0 bottom-0 flex flex-col items-center">
-                <span className="text-4xl font-bold tabular-nums" style={{ color }}>{Math.round(clamped)}</span>
+                <span className="text-4xl font-bold tabular-nums" style={{ color }}>
+                    <AnimatedCounter value={clamped} />
+                </span>
                 <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color }}>{tier}</span>
             </div>
         </div>
@@ -283,7 +319,9 @@ function TierCard({ tierKey, count, total, delay = 0 }) {
             <p className={`text-[11px] font-bold uppercase tracking-widest ${meta.accent}`}>{meta.label}</p>
             <p className="text-[10.5px] text-surface-500 dark:text-surface-400 mt-0.5">{meta.sublabel}</p>
             <div className="mt-4 flex items-baseline gap-2">
-                <span className="text-4xl font-bold tabular-nums text-surface-900 dark:text-surface-50">{count}</span>
+                <span className="text-4xl font-bold tabular-nums text-surface-900 dark:text-surface-50">
+                    <AnimatedCounter value={count} />
+                </span>
                 <span className="text-sm font-semibold text-surface-500 dark:text-surface-400">{pct.toFixed(1)}%</span>
             </div>
             <div className="mt-3 h-1 w-full rounded-full bg-surface-100 dark:bg-surface-800 overflow-hidden">
@@ -435,7 +473,9 @@ function ScorecardTab() {
                             <span className="text-[10.5px] font-bold uppercase tracking-widest text-surface-500 dark:text-surface-400">Pipeline overview</span>
                         </div>
                         <div className="flex items-baseline gap-3 flex-wrap">
-                            <span className="text-5xl font-bold tabular-nums leading-none text-surface-900 dark:text-surface-50">{total}</span>
+                            <span className="text-5xl font-bold tabular-nums leading-none text-surface-900 dark:text-surface-50">
+                                <AnimatedCounter value={total} />
+                            </span>
                             <span className="text-sm font-semibold text-surface-500 dark:text-surface-400">total leads</span>
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${qualifiedRate > 0 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400'}`}>
                                 {qualifiedRate > 0 ? <TrendingUp size={11} /> : <Minus size={11} />}
