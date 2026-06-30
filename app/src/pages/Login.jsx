@@ -117,9 +117,9 @@ export default function Login() {
           // Deep-link round-trip (e.g. push-notification click landed on
           // /support?session=<id> before auth bounced through here).
           navigate(safeNext);
-        } else if (data.is_superadmin) {
-          navigate('/superadmin/overview');
         } else {
+          // Super-admins log into the dedicated console at admin.oyechats.com,
+          // not this dashboard — route them to "/" like any other client.
           navigate('/');
         }
       }
@@ -135,7 +135,6 @@ export default function Login() {
       const pending = getAuthItem('admin_pending_email') || '';
       return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
     }
-    const isSuper = localStorage.getItem('is_superadmin') === 'true';
     const isOperator = localStorage.getItem('auth_type') === 'operator';
     // If an affiliate token is in the URL, keep routing it through the
     // invite landing — the recipient is already logged in and the page
@@ -143,7 +142,7 @@ export default function Login() {
     if (affiliateToken && !isOperator) {
       return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
     }
-    return <Navigate to={isSuper ? '/superadmin/overview' : isOperator ? '/support' : '/'} />;
+    return <Navigate to={isOperator ? '/support' : '/'} />;
   }
 
   return (

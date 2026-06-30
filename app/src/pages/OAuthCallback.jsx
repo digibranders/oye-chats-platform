@@ -140,13 +140,13 @@ export default function OAuthCallback() {
                 }
 
                 // Routing precedence mirrors Login.jsx:
-                //   superadmin → /superadmin/overview
                 //   affiliate-only → /affiliate
                 //   explicit ?next= override
                 //   else → "/"
+                // Super-admins use the dedicated console at
+                // admin.oyechats.com and do not route here.
                 let destination = next;
-                if (me?.is_superadmin) destination = '/superadmin/overview';
-                else if (me?.is_affiliate_only) destination = '/affiliate';
+                if (me?.is_affiliate_only) destination = '/affiliate';
                 else if (!destination || destination === '/') destination = '/';
 
                 navigate(destination, { replace: true });

@@ -104,6 +104,15 @@ class CrawlRequest(BaseModel):
         "Old chunks for this source are deleted only after new ingestion succeeds — "
         "so the bot always has knowledge during the recrawl.",
     )
+    expected_new_pages: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional client-supplied page count from a prior /crawl/diff call, used "
+        "to right-size the credit pre-flight on a recrawl (only honored when "
+        "``replace_source`` is set). Per-page atomic deduction inside the ingestion "
+        "pipeline remains authoritative — this only loosens the upfront ceiling so a "
+        "9-new-page recrawl isn't blocked by a 1200-page worst-case reservation.",
+    )
 
     @field_validator("url")
     @classmethod

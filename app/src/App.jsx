@@ -37,14 +37,6 @@ import Integrations from './pages/Integrations';
 import Billing from './pages/Billing';
 import AffiliateDashboard from './pages/AffiliateDashboard';
 
-// Superadmin
-import SuperadminLayout from './layouts/SuperadminLayout';
-import SuperadminOverview from './pages/superadmin/Overview';
-import SuperadminClients from './pages/superadmin/Clients';
-import SuperadminFeedback from './pages/superadmin/Feedback';
-import SuperadminAffiliates from './pages/superadmin/Affiliates';
-import SuperadminPricingInsights from './pages/superadmin/PricingInsights';
-
 // Components
 import AccessDenied from './components/AccessDenied';
 import { getAuthItem } from './utils/authStorage';
@@ -70,14 +62,6 @@ const ProtectedRoute = ({ children }) => {
     return children;
 };
 
-const SuperadminRoute = ({ children }) => {
-    const isAuthenticated = !!getAuthItem('admin_token');
-    const isSuperadmin = getAuthItem('is_superadmin') === 'true';
-    if (!isAuthenticated) return <Navigate to={loginUrlPreservingNext()} replace />;
-    if (!isSuperadmin) return <Navigate to="/" replace />;
-    return children;
-};
-
 // AffiliateRoute removed — the dedicated layout guard is gone, the
 // AffiliateDashboard now lives inside the main AdminLayout tree which
 // is already wrapped in ProtectedRoute. AffiliateDashboard's own 403
@@ -99,15 +83,11 @@ const LegacyAffiliateAcceptRedirect = () => {
  * Smart root redirect. The instant the user lands at "/", we fetch
  * /auth/me and route them based on who they are:
  *
- *   - superadmin           → /superadmin/overview
- *   - affiliate-only user  → /affiliate  (inside the main admin layout
- *                                          — the dedicated affiliate
- *                                          shell was removed; the page
- *                                          now lives alongside Billing,
- *                                          Settings, etc., with the
- *                                          Sidebar conditionally
- *                                          rendering the menu item)
+ *   - affiliate-only user  → /affiliate  (inside the main admin layout)
  *   - everyone else        → render the customer Dashboard inline
+ *
+ * Superadmins are NOT routed here — the super-admin console is a
+ * separate Next.js app at admin.oyechats.com.
  *
  * Failure to fetch /auth/me falls through to the customer Dashboard so
  * stale localStorage tokens don't trap users in an infinite loading
@@ -123,9 +103,7 @@ const RootRedirect = ({ fallback }) => {
         getCurrentUser()
             .then((me) => {
                 if (cancelled) return;
-                if (me?.is_superadmin) {
-                    setDestination('/superadmin/overview');
-                } else if (me?.is_affiliate_only) {
+                if (me?.is_affiliate_only) {
                     setDestination('/affiliate');
                 }
             })
@@ -258,21 +236,10 @@ function App() {
                     <Route path="/admin" element={<Navigate to="/" replace />} />
                     <Route path="/admin/*" element={<Navigate to="/" replace />} />
 
-                    {/* Superadmin */}
-                    <Route
-                        path="/superadmin"
-                        element={
-                            <SuperadminRoute>
-                                <SuperadminLayout />
-                            </SuperadminRoute>
-                        }
-                    >
-                        <Route path="overview" element={<SuperadminOverview />} />
-                        <Route path="clients" element={<SuperadminClients />} />
-                        <Route path="pricing-insights" element={<SuperadminPricingInsights />} />
-                        <Route path="affiliates" element={<SuperadminAffiliates />} />
-                        <Route path="feedback" element={<SuperadminFeedback />} />
-                    </Route>
+                    {/* The super-admin console moved to admin.oyechats.com
+                        (separate Next.js app). Any stale /superadmin/* deep
+                        links land back at "/", which RootRedirect handles. */}
+                    <Route path="/superadmin/*" element={<Navigate to="/" replace />} />
 
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>

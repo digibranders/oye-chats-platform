@@ -254,7 +254,15 @@ export const CrawlProvider = ({ children }) => {
     // ── Actions ──────────────────────────────────────────────────────────────
 
     const startCrawl = useCallback(
-        async ({ url, botId, botName = null, useJs = false, replaceSource = null, discoveredTotal = null } = {}) => {
+        async ({
+            url,
+            botId,
+            botName = null,
+            useJs = false,
+            replaceSource = null,
+            discoveredTotal = null,
+            expectedNewPages = null,
+        } = {}) => {
             cancelledByUserRef.current = false;
             // Brand-new crawl → forget which terminal we already handled so
             // the next "Crawl complete" toast fires once for THIS run. Also
@@ -290,7 +298,7 @@ export const CrawlProvider = ({ children }) => {
                 cancelInFlight: false,
             }));
             try {
-                const response = await crawlWebsite(url, botId, useJs, replaceSource);
+                const response = await crawlWebsite(url, botId, useJs, replaceSource, expectedNewPages);
                 // Kick a poll immediately so the bar advances faster than the
                 // background tick.
                 poll();

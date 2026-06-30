@@ -106,11 +106,10 @@ export default function Register() {
       const pending = getAuthItem('admin_pending_email') || '';
       return <Navigate to={`/verify-email${pending ? `?email=${encodeURIComponent(pending)}` : ''}`} replace />;
     }
-    const isSuper = getAuthItem('is_superadmin') === 'true';
-    if (affiliateToken && !isSuper) {
+    if (affiliateToken) {
       return <Navigate to={`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`} />;
     }
-    return <Navigate to={isSuper ? '/superadmin/overview' : '/'} />;
+    return <Navigate to="/" />;
   }
 
   const strengthColor = strengthScore === 3 ? 'bg-emerald-500' : strengthScore === 2 ? 'bg-amber-500' : strengthScore === 1 ? 'bg-rose-500' : 'bg-white/10';
