@@ -30,6 +30,7 @@ from app.api.auth import get_superadmin
 from app.api.superadmin_plan_routes import _to_usd_cents
 from app.api.superadmin_routes_v2 import _require_write
 from app.db.models import (
+    BANTSignal,
     Bot,
     ChatMessage,
     ChatSession,
@@ -1040,3 +1041,199 @@ def list_usage_records(
             }
             for r in records
         ]
+
+
+# ── BANT / qualification signals (audit) ──────────────────────────────────────
+
+
+_BANT_DIMENSIONS = ("budget", "authority", "need", "timeline")
+
+
+@router.get("/bant-signals")
+def list_bant_signals(
+    session_id: str | None = None,
+    dimension: str | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """Append-only BANT/MEDDIC qualification signals for auditing extraction
+    quality. Newest first, capped at 500. Filter by ``session_id`` and/or
+    ``dimension`` (budget|authority|need|timeline). Bot/client names are joined
+    via the owning chat session (batch-loaded, no N+1)."""
+    with get_session() as session:
+        stmt = select(BANTSignal).order_by(BANTSignal.created_at.desc())
+        if session_id:
+            stmt = stmt.where(BANTSignal.session_id == session_id)
+        if dimension:
+            stmt = stmt.where(BANTSignal.dimension == dimension)
+        signals = session.execute(stmt.limit(500)).scalars().all()
+
+        session_ids = {s.session_id for s in signals}
+        sessions = {
+            cs.id: cs.bot_id
+            for cs in (
+                session.execute(select(ChatSession).where(ChatSession.id.in_(session_ids))).scalars().all()
+                if session_ids
+                else []
+            )
+        }
+        bot_ids = {bid for bid in sessions.values() if bid}
+        bots = {
+            b.id: (b.name, b.client_id)
+            for b in (session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else [])
+        }
+        client_ids = {cid for _, cid in bots.values()}
+        clients = {
+            c.id: c.name
+            for c in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+
+        result = []
+        for s in signals:
+            bot_id = sessions.get(s.session_id)
+            bot_name, client_id = bots.get(bot_id, (None, None)) if bot_id else (None, None)
+            result.append(
+                {
+                    "id": s.id,
+                    "session_id": s.session_id,
+                    "message_id": s.message_id,
+                    "bot_name": bot_name,
+                    "client_name": clients.get(client_id) if client_id else None,
+                    "dimension": s.dimension,
+                    "signal_text": s.signal_text,
+                    "extracted_value": s.extracted_value,
+                    "confidence": s.confidence,
+                    "score_before": s.score_before,
+                    "score_after": s.score_after,
+                    "source": s.source,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                }
+            )
+        return result
+
+
+# ── Outbound webhook registrations (customer-registered endpoints) ────────────
+
+
+def _webhook_registration_dict(wh: Webhook, bot_name: str | None, client_name: str | None) -> dict[str, Any]:
+    return {
+        "id": wh.id,
+        "bot_id": wh.bot_id,
+        "bot_name": bot_name,
+        "client_name": client_name,
+        "url": wh.url,
+        "events": wh.events or [],
+        "is_active": wh.is_active,
+        "created_at": wh.created_at.isoformat() if wh.created_at else None,
+        "updated_at": wh.updated_at.isoformat() if wh.updated_at else None,
+    }
+
+
+@router.get("/webhook-registrations")
+def list_webhook_registrations(
+    bot_id: int | None = None,
+    _admin: Client = Depends(get_superadmin),
+):
+    """All customer-registered outbound webhooks (distinct from the delivery
+    log). The signing secret is never returned. Newest first, capped at 500,
+    filterable by ``bot_id``. Bot/client names batch-loaded."""
+    with get_session() as session:
+        stmt = select(Webhook).order_by(Webhook.created_at.desc())
+        if bot_id:
+            stmt = stmt.where(Webhook.bot_id == bot_id)
+        hooks = session.execute(stmt.limit(500)).scalars().all()
+
+        bot_ids = {w.bot_id for w in hooks}
+        bots = {
+            b.id: (b.name, b.client_id)
+            for b in (session.execute(select(Bot).where(Bot.id.in_(bot_ids))).scalars().all() if bot_ids else [])
+        }
+        client_ids = {cid for _, cid in bots.values()}
+        clients = {
+            c.id: c.name
+            for c in (
+                session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
+            )
+        }
+        result = []
+        for w in hooks:
+            bot_name, client_id = bots.get(w.bot_id, (None, None))
+            result.append(_webhook_registration_dict(w, bot_name, clients.get(client_id) if client_id else None))
+        return result
+
+
+class WebhookRegistrationPatch(BaseModel):
+    is_active: bool
+
+
+@router.patch("/webhook-registrations/{webhook_id}")
+def update_webhook_registration(
+    webhook_id: int,
+    body: WebhookRegistrationPatch,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Enable or disable a customer webhook registration. Audit-logged."""
+    _require_write(admin)
+    with get_session() as session:
+        wh = session.get(Webhook, webhook_id)
+        if not wh:
+            raise HTTPException(status_code=404, detail="Webhook registration not found")
+
+        before = {"is_active": wh.is_active}
+        wh.is_active = body.is_active
+        session.flush()
+
+        record_audit(
+            session,
+            actor=admin,
+            action="webhook_registration.update",
+            target_type="webhook",
+            target_id=webhook_id,
+            before=before,
+            after={"is_active": wh.is_active},
+            request=request,
+        )
+        session.commit()
+        return {"ok": True}
+
+
+@router.post("/webhook-registrations/{webhook_id}/test")
+def test_webhook_registration(
+    webhook_id: int,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Dispatch a sample ``tier_transition`` event to a registration so the
+    superadmin can verify the customer endpoint is reachable. Audit-logged."""
+    _require_write(admin)
+    from app.services.webhook_service import queue_webhook_delivery
+
+    with get_session() as session:
+        wh = session.get(Webhook, webhook_id)
+        if not wh:
+            raise HTTPException(status_code=404, detail="Webhook registration not found")
+
+        queue_webhook_delivery(
+            wh.id,
+            "tier_transition",
+            {
+                "session_id": "test_session",
+                "old_tier": "mql",
+                "new_tier": "sql",
+                "score": 82,
+                "behavioral_score": 12,
+                "test": True,
+            },
+        )
+        record_audit(
+            session,
+            actor=admin,
+            action="webhook_registration.test",
+            target_type="webhook",
+            target_id=webhook_id,
+            request=request,
+        )
+        session.commit()
+        return {"ok": True, "message": "Test event dispatched"}
