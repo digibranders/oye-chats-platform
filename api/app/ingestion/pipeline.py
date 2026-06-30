@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import shutil
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from app.config import ARCHIVE_DIR
@@ -170,7 +170,7 @@ def _ingest_document(
             chunk_contents = enrich_chunks_batch(chunk_contents, document_summary)
 
         # Enhance metadata with source info
-        current_time = datetime.utcnow().isoformat()
+        current_time = datetime.now(UTC).isoformat()
         chunk_metadatas = []
         for c in chunks:
             meta = c.metadata.copy()
@@ -355,7 +355,7 @@ def batch_web_ingestion(
     all_chunk_contents: list[str] = []
     all_chunk_metadatas: list[dict] = []
     page_boundaries: list[dict] = []  # Track which chunks belong to which page
-    current_time = datetime.utcnow().isoformat()
+    current_time = datetime.now(UTC).isoformat()
 
     with get_session() as session:
         # Resolve the bot's ledger scope once so every page in the batch
@@ -541,7 +541,7 @@ def move_to_archive(file_path: str, filename: str):
     dest_path = os.path.join(ARCHIVE_DIR, filename)
 
     if os.path.exists(dest_path):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         name, ext = os.path.splitext(filename)
         dest_path = os.path.join(ARCHIVE_DIR, f"{name}_{timestamp}{ext}")
 
@@ -562,7 +562,7 @@ def move_to_quarantine(file_path: str, filename: str):
     dest_path = os.path.join(QUARANTINE_DIR, filename)
 
     if os.path.exists(dest_path):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         name, ext = os.path.splitext(filename)
         dest_path = os.path.join(QUARANTINE_DIR, f"{name}_{timestamp}{ext}")
 

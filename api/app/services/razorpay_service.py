@@ -1652,7 +1652,12 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     # Without this, a grant that lands between the two events would be clawed a
     # second time (remediation N2). First event to arrive claws; the rest no-op.
     refund_id = refund_entity.get("id")
-    if refund_id and not _record_or_skip_event(session, f"refund:{refund_id}"):
+    # A refund with no id can't be deduped — reject rather than process it
+    # un-deduped (which would let refund.created + refund.processed double-claw).
+    if not refund_id:
+        logger.warning("refund event missing id for payment %s — rejecting", payment_id)
+        return "refund missing id"
+    if not _record_or_skip_event(session, f"refund:{refund_id}"):
         return f"Refund {refund_id} already clawed back"
 
     inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()

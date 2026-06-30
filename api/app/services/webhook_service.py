@@ -1,12 +1,14 @@
 import hashlib
 import hmac
+import http.client
 import ipaddress
 import json
 import logging
 import secrets
+import socket
+import ssl
 import threading
 import time
-import urllib.request
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
@@ -80,6 +82,10 @@ def fire_webhook(bot_id: int, event_type: str, data: dict) -> None:
             queue_webhook_delivery(webhook.id, event_type, data)
 
 
+def _ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return not (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast)
+
+
 def _is_safe_webhook_url(url: str) -> bool:
     """Re-validate webhook URL at delivery time to block DNS rebinding SSRF."""
     parsed = urlparse(url)
@@ -88,9 +94,92 @@ def _is_safe_webhook_url(url: str) -> bool:
         return False
     try:
         ip = ipaddress.ip_address(hostname)
-        return not (ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local)
+        return _ip_is_public(ip)
     except ValueError:
         return _is_public_hostname(hostname)
+
+
+def _resolve_pinned_public_ip(hostname: str) -> str | None:
+    """Resolve ``hostname`` once and return a single public IP to pin to.
+
+    Closes the SSRF TOCTOU (N7): the previous code validated the hostname with
+    one DNS lookup and then let ``urlopen`` do its OWN lookup, so a short-TTL
+    record could return a public IP to the check and a private IP to the
+    connection microseconds later. We resolve once here and connect to exactly
+    this IP. Fail-closed: if ANY resolved address is non-public, reject the host.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return None
+    pinned: str | None = None
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return None
+        if not _ip_is_public(ip):
+            return None  # any private/internal answer → reject the whole host
+        if pinned is None:
+            pinned = ip_str
+    return pinned
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection that dials a pre-validated IP but keeps the original
+    hostname for TLS SNI + certificate verification (so pinning doesn't weaken
+    TLS)."""
+
+    def __init__(self, host, *args, pinned_ip: str, **kwargs):
+        super().__init__(host, *args, **kwargs)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host, *args, pinned_ip: str, **kwargs):
+        super().__init__(host, *args, **kwargs)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+
+
+def _open_pinned(url: str, *, data: bytes, headers: dict, timeout: int) -> tuple[int, str]:
+    """POST ``data`` to ``url``, connecting to a re-validated pinned public IP.
+
+    Returns ``(status_code, body)``. Raises on transport failure (caller logs).
+    Only http/https are allowed; redirects are NOT followed (a 3xx is surfaced
+    as-is so a redirect can't bounce the request to an internal address).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Unsupported webhook URL scheme")
+    pinned_ip = _resolve_pinned_public_ip(parsed.hostname)
+    if pinned_ip is None:
+        raise ValueError("Webhook host did not resolve to a public address")
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if parsed.scheme == "https":
+        conn = _PinnedHTTPSConnection(
+            parsed.hostname, port=port, timeout=timeout, pinned_ip=pinned_ip, context=ssl.create_default_context()
+        )
+    else:
+        conn = _PinnedHTTPConnection(parsed.hostname, port=port, timeout=timeout, pinned_ip=pinned_ip)
+    try:
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        conn.request("POST", path, body=data, headers=headers)
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", errors="replace")[:1000]
+        return resp.status, body
+    finally:
+        conn.close()
 
 
 def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int = 1) -> None:
@@ -138,23 +227,20 @@ def _deliver_webhook(webhook_id: int, event_type: str, data: dict, attempt: int 
         next_retry_at = None
 
         try:
-            req = urllib.request.Request(
+            status_code, response_body = _open_pinned(
                 webhook.url,
                 data=payload_bytes,
-                method="POST",
                 headers={
                     "Content-Type": "application/json",
                     "X-OyeChats-Signature": f"sha256={signature}",
                 },
+                timeout=_DELIVERY_TIMEOUT,
             )
-            with urllib.request.urlopen(req, timeout=_DELIVERY_TIMEOUT) as resp:
-                status_code = getattr(resp, "status", 200)
-                response_body = resp.read().decode("utf-8", errors="replace")[:1000]
-                if 200 <= status_code < 300:
-                    delivered_at = now
-                elif attempt < _MAX_RETRIES:
-                    delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
-                    next_retry_at = datetime.fromtimestamp(time.time() + delay, UTC)
+            if 200 <= status_code < 300:
+                delivered_at = now
+            elif attempt < _MAX_RETRIES:
+                delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
+                next_retry_at = datetime.fromtimestamp(time.time() + delay, UTC)
         except Exception as exc:
             response_body = str(exc)[:1000]
             if attempt < _MAX_RETRIES:

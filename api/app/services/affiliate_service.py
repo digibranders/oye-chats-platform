@@ -1366,10 +1366,13 @@ def delete_affiliate(session: Session, affiliate_id: int) -> None:
     if aff is None:
         raise NotAffiliate("Affiliate not found.")
 
+    # Capture before delete — reading aff.client_id after session.delete can
+    # raise ObjectDeletedError / return None once the row is expired.
+    client_id = aff.client_id
     # Wipe codes (cascade fans out to clicks; nulls out clients).
     session.execute(delete(ReferralCode).where(ReferralCode.affiliate_id == affiliate_id))
     session.delete(aff)
     logger.info(
         "affiliate_deleted",
-        extra={"affiliate_id": affiliate_id, "client_id": aff.client_id},
+        extra={"affiliate_id": affiliate_id, "client_id": client_id},
     )
