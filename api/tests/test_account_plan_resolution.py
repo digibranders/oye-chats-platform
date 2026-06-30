@@ -83,3 +83,57 @@ def test_single_subscription_still_resolves(db):
     db.commit()
 
     assert plan_service.get_client_subscription(db, client.id).plan_id == plan.id
+
+
+# ── M7 / M4 / NV6 — usage counters & records ─────────────────────────────────
+
+
+def test_documents_counted_by_source_not_name_heuristic(db):
+    """M7 — an uploaded file named like a URL still counts as a document, and a
+    crawled page is excluded, because the count keys on ``source`` not the name."""
+    from app.db.models import Document
+    from app.services.plan_entitlements_service import _build_usage
+
+    client = Client(name="c", email="m7@e.com", api_key="m7", hashed_password="h")
+    db.add(client)
+    db.flush()
+    # An uploaded file whose name starts with "http" (old heuristic excluded it).
+    db.add(
+        Document(
+            client_id=client.id,
+            document_name="https-notes.pdf",
+            source="upload",
+            file_hash="h1",
+            content="x",
+        )
+    )
+    # A crawled page (must NOT count toward the documents quota).
+    db.add(
+        Document(
+            client_id=client.id,
+            document_name="http://example.com/page",
+            source="crawl",
+            file_hash="h2",
+            content="y",
+        )
+    )
+    db.commit()
+
+    usage = _build_usage(client_id=client.id, db_session=db, limits={})
+    assert usage["documents"] == 1
+
+
+def test_get_or_create_usage_record_is_idempotent(db):
+    """M4/NV6 — a second call in the same period returns the existing row
+    deterministically, never a duplicate or an error."""
+    client = Client(name="c", email="m4@e.com", api_key="m4", hashed_password="h")
+    db.add(client)
+    db.flush()
+    free = Plan(name="Free", slug="free", monthly_price_cents=0, credits_per_month=200)
+    db.add(free)
+    db.commit()
+
+    first = plan_service.get_or_create_usage_record(db, client.id)
+    db.commit()
+    second = plan_service.get_or_create_usage_record(db, client.id)
+    assert second.id == first.id

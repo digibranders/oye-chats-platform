@@ -369,6 +369,11 @@ class Document(Base):
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True)
 
     document_name = Column(String, nullable=False)
+    # Explicit ingestion source (remediation M7): "upload" for a file the
+    # customer uploaded, "crawl" for a page ingested from a URL. Replaces the
+    # fragile ``document_name LIKE 'http%'`` heuristic for the documents quota —
+    # a file literally named ``https-notes.pdf`` is no longer mis-classified.
+    source = Column(String, nullable=False, default="upload", server_default="upload")
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)

@@ -123,7 +123,12 @@ def _normalize_for_dedup_hash(text: str) -> str:
 
 
 def _ingest_document(
-    client_id: int, source_name: str, full_text: str, pages_data: list[dict[str, Any]], bot_id: int | None = None
+    client_id: int,
+    source_name: str,
+    full_text: str,
+    pages_data: list[dict[str, Any]],
+    bot_id: int | None = None,
+    source: str = "upload",
 ) -> int:
     """
     Common ingestion logic for both files and web content.
@@ -183,7 +188,15 @@ def _ingest_document(
         # 4. Save to Database with JSONB metadata
         try:
             insert_documents(
-                session, client_id, source_name, file_hash, chunk_contents, embeddings, chunk_metadatas, bot_id=bot_id
+                session,
+                client_id,
+                source_name,
+                file_hash,
+                chunk_contents,
+                embeddings,
+                chunk_metadatas,
+                bot_id=bot_id,
+                source=source,
             )
             session.commit()
             # Invalidate cached QA responses AND stale relevance-gate judgments
@@ -290,7 +303,7 @@ def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int | None
         # We treat the whole page as a single "page" of text
         pages_data = [{"text": content, "metadata": meta}]
 
-        chunks_count = _ingest_document(client_id, url, content, pages_data, bot_id=bot_id)
+        chunks_count = _ingest_document(client_id, url, content, pages_data, bot_id=bot_id, source="crawl")
         logger.info(f"Web ingestion complete for {url}. Chunks: {chunks_count}")
         return chunks_count
 
@@ -454,6 +467,7 @@ def batch_web_ingestion(
                     page_embeddings,
                     page_metas,
                     bot_id=bot_id,
+                    source="crawl",
                 )
                 # Atomic billing: deduct in the same TX as the chunk insert so
                 # we never end up with chunks-without-charge or charge-without-

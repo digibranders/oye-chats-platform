@@ -383,12 +383,16 @@ def insert_documents(
     embeddings=None,
     metadatas=None,
     bot_id: int = None,
+    source: str = "upload",
 ):
     """Batch insert documents. Supports both client_id (legacy) and bot_id (new).
 
     ``chunks``, ``embeddings`` and ``metadatas`` MUST be the same length —
     a partial embedding failure that returns fewer vectors than chunks would
     otherwise silently truncate (paid embeddings discarded, no error).
+
+    ``source`` tags each row as ``"upload"`` or ``"crawl"`` (M7) so the
+    documents quota counts uploaded files without sniffing ``document_name``.
     """
     chunks = chunks or []
     embeddings = embeddings or []
@@ -403,6 +407,7 @@ def insert_documents(
     for chunk, embedding, meta in zip(chunks, embeddings, metadatas, strict=True):
         row = {
             "document_name": file_name,
+            "source": source,
             "file_hash": file_hash,
             "content": chunk,
             "metadata_info": meta,
