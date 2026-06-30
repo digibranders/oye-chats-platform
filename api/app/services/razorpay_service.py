@@ -63,6 +63,12 @@ logger = logging.getLogger(__name__)
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
 
+# Minimum paise a discounted recurring plan may charge (remediation C3 floor).
+# ₹1.00 is Razorpay's own minimum; combined with the 50% discount cap this
+# makes a near-free plan unreachable from any code configuration.
+MIN_DISCOUNTED_PLAN_PAISE = 100
+
+
 class RazorpayBillingError(Exception):
     """Base class for Razorpay-specific billing errors."""
 
@@ -433,6 +439,13 @@ def resolve_discounted_plan(
 
     base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
     discounted_paise = base_amount - (base_amount * discount_bps) // 10000
+    # Minimum-price floor (remediation C3): even with the discount cap, never
+    # create a near-free recurring plan. Razorpay also rejects sub-₹1 charges.
+    if discounted_paise < MIN_DISCOUNTED_PLAN_PAISE:
+        raise ValueError(
+            f"discounted price ₹{discounted_paise / 100:.2f} is below the ₹{MIN_DISCOUNTED_PLAN_PAISE / 100:.2f} "
+            f"minimum (base ₹{base_amount / 100:.2f}, {discount_bps} bps)"
+        )
     period = "yearly" if billing_cycle == "annual" else "monthly"
 
     rzp = _get_razorpay()
@@ -686,6 +699,50 @@ def update_subscription_quantity(
     session.flush()
     logger.info("Updated seat count for subscription %s to %d", sub.id, new_quantity)
     return new_quantity
+
+
+# ── Refunds ─────────────────────────────────────────────────────────────────────
+
+
+def refund_payment(payment_id: str, amount: int | None = None) -> dict[str, Any]:
+    """Issue a refund against a captured Razorpay payment.
+
+    ``amount`` is the refund amount in **paise** (the minor unit of INR). When
+    ``None`` the full captured amount is refunded — Razorpay treats an omitted
+    ``amount`` as a full refund.
+
+    Razorpay fires ``refund.created`` / ``refund.processed`` webhooks after this
+    call; :func:`_handle_refund_created` claws the granted credits back from the
+    same ledger scope. This helper only initiates the gateway refund — local
+    ``Invoice.status`` bookkeeping is the caller's responsibility (the webhook
+    path also reconciles it), mirroring how :func:`cancel_subscription` leaves
+    DB state to the webhook handler.
+
+    Returns the raw Razorpay refund entity (id, status, amount, ...).
+    """
+    if not payment_id:
+        raise ValueError("payment_id is required to issue a refund")
+
+    rzp = _get_razorpay()
+    data: dict[str, Any] = {}
+    if amount is not None:
+        if amount <= 0:
+            raise ValueError(f"Refund amount must be positive, got {amount}")
+        data["amount"] = int(amount)
+
+    try:
+        refund = rzp.payment.refund(payment_id, data)
+    except Exception as exc:
+        logger.exception("Razorpay payment.refund failed for payment %s: %s", payment_id, exc)
+        raise RazorpayBillingError("Could not issue the refund with Razorpay.") from exc
+
+    logger.info(
+        "Issued Razorpay refund %s for payment %s (amount=%s)",
+        (refund or {}).get("id"),
+        payment_id,
+        amount if amount is not None else "full",
+    )
+    return refund
 
 
 # ── Webhooks ──────────────────────────────────────────────────────────────────

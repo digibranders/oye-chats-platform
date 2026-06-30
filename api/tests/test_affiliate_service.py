@@ -495,3 +495,84 @@ class TestNoStackingGuard:
 
         client = SimpleNamespace(referral_code_id=None)
         _assert_no_stacking(client, None)  # no raise
+
+
+# ── C3 / NV4 — referral redemption caps, expiry, discount ceiling, invite pool ──
+
+
+class TestReferralCaps:
+    def test_redemption_cap_blocks_after_limit(self, db):
+        """C3 — a code with max_redemptions=1 attributes once, then is exhausted."""
+        aff = make_affiliate(db, commission_bps=2000)
+        code = ReferralCode(affiliate_id=aff.id, code="CAP1", customer_discount_bps=1000, max_redemptions=1)
+        db.add(code)
+        db.commit()
+
+        first = make_client(db, email="first@e.com")
+        second = make_client(db, email="second@e.com")
+        assert svc.attribute_signup(db, first.id, "CAP1") is True
+        assert svc.attribute_signup(db, second.id, "CAP1") is False
+
+        db.refresh(code)
+        assert code.redeemed_count == 1
+        assert svc.validate_code(db, "CAP1") is None  # exhausted
+
+    def test_expired_code_rejected(self, db):
+        """C3 — a code past valid_until is neither valid nor attributable."""
+        aff = make_affiliate(db, commission_bps=2000)
+        code = ReferralCode(
+            affiliate_id=aff.id,
+            code="EXPIRED1",
+            customer_discount_bps=1000,
+            valid_until=datetime.now(UTC) - timedelta(days=1),
+        )
+        db.add(code)
+        db.commit()
+
+        assert svc.validate_code(db, "EXPIRED1") is None
+        prospect = make_client(db, email="late@e.com")
+        assert svc.attribute_signup(db, prospect.id, "EXPIRED1") is False
+
+    def test_race_loss_releases_redemption_slot(self, db):
+        """C3 — if attribution is claimed but the client was already attributed,
+        the redemption slot must be released so the count stays exact."""
+        aff = make_affiliate(db, commission_bps=2000)
+        code_a = ReferralCode(affiliate_id=aff.id, code="AAA1", customer_discount_bps=1000, max_redemptions=5)
+        code_b = ReferralCode(affiliate_id=aff.id, code="BBB1", customer_discount_bps=1000, max_redemptions=5)
+        db.add_all([code_a, code_b])
+        db.commit()
+
+        prospect = make_client(db, email="dup@e.com")
+        assert svc.attribute_signup(db, prospect.id, "AAA1") is True
+        # Second attribution (already attributed) must not consume B's slot.
+        assert svc.attribute_signup(db, prospect.id, "BBB1") is False
+        db.refresh(code_a)
+        db.refresh(code_b)
+        assert code_a.redeemed_count == 1
+        assert code_b.redeemed_count == 0
+
+    def test_customer_discount_capped_independent_of_pool(self, db):
+        """C3 — even with a 100% pool, a single code's customer discount is
+        capped at MAX_CUSTOMER_DISCOUNT_BPS (50%)."""
+        aff = make_affiliate(db, commission_bps=10000)
+        with pytest.raises(svc.CommissionSplitExceedsPool):
+            svc.create_code(db, aff, "TOOBIG1", customer_discount_bps=6000)
+        row = svc.create_code(db, aff, "OKAY1", customer_discount_bps=5000)
+        assert row.customer_discount_bps == 5000
+
+    def test_invite_carries_commission_pool_to_affiliate(self, db):
+        """NV4 — a magic-link invite stores the pool and the accept path grants it."""
+        inviter = make_client(db, email="boss@e.com")
+        result = svc.invite_affiliate(db, email="newbie@e.com", invited_by_client_id=inviter.id, commission_bps=3000)
+        assert result["kind"] == "pending_invite"
+        invite = result["invite"]
+        assert invite.commission_bps == 3000
+
+        _client, affiliate = svc.accept_invite(
+            db,
+            result["raw_token"],
+            name="Newbie",
+            password_hash="hashed",
+            api_key="apikey-newbie",
+        )
+        assert affiliate.commission_bps == 3000

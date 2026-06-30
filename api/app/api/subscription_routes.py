@@ -610,7 +610,16 @@ def create_checkout(
         from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service
 
-        discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
+        # Only resolve/apply the referral discount on a provider that can realise
+        # it (N4). Today only Razorpay is live; gating here means that if the
+        # Stripe path is ever re-enabled before its coupon realiser exists, the
+        # discount is not silently dropped (customer over-charged) — it's simply
+        # not resolved until the provider can honour it.
+        provider = _resolve_provider()
+        if provider == "razorpay":
+            discount_bps, disc_meta = discount_service.resolve_customer_discount_bps(session, client)
+        else:
+            discount_bps, disc_meta = 0, None
         try:
             result = razorpay_service.create_subscription(
                 session, client, plan, request.billing_cycle, discount_bps=discount_bps
@@ -624,7 +633,9 @@ def create_checkout(
                 ReferralConversion(
                     client_id=client.id,
                     referral_code_id=int(disc_meta["referral_code_id"]),
-                    affiliate_id=None,
+                    # Snapshot the affiliate so payout reconciliation can attribute
+                    # the conversion without re-joining the mutable code row (N6).
+                    affiliate_id=int(disc_meta["affiliate_id"]),
                     commission_bps=int(disc_meta["affiliate_commission_bps"]),
                     customer_discount_bps=int(disc_meta["discount_bps"]),
                 )

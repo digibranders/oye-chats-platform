@@ -44,6 +44,7 @@ def resolve_customer_discount_bps(session: Session, client: Client) -> tuple[int
     return int(code.customer_discount_bps), {
         "referral_code_id": str(code.id),
         "referral_code": code.code,
+        "affiliate_id": str(code.affiliate_id),
         "discount_bps": str(code.customer_discount_bps),
         "affiliate_commission_bps": str(code.affiliate_commission_bps),
     }
