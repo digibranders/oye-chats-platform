@@ -10,8 +10,8 @@ import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import useEntitlements from '../hooks/useEntitlements';
 import EmptyState from '../components/ui/EmptyState';
-import MessagesTab from './MessagesTab';
-import AdvancedSettingsTab from './AdvancedSettingsTab';
+import MessagesTab from './bot-settings/MessagesTab';
+import AdvancedSettingsTab from './bot-settings/AdvancedSettingsTab';
 
 // Helper: create cropped image from canvas (supports rotation)
 const getCroppedImg = (imageSrc, pixelCrop, rotation = 0) => {
