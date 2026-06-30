@@ -559,6 +559,98 @@ class ConnectionManager:
         finally:
             self._operator_disconnect_tasks.pop(operator_id, None)
 
+    async def mark_operator_offline_now(
+        self,
+        operator_id: int,
+        visitor_message: str = "Your operator went offline. Finding another one...",
+    ) -> int:
+        """Force an operator offline immediately (no grace period).
+
+        Used when an operator explicitly toggles themselves offline while their
+        WebSocket is still connected — the grace-period path in
+        ``_operator_disconnect_timeout`` only fires on a WS drop, so without this
+        the visitor stays glued to a "live" session with no one on the other end.
+
+        Re-queues every ``status='live'`` session assigned to this operator,
+        notifies each affected visitor over WS, updates presence + workspace
+        caches, and broadcasts an operator roster refresh. Returns the number
+        of sessions that were re-queued.
+        """
+        # Cancel any pending grace-period task so it doesn't double-fire.
+        self._cancel_operator_disconnect_task(operator_id)
+
+        # Update presence + caches. Use the cached client_id if available
+        # (set when the operator's WS connected); otherwise fall back to the DB.
+        client_id_for_presence = self._operator_client_ids.get(operator_id)
+        if client_id_for_presence is None:
+            try:
+                with get_session() as db:
+                    op_row = db.execute(
+                        select(Operator.client_id).where(Operator.id == operator_id)
+                    ).scalar_one_or_none()
+                    if op_row is not None:
+                        client_id_for_presence = op_row
+            except Exception:
+                logger.debug("Failed to look up client_id for operator %s", operator_id, exc_info=True)
+
+        if client_id_for_presence is not None:
+            try:
+                presence.mark_offline(operator_id, client_id_for_presence)
+            except Exception:
+                logger.debug("presence.mark_offline failed for operator %s", operator_id, exc_info=True)
+            self._invalidate_workspace_state_caches(client_id_for_presence)
+
+        # Re-queue live sessions in the DB.
+        orphaned_sessions: list[str] = []
+        try:
+            with get_session() as db:
+                live_sessions = (
+                    db.execute(
+                        select(ChatSession).where(
+                            ChatSession.assigned_operator_id == operator_id,
+                            ChatSession.status == "live",
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for cs in live_sessions:
+                    cs.status = "waiting"
+                    cs.assigned_operator_id = None
+                    orphaned_sessions.append(cs.id)
+                db.commit()
+        except Exception as e:
+            logger.warning(f"Failed to re-queue sessions for operator {operator_id}: {e}")
+
+        # Update in-memory assignments + queue, notify each affected visitor.
+        for sid in orphaned_sessions:
+            self.assignments.pop(sid, None)
+            if sid not in self.waiting_queue:
+                self.waiting_queue.append(sid)
+            await self._send_to_visitor(
+                sid,
+                {
+                    "type": "status",
+                    "status": "waiting",
+                    "message": visitor_message,
+                    "queue_position": (self.waiting_queue.index(sid) + 1 if sid in self.waiting_queue else 0),
+                },
+            )
+
+        if orphaned_sessions:
+            logger.info(f"Re-queued {len(orphaned_sessions)} session(s) after operator {operator_id} went offline")
+            for oid in list(self.operator_connections.keys()):
+                await self._notify_operator_queue(oid)
+
+        # Drop in-memory roster state for this operator so the broadcast shows them offline.
+        self._operator_departments.pop(operator_id, None)
+        self._operator_names.pop(operator_id, None)
+        self._operator_client_ids.pop(operator_id, None)
+        self._operator_message_queue.pop(operator_id, None)
+
+        await self.broadcast_operators_update()
+        return len(orphaned_sessions)
+
     # ── Handoff flow ──
 
     # Maximum queue size to prevent unbounded growth

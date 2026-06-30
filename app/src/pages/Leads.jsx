@@ -38,6 +38,109 @@ const CONTACT_FILTERS = [
 
 const hasContactName = (lead) => Boolean(lead?.contact?.name && lead.contact.name.trim() !== '');
 
+/**
+ * Animated circular score gauge. To restart the animation when `score`
+ * changes, callers pass `key={score}` so React remounts the component —
+ * that gives us a fresh `useState(0)` initial value without the lint-flagged
+ * `setAnimatedScore(0)` inside the effect (which would cause a cascading
+ * render). This is the React-recommended pattern for animation-on-prop-change;
+ * see https://react.dev/reference/react/useState#resetting-state-with-a-key.
+ */
+const BantScoreGauge = ({ score }) => {
+    const [animatedScore, setAnimatedScore] = useState(0);
+
+    useEffect(() => {
+        const duration = 1200; // 1.2 seconds for a premium, smooth deceleration
+        const startTime = performance.now();
+
+        let animationFrameId;
+
+        const animate = (currentTime) => {
+            const elapsedTime = currentTime - startTime;
+            const progress = Math.min(elapsedTime / duration, 1);
+
+            // Quintic ease-out for maximum smoothness and elegant deceleration
+            const easeProgress = 1 - Math.pow(1 - progress, 5);
+
+            setAnimatedScore(easeProgress * score);
+
+            if (progress < 1) {
+                animationFrameId = requestAnimationFrame(animate);
+            }
+        };
+
+        animationFrameId = requestAnimationFrame(animate);
+
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+        };
+    }, [score]);
+
+    const size = 120;
+    const strokeWidth = 8;
+    const center = size / 2;
+    const radius = center - strokeWidth / 2 - 4;
+    const circumference = 2 * Math.PI * radius;
+    
+    // Smooth floating point value for sub-pixel circle stroke offsets
+    const dashOffset = circumference - (animatedScore / 100) * circumference;
+    const color = score >= 75 ? '#22c55e' : score >= 50 ? '#f97316' : score >= 25 ? '#eab308' : '#94a3b8';
+
+    return (
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
+            {/* Track */}
+            <circle
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke="rgba(148, 163, 184, 0.1)"
+                strokeWidth={strokeWidth}
+            />
+            {/* Fill */}
+            <circle
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+                transform={`rotate(-90 ${center} ${center})`}
+                style={{
+                    filter: `drop-shadow(0 0 6px ${color}40)`,
+                }}
+            />
+            {/* Score text */}
+            <text
+                x={center}
+                y={center - 4}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="currentColor"
+                className="text-surface-900 dark:text-white font-bold"
+                fontSize={Math.round(size * 0.22)}
+            >
+                {Math.round(animatedScore)}
+            </text>
+            {/* Label */}
+            <text
+                x={center}
+                y={center + size * 0.14}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="currentColor"
+                className="text-surface-450 dark:text-surface-400 font-bold tracking-wider"
+                fontSize={Math.round(size * 0.075)}
+            >
+                BANT SCORE
+            </text>
+        </svg>
+    );
+};
+
 export default function Leads() {
     const { selectedBot, bots, loading: botsLoading } = useBotContext();
     const { showToast } = useToast();
@@ -568,70 +671,10 @@ export default function Leads() {
                                     {/* Score + Status with circular gauge matching first image */}
                                     <div className="flex flex-col items-center justify-center p-6 bg-surface-50 dark:bg-surface-800/40 rounded-2xl border border-surface-200 dark:border-surface-800/50">
                                         <div className="relative flex flex-col items-center">
-                                            {(() => {
-                                                const score = leadDetail.score;
-                                                const size = 120;
-                                                const strokeWidth = 8;
-                                                const center = size / 2;
-                                                const radius = center - strokeWidth / 2 - 4;
-                                                const circumference = 2 * Math.PI * radius;
-                                                const dashOffset = circumference - (score / 100) * circumference;
-                                                const color = score >= 75 ? '#22c55e' : score >= 50 ? '#f97316' : score >= 25 ? '#eab308' : '#94a3b8';
-                                                return (
-                                                    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
-                                                        {/* Track */}
-                                                        <circle
-                                                            cx={center}
-                                                            cy={center}
-                                                            r={radius}
-                                                            fill="none"
-                                                            stroke="rgba(148, 163, 184, 0.1)"
-                                                            strokeWidth={strokeWidth}
-                                                        />
-                                                        {/* Fill */}
-                                                        <circle
-                                                            cx={center}
-                                                            cy={center}
-                                                            r={radius}
-                                                            fill="none"
-                                                            stroke={color}
-                                                            strokeWidth={strokeWidth}
-                                                            strokeLinecap="round"
-                                                            strokeDasharray={circumference}
-                                                            strokeDashoffset={dashOffset}
-                                                            transform={`rotate(-90 ${center} ${center})`}
-                                                            style={{
-                                                                transition: 'stroke-dashoffset 1s ease-in-out',
-                                                                filter: `drop-shadow(0 0 6px ${color}40)`,
-                                                            }}
-                                                        />
-                                                        {/* Score text */}
-                                                        <text
-                                                            x={center}
-                                                            y={center - 4}
-                                                            textAnchor="middle"
-                                                            dominantBaseline="middle"
-                                                            fill="currentColor"
-                                                            className="text-surface-900 dark:text-white font-bold"
-                                                            fontSize={Math.round(size * 0.22)}
-                                                        >
-                                                            {score}
-                                                        </text>
-                                                        {/* Label */}
-                                                        <text
-                                                            x={center}
-                                                            y={center + size * 0.14}
-                                                            textAnchor="middle"
-                                                            dominantBaseline="middle"
-                                                            fill="currentColor"
-                                                            className="text-surface-450 dark:text-surface-400 font-bold tracking-wider"
-                                                            fontSize={Math.round(size * 0.075)}
-                                                        >
-                                                            BANT SCORE
-                                                        </text>
-                                                    </svg>
-                                                );
-                                            })()}
+                                            {/* key={score} forces a remount when the score changes
+                                                so the gauge animation always plays from 0 → new value.
+                                                See BantScoreGauge doc-comment above for why. */}
+                                            <BantScoreGauge key={leadDetail.score} score={leadDetail.score} />
                                         </div>
                                         <span className={cn('inline-block mt-3 px-3.5 py-1 rounded-full text-[11px] font-bold tracking-wide shadow-sm', STATUS_CONFIG[leadDetail.status]?.color)}>
                                             {STATUS_CONFIG[leadDetail.status]?.label}

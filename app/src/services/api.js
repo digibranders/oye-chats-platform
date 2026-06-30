@@ -310,6 +310,25 @@ export const discoverCrawlUrls = async (url, botId) => {
 };
 
 /**
+ * Diff a recrawl against existing stored pages for the same source.
+ * Returns exact counts of unchanged, new, and removed URLs without ingesting.
+ * @param {string} url - The root URL being recrawled
+ * @param {string} replaceSource - The bare domain whose existing pages to diff against
+ * @param {number|undefined} botId - Optional bot ID scope
+ * @returns {Promise<{url: string, replace_source: string, sitemap_total: number, existing_total: number, unchanged: number, new_pages: number, removed_pages: number, capped: boolean, plan_max: number}>}
+ */
+export const diffRecrawl = async (url, replaceSource, botId) => {
+    try {
+        const endpoint = botId ? `/crawl/diff?bot_id=${botId}` : '/crawl/diff';
+        const response = await api.post(endpoint, { url, replace_source: replaceSource }, { timeout: 30000 });
+        return response.data;
+    } catch (error) {
+        console.error('API Error during recrawl diff:', error);
+        throw buildApiError(error, 'Failed to diff recrawl');
+    }
+};
+
+/**
  * Submits a URL to be crawled and ingested.
  * @param {string} url - The root URL to start crawling
  * @param {number|undefined} botId - Optional bot ID to scope the crawl
@@ -1903,5 +1922,123 @@ export const deleteSuperadminAffiliate = async (affiliateId) => {
         return true;
     } catch (error) {
         throw buildApiError(error, 'Failed to remove affiliate');
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Web Push (operator notifications)
+//
+// Only operators ever subscribe. The dashboard's usePushNotifications hook
+// gates these calls behind `authType === 'operator'`; calling them as a
+// client login will receive a 400 from the backend, which we handle as a
+// no-op since clients don't need push.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Fetch the server's VAPID public key for pushManager.subscribe(). */
+export const getVapidPublicKey = async () => {
+    try {
+        const response = await api.get('/operators/push/vapid-public-key');
+        return response.data; // { public_key: string, enabled: boolean }
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load push public key');
+    }
+};
+
+/** Register a PushSubscription with the backend. */
+export const subscribePush = async (subscription) => {
+    // PushSubscription.toJSON() returns { endpoint, expirationTime, keys: { p256dh, auth } }
+    // — exactly the shape the backend expects, minus expirationTime which we drop.
+    const json = subscription.toJSON();
+    try {
+        await api.post('/operators/push/subscribe', {
+            endpoint: json.endpoint,
+            keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+        });
+        return true;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to register push subscription');
+    }
+};
+
+// ── In-app notifications (bell + dropdown) ─────────────────────────────────
+
+/** Fetch the most recent notifications + the unread count. */
+export const listNotifications = async ({ limit = 30, beforeId, unreadOnly = false } = {}) => {
+    try {
+        const params = { limit };
+        if (beforeId) params.before_id = beforeId;
+        if (unreadOnly) params.unread_only = true;
+        const response = await api.get('/notifications', { params });
+        return response.data; // { items, unread_count }
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load notifications');
+    }
+};
+
+/** Cheap polling endpoint — returns ``{unread_count}``. */
+export const getUnreadNotificationCount = async () => {
+    try {
+        const response = await api.get('/notifications/unread-count');
+        return response.data.unread_count;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load unread count');
+    }
+};
+
+/** Mark every unread notification as read. */
+export const markAllNotificationsRead = async () => {
+    try {
+        const response = await api.post('/notifications/mark-all-read');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to mark notifications read');
+    }
+};
+
+/** Mark a single notification as read. Safe to call on already-read rows. */
+export const markNotificationRead = async (notificationId) => {
+    try {
+        const response = await api.patch(`/notifications/${notificationId}/read`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update notification');
+    }
+};
+
+/** Delete one notification from the feed. */
+export const deleteNotification = async (notificationId) => {
+    try {
+        const response = await api.delete(`/notifications/${notificationId}`);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to delete notification');
+    }
+};
+
+/** Clear the entire feed for this workspace. */
+export const clearAllNotifications = async () => {
+    try {
+        const response = await api.delete('/notifications');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to clear notifications');
+    }
+};
+
+/** Unregister a PushSubscription from the backend. */
+export const unsubscribePush = async (endpoint, keys) => {
+    try {
+        await api.delete('/operators/push/subscribe', {
+            data: { endpoint, keys },
+        });
+        return true;
+    } catch (error) {
+        // Treat 4xx as best-effort cleanup — the subscription may already be
+        // gone server-side (different device or 410 prune), and we still want
+        // the local unsubscribe to proceed.
+        if (error?.status >= 400 && error?.status < 500) {
+            return false;
+        }
+        throw buildApiError(error, 'Failed to remove push subscription');
     }
 };

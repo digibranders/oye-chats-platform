@@ -8,12 +8,49 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.config import RAZORPAY_WEBHOOK_SECRET
+from app.config import RAZORPAY_WEBHOOK_SECRET, WEBHOOK_RETRY_ON_ERROR
+from app.db.models import FailedWebhook
 from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["billing-webhooks"])
+
+
+def _dead_letter(
+    *,
+    provider: str,
+    raw_payload: bytes,
+    signature: str | None,
+    event_id: str | None,
+    event_type: str | None,
+    error: BaseException,
+) -> None:
+    """Persist a failed webhook in its own transaction so it survives the
+    handler's rollback. Best-effort: a dead-letter write failure must never
+    mask the original error — we log critically and let the caller still 5xx
+    so the provider keeps retrying.
+    """
+    try:
+        with get_session() as session:
+            session.add(
+                FailedWebhook(
+                    provider=provider,
+                    event_id=event_id,
+                    event_type=event_type,
+                    raw_payload=raw_payload,
+                    signature=signature,
+                    error=repr(error),
+                )
+            )
+            session.commit()
+    except Exception:
+        logger.critical(
+            "Failed to dead-letter %s webhook event_id=%s — event may be lost if retries are exhausted",
+            provider,
+            event_id,
+            exc_info=True,
+        )
 
 
 @router.post("/razorpay")
@@ -25,9 +62,12 @@ async def razorpay_webhook(request: Request):
     :func:`razorpay_service.handle_webhook_event`. Idempotency is keyed on
     the ``X-Razorpay-Event-Id`` header (present on all modern deliveries).
 
-    On exception during processing, returns 200 OK to Razorpay to suppress
-    the retry storm — the error is captured to Sentry/logs and can be
-    reprocessed manually if needed.
+    On a processing failure the raw signed event is dead-lettered (so it can
+    be replayed) and, when ``WEBHOOK_RETRY_ON_ERROR`` is on (default), the
+    route returns 5xx so Razorpay retries — safe because event-id idempotency
+    makes the eventual successful retry a no-op. The flag can be turned off to
+    fall back to the legacy 200-on-error behaviour, but the event is still
+    dead-lettered either way.
     """
     if not RAZORPAY_WEBHOOK_SECRET:
         logger.error("RAZORPAY_WEBHOOK_SECRET is not configured — rejecting unverified webhook.")
@@ -65,7 +105,25 @@ async def razorpay_webhook(request: Request):
             logger.info("Razorpay webhook processed: %s → %s", event_type, result)
     except Exception as exc:
         logger.error("Razorpay webhook processing error for %s: %s", event_type, exc, exc_info=True)
-        # Return 200 so Razorpay doesn't retry-storm us. Sentry has the trace.
+        # The handler's transaction (including the processed_webhooks dedup row)
+        # has rolled back, so the event is NOT marked processed and a retry can
+        # reprocess it. Persist the raw event as a dead-letter backstop, then
+        # ask Razorpay to retry by returning 5xx (idempotency makes that safe).
+        _dead_letter(
+            provider="razorpay",
+            raw_payload=raw_payload,
+            signature=signature,
+            event_id=event_id,
+            event_type=event_type,
+            error=exc,
+        )
+        if WEBHOOK_RETRY_ON_ERROR:
+            raise HTTPException(
+                status_code=500,
+                detail="Webhook processing failed; will retry.",
+            ) from exc
+        # Legacy escape hatch: ACK 200 so Razorpay stops retrying. The event is
+        # still dead-lettered above for manual replay.
         return {"status": "error", "event": event_type, "message": str(exc)}
 
     return {"status": "ok", "event": event_type, "result": result}

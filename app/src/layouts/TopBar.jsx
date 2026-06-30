@@ -6,6 +6,7 @@ import Breadcrumbs from '../components/Breadcrumbs';
 import { clearAuthStorage, getAuthItem } from '../utils/authStorage';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import Avatar from '../components/ui/Avatar';
+import NotificationBell from '../components/NotificationBell';
 import { getCurrentUser } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
 
@@ -30,10 +31,39 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
   const { entitlements } = useEntitlements();
+  const [isOnline, setIsOnline] = useState(() => localStorage.getItem('operator_is_online') === 'true');
   // Mounted-flag prevents a state update after the menu closes if the network
   // request is still in flight — avoids the React "set state on unmounted" warn.
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
+
+  // Sync operator online/offline status in real time
+  useEffect(() => {
+    const handleStatusChange = (e) => {
+      if (e.detail && typeof e.detail.isOnline === 'boolean') {
+        setIsOnline(e.detail.isOnline);
+      }
+    };
+    const handleStorageChange = (e) => {
+      if (e.key === 'operator_is_online') {
+        setIsOnline(e.newValue === 'true');
+      }
+    };
+    window.addEventListener('oyechats:operator-online-changed', handleStatusChange);
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('oyechats:operator-online-changed', handleStatusChange);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (profile && typeof profile.is_online !== 'undefined') {
+      const apiOnline = Boolean(profile.is_online);
+      setIsOnline(apiOnline);
+      localStorage.setItem('operator_is_online', apiOnline ? 'true' : 'false');
+    }
+  }, [profile]);
 
   const handleLogout = async () => {
     // Clear from BOTH localStorage + sessionStorage so a session-only
@@ -109,17 +139,20 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
           <Search size={16} />
         </button>
 
+        {/* Notification bell — left of the profile avatar */}
+        <NotificationBell />
+
+        {/* Divider line */}
+        <div className="h-6 w-px bg-surface-200 dark:bg-surface-800 mx-2 md:mx-3 self-center" />
+
         {/* User menu */}
         <div className="relative">
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}
             onBlur={() => setTimeout(() => setShowUserMenu(false), 150)}
-            className="flex items-center gap-2 p-1 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+            className="flex items-center p-1 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
           >
-            <Avatar name={adminName} size="sm" />
-            <span className="hidden md:block text-[13px] font-medium text-surface-700 dark:text-surface-300 max-w-[100px] truncate">
-              {adminName}
-            </span>
+            <Avatar name={profile?.name || adminName} size="sm" status={isOnline ? 'online' : 'offline'} />
           </button>
 
           <AnimatePresence>
@@ -133,9 +166,9 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
               >
                 {/* Identity header */}
                 <div className="px-4 py-4 border-b border-surface-100 dark:border-surface-800 flex items-start gap-3">
-                  <Avatar name={profile?.name || adminName} size="md" />
+                  <Avatar name={profile?.name || adminName} size="md" status={isOnline ? 'online' : 'offline'} />
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 min-w-0">
                       <p className="text-[14px] font-semibold text-surface-900 dark:text-surface-50 truncate">
                         {profile?.name || adminName}
                       </p>
@@ -146,17 +179,23 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                           {profile.role}
                         </span>
                       )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5 min-w-0">
-                      <p className="text-[12px] text-surface-500 dark:text-surface-400 truncate flex-1">
-                        {profileLoading && !profile ? 'Loading…' : (profile?.email || (profileError ? 'Profile unavailable' : '—'))}
-                      </p>
                       {!profileLoading && profile && (
-                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 shrink-0">
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 shrink-0">
                           {entitlements?.planName || 'Free'} Plan
                         </span>
                       )}
                     </div>
+                    {/* Dynamic Online Status Indicator */}
+                    {isOnline && (
+                      <p className="text-[12px] font-semibold mt-0.5 text-emerald-500 dark:text-emerald-400">
+                        Online
+                      </p>
+                    )}
+                    {profileError && !profile && (
+                      <p className="text-[11px] text-surface-500 dark:text-surface-400 mt-1 truncate">
+                        Profile unavailable
+                      </p>
+                    )}
                   </div>
                 </div>
 

@@ -332,6 +332,7 @@ class CurrentUserResponse(BaseModel):
     created_at: str
     bot_count: int
     is_superadmin: bool = False
+    is_online: bool = False
     role: str | None = None  # operator role; None for clients
     # Affiliate-program membership — derived from the affiliates table.
     # ``True`` only when an active (non-deactivated) row exists for the
@@ -408,6 +409,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
                 created_at=operator.created_at.isoformat() if operator.created_at else "",
                 bot_count=int(bot_count or 0),
                 is_superadmin=False,
+                is_online=bool(operator.is_online),
                 role=operator.role,
             )
 
@@ -427,6 +429,12 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             .first()
         )
 
+        # Look up owner operator record to get online status
+        operator_row = session.execute(
+            select(Operator).where(Operator.client_id == client.id, Operator.role == "owner").limit(1)
+        ).scalar_one_or_none()
+        is_online = operator_row.is_online if operator_row else False
+
         # Resolve the trial snapshot in the same transaction. ``None`` for
         # paid customers and seeded superadmins; the dashboard treats that
         # as "no trial UI". For ``trial_expired`` we still return the
@@ -443,6 +451,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             created_at=client.created_at.isoformat() if client.created_at else "",
             bot_count=int(bot_count or 0),
             is_superadmin=bool(client.is_superadmin),
+            is_online=bool(is_online),
             role=None,
             is_affiliate=affiliate_row is not None,
             affiliate_id=affiliate_row.id if affiliate_row else None,

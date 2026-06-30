@@ -49,16 +49,31 @@ import SuperadminPricingInsights from './pages/superadmin/PricingInsights';
 import AccessDenied from './components/AccessDenied';
 import { getAuthItem } from './utils/authStorage';
 
+// Build a "?next=..." login URL that round-trips the deep-link target through
+// authentication. Used so push-notification clicks (which land on a specific
+// /support?session=<id> URL) survive an intervening login bounce — without
+// this, the operator would log in and lose track of which waiting chat they
+// were trying to open.
+//
+// Only same-origin relative paths are preserved; anything else falls back to
+// a bare /login redirect (prevents open-redirect via a crafted notification).
+function loginUrlPreservingNext() {
+    if (typeof window === 'undefined') return '/login';
+    const next = window.location.pathname + window.location.search;
+    const safe = next.startsWith('/') && !next.startsWith('//') && next !== '/login';
+    return safe ? `/login?next=${encodeURIComponent(next)}` : '/login';
+}
+
 const ProtectedRoute = ({ children }) => {
     const isAuthenticated = !!getAuthItem('admin_token');
-    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (!isAuthenticated) return <Navigate to={loginUrlPreservingNext()} replace />;
     return children;
 };
 
 const SuperadminRoute = ({ children }) => {
     const isAuthenticated = !!getAuthItem('admin_token');
     const isSuperadmin = getAuthItem('is_superadmin') === 'true';
-    if (!isAuthenticated) return <Navigate to="/login" replace />;
+    if (!isAuthenticated) return <Navigate to={loginUrlPreservingNext()} replace />;
     if (!isSuperadmin) return <Navigate to="/" replace />;
     return children;
 };

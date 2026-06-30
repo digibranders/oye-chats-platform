@@ -33,6 +33,8 @@ References (Razorpay docs, validated against this implementation):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -697,18 +699,19 @@ def verify_webhook_signature(*, payload: bytes, signature: str) -> None:
     upstream changes if the algorithm ever evolves).
 
     ``RAZORPAY_WEBHOOK_SECRET`` must be set; we fail-closed if missing.
+
+    The HMAC is computed over the **exact raw bytes** Razorpay sent (never a
+    ``decode("utf-8")`` round-trip, which can diverge and raises outright on
+    non-UTF-8 bytes) and compared with :func:`hmac.compare_digest` (constant
+    time). This is byte-for-byte the algorithm the Razorpay SDK uses, so we
+    drop the SDK dependency on this trust-boundary hot path.
     """
     if not RAZORPAY_WEBHOOK_SECRET:
         raise RuntimeError("RAZORPAY_WEBHOOK_SECRET not configured")
-    rzp = _get_razorpay()
-    try:
-        rzp.utility.verify_webhook_signature(
-            payload.decode("utf-8") if isinstance(payload, bytes) else payload,
-            signature,
-            RAZORPAY_WEBHOOK_SECRET,
-        )
-    except Exception as exc:
-        raise SignatureMismatch("Razorpay webhook signature mismatch") from exc
+    body = payload if isinstance(payload, bytes) else str(payload).encode("utf-8")
+    expected = hmac.new(RAZORPAY_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature or ""):
+        raise SignatureMismatch("Razorpay webhook signature mismatch")
 
 
 def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
@@ -787,6 +790,12 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         # the upstream event-id dedupe so the same id never lands twice.
         "refund.created": _handle_refund_created,
         "refund.processed": _handle_refund_created,
+        # Disputes / chargebacks. Razorpay withdraws the funds on ``lost`` —
+        # that's when we claw the credits back. ``created`` / ``won`` only move
+        # the invoice's dispute status (H6).
+        "payment.dispute.created": _handle_dispute_created,
+        "payment.dispute.lost": _handle_dispute_lost,
+        "payment.dispute.won": _handle_dispute_won,
     }
     handler = handlers.get(event_name)
     if handler is None:
@@ -953,6 +962,63 @@ def _create_bot_from_subscription_notes(
     return bot
 
 
+def _emit_plan_purchased_notification(session: Session, client_id: int, plan_id: int, billing_cycle: str) -> None:
+    """Best-effort: drop a ``plan_purchased`` row into the in-app bell.
+
+    Wrapped in a broad try/except so a notification failure can never break
+    subscription activation — the bell is a UX nicety, the activation is
+    the business-critical path.
+    """
+    try:
+        from app.db.models import Plan
+        from app.services.notification_service import notify_plan_purchased
+
+        plan = session.get(Plan, plan_id)
+        notify_plan_purchased(
+            session,
+            client_id=client_id,
+            plan_name=plan.name if plan else "Plan",
+            billing_cycle=billing_cycle,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to record plan_purchased notification (razorpay) for client %s plan %s",
+            client_id,
+            plan_id,
+        )
+
+
+def _grant_subscription_period(session: Session, subscription: Subscription, period_end: datetime | None) -> bool:
+    """Reset + grant the plan's monthly credits for ``period_end``, once.
+
+    Idempotent per billing period (remediation H4): if the subscription's
+    ``last_granted_period_end`` already equals ``period_end``, this is a no-op
+    and returns ``False``. Otherwise it resets the prior period's unused plan
+    grant, grants the new allowance, advances the marker, and returns ``True``.
+
+    A ``None`` ``period_end`` (event missing ``current_end``) still grants but
+    cannot advance the marker; that is logged so a missing period is visible
+    rather than silently double-granting on a later event.
+    """
+    if (
+        period_end is not None
+        and subscription.last_granted_period_end is not None
+        and subscription.last_granted_period_end == period_end
+    ):
+        return False
+
+    credit_service.reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
+    credit_service.grant_for_subscription(session, subscription)
+    if period_end is not None:
+        subscription.last_granted_period_end = period_end
+    else:
+        logger.warning(
+            "Granted subscription %s credits without a period end — marker not advanced",
+            subscription.razorpay_subscription_id,
+        )
+    return True
+
+
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
     """First mandate-authentication or restart after a paused state.
 
@@ -1059,6 +1125,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 client_id,
                 new_bot.id,
             )
+            _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
             return f"Per-bot subscription activated: client {client_id}, bot {new_bot.id}"
 
         # Expire any unused plan_grant from the prior subscription before
@@ -1067,8 +1134,9 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # free credits stacked on top of the new grant (e.g. 500 + 10,000
         # → 10,500 / 10,000). Mirrors the same reset → grant ordering used
         # by the Stripe change-plan path and ``start_trial_subscription``.
-        credit_service.reset_monthly_plan_credits(session, client_id, bot_id=local.bot_id)
-        credit_service.grant_for_subscription(session, local)
+        # Sets the period marker so the first subscription.charged for this
+        # period is a no-op (H4).
+        _grant_subscription_period(session, local, current_period_end)
 
         # Apply any pending upgrade proration as a top-up credit. Idempotent —
         # the old sub's column is zeroed the first time this runs, so webhook
@@ -1082,6 +1150,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
             local.id,
             client_id,
         )
+        _emit_plan_purchased_notification(session, client_id, plan_id, notes.get("billing_cycle", "monthly"))
         return f"Subscription activated for client {client_id}"
 
     # Existing local row — update fields and ensure first-month credits exist.
@@ -1139,6 +1208,7 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
                 Invoice(
                     client_id=local.client_id,
                     subscription_id=local.id,
+                    bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
                     amount_cents=int(pay_entity.get("amount", 0)),
                     currency=str(pay_entity.get("currency", "INR")).lower(),
                     status="paid",
@@ -1150,15 +1220,11 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
                 )
             )
 
-    # Detect first-cycle charge that overlaps with the activated grant.
-    is_first_cycle = (
-        local.current_period_start is not None
-        and new_period_start is not None
-        and abs((new_period_start - local.current_period_start).total_seconds()) < 86400
-    )
-    if not is_first_cycle:
-        credit_service.reset_monthly_plan_credits(session, local.client_id, bot_id=local.bot_id)
-        credit_service.grant_for_subscription(session, local)
+    # Grant this period's credits at most once, keyed on the period end marker
+    # (replaces the old fragile 24h time-window heuristic — H4). The activation
+    # grant set the marker for the first period, so the first charged event for
+    # that period is a no-op; each later renewal advances to a new period.
+    if _grant_subscription_period(session, local, new_period_end):
         logger.info(
             "Renewed monthly credits for client %s from subscription.charged (%s)",
             local.client_id,
@@ -1279,6 +1345,18 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     if not notes and order_entity:
         notes = order_entity.get("notes") or {}
 
+    # A ``payment.captured`` webhook carries only the PAYMENT entity, but top-up
+    # metadata lives on the ORDER's notes. When the order entity isn't in the
+    # payload (the common payment.captured shape), fetch the order so a top-up
+    # can be granted from payment.captured alone — not only from order.paid (H5).
+    order_id_for_notes = (pay_entity or {}).get("order_id")
+    if not notes and order_id_for_notes:
+        try:
+            fetched_order = _get_razorpay().order.fetch(order_id_for_notes)
+            notes = (fetched_order or {}).get("notes") or {}
+        except Exception:
+            logger.warning("Could not fetch Razorpay order %s for top-up notes", order_id_for_notes)
+
     purpose = notes.get("purpose")
 
     if purpose != "topup":
@@ -1305,9 +1383,22 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     amount_paise = int((pay_entity or {}).get("amount") or (order_entity or {}).get("amount") or 0)
     amount_inr = int(notes.get("amount_inr") or (amount_paise // 100))
 
+    # Notes may carry ``bot_id`` for per-bot top-ups (set by
+    # ``create_topup_order(bot_id=...)``). Default to None → client pool.
+    # Resolved before the invoice insert so the invoice records the ledger
+    # scope this payment credited (remediation C2 — drives refund clawback).
+    target_bot_id_raw = notes.get("bot_id")
+    target_bot_id: int | None = None
+    if target_bot_id_raw is not None:
+        try:
+            target_bot_id = int(target_bot_id_raw)
+        except (TypeError, ValueError):
+            target_bot_id = None
+
     invoice = Invoice(
         client_id=client_id,
         subscription_id=None,
+        bot_id=target_bot_id,
         amount_cents=amount_paise,
         currency=str((pay_entity or {}).get("currency", "INR")).lower(),
         status="paid",
@@ -1317,16 +1408,6 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     )
     session.add(invoice)
     session.flush()
-
-    # Notes may carry ``bot_id`` for per-bot top-ups (set by
-    # ``create_topup_order(bot_id=...)``). Default to None → client pool.
-    target_bot_id_raw = notes.get("bot_id")
-    target_bot_id: int | None = None
-    if target_bot_id_raw is not None:
-        try:
-            target_bot_id = int(target_bot_id_raw)
-        except (TypeError, ValueError):
-            target_bot_id = None
 
     credit_service.grant_topup(
         session,
@@ -1371,11 +1452,11 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     needs is not required here: each refund event represents exactly its
     own amount.
 
-    Both ``refund.created`` and ``refund.processed`` route here. Created
-    fires the moment the refund is initiated; processed fires when the
-    bank settles it. We claw back on the FIRST event so the customer
-    can't keep using credits during the settlement window — the second
-    event's clawback is a no-op (already-clawed delta returns 0).
+    Both ``refund.created`` and ``refund.processed`` route here. Created fires
+    the moment the refund is initiated; processed fires when the bank settles
+    it. We claw back on the FIRST event so the customer can't keep using credits
+    during the settlement window, and dedupe on the refund id so the second
+    event never claws again — even if a fresh grant arrived in between (N2).
     """
     refund_entity = (payload.get("refund") or {}).get("entity") or {}
     if not refund_entity:
@@ -1386,6 +1467,15 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     if not payment_id or refund_minor <= 0:
         return "refund missing payment_id or amount"
 
+    # Dedupe by REFUND id, not just webhook event id. ``refund.created`` and
+    # ``refund.processed`` are distinct events (distinct ``x-razorpay-event-id``)
+    # for the SAME refund, so the top-level event dedup lets both through.
+    # Without this, a grant that lands between the two events would be clawed a
+    # second time (remediation N2). First event to arrive claws; the rest no-op.
+    refund_id = refund_entity.get("id")
+    if refund_id and not _record_or_skip_event(session, f"refund:{refund_id}"):
+        return f"Refund {refund_id} already clawed back"
+
     inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
     if inv is None:
         logger.warning("refund event for unknown razorpay payment %s", payment_id)
@@ -1395,12 +1485,19 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     if charge_minor <= 0:
         return f"Invoice {inv.id} has no recorded charge amount"
 
+    # Reverse credits from the SAME ledger scope and grant type the payment
+    # credited (remediation C2): the invoice records the bot scope, and a
+    # subscription invoice (subscription_id set) paid for a plan_grant while a
+    # one-off invoice paid for a topup.
+    reasons = ("plan_grant",) if inv.subscription_id is not None else ("topup",)
     clawed, entry_id = credit_service.clawback_refund(
         session,
         client_id=inv.client_id,
         charge_minor=charge_minor,
         refund_minor=refund_minor,
         note=f"Refund clawback for Razorpay refund {refund_entity.get('id', '?')}",
+        bot_id=inv.bot_id,
+        reasons=reasons,
     )
 
     # Razorpay refunds may be partial; mirror Stripe's distinction so the
@@ -1417,3 +1514,80 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         entry_id,
     )
     return f"Refund processed: {clawed} credit(s) clawed back from invoice {inv.id}"
+
+
+# ── Dispute / chargeback handling ────────────────────────────────────────────
+
+
+def _extract_dispute_entity(payload: dict[str, Any]) -> dict[str, Any]:
+    return (payload.get("dispute") or {}).get("entity") or {}
+
+
+def _invoice_for_payment(session: Session, payment_id: str) -> Invoice | None:
+    return session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+
+
+def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
+    """A dispute/chargeback was opened. Razorpay withdraws the funds only on
+    ``lost``, so here we just flag the invoice; the credit clawback happens in
+    :func:`_handle_dispute_lost` (H6)."""
+    dispute = _extract_dispute_entity(payload)
+    payment_id = dispute.get("payment_id")
+    if not payment_id:
+        return "dispute missing payment_id"
+    inv = _invoice_for_payment(session, payment_id)
+    if inv is None:
+        logger.warning("dispute.created for unknown razorpay payment %s", payment_id)
+        return f"Payment {payment_id} not found locally"
+    inv.status = "disputed"
+    session.flush()
+    return f"Dispute {dispute.get('id')} opened on invoice {inv.id}"
+
+
+def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
+    """Dispute lost — Razorpay has withdrawn the funds, so reverse the credits
+    the payment granted, from the SAME ledger scope and grant type a refund
+    would use (C2). Deduped on the dispute id so a replay (or created→lost
+    sequence) can't double-claw."""
+    dispute = _extract_dispute_entity(payload)
+    dispute_id = dispute.get("id")
+    payment_id = dispute.get("payment_id")
+    if not payment_id:
+        return "dispute missing payment_id"
+    if dispute_id and not _record_or_skip_event(session, f"dispute_lost:{dispute_id}"):
+        return f"Dispute {dispute_id} already clawed back"
+    inv = _invoice_for_payment(session, payment_id)
+    if inv is None:
+        logger.warning("dispute.lost for unknown razorpay payment %s", payment_id)
+        return f"Payment {payment_id} not found locally"
+    charge_minor = int(inv.amount_cents or 0)
+    dispute_minor = int(dispute.get("amount") or charge_minor)
+    reasons = ("plan_grant",) if inv.subscription_id is not None else ("topup",)
+    clawed, _entry = credit_service.clawback_refund(
+        session,
+        client_id=inv.client_id,
+        charge_minor=charge_minor,
+        refund_minor=dispute_minor,
+        note=f"Chargeback clawback for Razorpay dispute {dispute_id or '?'}",
+        bot_id=inv.bot_id,
+        reasons=reasons,
+    )
+    inv.status = "dispute_lost"
+    session.flush()
+    return f"Dispute {dispute_id} lost: {clawed} credit(s) clawed from invoice {inv.id}"
+
+
+def _handle_dispute_won(session: Session, payload: dict[str, Any]) -> str:
+    """Dispute won — funds retained. We never clawed (clawback is on ``lost``),
+    so just clear the dispute flag."""
+    dispute = _extract_dispute_entity(payload)
+    payment_id = dispute.get("payment_id")
+    if not payment_id:
+        return "dispute missing payment_id"
+    inv = _invoice_for_payment(session, payment_id)
+    if inv is None:
+        return f"Payment {payment_id} not found locally"
+    if inv.status == "disputed":
+        inv.status = "paid"
+    session.flush()
+    return f"Dispute {dispute.get('id')} won on invoice {inv.id}"

@@ -27,6 +27,8 @@ from app.api.chat_routes import router as chat_router
 from app.api.client_routes import router as client_router
 from app.api.document_routes import router as document_router
 from app.api.lead_routes import router as lead_router
+from app.api.notification_routes import router as notification_router
+from app.api.notification_routes import ws_router as notification_ws_router
 from app.api.oauth_routes import router as oauth_router
 from app.api.offline_message_routes import router as offline_message_router
 from app.api.operator_routes import router as operator_router
@@ -128,6 +130,8 @@ app.include_router(lead_router)
 app.include_router(operator_router)
 app.include_router(offline_message_router)
 app.include_router(canned_response_router)
+app.include_router(notification_router)
+app.include_router(notification_ws_router)
 app.include_router(ws_router)
 app.include_router(client_router)
 app.include_router(webhook_router)
@@ -390,6 +394,42 @@ async def shutdown_services():
 
     flush_langfuse()
     shutdown_pool()
+
+
+@app.on_event("startup")
+async def _bind_notification_broadcaster_loop():
+    """Capture the FastAPI event loop for thread-safe notification fan-out.
+
+    ``create_notification`` is invoked from both async routes (offline
+    message, handoff) and sync routes (bot create, billing webhooks). The
+    sync ones run in Starlette's threadpool, where ``asyncio.get_running_loop``
+    raises. By binding the main loop here, the broadcaster can use
+    ``run_coroutine_threadsafe`` from any context to deliver the WS event
+    in real time.
+    """
+    import asyncio as _asyncio
+
+    from app.services.notification_broadcaster import broadcaster as _br
+
+    try:
+        _br.bind_loop(_asyncio.get_running_loop())
+        logger.info("Notification broadcaster bound to FastAPI event loop")
+    except Exception:
+        logger.exception("Failed to bind notification broadcaster loop")
+
+    # Belt-and-braces: make sure the ``notifications`` table actually exists.
+    # On a fresh local DB or a deploy where alembic was skipped, the REST
+    # endpoints would 500 every call and the bell would look "broken" with
+    # no obvious cause. Calling ``Base.metadata.create_all`` for just this
+    # one table is idempotent (``checkfirst=True`` by default) and noop on
+    # any environment that already ran the migration.
+    try:
+        from app.db.models import Notification as _Notif
+
+        _Notif.__table__.create(bind=engine, checkfirst=True)
+        logger.info("Notifications table ready")
+    except Exception:
+        logger.exception("Failed to ensure notifications table exists")
 
 
 @app.on_event("startup")

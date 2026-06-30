@@ -143,6 +143,34 @@ else:
     logger.info("Email notifications disabled (no BREVO_API_KEY)")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Web Push (VAPID) — operator notifications when their dashboard tab is closed
+# ─────────────────────────────────────────────────────────────────────────────
+# Generate a keypair locally:
+#     uv run python -m app.scripts.generate_vapid_keys
+# Then paste the public key into VAPID_PUBLIC_KEY and the PEM into
+# VAPID_PRIVATE_KEY (single-line, escape newlines as \n) or store the PEM in a
+# file and point VAPID_PRIVATE_KEY_FILE at it.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "").strip()
+VAPID_PRIVATE_KEY_FILE = os.getenv("VAPID_PRIVATE_KEY_FILE", "").strip()
+# Required by the Web Push protocol — push providers use this to contact you
+# if a subscription misbehaves. Must be a `mailto:` URL or an HTTPS site root.
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", f"mailto:{SUPPORT_EMAIL}").strip()
+# How long after the operator's last WS heartbeat we still consider them
+# "actively watching the dashboard" (and therefore skip push, since the
+# in-dashboard toast covers them). Tunable; 30s matches the WS ping cadence.
+PUSH_WS_GRACE_SECONDS = int(os.getenv("PUSH_WS_GRACE_SECONDS", "30"))
+# Visitor-message email debounce — if a visitor in a waiting/unattended session
+# sends multiple messages in quick succession, only one email per window.
+PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(os.getenv("PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS", "60"))
+
+PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and (VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_FILE))
+if PUSH_ENABLED:
+    logger.info("Web Push notifications enabled (VAPID configured)")
+else:
+    logger.info("Web Push notifications disabled (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY missing)")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Redis (required in production — enables distributed rate limiting + caching)
 # ─────────────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL")
@@ -283,6 +311,33 @@ TRIAL_DATA_RETENTION_DAYS = int(os.getenv("TRIAL_DATA_RETENTION_DAYS", "15"))
 # is typically 3 retries over ~7 days, so the default lines up with "we've
 # given the gateway time to recover the card, now stop bleeding LLM credits".
 PAYMENT_FAILED_GRACE_DAYS = int(os.getenv("PAYMENT_FAILED_GRACE_DAYS", "7"))
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    """Parse a boolean feature flag from the environment.
+
+    Accepts ``1/true/yes/on`` (case-insensitive) as true and
+    ``0/false/no/off`` as false. An unset/blank value resolves to ``default``.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ── Payment remediation feature flags (docs/billing/2026-06-29-remediation-plan.md) ──
+#
+# WEBHOOK_RETRY_ON_ERROR (default ON): when a verified webhook's processing
+# raises, return 5xx so the provider retries (safe — event-id idempotency makes
+# retries no-ops) and dead-letter the raw event instead of silently ACKing 200.
+# Default ON because the legacy "200 on error" behaviour drops paid events; the
+# flag is an emergency rollback switch only.
+WEBHOOK_RETRY_ON_ERROR = _env_flag("WEBHOOK_RETRY_ON_ERROR", default=True)
+
+# PRORATED_UPGRADES_ENABLED (default OFF): gates the Phase 6 prorated mid-cycle
+# upgrade flow. Until enabled, the existing cancel-and-recreate upgrade path
+# stays in effect.
+PRORATED_UPGRADES_ENABLED = _env_flag("PRORATED_UPGRADES_ENABLED", default=False)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler

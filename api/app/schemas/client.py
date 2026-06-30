@@ -76,6 +76,16 @@ class CrawlDiscoverRequest(BaseModel):
         return v
 
 
+class CrawlDiffRequest(CrawlDiscoverRequest):
+    """Request body for POST /crawl/diff — diff a recrawl against existing pages."""
+
+    replace_source: str = Field(
+        ...,
+        min_length=1,
+        description="Root domain whose existing pages should be diffed against the live sitemap (e.g. 'oyechats.com').",
+    )
+
+
 class CrawlRequest(BaseModel):
     url: str
     # Upper bound is enforced by the route layer against the caller's plan

@@ -116,32 +116,6 @@ const OperatorJoinedNotice = ({ name, department, timestamp, settings }) => {
 };
 
 // Date separator — shown between messages from different days (Intercom/Crisp pattern)
-// Format an ISO timestamp ("next_available_at" from the backend availability
-// resolver) into a visitor-friendly "we're back at..." phrase. Uses the
-// browser's locale so a US visitor sees "Monday at 9:00 AM EST" while an
-// IST visitor sees "Monday at 6:30 PM IST" for the same instant. Returns
-// null if the timestamp is missing or unparseable so the caller can fall
-// back to generic copy.
-const formatNextAvailable = (iso) => {
-    if (!iso) return null;
-    const target = new Date(iso);
-    if (Number.isNaN(target.getTime())) return null;
-    const now = new Date();
-    const sameDay = target.toDateString() === now.toDateString();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const isTomorrow = target.toDateString() === tomorrow.toDateString();
-    const time = target.toLocaleTimeString(undefined, {
-        hour: 'numeric',
-        minute: '2-digit',
-        timeZoneName: 'short',
-    });
-    if (sameDay) return `today at ${time}`;
-    if (isTomorrow) return `tomorrow at ${time}`;
-    const day = target.toLocaleDateString(undefined, { weekday: 'long' });
-    return `${day} at ${time}`;
-};
-
 const DateSeparator = ({ date }) => {
     const label = (() => {
         const d = new Date(date);
@@ -754,35 +728,82 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [chatMode]);
 
-    // Waiting timer + auto-timeout
-    const WAITING_TIMEOUT_SECONDS = settings.operator_timeout_seconds || 300; // 5 min default
+    // Waiting timer + auto-timeout.
+    //
+    // Product policy: never make a visitor stare at the spinner for more
+    // than 35 seconds. After that we flip into ``unavailable`` so the
+    // offline-message form takes over. This is INTENTIONALLY hard-coded
+    // — earlier versions read ``settings.operator_timeout_seconds`` and
+    // legacy bots that had it set to 300 silently broke the policy.
+    //
+    // We also use a wall-clock check instead of a tick counter so the
+    // transition still fires when the tab is backgrounded (browsers
+    // throttle ``setInterval`` to ~1 Hz minimum but can clamp it to
+    // 1/min on inactive tabs). The interval is only used to refresh the
+    // ``waitingSeconds`` UI label; the deadline is checked against
+    // ``Date.now()``.
+    const WAITING_TIMEOUT_SECONDS = 35;
+    const waitingDeadlineRef = useRef(null);
     useEffect(() => {
         if (chatMode === 'waiting') {
             setWaitingSeconds(0);
+            const startedAt = Date.now();
+            waitingDeadlineRef.current = startedAt + WAITING_TIMEOUT_SECONDS * 1000;
             waitingTimerRef.current = setInterval(() => {
-                setWaitingSeconds(prev => {
-                    if (prev + 1 >= WAITING_TIMEOUT_SECONDS) {
-                        clearInterval(waitingTimerRef.current);
-                        waitingTimerRef.current = null;
-                        setChatMode('unavailable');
-                    }
-                    return prev + 1;
-                });
+                const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+                setWaitingSeconds(elapsed);
+                if (Date.now() >= (waitingDeadlineRef.current || 0)) {
+                    clearInterval(waitingTimerRef.current);
+                    waitingTimerRef.current = null;
+                    waitingDeadlineRef.current = null;
+                    setChatMode('unavailable');
+                }
             }, 1000);
         } else {
             if (waitingTimerRef.current) {
                 clearInterval(waitingTimerRef.current);
                 waitingTimerRef.current = null;
             }
+            waitingDeadlineRef.current = null;
         }
         return () => {
             if (waitingTimerRef.current) clearInterval(waitingTimerRef.current);
         };
-    }, [chatMode, setChatMode, WAITING_TIMEOUT_SECONDS]);
+    }, [chatMode, setChatMode]);
 
+    // Visibility safety net — when the tab regains focus, re-evaluate the
+    // deadline immediately so a throttled interval doesn't stretch the
+    // wait past 35 s. Without this, a backgrounded tab can sit at the
+    // spinner for minutes before the next throttled tick fires.
+    useEffect(() => {
+        if (chatMode !== 'waiting') return undefined;
+        const onVisible = () => {
+            if (document.hidden) return;
+            const deadline = waitingDeadlineRef.current;
+            if (deadline && Date.now() >= deadline) {
+                if (waitingTimerRef.current) {
+                    clearInterval(waitingTimerRef.current);
+                    waitingTimerRef.current = null;
+                }
+                waitingDeadlineRef.current = null;
+                setChatMode('unavailable');
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('focus', onVisible);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('focus', onVisible);
+        };
+    }, [chatMode, setChatMode]);
+
+    // Escalating waiting-state copy. Tiered against the 35 s ceiling:
+    //   0–11 s  → bot's configured waiting_message
+    //   12–22 s → "still connecting"
+    //   23–35 s → "taking a bit longer" + visible "Leave a message" CTA
     const getWaitingMessage = () => {
-        if (waitingSeconds >= 45) return "Taking a bit longer than usual — you can leave a message if you'd prefer";
-        if (waitingSeconds >= 15) return 'Still connecting — our team will be right with you';
+        if (waitingSeconds >= 23) return "Taking a bit longer than usual — you can leave a message if you'd prefer";
+        if (waitingSeconds >= 12) return 'Still connecting — our team will be right with you';
         return settings.waiting_message || 'Please wait a moment';
     };
 
@@ -1257,6 +1278,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             // suggested_action is "route" or "wait" — both proceed to the
             // waiting screen but with different progress UI. Store the queue
             // metadata so LiveChatMode / the waiting overlay can render it.
+            //
+            // We ALSO stash ``capturedName``/``capturedEmail`` (just like the
+            // offline_form branch above) so that when the 35-second waiting
+            // timeout flips to ``unavailable``, the offline form recognises
+            // the visitor and shows the compact message-only variant instead
+            // of re-asking for the name/email they just typed. Without this,
+            // a queue-timeout fall-through silently re-prompts for contact
+            // info and feels broken to the visitor.
             setLiveChatState({
                 suggestedAction,
                 state: response?.state,
@@ -1264,7 +1293,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 etaSeconds: response?.eta_seconds,
                 queueTimeoutSeconds: response?.queue_timeout_seconds,
                 onlineOperatorCount: response?.online_operator_count,
+                capturedName: formData.name,
+                capturedEmail: formData.email,
             });
+            setOfflineForm(prev => ({
+                ...prev,
+                name: formData.name || prev.name,
+                email: formData.email || prev.email,
+                phone: formData.phone || prev.phone,
+            }));
             setMessages(prev => [
                 ...prev.filter(m => m.type !== 'handoff_form'),
                 {
@@ -1664,10 +1701,31 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     ts: m.timestamp || '',
                 }));
 
+            // Resolve contact info from every known source so a compact-form
+            // submit doesn't drop name/email when the offlineForm state hasn't
+            // caught up to the prefill microtask yet.
+            const submitName = (
+                offlineForm.name?.trim() ||
+                liveChatState?.capturedName?.trim() ||
+                existingLeadInfo?.name?.trim() ||
+                ''
+            );
+            const submitEmail = (
+                offlineForm.email?.trim() ||
+                liveChatState?.capturedEmail?.trim() ||
+                existingLeadInfo?.email?.trim() ||
+                ''
+            );
+            const submitPhone = (
+                offlineForm.phone?.trim() ||
+                existingLeadInfo?.phone?.trim() ||
+                null
+            );
+
             await submitOfflineMessage({
-                name: offlineForm.name,
-                email: offlineForm.email,
-                phone: offlineForm.phone || null,
+                name: submitName,
+                email: submitEmail,
+                phone: submitPhone || null,
                 message: offlineForm.message,
                 session_id: sessionId,
                 // The resolver state that drove the fallback. Used by the
@@ -2234,7 +2292,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         >
                             {getWaitingMessage()}
                         </p>
-                        {waitingSeconds >= 45 && (
+                        {waitingSeconds >= 23 && (
                             <button
                                 onClick={() => setChatMode('unavailable')}
                                 className="mt-2 text-[12px] font-medium hover:underline transition-colors"
@@ -2345,88 +2403,43 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 </button>
                             </div>
                         ) : (() => {
-                            // Compact mode: when the visitor came here from a
-                            // handoff fallback they already gave us name+email
-                            // in HandoffForm. Re-prompting for them would be
-                            // hostile UX. Detect via `liveChatState?.fallbackReason`
-                            // — only set on the handoff-fallback path, never on
-                            // the direct "Leave a message" CTA.
-                            const isCompact = !!(
-                                liveChatState?.fallbackReason &&
-                                offlineForm.name?.trim() &&
-                                offlineForm.email?.trim()
+                            // Always render the full form — name, email,
+                            // phone, message — pre-filled from anywhere
+                            // we already know the visitor (handoff capture
+                            // or an existing lead row). The previous
+                            // "compact" branch (message-only when name +
+                            // email were already known) caused the email
+                            // field to vanish mid-typing whenever the
+                            // visitor's name was on file: typing one
+                            // character into email made the compact gate
+                            // flip and unmounted the input. Showing the
+                            // full form unconditionally is simpler and
+                            // lets the visitor correct any field before
+                            // submitting.
+                            const externalName = (
+                                liveChatState?.capturedName?.trim() ||
+                                existingLeadInfo?.name?.trim() ||
+                                ''
                             );
-
-                            if (isCompact) {
-                                const isOutOfHours = liveChatState?.state === 'out_of_hours';
-                                const nextAvailableLabel = isOutOfHours
-                                    ? formatNextAvailable(liveChatState?.nextAvailableAt)
-                                    : null;
-                                const title = isOutOfHours
-                                    ? 'Our team is offline right now'
-                                    : 'We’ll be right back!';
-                                return (
-                                    <>
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <Mail className="w-4 h-4 flex-shrink-0" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
-                                            <p className="text-[13px] font-semibold text-[#16202C]">{title}</p>
-                                        </div>
-                                        <p className="text-[12px] text-gray-500 mb-3">
-                                            {isOutOfHours && nextAvailableLabel ? (
-                                                <>
-                                                    Thanks for reaching out! Our team is back{' '}
-                                                    <strong className="text-gray-700">{nextAvailableLabel}</strong>.
-                                                    Leave a message and we&apos;ll reply at{' '}
-                                                    <strong className="text-gray-700">{offlineForm.email}</strong>{' '}
-                                                    within one business day.
-                                                </>
-                                            ) : isOutOfHours ? (
-                                                <>
-                                                    Thanks for reaching out! Our team isn&apos;t available right now.
-                                                    Leave a message and we&apos;ll reply at{' '}
-                                                    <strong className="text-gray-700">{offlineForm.email}</strong>{' '}
-                                                    within one business day.
-                                                </>
-                                            ) : (
-                                                <>
-                                                    Leave a message and we&apos;ll get back to you at{' '}
-                                                    <strong className="text-gray-700">{offlineForm.email}</strong>.
-                                                </>
-                                            )}
-                                        </p>
-                                        <form onSubmit={handleOfflineSubmit} className="space-y-2">
-                                            <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2 focus-within:border-blue-300 focus-within:bg-white transition-colors">
-                                                <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
-                                                <textarea
-                                                    placeholder="How can we help you?"
-                                                    required
-                                                    rows={3}
-                                                    autoFocus
-                                                    value={offlineForm.message}
-                                                    onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
-                                                    className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none"
-                                                />
-                                            </div>
-                                            <button
-                                                type="submit"
-                                                disabled={offlineSubmitting || !offlineForm.message.trim()}
-                                                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
-                                                style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
-                                            >
-                                                {offlineSubmitting
-                                                    ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                    : 'Send Message'}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={handleReturnToBot}
-                                                disabled={offlineSubmitting}
-                                                className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
-                                            >
-                                                Continue with AI instead
-                                            </button>
-                                        </form>
-                                    </>
+                            const externalEmail = (
+                                liveChatState?.capturedEmail?.trim() ||
+                                existingLeadInfo?.email?.trim() ||
+                                ''
+                            );
+                            // Backfill offlineForm from EXTERNAL sources
+                            // so handleOfflineSubmit posts the right data
+                            // even if the visitor doesn't touch the
+                            // pre-filled fields. Never echo the visitor's
+                            // own keystrokes back into state during
+                            // render.
+                            if (externalName && !offlineForm.name) {
+                                queueMicrotask(() =>
+                                    setOfflineForm(p => p.name ? p : { ...p, name: externalName })
+                                );
+                            }
+                            if (externalEmail && !offlineForm.email) {
+                                queueMicrotask(() =>
+                                    setOfflineForm(p => p.email ? p : { ...p, email: externalEmail })
                                 );
                             }
 

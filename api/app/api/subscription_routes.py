@@ -25,7 +25,12 @@ from app.core.pricing import format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
 from app.services import credit_service
-from app.services.plan_service import get_active_plans, get_client_plan, get_client_subscription
+from app.services.plan_service import (
+    get_active_plans,
+    get_client_plan,
+    get_client_subscription,
+    lock_client_for_billing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -641,6 +646,8 @@ def change_plan(
     * ``{"status": "downgraded", "message": "..."}`` — Free downgrade
     """
     with get_session() as session:
+        # Serialize this client's billing mutations (H1) before reading state.
+        lock_client_for_billing(session, client.id)
         from app.services.plan_service import get_client_subscription, get_plan_by_id
 
         new_plan = get_plan_by_id(session, request.plan_id)
@@ -842,6 +849,7 @@ def cancel_scheduled_change_endpoint(client: Client = Depends(get_current_client
     from app.services import transition_service
 
     with get_session() as session:
+        lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
         sub = get_client_subscription(session, client.id)
         if sub is None:
             raise HTTPException(status_code=404, detail="No subscription found.")
@@ -880,6 +888,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
     fires the actual cancellation.
     """
     with get_session() as session:
+        lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
         sub = get_client_subscription(session, client.id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
@@ -913,6 +922,7 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
 def resume_subscription(client: Client = Depends(get_current_client)):
     """Resume a subscription that was scheduled for cancellation."""
     with get_session() as session:
+        lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
         sub = get_client_subscription(session, client.id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
@@ -952,6 +962,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
         raise HTTPException(status_code=400, detail="Delta must be non-zero.")
 
     with get_session() as session:
+        lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
         sub = get_client_subscription(session, client.id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")

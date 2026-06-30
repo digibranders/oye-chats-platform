@@ -1099,6 +1099,22 @@ def create_bot(
 
         logger.info(f"Workspace {auth['client_id']} created bot {new_bot.id} ({new_bot.name})")
 
+        # Drop a notification into the workspace feed so every operator
+        # (and the owner) sees the new bot show up in the bell. Best-effort
+        # — broadcast failures are swallowed inside the service.
+        try:
+            from app.services.notification_service import notify_bot_created
+
+            notify_bot_created(
+                session,
+                client_id=auth["client_id"],
+                bot_id=new_bot.id,
+                bot_name=new_bot.name,
+                bot_key=new_bot.bot_key,
+            )
+        except Exception:
+            logger.exception("Failed to record bot_created notification for bot %s", new_bot.id)
+
         return {
             "message": "Bot created successfully",
             "bot_id": new_bot.id,

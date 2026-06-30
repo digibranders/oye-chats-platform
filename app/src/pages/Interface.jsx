@@ -1368,28 +1368,65 @@ export default function Interface({ embedded = false }) {
                         </div>
                     ) : activeTab === 'Custom Brand' ? (
                         <div className="space-y-6 animate-fade-in">
-                            <div className="bg-gradient-to-br from-primary-50 to-primary-50/50 dark:from-primary-500/10 dark:to-primary-500/5 p-8 rounded-2xl border border-primary-200 shadow-sm">
-                                <div className="flex items-start gap-4">
-                                    <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center flex-shrink-0">
-                                        <Settings2 className="w-6 h-6 text-primary-600" />
-                                    </div>
+                            <div className="relative overflow-hidden bg-gradient-to-br from-[#060415] to-[#0A071E] p-8 rounded-[20px] border border-[#231A3D] shadow-2xl flex flex-col md:flex-row items-center md:items-start gap-6">
+                                {/* Wavy background curves */}
+                                <svg className="absolute right-0 top-0 h-full w-[45%] pointer-events-none opacity-30 select-none hidden md:block" viewBox="0 0 200 120" fill="none" preserveAspectRatio="none">
+                                    <path d="M50,-20 C100,40 120,60 220,50" stroke="url(#wave-grad-1)" strokeWidth="1" />
+                                    <path d="M30,-20 C90,50 110,80 220,70" stroke="url(#wave-grad-2)" strokeWidth="1.2" />
+                                    <path d="M10,-20 C80,60 100,100 220,90" stroke="url(#wave-grad-1)" strokeWidth="0.8" />
+                                    <defs>
+                                        <linearGradient id="wave-grad-1" x1="0%" y1="0%" x2="100%" y2="100%">
+                                            <stop offset="0%" stopColor="#635BFF" stopOpacity="0" />
+                                            <stop offset="50%" stopColor="#635BFF" stopOpacity="0.4" />
+                                            <stop offset="100%" stopColor="#635BFF" stopOpacity="0.8" />
+                                        </linearGradient>
+                                        <linearGradient id="wave-grad-2" x1="0%" y1="0%" x2="100%" y2="100%">
+                                            <stop offset="0%" stopColor="#BD34FE" stopOpacity="0" />
+                                            <stop offset="50%" stopColor="#BD34FE" stopOpacity="0.3" />
+                                            <stop offset="100%" stopColor="#BD34FE" stopOpacity="0.7" />
+                                        </linearGradient>
+                                    </defs>
+                                    <circle cx="120" cy="50" r="1.5" fill="#635BFF" className="animate-pulse" />
+                                    <circle cx="160" cy="80" r="1.0" fill="#BD34FE" className="animate-pulse" />
+                                </svg>
+
+                                {/* Left Squircle Settings Icon */}
+                                <div className="w-[72px] h-[72px] rounded-2xl bg-gradient-to-tr from-[#1E1743] to-[#2B235E] flex items-center justify-center flex-shrink-0 border border-[#443888]/30 shadow-[0_4px_20px_rgba(99,91,255,0.25)] relative overflow-hidden group">
+                                    {/* Icon Glow */}
+                                    <div className="absolute inset-0 bg-[#635BFF] opacity-10 filter blur-md group-hover:opacity-20 transition-opacity duration-300" />
+                                    {/* Sliders custom SVG */}
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-white relative z-10 drop-shadow-[0_0_6px_rgba(255,255,255,0.7)]">
+                                        <line x1="4" y1="8" x2="20" y2="8" strokeOpacity="0.4" />
+                                        <line x1="4" y1="16" x2="20" y2="16" strokeOpacity="0.4" />
+                                        <circle cx="8" cy="8" r="2.5" fill="white" />
+                                        <circle cx="16" cy="16" r="2.5" fill="white" />
+                                    </svg>
+                                </div>
+
+                                {/* Right Content Column */}
+                                <div className="flex-grow text-center md:text-left z-10 space-y-4">
                                     <div>
-                                        <h3 className="text-[16px] font-bold text-surface-900 dark:text-surface-50 mb-1">
-                                            Need <span className="font-bold">Personalized</span> Customization?
+                                        <h3 className="text-[19px] md:text-[20px] font-bold text-white tracking-[-0.01em] mb-1.5">
+                                            Need Personalized Customization?
                                         </h3>
-                                        <p className="text-[13px] text-surface-600 dark:text-surface-400 leading-relaxed mb-4">
-                                            If you'd like to add <span className="font-semibold text-surface-700 dark:text-surface-300">custom branding</span>, <span className="font-semibold text-surface-700 dark:text-surface-300">unique themes</span>, or any <span className="font-semibold text-surface-700 dark:text-surface-300">personalized features</span> to your chatbot, our development team is here to help!
+                                        <p className="text-[14px] text-[#9B99AF] leading-relaxed max-w-[580px]">
+                                            If you'd like to add custom branding, unique themes, or any personalized features to your chatbot, our development team is here to help!
                                         </p>
-                                        <div className="bg-white dark:bg-surface-900 px-5 py-4 rounded-xl border border-surface-200 dark:border-surface-700 inline-flex items-center gap-3">
-                                            <span className="text-[13px] text-surface-500">Email us at:</span>
-                                            <a
-                                                href="mailto:support@oyechats.com"
-                                                className="text-[14px] font-bold text-primary-600 hover:underline"
-                                            >
-                                                support@oyechats.com
-                                            </a>
-                                        </div>
                                     </div>
+
+                                    {/* Email Pill Button */}
+                                    <a
+                                        href="mailto:support@oyechats.com"
+                                        className="inline-flex items-center gap-3.5 px-5 py-3 rounded-xl border border-[#2C2654] bg-[#060411]/50 hover:bg-[#0A071A]/80 hover:border-[#635BFF]/50 transition-all duration-300 shadow-inner group"
+                                    >
+                                        <Mail className="w-[18px] h-[18px] text-[#9B99AF] group-hover:text-[#635BFF] transition-colors" />
+                                        <div className="flex items-center gap-1.5 text-[14px]">
+                                            <span className="text-[#9B99AF] font-medium">Email us at:</span>
+                                            <span className="font-bold text-[#635BFF] hover:text-[#7A73FF] transition-colors">
+                                                support@oyechats.com
+                                            </span>
+                                        </div>
+                                    </a>
                                 </div>
                             </div>
                         </div>

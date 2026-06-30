@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -848,6 +849,11 @@ class Subscription(Base):
     # Billing period
     current_period_start = Column(DateTime(timezone=True), nullable=True)
     current_period_end = Column(DateTime(timezone=True), nullable=True)
+    # The billing period (by ``current_period_end``) the plan's monthly credits
+    # were last granted for. Makes the renewal grant idempotent per period —
+    # ``subscription.charged`` / ``activated`` grant at most once per distinct
+    # period regardless of event timing, ordering, or replays (remediation H4).
+    last_granted_period_end = Column(DateTime(timezone=True), nullable=True)
 
     # Trial tracking
     trial_start = Column(DateTime(timezone=True), nullable=True)
@@ -1002,6 +1008,10 @@ class Invoice(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
     subscription_id = Column(Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True)
+    # Ledger scope this payment credited: the bot's isolated ledger when set,
+    # else the client pool (NULL). Recorded so a refund claws credits back from
+    # the SAME scope it granted them to (remediation C2).
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Amount
     amount_cents = Column(Integer, nullable=False)
@@ -1141,6 +1151,36 @@ class ProcessedWebhook(Base):
     event_id = Column(Text, primary_key=True)
     provider = Column(Text, nullable=False, index=True)  # 'stripe' | 'razorpay'
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class FailedWebhook(Base):
+    """Dead-letter store for billing webhooks whose processing failed.
+
+    When a verified Razorpay/Stripe webhook raises during processing, the
+    handler's transaction is rolled back (including the ``processed_webhooks``
+    idempotency row), and the raw event is persisted here in a separate
+    transaction so it survives that rollback. The provider is then asked to
+    retry (5xx); this row is the backstop if every retry is exhausted.
+
+    ``raw_payload`` keeps the **exact signed bytes** (not parsed JSON) so the
+    ``X-Razorpay-Signature`` HMAC can be re-verified when the event is replayed.
+    """
+
+    __tablename__ = "failed_webhooks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(Text, nullable=False, index=True)  # 'razorpay' | 'stripe'
+    # Provider event id (``x-razorpay-event-id``); may be absent on some deliveries.
+    event_id = Column(Text, nullable=True, index=True)
+    event_type = Column(Text, nullable=True)  # e.g. 'payment.captured'
+    raw_payload = Column(LargeBinary, nullable=False)  # exact bytes, for signature re-verify
+    signature = Column(Text, nullable=True)  # X-Razorpay-Signature header at receipt time
+    headers = Column(JSONB, nullable=True)  # selected headers captured for replay/debug
+    error = Column(Text, nullable=True)  # repr of the exception that caused the failure
+    # 'pending' (awaiting replay) | 'replayed' (successfully reprocessed) | 'ignored'.
+    status = Column(Text, nullable=False, server_default="pending", default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    replayed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 # ── Super-admin audit & supporting tables ────────────────────────────────────
@@ -1482,3 +1522,125 @@ class PlatformFeedback(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
 
     client = relationship("Client", foreign_keys=[client_id])
+
+
+# ── Web Push subscriptions (operator notifications) ──────────────────────────
+
+
+class OperatorPushSubscription(Base):
+    """Web Push subscription for a dashboard user's browser/device.
+
+    Despite the legacy table name (``operator_push_subscriptions``), this row
+    can belong to either an **operator** (``operator_id`` set) or a workspace
+    **owner / client** (``client_id`` set). Small teams where the owner takes
+    chats themselves get push without needing a separate operator account.
+    A DB-level CHECK constraint enforces that exactly one of the two FKs is
+    populated; both branches are pruned on the same ``410 Gone`` rule.
+
+    One subscriber can have many rows — one per browser/device they've
+    granted permission on (laptop + work desktop + phone). The fan-out at
+    handoff time sends to every row for every eligible recipient; first
+    accept wins, the rest get a tagged follow-up that updates the on-device
+    notification to "Claimed by X."
+    """
+
+    __tablename__ = "operator_push_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    operator_id = Column(
+        Integer,
+        ForeignKey("operators.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(String, nullable=False)
+    auth = Column(String, nullable=False)
+    # Optional device hint surfaced from the User-Agent at subscribe time.
+    # Purely cosmetic (lets the user distinguish "Laptop Chrome" from
+    # "iPhone Safari" when managing devices); not used in routing.
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Updated on every successful push send. A long-stale ``last_used_at``
+    # without a 410 isn't itself reason to prune (most providers keep
+    # subscriptions valid for months), but it's useful telemetry.
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("endpoint", name="uq_operator_push_endpoint"),
+        CheckConstraint(
+            "((operator_id IS NULL)::int + (client_id IS NULL)::int) = 1",
+            name="chk_push_subscription_owner_xor",
+        ),
+    )
+
+    operator = relationship("Operator", foreign_keys=[operator_id])
+    client = relationship("Client", foreign_keys=[client_id])
+
+
+# ── In-app notifications (admin dashboard bell + dropdown) ──────────────────
+
+
+class Notification(Base):
+    """Persistent in-app notification surfaced in the admin dashboard.
+
+    Scoped to a ``client_id`` (workspace owner) so every operator in the
+    workspace sees the same feed. ``operator_id`` is reserved for future
+    per-operator notifications (e.g. "you were @mentioned") and is NULL for
+    the three workspace-wide types currently in use:
+
+      * ``plan_purchased``           — billing webhook activated a paid plan
+      * ``bot_created``              — a new bot was created in the workspace
+      * ``offline_message_received`` — visitor submitted the offline form
+      * ``handoff_request``          — visitor pressed "Talk to a human"
+        (also drives the in-app banner; persisted so a missed handoff still
+        shows up in the bell when the operator returns to the dashboard)
+
+    ``data`` is a free-form JSON blob carrying type-specific payload (bot_id,
+    plan name, message preview, session_id, etc.). ``link`` is an optional
+    in-app route to navigate to on click. Both are validated in the service
+    layer, not at the DB level — schema-on-read keeps adding new types cheap.
+    """
+
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    operator_id = Column(
+        Integer,
+        ForeignKey("operators.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    type = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=True)
+    link = Column(String, nullable=True)
+    data = Column(JSONB, nullable=True)
+    is_read = Column(Boolean, nullable=False, server_default=sqlalchemy.text("false"))
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
+    )
+
+    __table_args__ = (
+        Index("ix_notifications_client_created", "client_id", "created_at"),
+        Index("ix_notifications_client_unread", "client_id", "is_read"),
+    )
+
+    client = relationship("Client", foreign_keys=[client_id])
+    operator = relationship("Operator", foreign_keys=[operator_id])

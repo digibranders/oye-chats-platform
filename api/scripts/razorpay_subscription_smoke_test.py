@@ -161,6 +161,7 @@ def main() -> None:
 
     with Session(engine) as session:
         from sqlalchemy import func
+
         max_credit_id = session.query(func.max(CreditLedger.id)).scalar() or 0
 
         from app.services.razorpay_service import handle_webhook_event

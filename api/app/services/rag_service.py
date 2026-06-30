@@ -2875,637 +2875,647 @@ async def rag_pipeline_stream(
 
     full_answer = ""
     try:
-      with get_session() as session:
-        bot = (
-            session.query(Bot).options(joinedload(Bot.client)).get(bid)
-            if bid
-            else (client if isinstance(client, Bot) else None)
-        )
+        with get_session() as session:
+            bot = (
+                session.query(Bot).options(joinedload(Bot.client)).get(bid)
+                if bid
+                else (client if isinstance(client, Bot) else None)
+            )
 
-        # Resolve company identity: prefer bot-level (auto-extracted from website)
-        # over client-level (typed at registration)
-        _company_name = None
-        _company_desc = None
-        _bot_name = None
-        if bot:
-            _bot_name = bot.name
-            _company_desc = getattr(bot, "company_description", None)
-            _company_name = getattr(bot, "company_name", None)
-            if not _company_name and bot.client:
-                _company_name = bot.client.company_name
+            # Resolve company identity: prefer bot-level (auto-extracted from website)
+            # over client-level (typed at registration)
+            _company_name = None
+            _company_desc = None
+            _bot_name = None
+            if bot:
+                _bot_name = bot.name
+                _company_desc = getattr(bot, "company_description", None)
+                _company_name = getattr(bot, "company_name", None)
+                if not _company_name and bot.client:
+                    _company_name = bot.client.company_name
 
-        ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
+            ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
-        # Save user message first (always persisted, even on cache hit)
-        add_chat_message(
-            session,
-            session_id,
-            client_id=cid,
-            role="user",
-            content=question,
-            location=location,
-            device=device,
-            bot_id=bid,
-        )
-
-        # ── Deterministic intent router (streaming path) ─────────────────
-        # Mirrors the non-stream path: greetings/acks/identity questions
-        # short-circuit before retrieval so visitors don't hit the relevance
-        # gate's boilerplate refusal as a first impression.
-        _intent = route_intent(question, _company_name)
-        if _intent is not None:
-            _safety_net_metric(
-                "intent_router_short_circuit",
-                path="stream",
-                intent=_intent.intent,
-                session=session_id,
+            # Save user message first (always persisted, even on cache hit)
+            add_chat_message(
+                session,
+                session_id,
+                client_id=cid,
+                role="user",
+                content=question,
+                location=location,
+                device=device,
                 bot_id=bid,
             )
-            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield _intent.answer
-            _bot_msg = add_chat_message(
-                session, session_id, client_id=cid, role="bot", content=_intent.answer, bot_id=bid
-            )
-            session.flush()
-            _msg_id = _bot_msg.id
-            session.commit()
-            yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
-            return
 
-        # ── Visitor input injection guard (streaming path) ──────────────
-        if is_visitor_injection_attempt(question):
-            _safety_net_metric(
-                "injection_attempt",
-                path="stream",
-                session=session_id,
-                bot_id=bid,
-            )
-            _refusal = _off_topic_refusal(_company_name)
-            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield _refusal
-            _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid)
-            session.flush()
-            _msg_id = _bot_msg.id
-            session.commit()
-            yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
-            return
+            # ── Deterministic intent router (streaming path) ─────────────────
+            # Mirrors the non-stream path: greetings/acks/identity questions
+            # short-circuit before retrieval so visitors don't hit the relevance
+            # gate's boilerplate refusal as a first impression.
+            _intent = route_intent(question, _company_name)
+            if _intent is not None:
+                _safety_net_metric(
+                    "intent_router_short_circuit",
+                    path="stream",
+                    intent=_intent.intent,
+                    session=session_id,
+                    bot_id=bid,
+                )
+                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _intent.answer
+                _bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_intent.answer, bot_id=bid
+                )
+                session.flush()
+                _msg_id = _bot_msg.id
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                return
 
-        # ── OpenAI Moderation pre-check (streaming path) ────────────────
-        _safe, _flagged_cat = await asyncio.to_thread(check_visitor_safety, question)
-        if not _safe:
-            _safety_net_metric(
-                "moderation_block",
-                path="stream",
-                category=_flagged_cat or "unspecified",
-                session=session_id,
-                bot_id=bid,
-            )
-            _refusal = _off_topic_refusal(_company_name)
-            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield _refusal
-            _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid)
-            session.flush()
-            _msg_id = _bot_msg.id
-            session.commit()
-            yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
-            return
+            # ── Visitor input injection guard (streaming path) ──────────────
+            if is_visitor_injection_attempt(question):
+                _safety_net_metric(
+                    "injection_attempt",
+                    path="stream",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _refusal = _off_topic_refusal(_company_name)
+                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _refusal
+                _bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                )
+                session.flush()
+                _msg_id = _bot_msg.id
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                return
 
-        # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
-        _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
-        _cache_key = qa_response_key(bid, _q_hash) if bid else None
-        if _cache_key:
-            cached_qa = cache_get(_cache_key)
-            if cached_qa:
-                # Run handoff detection even on cache hit so the widget can
-                # trigger the handoff form when appropriate.
-                _cached_handoff = await asyncio.to_thread(detect_handoff_intent, question)
-                live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
+            # ── OpenAI Moderation pre-check (streaming path) ────────────────
+            _safe, _flagged_cat = await asyncio.to_thread(check_visitor_safety, question)
+            if not _safe:
+                _safety_net_metric(
+                    "moderation_block",
+                    path="stream",
+                    category=_flagged_cat or "unspecified",
+                    session=session_id,
+                    bot_id=bid,
+                )
+                _refusal = _off_topic_refusal(_company_name)
+                yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                yield _refusal
+                _bot_msg = add_chat_message(
+                    session, session_id, client_id=cid, role="bot", content=_refusal, bot_id=bid
+                )
+                session.flush()
+                _msg_id = _bot_msg.id
+                session.commit()
+                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                return
 
-                if _cached_handoff and live_chat_on:
-                    # Handoff requested — invalidate cache and fall through to
-                    # the full pipeline so the LLM generates a proper handoff
-                    # response with the suggest_handoff flag.
-                    cache_delete(_cache_key)
-                    logger.info(f"QA cache invalidated (handoff detected) | bot_id={bid}")
+            # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
+            _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
+            _cache_key = qa_response_key(bid, _q_hash) if bid else None
+            if _cache_key:
+                cached_qa = cache_get(_cache_key)
+                if cached_qa:
+                    # Run handoff detection even on cache hit so the widget can
+                    # trigger the handoff form when appropriate.
+                    _cached_handoff = await asyncio.to_thread(detect_handoff_intent, question)
+                    live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
+
+                    if _cached_handoff and live_chat_on:
+                        # Handoff requested — invalidate cache and fall through to
+                        # the full pipeline so the LLM generates a proper handoff
+                        # response with the suggest_handoff flag.
+                        cache_delete(_cache_key)
+                        logger.info(f"QA cache invalidated (handoff detected) | bot_id={bid}")
+                    else:
+                        logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
+                        cached_answer = cached_qa["answer"]
+                        cached_sources = cached_qa.get("sources", [])
+                        yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': cached_sources})}\n"
+                        yield cached_answer
+                        bot_msg = add_chat_message(
+                            session, session_id, client_id=cid, role="bot", content=cached_answer, bot_id=bid
+                        )
+                        session.flush()
+                        _cached_msg_id = bot_msg.id
+                        session.commit()
+                        yield f"\nFINAL_METADATA:{json.dumps({'message_id': _cached_msg_id})}\n"
+                        return
+
+            # Expensive steps: handoff detection, query rewriting (LLM), embedding (API).
+            # Defense-in-depth: scope the session lookup by tenant — see equivalent
+            # block in the non-streaming path above for rationale.
+            _cs_filters_stream = [ChatSession.id == session_id]
+            if bid:
+                _cs_filters_stream.append(ChatSession.bot_id == bid)
+            elif cid:
+                _cs_filters_stream.append(ChatSession.client_id == cid)
+            chat_session = session.query(ChatSession).filter(*_cs_filters_stream).first()
+            current_bant = _build_bant_state(chat_session)
+            history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
+
+            # ── CAG-lite: skip retrieval for small knowledge bases ──────────────
+            # The two DB helpers below run inside ``asyncio.to_thread`` so they MUST
+            # use their own session — SQLAlchemy ``Session`` objects are not
+            # thread-safe and sharing the outer request-scoped session across
+            # threads can corrupt state or raise InvalidRequestError under load.
+            def _count_chunks_isolated(bot_id: int | None, client_id: int | None) -> int:
+                with get_session() as s:
+                    return count_documents_for_bot(s, bot_id=bot_id, client_id=client_id)
+
+            def _fetch_all_chunks_isolated(bot_id: int | None, client_id: int | None) -> list:
+                with get_session() as s:
+                    docs = list(get_all_documents_for_bot(s, bot_id=bot_id, client_id=client_id))
+                    # Detach so callers can safely read scalar attrs after the
+                    # session closes. Lazy-loaded relationships will fail — none
+                    # of the downstream context-building code touches them.
+                    for d in docs:
+                        s.expunge(d)
+                    return docs
+
+            _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
+            _total_chunks = await asyncio.to_thread(_count_chunks_isolated, bid, cid) if bid or cid else 0
+            _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
+
+            if _use_cag_lite:
+                logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
+                final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
+                search_query = question
+                suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question)
+            else:
+                handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
+                search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
+                search_query = _expand_company_query(search_query, _company_name)
+
+                # ── Phase 4B: embedding cache (async path) ────────────────────
+                _emb_key = f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
+                _cached_emb = cache_get(_emb_key)
+                if _cached_emb and isinstance(_cached_emb, list):
+                    query_embedding = _cached_emb
                 else:
-                    logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
-                    cached_answer = cached_qa["answer"]
-                    cached_sources = cached_qa.get("sources", [])
-                    yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': cached_sources})}\n"
-                    yield cached_answer
-                    bot_msg = add_chat_message(
-                        session, session_id, client_id=cid, role="bot", content=cached_answer, bot_id=bid
+                    # Guard the embedding call so an OpenAI embeddings outage
+                    # doesn't take down every chat stream. Fall back to
+                    # keyword-only retrieval if embedding fails.
+                    try:
+                        _embs = await embed_chunks_async([search_query])
+                        query_embedding = _embs[0] if _embs else None
+                        if query_embedding is not None:
+                            cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
+                    except Exception as _emb_err:
+                        logger.warning(
+                            "Query embedding failed (%s) — streaming with keyword-only retrieval",
+                            type(_emb_err).__name__,
+                        )
+                        query_embedding = None
+
+                try:
+                    suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0)
+                except TimeoutError:
+                    # LLM timed out — fall back to keyword signal.
+                    suggest_handoff = detect_handoff_intent_keywords(question)
+                    logger.warning(
+                        "Handoff LLM timed out for session %s, keyword fallback=%s",
+                        session_id,
+                        "YES" if suggest_handoff else "NO",
+                    )
+
+                # Cost-tuned flat k=15 (matches non-stream path). See the
+                # rationale comment in the non-stream branch — bump back to
+                # 20-30 if long-list under-reporting becomes a customer
+                # complaint.
+                _retrieval_k = 15
+                import time as _t
+
+                _ret_start = _t.perf_counter()
+                if query_embedding is not None:
+                    vector_results, keyword_results = await asyncio.gather(
+                        asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k),
+                        asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
+                    )
+                else:
+                    # Embedding outage path — keyword-only.
+                    vector_results = []
+                    keyword_results = await asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k)
+                _gather_ms = (_t.perf_counter() - _ret_start) * 1000
+
+                _fuse_start = _t.perf_counter()
+                final_results = reciprocal_rank_fusion(vector_results, keyword_results)
+                final_results = _trim_results(final_results, top_k=_retrieval_k)
+                _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
+
+                _rerank_ms = 0.0
+                if RERANK_ENABLED:
+                    _rerank_start = _t.perf_counter()
+                    # Forward ``_retrieval_k`` so list/count questions keep their
+                    # 30-chunk boost. The reranker defaults to RERANK_TOP_N=5, which
+                    # silently undid the explicit boost above and made the bot
+                    # under-report on "list all"/"how many" queries.
+                    final_results = rerank(search_query, final_results, top_n=_retrieval_k)
+                    _rerank_ms = (_t.perf_counter() - _rerank_start) * 1000
+
+                logger.info(
+                    "[retrieval] hybrid_search bot=%s k=%d gather_ms=%.1f fuse_ms=%.1f "
+                    "rerank_ms=%.1f total_ms=%.1f final_hits=%d",
+                    bid,
+                    _retrieval_k,
+                    _gather_ms,
+                    _fuse_ms,
+                    _rerank_ms,
+                    _gather_ms + _fuse_ms + _rerank_ms,
+                    len(final_results),
+                )
+
+            sources = [doc.document_name for doc in final_results]
+
+            # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
+            _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
+            _is_relevant, _gate_score = await asyncio.to_thread(
+                check_relevance, question, final_results, bid, cid, _bot_threshold
+            )
+            if not _is_relevant:
+                # Mirror of the non-stream path: on-scope questions where the
+                # gate fired (no matching chunks) get the graceful no-info pivot
+                # instead of the off-topic refusal.
+                _on_scope = _question_looks_on_scope(question, _company_name)
+                if not _on_scope and search_query != question:
+                    _on_scope = _question_looks_on_scope(search_query, _company_name)
+
+                if _on_scope:
+                    _safety_net_metric(
+                        "no_info_pivot",
+                        reason="gate_fired_on_scope",
+                        path="stream",
+                        gate_score=f"{_gate_score:.2f}",
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _pivot = _no_info_pivot(_company_name)
+                    yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                    yield _pivot
+                    _bot_msg = add_chat_message(
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
                     )
                     session.flush()
-                    _cached_msg_id = bot_msg.id
+                    _msg_id = _bot_msg.id
                     session.commit()
-                    yield f"\nFINAL_METADATA:{json.dumps({'message_id': _cached_msg_id})}\n"
+                    yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
                     return
 
-        # Expensive steps: handoff detection, query rewriting (LLM), embedding (API).
-        # Defense-in-depth: scope the session lookup by tenant — see equivalent
-        # block in the non-streaming path above for rationale.
-        _cs_filters_stream = [ChatSession.id == session_id]
-        if bid:
-            _cs_filters_stream.append(ChatSession.bot_id == bid)
-        elif cid:
-            _cs_filters_stream.append(ChatSession.client_id == cid)
-        chat_session = session.query(ChatSession).filter(*_cs_filters_stream).first()
-        current_bant = _build_bant_state(chat_session)
-        history = get_chat_history(session, session_id, client_id=cid, limit=5, bot_id=bid)
-
-        # ── CAG-lite: skip retrieval for small knowledge bases ──────────────
-        # The two DB helpers below run inside ``asyncio.to_thread`` so they MUST
-        # use their own session — SQLAlchemy ``Session`` objects are not
-        # thread-safe and sharing the outer request-scoped session across
-        # threads can corrupt state or raise InvalidRequestError under load.
-        def _count_chunks_isolated(bot_id: int | None, client_id: int | None) -> int:
-            with get_session() as s:
-                return count_documents_for_bot(s, bot_id=bot_id, client_id=client_id)
-
-        def _fetch_all_chunks_isolated(bot_id: int | None, client_id: int | None) -> list:
-            with get_session() as s:
-                docs = list(get_all_documents_for_bot(s, bot_id=bot_id, client_id=client_id))
-                # Detach so callers can safely read scalar attrs after the
-                # session closes. Lazy-loaded relationships will fail — none
-                # of the downstream context-building code touches them.
-                for d in docs:
-                    s.expunge(d)
-                return docs
-
-        _cag_threshold = int(os.getenv("CAG_LITE_THRESHOLD", "20"))
-        _total_chunks = await asyncio.to_thread(_count_chunks_isolated, bid, cid) if bid or cid else 0
-        _use_cag_lite = _cag_threshold > 0 and 0 < _total_chunks <= _cag_threshold
-
-        if _use_cag_lite:
-            logger.info(f"CAG-lite stream mode: injecting all {_total_chunks} chunks (bot_id={bid})")
-            final_results = await asyncio.to_thread(_fetch_all_chunks_isolated, bid, cid)
-            search_query = question
-            suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question)
-        else:
-            handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
-            search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
-            search_query = _expand_company_query(search_query, _company_name)
-
-            # ── Phase 4B: embedding cache (async path) ────────────────────
-            _emb_key = f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
-            _cached_emb = cache_get(_emb_key)
-            if _cached_emb and isinstance(_cached_emb, list):
-                query_embedding = _cached_emb
-            else:
-                # Guard the embedding call so an OpenAI embeddings outage
-                # doesn't take down every chat stream. Fall back to
-                # keyword-only retrieval if embedding fails.
-                try:
-                    _embs = await embed_chunks_async([search_query])
-                    query_embedding = _embs[0] if _embs else None
-                    if query_embedding is not None:
-                        cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
-                except Exception as _emb_err:
-                    logger.warning(
-                        "Query embedding failed (%s) — streaming with keyword-only retrieval",
-                        type(_emb_err).__name__,
-                    )
-                    query_embedding = None
-
-            try:
-                suggest_handoff = await asyncio.wait_for(handoff_task, timeout=2.0)
-            except TimeoutError:
-                # LLM timed out — fall back to keyword signal.
-                suggest_handoff = detect_handoff_intent_keywords(question)
-                logger.warning(
-                    "Handoff LLM timed out for session %s, keyword fallback=%s",
-                    session_id,
-                    "YES" if suggest_handoff else "NO",
-                )
-
-            # Cost-tuned flat k=15 (matches non-stream path). See the
-            # rationale comment in the non-stream branch — bump back to
-            # 20-30 if long-list under-reporting becomes a customer
-            # complaint.
-            _retrieval_k = 15
-            import time as _t
-
-            _ret_start = _t.perf_counter()
-            if query_embedding is not None:
-                vector_results, keyword_results = await asyncio.gather(
-                    asyncio.to_thread(_vector_search, cid, bid, query_embedding, _retrieval_k),
-                    asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k),
-                )
-            else:
-                # Embedding outage path — keyword-only.
-                vector_results = []
-                keyword_results = await asyncio.to_thread(_keyword_search, cid, bid, search_query, _retrieval_k)
-            _gather_ms = (_t.perf_counter() - _ret_start) * 1000
-
-            _fuse_start = _t.perf_counter()
-            final_results = reciprocal_rank_fusion(vector_results, keyword_results)
-            final_results = _trim_results(final_results, top_k=_retrieval_k)
-            _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
-
-            _rerank_ms = 0.0
-            if RERANK_ENABLED:
-                _rerank_start = _t.perf_counter()
-                # Forward ``_retrieval_k`` so list/count questions keep their
-                # 30-chunk boost. The reranker defaults to RERANK_TOP_N=5, which
-                # silently undid the explicit boost above and made the bot
-                # under-report on "list all"/"how many" queries.
-                final_results = rerank(search_query, final_results, top_n=_retrieval_k)
-                _rerank_ms = (_t.perf_counter() - _rerank_start) * 1000
-
-            logger.info(
-                "[retrieval] hybrid_search bot=%s k=%d gather_ms=%.1f fuse_ms=%.1f "
-                "rerank_ms=%.1f total_ms=%.1f final_hits=%d",
-                bid,
-                _retrieval_k,
-                _gather_ms,
-                _fuse_ms,
-                _rerank_ms,
-                _gather_ms + _fuse_ms + _rerank_ms,
-                len(final_results),
-            )
-
-        sources = [doc.document_name for doc in final_results]
-
-        # ── Phase 4A: CRAG relevance gate (streaming path) ───────────────
-        _bot_threshold = getattr(bot, "relevance_threshold", None) if bot else None
-        _is_relevant, _gate_score = await asyncio.to_thread(
-            check_relevance, question, final_results, bid, cid, _bot_threshold
-        )
-        if not _is_relevant:
-            # Mirror of the non-stream path: on-scope questions where the
-            # gate fired (no matching chunks) get the graceful no-info pivot
-            # instead of the off-topic refusal.
-            _on_scope = _question_looks_on_scope(question, _company_name)
-            if not _on_scope and search_query != question:
-                _on_scope = _question_looks_on_scope(search_query, _company_name)
-
-            if _on_scope:
                 _safety_net_metric(
-                    "no_info_pivot",
-                    reason="gate_fired_on_scope",
+                    "off_topic_refusal",
+                    reason="gate_fired",
                     path="stream",
                     gate_score=f"{_gate_score:.2f}",
                     session=session_id,
                     bot_id=bid,
                 )
-                _pivot = _no_info_pivot(_company_name)
+                _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-                yield _pivot
-                _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid)
-                session.flush()
-                _msg_id = _bot_msg.id
-                session.commit()
-                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                yield _off_topic_refusal(_company_name, _recent_bot)
                 return
 
-            _safety_net_metric(
-                "off_topic_refusal",
-                reason="gate_fired",
-                path="stream",
-                gate_score=f"{_gate_score:.2f}",
-                session=session_id,
-                bot_id=bid,
-            )
-            _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield _off_topic_refusal(_company_name, _recent_bot)
-            return
+            # ── Empty-context short-circuit (streaming path) ─────────────────
+            if not final_results:
+                if _question_looks_on_scope(question, _company_name) or (
+                    search_query != question and _question_looks_on_scope(search_query, _company_name)
+                ):
+                    _safety_net_metric(
+                        "no_info_pivot",
+                        reason="empty_retrieval_on_scope",
+                        path="stream",
+                        session=session_id,
+                        bot_id=bid,
+                    )
+                    _pivot = _no_info_pivot(_company_name)
+                    yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
+                    yield _pivot
+                    _bot_msg = add_chat_message(
+                        session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid
+                    )
+                    session.flush()
+                    _msg_id = _bot_msg.id
+                    session.commit()
+                    yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                    return
 
-        # ── Empty-context short-circuit (streaming path) ─────────────────
-        if not final_results:
-            if _question_looks_on_scope(question, _company_name) or (
-                search_query != question and _question_looks_on_scope(search_query, _company_name)
-            ):
                 _safety_net_metric(
-                    "no_info_pivot",
-                    reason="empty_retrieval_on_scope",
+                    "off_topic_refusal",
+                    reason="empty_retrieval",
                     path="stream",
                     session=session_id,
                     bot_id=bid,
                 )
-                _pivot = _no_info_pivot(_company_name)
+                _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
                 yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-                yield _pivot
-                _bot_msg = add_chat_message(session, session_id, client_id=cid, role="bot", content=_pivot, bot_id=bid)
-                session.flush()
-                _msg_id = _bot_msg.id
-                session.commit()
-                yield f"\nFINAL_METADATA:{json.dumps({'message_id': _msg_id})}\n"
+                yield _off_topic_refusal(_company_name, _recent_bot)
                 return
 
-            _safety_net_metric(
-                "off_topic_refusal",
-                reason="empty_retrieval",
-                path="stream",
-                session=session_id,
-                bot_id=bid,
+            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
+
+            # Build context with company identity injection
+            context_parts = []
+            if _company_name:
+                context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
+            for i, doc in enumerate(final_results, 1):
+                chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
+                context_parts.append(
+                    f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
+                )
+            context_text = "\n---\n".join(context_parts)
+            history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+
+            is_bant_enabled = getattr(client, "bant_enabled", True)
+            bant_config = get_framework_config(bot) if is_bant_enabled else None
+
+            prompt = build_hybrid_prompt(
+                client,
+                question,
+                context_text,
+                history_context,
+                bant_state=current_bant,
+                bant_enabled=is_bant_enabled,
+                bant_config=bant_config,
+                live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
+                custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
+                brand_tone=getattr(bot, "brand_tone", None) if bot else None,
+                company_name=_company_name,
+                company_description=_company_desc,
+                bot_name=_bot_name,
+                meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
+                services=getattr(bot, "services", None) if bot else None,
+                services_url=getattr(bot, "services_url", None) if bot else None,
             )
-            _recent_bot = [m.content for m in history if m.role == "bot"][-3:]
-            yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': []})}\n"
-            yield _off_topic_refusal(_company_name, _recent_bot)
-            return
+            logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
-        yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
+            _stream_error = False
+            _leak_aborted = False
+            # Strip [CTA:…] / [CTA_Q:…] sentinels from the stream as they arrive,
+            # so the visitor never sees the raw token typed into the bubble. The
+            # post-stream _strip_cta_marker call still runs against full_answer
+            # for DB persistence + CTA payload extraction; this is purely a
+            # display-side safeguard.
+            cta_sanitizer = _StreamCtaSanitizer()
+            try:
+                chunk_count = 0
+                async for chunk in generate_response_stream(
+                    prompt,
+                    temperature=0.3,
+                    max_tokens=600,
+                    metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
+                ):
+                    if chunk:
+                        chunk_count += 1
+                        full_answer += chunk
+                        safe_chunk = cta_sanitizer.feed(chunk)
+                        if safe_chunk:
+                            yield safe_chunk
+                        # Output-side leakage guard: if the accumulated answer
+                        # contains a system-prompt sentinel, stop streaming and
+                        # replace the persisted message with the refusal. We
+                        # cannot un-yield the bytes already sent, but we can stop
+                        # any further leakage and avoid storing the leaked text.
+                        if contains_system_prompt_leak(full_answer):
+                            _safety_net_metric(
+                                "system_prompt_leak",
+                                path="stream",
+                                session=session_id,
+                                bot_id=bid,
+                            )
+                            _leak_aborted = True
+                            full_answer = _off_topic_refusal(_company_name)
+                            yield f"\n\n{full_answer}"
+                            suggest_handoff = False
+                            break
 
-        # Build context with company identity injection
-        context_parts = []
-        if _company_name:
-            context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
-        for i, doc in enumerate(final_results, 1):
-            chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
-            context_parts.append(f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n")
-        context_text = "\n---\n".join(context_parts)
-        history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+                # Drain any text the sanitiser was still holding (e.g. trailing
+                # "[" that turned out not to be a sentinel). Skip on leak-abort —
+                # the buffer at that point may be partial sentinel and is unsafe.
+                if not _leak_aborted:
+                    tail = cta_sanitizer.flush()
+                    if tail:
+                        yield tail
 
-        is_bant_enabled = getattr(client, "bant_enabled", True)
-        bant_config = get_framework_config(bot) if is_bant_enabled else None
+                if chunk_count == 0:
+                    logger.warning(f"LLM returned zero chunks for session {session_id}")
+                    yield "I'm sorry, I couldn't generate a response. Please try again or ask something else."
+                    full_answer = "I'm sorry, I couldn't generate a response. Please try again or ask something else."
+            except Exception as e:
+                logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
+                yield " [I encountered an error. Please try again.]"
+                _stream_error = True
+                suggest_handoff = False  # Don't suggest handoff on errored/partial responses
 
-        prompt = build_hybrid_prompt(
-            client,
-            question,
-            context_text,
-            history_context,
-            bant_state=current_bant,
-            bant_enabled=is_bant_enabled,
-            bant_config=bant_config,
-            live_chat_enabled=getattr(bot, "live_chat_enabled", True) if bot else True,
-            custom_system_prompt=getattr(bot, "system_prompt", None) if bot else None,
-            brand_tone=getattr(bot, "brand_tone", None) if bot else None,
-            company_name=_company_name,
-            company_description=_company_desc,
-            bot_name=_bot_name,
-            meeting_booking_enabled=getattr(bot, "meeting_booking_enabled", False) if bot else False,
-            services=getattr(bot, "services", None) if bot else None,
-            services_url=getattr(bot, "services_url", None) if bot else None,
-        )
-        logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
+            # Strip CTA marker from response before saving. The third return
+            # carries any [CTA_Q:…] the LLM wrote, so the fallback can still
+            # surface that contextual one-liner if it has to infer the dim.
+            full_answer, cta_data, _cta_q = _strip_cta_marker(full_answer, bant_config)
 
-        _stream_error = False
-        _leak_aborted = False
-        # Strip [CTA:…] / [CTA_Q:…] sentinels from the stream as they arrive,
-        # so the visitor never sees the raw token typed into the bubble. The
-        # post-stream _strip_cta_marker call still runs against full_answer
-        # for DB persistence + CTA payload extraction; this is purely a
-        # display-side safeguard.
-        cta_sanitizer = _StreamCtaSanitizer()
-        try:
-            chunk_count = 0
-            async for chunk in generate_response_stream(
-                prompt,
-                temperature=0.3,
-                max_tokens=600,
-                metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
-            ):
-                if chunk:
-                    chunk_count += 1
-                    full_answer += chunk
-                    safe_chunk = cta_sanitizer.feed(chunk)
-                    if safe_chunk:
-                        yield safe_chunk
-                    # Output-side leakage guard: if the accumulated answer
-                    # contains a system-prompt sentinel, stop streaming and
-                    # replace the persisted message with the refusal. We
-                    # cannot un-yield the bytes already sent, but we can stop
-                    # any further leakage and avoid storing the leaked text.
-                    if contains_system_prompt_leak(full_answer):
-                        _safety_net_metric(
-                            "system_prompt_leak",
-                            path="stream",
-                            session=session_id,
-                            bot_id=bid,
-                        )
-                        _leak_aborted = True
-                        full_answer = _off_topic_refusal(_company_name)
-                        yield f"\n\n{full_answer}"
-                        suggest_handoff = False
-                        break
+            # Markdown safety net: if the LLM ended on a follow-up question
+            # without a preceding blank line, the renderer glues it onto the
+            # previous list item (e.g. "- 24x7 supportWhich of these…"). Splice
+            # in the missing paragraph break before persisting so the saved
+            # history view is always clean.
+            full_answer = _ensure_followup_spacing(full_answer)
 
-            # Drain any text the sanitiser was still holding (e.g. trailing
-            # "[" that turned out not to be a sentinel). Skip on leak-abort —
-            # the buffer at that point may be partial sentinel and is unsafe.
-            if not _leak_aborted:
-                tail = cta_sanitizer.flush()
-                if tail:
-                    yield tail
-
-            if chunk_count == 0:
-                logger.warning(f"LLM returned zero chunks for session {session_id}")
-                yield "I'm sorry, I couldn't generate a response. Please try again or ask something else."
-                full_answer = "I'm sorry, I couldn't generate a response. Please try again or ask something else."
-        except Exception as e:
-            logger.error(f"Streaming prompt error ({type(e).__name__}): {e}", exc_info=True)
-            yield " [I encountered an error. Please try again.]"
-            _stream_error = True
-            suggest_handoff = False  # Don't suggest handoff on errored/partial responses
-
-        # Strip CTA marker from response before saving. The third return
-        # carries any [CTA_Q:…] the LLM wrote, so the fallback can still
-        # surface that contextual one-liner if it has to infer the dim.
-        full_answer, cta_data, _cta_q = _strip_cta_marker(full_answer, bant_config)
-
-        # Markdown safety net: if the LLM ended on a follow-up question
-        # without a preceding blank line, the renderer glues it onto the
-        # previous list item (e.g. "- 24x7 supportWhich of these…"). Splice
-        # in the missing paragraph break before persisting so the saved
-        # history view is always clean.
-        full_answer = _ensure_followup_spacing(full_answer)
-
-        # Drift detection: the system prompt forbids asking a question in the
-        # body when [CTA_Q:…] is emitted (avoids two prompts in one bubble).
-        # We don't auto-rewrite — natural-language surgery is too risky — but
-        # we log a warning so prompt drift is visible in journalctl over time.
-        if _cta_q and _body_asks_a_question(full_answer):
-            logger.warning(
-                "[cta] double-question drift | session=%s bot=%s cta_q=%r body_tail=%r",
-                session_id,
-                bid,
-                _cta_q[:80],
-                full_answer[-120:],
-            )
-
-        # Safety net: if the LLM asked a qualifying question but forgot the
-        # [CTA:dim] marker, infer the CTA from the answer text so the
-        # quick-reply chips still render. Only the *streaming* path needs
-        # this — every visitor turn goes through here today, and the
-        # non-streaming path does not surface CTA chips to the widget.
-        if cta_data is None and is_bant_enabled:
-            cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config, contextual_q=_cta_q)
-
-        # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
-        # Build it inside a try/finally so even a DB failure sends the frame.
-        bot_msg_id = None
-        final_meta: dict = {}
-
-        # Detect + strip [MEETING_CARD] token from the LLM response. Card
-        # resolution (calendly_url etc.) runs AFTER precedence + dedupe below,
-        # so a suppressed meeting card doesn't emit show_booking metadata.
-        _meeting_card_detected = bool(_meeting_card_re.search(full_answer))
-        if _meeting_card_detected:
-            full_answer = _meeting_card_re.sub("", full_answer).rstrip()
-            logger.info("Meeting card token detected | session=%s", session_id)
-
-        # Detect + strip [LEAVE_MESSAGE_CARD] token from the LLM response.
-        _leave_msg_card_detected = bool(_leave_message_card_re.search(full_answer))
-        if _leave_msg_card_detected:
-            full_answer = _leave_message_card_re.sub("", full_answer).rstrip()
-            logger.info("Leave-message card token detected | session=%s", session_id)
-
-        # Safety net: if the intent classifier missed handoff but the LLM
-        # still produced a handoff-style response, override suggest_handoff.
-        if not suggest_handoff and not _stream_error:
-            _live = getattr(bot, "live_chat_enabled", True) if bot else True
-            if _live and _response_suggests_handoff(full_answer):
-                suggest_handoff = True
-                _safety_net_metric(
-                    "handoff_safety_net_triggered",
-                    path="stream",
-                    bot_id=bid,
-                    session=session_id,
+            # Drift detection: the system prompt forbids asking a question in the
+            # body when [CTA_Q:…] is emitted (avoids two prompts in one bubble).
+            # We don't auto-rewrite — natural-language surgery is too risky — but
+            # we log a warning so prompt drift is visible in journalctl over time.
+            if _cta_q and _body_asks_a_question(full_answer):
+                logger.warning(
+                    "[cta] double-question drift | session=%s bot=%s cta_q=%r body_tail=%r",
+                    session_id,
+                    bid,
+                    _cta_q[:80],
+                    full_answer[-120:],
                 )
 
-        # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly asks
-        # for async team contact but the LLM forgot to emit the sentinel.
-        # Mirrors the non-streaming path — see its comment for rationale.
-        _leave_msg_safety_net_fired = False
-        if (
-            not _leave_msg_card_detected
-            and not _meeting_card_detected
-            and not suggest_handoff
-            and not _stream_error
-            and _question_suggests_leave_message(question)
-            and _response_suggests_leave_message(full_answer)
-        ):
-            _leave_msg_card_detected = True
-            _leave_msg_safety_net_fired = True
-            _safety_net_metric(
-                "leave_message_safety_net_triggered",
-                path="stream",
-                bot_id=bid,
-                session=session_id,
-            )
+            # Safety net: if the LLM asked a qualifying question but forgot the
+            # [CTA:dim] marker, infer the CTA from the answer text so the
+            # quick-reply chips still render. Only the *streaming* path needs
+            # this — every visitor turn goes through here today, and the
+            # non-streaming path does not surface CTA chips to the widget.
+            if cta_data is None and is_bant_enabled:
+                cta_data = _infer_cta_fallback(full_answer, current_bant, bant_config, contextual_q=_cta_q)
 
-        # Precedence: [MEETING_CARD] wins over [LEAVE_MESSAGE_CARD] when both
-        # fire this turn — booking flow collects contact as part of confirm.
-        if _meeting_card_detected and _leave_msg_card_detected:
-            _leave_msg_card_detected = False
-            logger.info(
-                "Leave-message card suppressed by meeting-card precedence | session=%s",
-                session_id,
-            )
+            # Always yield FINAL_METADATA so the frontend never hangs waiting for it.
+            # Build it inside a try/finally so even a DB failure sends the frame.
+            bot_msg_id = None
+            final_meta: dict = {}
 
-        # Per-session dedupe for the meeting card only — see non-streaming
-        # path above for the reasoning. Leave-message intentionally re-renders
-        # so visitors can send a follow-up message without the promised form
-        # silently disappearing.
-        if _meeting_card_detected and _card_already_shown(chat_session, "meeting"):
-            _meeting_card_detected = False
-            logger.info("Meeting card suppressed (already shown) | session=%s", session_id)
+            # Detect + strip [MEETING_CARD] token from the LLM response. Card
+            # resolution (calendly_url etc.) runs AFTER precedence + dedupe below,
+            # so a suppressed meeting card doesn't emit show_booking metadata.
+            _meeting_card_detected = bool(_meeting_card_re.search(full_answer))
+            if _meeting_card_detected:
+                full_answer = _meeting_card_re.sub("", full_answer).rstrip()
+                logger.info("Meeting card token detected | session=%s", session_id)
 
-        # Resolve meeting-card data now that precedence + dedupe are settled.
-        if _meeting_card_detected:
-            meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
-            if meeting_data:
-                final_meta.update(meeting_data)
-            else:
-                # _resolve_meeting_booking returned {} (provider URL missing or
-                # already booked) — don't flip to card-shown state.
-                _meeting_card_detected = False
-        try:
-            if not _stream_error or full_answer:
-                bot_msg = add_chat_message(
-                    session, session_id, client_id=cid, role="bot", content=full_answer, bot_id=bid
-                )
+            # Detect + strip [LEAVE_MESSAGE_CARD] token from the LLM response.
+            _leave_msg_card_detected = bool(_leave_message_card_re.search(full_answer))
+            if _leave_msg_card_detected:
+                full_answer = _leave_message_card_re.sub("", full_answer).rstrip()
+                logger.info("Leave-message card token detected | session=%s", session_id)
 
-                if _lf and hasattr(bot_msg, "trace_id"):
-                    with contextlib.suppress(Exception):
-                        bot_msg.trace_id = _lf.get_current_trace_id()
-
-                # Flush first to execute the INSERT and populate bot_msg.id.
-                # This lets us capture the id before commit so FINAL_METADATA
-                # always carries message_id even if the commit later fails.
-                session.flush()
-                bot_msg_id = bot_msg.id
-                session.commit()
-
-                # Only cache a real LLM answer — never cache the zero-chunk
-                # fallback string, which would poison the QA cache. Also skip
-                # caching when any per-turn inline trigger fires (handoff,
-                # meeting card, leave-message card, CTA button): those flags
-                # aren't stored in the cache payload and would silently vanish
-                # on future hits, making a cached response miss its CTA.
-                _skip_cache_for_turn = (
-                    suggest_handoff or _meeting_card_detected or _leave_msg_card_detected or bool(cta_data)
-                )
-                if _cache_key and full_answer and chunk_count > 0 and not _skip_cache_for_turn:
-                    cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
-
-                if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
-                    # Pass bid (id), not the bot ORM object — see streaming
-                    # path's equivalent call above for the rationale.
-                    submit_background(
-                        _background_bant_extraction,
-                        session_id,
-                        cid,
-                        bid,
-                        history_context,
-                        question,
-                        full_answer,
-                        current_bant,
-                        bid,
-                        bant_config,
-                        bot_msg_id,
+            # Safety net: if the intent classifier missed handoff but the LLM
+            # still produced a handoff-style response, override suggest_handoff.
+            if not suggest_handoff and not _stream_error:
+                _live = getattr(bot, "live_chat_enabled", True) if bot else True
+                if _live and _response_suggests_handoff(full_answer):
+                    suggest_handoff = True
+                    _safety_net_metric(
+                        "handoff_safety_net_triggered",
+                        path="stream",
+                        bot_id=bid,
+                        session=session_id,
                     )
 
-                live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
-                if bot_msg_id:
-                    final_meta["message_id"] = bot_msg_id
-                if suggest_handoff and live_chat_on:
-                    final_meta["suggest_handoff"] = True
-                if cta_data:
-                    final_meta["cta"] = cta_data
+            # Safety net: force [LEAVE_MESSAGE_CARD] when the turn clearly asks
+            # for async team contact but the LLM forgot to emit the sentinel.
+            # Mirrors the non-streaming path — see its comment for rationale.
+            _leave_msg_safety_net_fired = False
+            if (
+                not _leave_msg_card_detected
+                and not _meeting_card_detected
+                and not suggest_handoff
+                and not _stream_error
+                and _question_suggests_leave_message(question)
+                and _response_suggests_leave_message(full_answer)
+            ):
+                _leave_msg_card_detected = True
+                _leave_msg_safety_net_fired = True
+                _safety_net_metric(
+                    "leave_message_safety_net_triggered",
+                    path="stream",
+                    bot_id=bid,
+                    session=session_id,
+                )
 
-                # Mark meeting card as shown for per-session dedupe (only if
-                # resolution actually populated show_booking above).
-                if _meeting_card_detected and final_meta.get("show_booking"):
-                    _mark_card_shown(chat_session, "meeting")
+            # Precedence: [MEETING_CARD] wins over [LEAVE_MESSAGE_CARD] when both
+            # fire this turn — booking flow collects contact as part of confirm.
+            if _meeting_card_detected and _leave_msg_card_detected:
+                _leave_msg_card_detected = False
+                logger.info(
+                    "Leave-message card suppressed by meeting-card precedence | session=%s",
+                    session_id,
+                )
 
-                # Leave-message card: only show when a live-chat handoff isn't
-                # already being suggested this turn, so the two CTAs never
-                # compete for the visitor's attention.
-                if _leave_msg_card_detected and not final_meta.get("suggest_handoff"):
-                    final_meta["show_leave_message"] = True
-                    _mark_card_shown(chat_session, "leave_message")
-                    if _leave_msg_safety_net_fired:
-                        _safety_net_metric(
-                            "leave_message_card_rendered",
-                            path="stream",
-                            source="safety_net",
-                            bot_id=bid,
-                            session=session_id,
+            # Per-session dedupe for the meeting card only — see non-streaming
+            # path above for the reasoning. Leave-message intentionally re-renders
+            # so visitors can send a follow-up message without the promised form
+            # silently disappearing.
+            if _meeting_card_detected and _card_already_shown(chat_session, "meeting"):
+                _meeting_card_detected = False
+                logger.info("Meeting card suppressed (already shown) | session=%s", session_id)
+
+            # Resolve meeting-card data now that precedence + dedupe are settled.
+            if _meeting_card_detected:
+                meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
+                if meeting_data:
+                    final_meta.update(meeting_data)
+                else:
+                    # _resolve_meeting_booking returned {} (provider URL missing or
+                    # already booked) — don't flip to card-shown state.
+                    _meeting_card_detected = False
+            try:
+                if not _stream_error or full_answer:
+                    bot_msg = add_chat_message(
+                        session, session_id, client_id=cid, role="bot", content=full_answer, bot_id=bid
+                    )
+
+                    if _lf and hasattr(bot_msg, "trace_id"):
+                        with contextlib.suppress(Exception):
+                            bot_msg.trace_id = _lf.get_current_trace_id()
+
+                    # Flush first to execute the INSERT and populate bot_msg.id.
+                    # This lets us capture the id before commit so FINAL_METADATA
+                    # always carries message_id even if the commit later fails.
+                    session.flush()
+                    bot_msg_id = bot_msg.id
+                    session.commit()
+
+                    # Only cache a real LLM answer — never cache the zero-chunk
+                    # fallback string, which would poison the QA cache. Also skip
+                    # caching when any per-turn inline trigger fires (handoff,
+                    # meeting card, leave-message card, CTA button): those flags
+                    # aren't stored in the cache payload and would silently vanish
+                    # on future hits, making a cached response miss its CTA.
+                    _skip_cache_for_turn = (
+                        suggest_handoff or _meeting_card_detected or _leave_msg_card_detected or bool(cta_data)
+                    )
+                    if _cache_key and full_answer and chunk_count > 0 and not _skip_cache_for_turn:
+                        cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
+
+                    if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
+                        # Pass bid (id), not the bot ORM object — see streaming
+                        # path's equivalent call above for the rationale.
+                        submit_background(
+                            _background_bant_extraction,
+                            session_id,
+                            cid,
+                            bid,
+                            history_context,
+                            question,
+                            full_answer,
+                            current_bant,
+                            bid,
+                            bant_config,
+                            bot_msg_id,
                         )
 
-                # BANT-based meeting card (only if [MEETING_CARD] didn't already
-                # trigger AND meeting hasn't already been shown this session).
-                if not final_meta.get("show_booking") and not _card_already_shown(chat_session, "meeting"):
-                    bant_meeting = _resolve_meeting_booking(bot, session, session_id, bid)
-                    if bant_meeting:
-                        show_for_sql = (chat_session.bant_tier or "unqualified") == "sql"
-                        if show_for_sql:
-                            final_meta.update(bant_meeting)
-                            _mark_card_shown(chat_session, "meeting")
+                    live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
+                    if bot_msg_id:
+                        final_meta["message_id"] = bot_msg_id
+                    if suggest_handoff and live_chat_on:
+                        final_meta["suggest_handoff"] = True
+                    if cta_data:
+                        final_meta["cta"] = cta_data
 
-                # Persist any mutation made to chat_session.inline_cards_shown
-                # by the _mark_card_shown calls above.
-                session.commit()
-        except Exception as cleanup_err:
-            logger.error(f"Post-stream cleanup failed for session {session_id}: {cleanup_err}", exc_info=True)
-            with contextlib.suppress(Exception):
-                session.rollback()
-        finally:
-            yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
+                    # Mark meeting card as shown for per-session dedupe (only if
+                    # resolution actually populated show_booking above).
+                    if _meeting_card_detected and final_meta.get("show_booking"):
+                        _mark_card_shown(chat_session, "meeting")
 
-        logger.info(f"Hybrid RAG stream finished for session: {session_id}")
+                    # Leave-message card: only show when a live-chat handoff isn't
+                    # already being suggested this turn, so the two CTAs never
+                    # compete for the visitor's attention.
+                    if _leave_msg_card_detected and not final_meta.get("suggest_handoff"):
+                        final_meta["show_leave_message"] = True
+                        _mark_card_shown(chat_session, "leave_message")
+                        if _leave_msg_safety_net_fired:
+                            _safety_net_metric(
+                                "leave_message_card_rendered",
+                                path="stream",
+                                source="safety_net",
+                                bot_id=bid,
+                                session=session_id,
+                            )
+
+                    # BANT-based meeting card (only if [MEETING_CARD] didn't already
+                    # trigger AND meeting hasn't already been shown this session).
+                    if not final_meta.get("show_booking") and not _card_already_shown(chat_session, "meeting"):
+                        bant_meeting = _resolve_meeting_booking(bot, session, session_id, bid)
+                        if bant_meeting:
+                            show_for_sql = (chat_session.bant_tier or "unqualified") == "sql"
+                            if show_for_sql:
+                                final_meta.update(bant_meeting)
+                                _mark_card_shown(chat_session, "meeting")
+
+                    # Persist any mutation made to chat_session.inline_cards_shown
+                    # by the _mark_card_shown calls above.
+                    session.commit()
+            except Exception as cleanup_err:
+                logger.error(f"Post-stream cleanup failed for session {session_id}: {cleanup_err}", exc_info=True)
+                with contextlib.suppress(Exception):
+                    session.rollback()
+            finally:
+                yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
+
+            logger.info(f"Hybrid RAG stream finished for session: {session_id}")
     finally:
         if _lf_trace is not None:
             with contextlib.suppress(Exception):

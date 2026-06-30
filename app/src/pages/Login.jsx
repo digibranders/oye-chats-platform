@@ -29,6 +29,15 @@ export default function Login() {
   // touches localStorage, so a stale token can't haunt later logins.
   const [searchParams] = useSearchParams();
   const affiliateToken = searchParams.get('affiliate_token') || '';
+  // Deep-link round-trip target. Push-notification clicks land at
+  // `/support?session=<id>`; an intervening auth bounce would lose that
+  // context. ProtectedRoute appends `?next=` when redirecting unauthenticated
+  // users here so we can navigate to the original target after login.
+  const rawNext = searchParams.get('next') || '';
+  // Only honour same-origin relative paths — anything starting with `//`,
+  // a protocol, or an external host is rejected to prevent open-redirect
+  // attacks via a crafted notification payload.
+  const safeNext = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '';
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -73,10 +82,10 @@ export default function Login() {
         loggedIn = true;
         // Operators are never affiliates by design — backend always
         // returns is_affiliate=false for X-Operator-Key principals. So
-        // even when an affiliate_token is present we route to /support;
-        // any logged-in affiliate redeeming an invite must use a client
-        // login, not an operator login.
-        navigate('/support');
+        // even when an affiliate_token is present we route to the deep-link
+        // target (push-notification round-trip) or /support; any logged-in
+        // affiliate redeeming an invite must use a client login.
+        navigate(safeNext || '/support');
       } catch {
         // Operator login failed — try admin login
       }
@@ -104,6 +113,10 @@ export default function Login() {
         } else if (affiliateToken) {
           // Affiliate token always wins over the default landing target.
           navigate(`/affiliate-invite?token=${encodeURIComponent(affiliateToken)}`);
+        } else if (safeNext) {
+          // Deep-link round-trip (e.g. push-notification click landed on
+          // /support?session=<id> before auth bounced through here).
+          navigate(safeNext);
         } else if (data.is_superadmin) {
           navigate('/superadmin/overview');
         } else {

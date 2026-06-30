@@ -12,7 +12,7 @@ from app.db.models import Bot, Document
 from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
 from app.ingestion.pipeline import run_folder_ingestion
-from app.schemas.client import CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
+from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
 from app.services.crawler_service import (
     acquire_crawl_lock,
     get_crawl_progress,
@@ -545,6 +545,154 @@ async def crawl_discover_endpoint(
         "url": discover_request.url,
         "total_found": total,
         "capped": total >= discovery_cap,
+        "plan_max": plan_max,
+    }
+
+
+@router.post("/crawl/diff")
+@limiter.limit("30/hour", key_func=key_from_api_key)
+async def crawl_diff_endpoint(
+    diff_request: CrawlDiffRequest,
+    request: Request,
+    bot_id: int | None = Query(None),
+    auth: dict = Depends(get_current_client_or_operator),
+):
+    """Diff a recrawl against the existing knowledge base for the given source.
+
+    Runs the same robots.txt → sitemap → BFS discovery as ``/crawl/discover`` and
+    compares the resulting URL set against the pages already stored under
+    ``replace_source`` for this bot/client. Returns exact counts: ``unchanged``
+    (URL present in both), ``new_pages`` (in sitemap but not stored), and
+    ``removed_pages`` (stored but no longer in sitemap).
+
+    Notes:
+    * URL-level diff only — actual content changes are detected per-page during
+      the crawl itself via the SHA-256 dedup hash in the ingestion pipeline. This
+      endpoint is fast (no page fetches) and is purely for the pre-recrawl
+      confirmation UI.
+    * Numbers are exact within the discovery cap; if ``capped`` is true the
+      sitemap exceeded the plan ceiling and only the first ``plan_max`` URLs
+      were considered.
+    """
+    _require_knowledge_management_access(auth)
+    client_id = auth["client_id"]
+    _verify_bot_ownership(bot_id, client_id)
+    _check_memory()
+
+    from urllib.parse import urlparse
+
+    from app.services import plan_service
+    from app.services.crawler_script import normalize_url
+    from app.services.url_discovery import check_urls_alive, discover_website_urls
+
+    with get_session() as db:
+        plan = plan_service.get_client_plan(db, client_id)
+        crawl_limits = plan_service.get_crawl_limits(plan)
+        plan_max = crawl_limits["max_crawl_pages"]
+
+    discovery_cap = min(plan_max, 1000)
+
+    # Stored ``document_name`` values were written through the crawler's
+    # ``normalize_url`` (strip www., drop tracking params, remove trailing
+    # slash + ``/index.html``, sort query string). Discovery returns raw
+    # sitemap/HTML URLs, so we MUST run them through the same function or
+    # nothing will ever line up.
+    def _normalize(u: str) -> str:
+        try:
+            return normalize_url(u.strip())
+        except Exception:
+            return u.strip().rstrip("/").lower()
+
+    # ── Step 1: pull every URL-typed Document for this scope ──────────────
+    # Filter by hostname in Python. The legacy SQL ``domain_expr`` in the
+    # orphan sweep extracts ``https://host`` and compares it against the
+    # bare-domain ``replace_source`` — that filter never matches in practice.
+    target_host = diff_request.replace_source.lower().removeprefix("www.")
+    owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
+    with get_session() as db:
+        url_rows = (
+            db.query(Document.document_name).filter(owner_filter, Document.document_name.like("http%")).distinct().all()
+        )
+
+    # Map normalized URL → canonical raw URL we'll HEAD-check. Two stored
+    # variants (e.g. ``/about/`` and ``/about``) collapse to one normalized
+    # key so we only probe the origin once per page.
+    stored_norm_to_raw: dict[str, str] = {}
+    for row in url_rows:
+        raw = row[0]
+        if not raw:
+            continue
+        try:
+            host = urlparse(raw).netloc.lower().removeprefix("www.")
+        except Exception:
+            continue
+        if host != target_host:
+            continue
+        norm = _normalize(raw)
+        stored_norm_to_raw.setdefault(norm, raw)
+
+    # ── Step 2: HEAD-check stored URLs (authoritative liveness) ───────────
+    # This is the key correctness change vs the previous URL-set-only diff:
+    # discovery and the original crawler use different traversal strategies
+    # and will find different URL sets even when the site hasn't changed,
+    # which made the diff hallucinate "removed" / "new" pages.
+    try:
+        liveness = await check_urls_alive(list(stored_norm_to_raw.values()))
+    except Exception as exc:
+        logger.warning("HEAD liveness check failed for %s: %s", diff_request.url, exc)
+        # Conservative fallback: assume every stored URL is still alive so a
+        # transient outage cannot make the UI suggest a destructive sweep.
+        liveness = {raw: True for raw in stored_norm_to_raw.values()}
+
+    unchanged_norm: set[str] = set()
+    removed_norm: set[str] = set()
+    for norm, raw in stored_norm_to_raw.items():
+        if liveness.get(raw, True):
+            unchanged_norm.add(norm)
+        else:
+            removed_norm.add(norm)
+
+    # ── Step 3: discover live URLs to find what's net-new ─────────────────
+    try:
+        sitemap_urls = await discover_website_urls(
+            diff_request.url,
+            max_urls=discovery_cap,
+            timeout=20.0,
+        )
+    except Exception as exc:
+        logger.warning("URL discovery failed for %s: %s", diff_request.url, exc)
+        sitemap_urls = []
+
+    discovery_norm_to_raw: dict[str, str] = {}
+    for u in sitemap_urls:
+        if not u:
+            continue
+        discovery_norm_to_raw.setdefault(_normalize(u), u)
+
+    # "New" = discovered but not previously stored. Discovery's reach only
+    # affects how many net-new pages we can show — it cannot incorrectly
+    # delete a page from the unchanged set.
+    new_norm = set(discovery_norm_to_raw.keys()) - set(stored_norm_to_raw.keys())
+
+    _PREVIEW_CAP = 500
+
+    def _sample(norm_set: set[str], lookup: dict[str, str]) -> list[str]:
+        # Show the raw URL the customer would recognise, sorted for stability.
+        return sorted({lookup[n] for n in norm_set if n in lookup})[:_PREVIEW_CAP]
+
+    return {
+        "url": diff_request.url,
+        "replace_source": diff_request.replace_source,
+        "sitemap_total": len(discovery_norm_to_raw),
+        "existing_total": len(stored_norm_to_raw),
+        "unchanged": len(unchanged_norm),
+        "new_pages": len(new_norm),
+        "removed_pages": len(removed_norm),
+        "unchanged_urls": _sample(unchanged_norm, stored_norm_to_raw),
+        "new_urls": _sample(new_norm, discovery_norm_to_raw),
+        "removed_urls": _sample(removed_norm, stored_norm_to_raw),
+        "preview_cap": _PREVIEW_CAP,
+        "capped": len(discovery_norm_to_raw) >= discovery_cap,
         "plan_max": plan_max,
     }
 
