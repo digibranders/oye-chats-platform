@@ -288,6 +288,108 @@ class TestUpdateBot:
 
         mock_cache.assert_called()
 
+    def test_persists_company_and_queue_fields(self, monkeypatch):
+        """PATCH writes company + live-chat queue fields onto the bot row.
+
+        The admin Bot Settings editor edits these four fields; they must be
+        accepted by ``UpdateBotRequest`` and applied by the generic setattr
+        step so they actually persist (round-trip starts here).
+        """
+        from app.api import bot_routes
+
+        bot = SimpleNamespace(
+            id=5,
+            client_id=1,
+            bot_key="bot-xyz",
+            name="Bot",
+            company_name=None,
+            company_description=None,
+            live_chat_queue_timeout_seconds=20,
+            live_chat_max_queue_size=10,
+            feature_flags={},
+            widget_messages={},
+            widget_config={},
+            bant_config=None,
+        )
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(bot)
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+
+        with patch("app.api.bot_routes.cache_delete"):
+            app = _build_app(auth_override=_client_auth())
+            tc = TestClient(app)
+            response = tc.patch(
+                "/bots/5",
+                json={
+                    "company_name": "Acme Inc",
+                    "company_description": "We sell anvils.",
+                    "live_chat_queue_timeout_seconds": 45,
+                    "live_chat_max_queue_size": 25,
+                },
+            )
+
+        assert response.status_code == 200
+        assert bot.company_name == "Acme Inc"
+        assert bot.company_description == "We sell anvils."
+        assert bot.live_chat_queue_timeout_seconds == 45
+        assert bot.live_chat_max_queue_size == 25
+
+
+class TestBotResponseRoundTrip:
+    """Schema-level guarantee that the four editor fields round-trip.
+
+    ``UpdateBotRequest`` must accept them and ``BotResponse`` must carry them
+    back, mirroring what GET /bots/{id} returns from the stored row.
+    """
+
+    def test_update_request_accepts_fields(self):
+        from app.api.bot_routes import UpdateBotRequest
+
+        req = UpdateBotRequest(
+            company_name="Acme Inc",
+            company_description="We sell anvils.",
+            live_chat_queue_timeout_seconds=45,
+            live_chat_max_queue_size=25,
+        )
+        dumped = req.dict(exclude_unset=True)
+        assert dumped == {
+            "company_name": "Acme Inc",
+            "company_description": "We sell anvils.",
+            "live_chat_queue_timeout_seconds": 45,
+            "live_chat_max_queue_size": 25,
+        }
+
+    def test_response_carries_fields(self):
+        from app.api.bot_routes import BotResponse
+
+        resp = BotResponse(
+            id=1,
+            bot_key="bot-xyz",
+            name="Bot",
+            website=None,
+            system_prompt=None,
+            company_name="Acme Inc",
+            company_description="We sell anvils.",
+            bot_logo=None,
+            launcher_name="Have Questions?",
+            launcher_logo=None,
+            primary_color="#ba68c8",
+            background_color="#ffffff",
+            header_color="#3A0CA3",
+            recommended_colors=[],
+            bant_enabled=False,
+            avatar_type="upload",
+            orb_color=None,
+            live_chat_queue_timeout_seconds=45,
+            live_chat_max_queue_size=25,
+            is_active=True,
+            created_at="2026-01-01T00:00:00",
+        )
+        assert resp.company_name == "Acme Inc"
+        assert resp.company_description == "We sell anvils."
+        assert resp.live_chat_queue_timeout_seconds == 45
+        assert resp.live_chat_max_queue_size == 25
+
 
 # ── Access control ───────────────────────────────────────────────────────────
 
