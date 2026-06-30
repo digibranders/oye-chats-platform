@@ -25,6 +25,11 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on simultaneous notification sockets per workspace. A few tabs
+# per operator is typical; this caps fan-out memory and stops a buggy or
+# malicious client from opening unbounded connections (PR #209 review #5).
+_MAX_CONNECTIONS_PER_CLIENT = 20
+
 
 class NotificationBroadcaster:
     """Per-workspace WebSocket registry with best-effort fan-out."""
@@ -68,14 +73,25 @@ class NotificationBroadcaster:
             logger.exception("schedule_broadcast failed")
             return False
 
-    async def connect(self, client_id: int, ws: WebSocket) -> None:
+    async def connect(self, client_id: int, ws: WebSocket) -> bool:
+        """Register a connection, enforcing the per-workspace cap.
+
+        Returns ``True`` if accepted, ``False`` when the workspace is already at
+        ``_MAX_CONNECTIONS_PER_CLIENT`` — the caller should close the socket.
+        """
         async with self._lock:
-            self._conns[client_id].add(ws)
-        logger.info(
-            "notification ws connected client_id=%s total=%d",
-            client_id,
-            len(self._conns[client_id]),
-        )
+            conns = self._conns[client_id]
+            if len(conns) >= _MAX_CONNECTIONS_PER_CLIENT:
+                logger.warning(
+                    "notification ws cap reached for client_id=%s (%d) — rejecting connection",
+                    client_id,
+                    len(conns),
+                )
+                return False
+            conns.add(ws)
+            total = len(conns)
+        logger.info("notification ws connected client_id=%s total=%d", client_id, total)
+        return True
 
     async def disconnect(self, client_id: int, ws: WebSocket) -> None:
         async with self._lock:

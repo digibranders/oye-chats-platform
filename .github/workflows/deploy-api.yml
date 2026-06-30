@@ -73,6 +73,31 @@ jobs:
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
+            # Preflight: this workflow rewrites api/.env in full, so a secret
+            # left unset in GitHub Actions would silently break prod on the next
+            # deploy. Fail fast instead of shipping a half-configured app
+            # (PR #209 review #6). Features that degrade gracefully (push,
+            # Stripe fallback, email, Redis, Sentry, Langfuse) only warn.
+            MISSING=""
+            for v in DB_URL OPENAI_API_KEY GOOGLE_API_KEY CORS_ORIGINS \
+                     R2_KEY_ID R2_APPLICATION_KEY R2_BUCKET_NAME R2_ENDPOINT \
+                     RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET \
+                     FRONTEND_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
+                     GOOGLE_REDIRECT_URI OAUTH_SUCCESS_REDIRECT_URL OAUTH_STATE_SECRET; do
+              if [ -z "$(printenv "$v" || true)" ]; then MISSING="$MISSING $v"; fi
+            done
+            if [ -n "$MISSING" ]; then
+              echo "::error::Deploy aborted — required secrets missing:$MISSING"
+              exit 1
+            fi
+            for v in VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY BREVO_API_KEY REDIS_URL \
+                     SENTRY_DSN_BACKEND LANGFUSE_SECRET_KEY LANGFUSE_PUBLIC_KEY \
+                     STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
+              if [ -z "$(printenv "$v" || true)" ]; then
+                echo "::warning::optional secret $v not set — related feature disabled"
+              fi
+            done
+
             cd /opt/oyechats/platform
 
             # Make the working tree match origin/main verbatim before

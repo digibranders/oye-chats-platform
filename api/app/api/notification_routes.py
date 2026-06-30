@@ -28,12 +28,32 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from sqlalchemy import select
 
 from app.api.auth import get_current_client_or_operator
+from app.core.middleware import get_cors_origins
+from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Client, Operator
 from app.db.session import get_session
 from app.services import notification_service
 from app.services.notification_broadcaster import broadcaster
 
 logger = logging.getLogger(__name__)
+
+
+def _dashboard_origin_allowed(origin_or_referer: str | None) -> bool:
+    """Whether a dashboard WebSocket may connect from ``origin_or_referer``.
+
+    Defense-in-depth for ``/ws/notifications`` (PR #209 review #5): the channel
+    is browser-only and dashboard-scoped, so we restrict it to the same origins
+    the HTTP CORS policy allows. Enforced only when ``CORS_ORIGINS`` is
+    configured (and not wildcard); otherwise we don't enforce, matching the
+    HTTP side. A missing ``Origin`` (non-browser client) is rejected when
+    enforcement is on.
+    """
+    origins = get_cors_origins()
+    if not origins or "*" in origins:
+        return True
+    allowed_hosts = [h for h in (extract_hostname(o) for o in origins) if h]
+    return is_origin_allowed(extract_hostname(origin_or_referer), allowed_hosts)
+
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -155,6 +175,13 @@ async def notifications_ws(ws: WebSocket):
         events as they happen. Other event types may be added later.
       • Client sends ``ping`` strings every 30s; server replies ``pong``.
     """
+    # Origin allowlist (parity with the dashboard CORS policy) — checked before
+    # auth so a foreign page is rejected outright (PR #209 review #5).
+    if not _dashboard_origin_allowed(ws.headers.get("origin") or ws.headers.get("referer")):
+        logger.warning("notifications_ws rejected by origin check: origin=%r", ws.headers.get("origin"))
+        await ws.close(code=1008)
+        return
+
     client_id, accepted = _auth_from_subprotocol(ws)
     if client_id is None:
         logger.warning("notifications_ws authentication failed (invalid subprotocol)")
@@ -163,7 +190,10 @@ async def notifications_ws(ws: WebSocket):
         return
 
     await ws.accept(subprotocol=accepted)
-    await broadcaster.connect(client_id, ws)
+    if not await broadcaster.connect(client_id, ws):
+        # Workspace is at the connection cap — ask the client to retry later.
+        await ws.close(code=1013)
+        return
 
     try:
         with get_session() as session:
