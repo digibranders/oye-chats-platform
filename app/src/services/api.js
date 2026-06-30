@@ -708,12 +708,32 @@ export const getGlobalFeedbackData = async () => {
 };
 
 /**
- * Client: Submit free-text feedback from the admin dashboard Feedback side tab.
- * @param {string} message - The feedback text
+ * Client: Submit classified feedback from the admin dashboard Feedback tab.
+ * @param {object} payload
+ * @param {string} payload.message - The feedback text (required)
+ * @param {string} [payload.type] - bug | feature_request | question | other
+ * @param {string|null} [payload.area] - billing | bots | knowledge | live_chat | dashboard | widget | other
+ * @param {string|null} [payload.severity] - low | medium | high | critical (bug-only)
+ * @param {object|null} [payload.context] - { page_url, app_version, plan_tier, user_agent }
+ * @param {Array|null} [payload.attachments] - [{ url, name?, content_type? }]
  */
-export const submitPlatformFeedback = async (message, category = null, attachmentUrl = null) => {
+export const submitPlatformFeedback = async ({
+    message,
+    type = 'other',
+    area = null,
+    severity = null,
+    context = null,
+    attachments = null,
+} = {}) => {
     try {
-        const response = await api.post('/client/feedback', { message, category, attachment_url: attachmentUrl });
+        const response = await api.post('/client/feedback', {
+            message,
+            type,
+            area,
+            severity,
+            context,
+            attachments,
+        });
         return response.data;
     } catch (error) {
         console.error('API Error submitting platform feedback:', error);
