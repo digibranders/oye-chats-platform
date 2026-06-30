@@ -83,6 +83,27 @@ def get_client_subscription(session: Session, client_id: int) -> Subscription | 
     return session.execute(stmt).scalars().first()
 
 
+def get_subscription_for_bot(session: Session, client_id: int, bot_id: int) -> Subscription | None:
+    """Return the active subscription funding a specific bot (remediation N3).
+
+    Under per-bot billing, mutation endpoints (cancel/resume/seats) must be able
+    to target a chosen bot's subscription rather than always acting on the
+    account's highest-tier one. Scoped by ``client_id`` so a bot owned by another
+    client never resolves. Ties break on most-recent.
+    """
+    stmt = (
+        select(Subscription)
+        .where(
+            Subscription.client_id == client_id,
+            Subscription.bot_id == bot_id,
+            Subscription.status.in_(("active", "trialing", "past_due")),
+        )
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )
+    return session.execute(stmt).scalars().first()
+
+
 def get_client_plan(session: Session, client_id: int) -> Plan:
     """Resolve the client's current plan. Falls back to the default (free) plan."""
     sub = get_client_subscription(session, client_id)

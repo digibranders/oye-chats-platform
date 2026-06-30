@@ -137,3 +137,35 @@ def test_get_or_create_usage_record_is_idempotent(db):
     db.commit()
     second = plan_service.get_or_create_usage_record(db, client.id)
     assert second.id == first.id
+
+
+def test_get_subscription_for_bot_targets_specific_bot(db):
+    """N3 — a client with two per-bot subscriptions can resolve either one by
+    bot_id, not just the account's highest-tier subscription."""
+    client = Client(name="c", email="n3@e.com", api_key="n3", hashed_password="h")
+    db.add(client)
+    db.flush()
+    standard = Plan(name="Standard", slug="standard", monthly_price_cents=399900, credits_per_month=10000)
+    starter = Plan(name="Starter", slug="starter", monthly_price_cents=99900, credits_per_month=2000)
+    db.add_all([standard, starter])
+    db.flush()
+    bot_a = Bot(client_id=client.id, bot_key="bot-a", name="A", is_legacy_pooled=False)
+    bot_b = Bot(client_id=client.id, bot_key="bot-b", name="B", is_legacy_pooled=False)
+    db.add_all([bot_a, bot_b])
+    db.flush()
+    sub_a = Subscription(
+        client_id=client.id, plan_id=standard.id, bot_id=bot_a.id, status="active", payment_provider="razorpay"
+    )
+    sub_b = Subscription(
+        client_id=client.id, plan_id=starter.id, bot_id=bot_b.id, status="active", payment_provider="razorpay"
+    )
+    db.add_all([sub_a, sub_b])
+    db.commit()
+
+    # Targeting bot B resolves the Starter sub, even though Standard is higher tier.
+    resolved_b = plan_service.get_subscription_for_bot(db, client.id, bot_b.id)
+    assert resolved_b is not None and resolved_b.id == sub_b.id
+    resolved_a = plan_service.get_subscription_for_bot(db, client.id, bot_a.id)
+    assert resolved_a is not None and resolved_a.id == sub_a.id
+    # A bot id not owned by the client resolves nothing.
+    assert plan_service.get_subscription_for_bot(db, client.id, 999999) is None

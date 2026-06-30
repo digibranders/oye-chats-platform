@@ -29,6 +29,7 @@ from app.services.plan_service import (
     get_active_plans,
     get_client_plan,
     get_client_subscription,
+    get_subscription_for_bot,
     lock_client_for_billing,
 )
 
@@ -36,6 +37,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 credits_router = APIRouter(prefix="/credits", tags=["credits"])
+
+
+def _resolve_target_subscription(session, client_id: int, bot_id: int | None):
+    """Resolve the subscription a mutation should act on (remediation N3).
+
+    When ``bot_id`` is given, target that bot's own subscription so a client with
+    several per-bot subscriptions can cancel/resume/reseat a specific one. When
+    omitted, fall back to the account's highest-tier subscription (legacy
+    behaviour for single-subscription clients).
+    """
+    if bot_id is not None:
+        return get_subscription_for_bot(session, client_id, bot_id)
+    return get_client_subscription(session, client_id)
 
 
 def effective_resets_at(sub: Subscription | None) -> datetime | None:
@@ -895,6 +909,7 @@ def cancel_scheduled_change_endpoint(client: Client = Depends(get_current_client
 
 class CancelSubscriptionRequest(BaseModel):
     reason: str | None = None
+    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/cancel")
@@ -903,11 +918,12 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
 
     Calls the upstream provider's cancel-at-cycle-end API; the local row is
     only marked ``cancel_at_period_end=True`` until the provider's webhook
-    fires the actual cancellation.
+    fires the actual cancellation. Pass ``bot_id`` to cancel a specific bot's
+    subscription under the per-bot model (N3); omit it to act on the account.
     """
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
-        sub = get_client_subscription(session, client.id)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
 
@@ -936,12 +952,23 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         return {"message": "Subscription will be canceled at the end of the current billing period."}
 
 
+class ResumeSubscriptionRequest(BaseModel):
+    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
+
+
 @router.post("/resume")
-def resume_subscription(client: Client = Depends(get_current_client)):
-    """Resume a subscription that was scheduled for cancellation."""
+def resume_subscription(
+    request: ResumeSubscriptionRequest = ResumeSubscriptionRequest(),
+    client: Client = Depends(get_current_client),
+):
+    """Resume a subscription that was scheduled for cancellation.
+
+    Pass ``bot_id`` to resume a specific bot's subscription (N3); omit to act on
+    the account's highest-tier subscription.
+    """
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
-        sub = get_client_subscription(session, client.id)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
 
@@ -963,6 +990,7 @@ def resume_subscription(client: Client = Depends(get_current_client)):
 
 class SeatChangeRequest(BaseModel):
     delta: int  # +1 to add a seat, -1 to remove. Must keep total >= included floor.
+    bot_id: int | None = None  # target a specific bot's subscription (N3); None = account
 
 
 @router.post("/seats")
@@ -981,7 +1009,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
 
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
-        sub = get_client_subscription(session, client.id)
+        sub = _resolve_target_subscription(session, client.id, request.bot_id)
         if not sub:
             raise HTTPException(status_code=404, detail="No active subscription found.")
         plan = sub.plan
