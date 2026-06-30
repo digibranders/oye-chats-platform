@@ -17,17 +17,32 @@ Conventions follow ``superadmin_routes_v2.py``:
 from __future__ import annotations
 
 import logging
+import uuid
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from app.api.auth import get_superadmin
 from app.api.superadmin_plan_routes import _to_usd_cents
 from app.api.superadmin_routes_v2 import _require_write
-from app.db.models import Client, Document, Invoice, Subscription, Webhook, WebhookDelivery
+from app.db.models import (
+    Bot,
+    ChatMessage,
+    ChatSession,
+    Client,
+    Document,
+    Invoice,
+    LeadInfo,
+    MeetingBooking,
+    Operator,
+    Subscription,
+    VisitorEvent,
+    Webhook,
+    WebhookDelivery,
+)
 from app.db.session import get_session
 from app.services.audit_service import record_audit
 
@@ -454,3 +469,340 @@ def revenue_cohorts(_admin: Client = Depends(get_superadmin)):
             }
             for cohort in sorted(signups)
         ]
+
+
+# ── Visitors (behavioral analytics) ──────────────────────────────────────────
+
+
+def _mask_api_key(key: str | None) -> str:
+    """Mask a credential to its last 4 chars (``••••••1a2b``); ``—`` when absent.
+
+    Never returns the full key — only the trailing 4 characters are revealed so
+    an operator can disambiguate keys without the value leaking to the client.
+    """
+    if not key:
+        return "—"
+    return "••••••" + key[-4:]
+
+
+@router.get("/visitors")
+def visitor_analytics(_admin: Client = Depends(get_superadmin)):
+    """Aggregate behavioral ``VisitorEvent`` data for the analytics dashboard.
+
+    Country / referrer / UTM source are pulled best-effort from the JSONB
+    ``event_data`` payload (keys ``country``, ``referrer``, ``utm_source``);
+    NULL / missing keys are skipped rather than surfaced as empty buckets.
+    Every list is capped at the top 10 and the daily series covers the trailing
+    14 days of ``page_view`` events. Empty data degrades to zeros / empty lists.
+    """
+    country_expr = VisitorEvent.event_data["country"].astext
+    referrer_expr = VisitorEvent.event_data["referrer"].astext
+    utm_expr = VisitorEvent.event_data["utm_source"].astext
+
+    with get_session() as session:
+        total_events = session.execute(select(func.count(VisitorEvent.id))).scalar() or 0
+        total_sessions = session.execute(select(func.count(func.distinct(VisitorEvent.session_id)))).scalar() or 0
+
+        by_event_type = [
+            {"event_type": event_type, "count": count}
+            for event_type, count in session.execute(
+                select(VisitorEvent.event_type, func.count(VisitorEvent.id))
+                .group_by(VisitorEvent.event_type)
+                .order_by(desc(func.count(VisitorEvent.id)))
+            ).all()
+        ]
+
+        top_countries = [
+            {"country": country, "count": count}
+            for country, count in session.execute(
+                select(country_expr, func.count(VisitorEvent.id))
+                .where(country_expr.isnot(None))
+                .group_by(country_expr)
+                .order_by(desc(func.count(VisitorEvent.id)))
+                .limit(10)
+            ).all()
+            if country
+        ]
+
+        top_referrers = [
+            {"referrer": referrer, "count": count}
+            for referrer, count in session.execute(
+                select(referrer_expr, func.count(VisitorEvent.id))
+                .where(referrer_expr.isnot(None))
+                .group_by(referrer_expr)
+                .order_by(desc(func.count(VisitorEvent.id)))
+                .limit(10)
+            ).all()
+            if referrer
+        ]
+
+        top_utm_sources = [
+            {"source": source, "count": count}
+            for source, count in session.execute(
+                select(utm_expr, func.count(VisitorEvent.id))
+                .where(utm_expr.isnot(None))
+                .group_by(utm_expr)
+                .order_by(desc(func.count(VisitorEvent.id)))
+                .limit(10)
+            ).all()
+            if source
+        ]
+
+        since = datetime.now(UTC) - timedelta(days=14)
+        day_expr = func.date_trunc("day", VisitorEvent.created_at)
+        daily = [
+            {"date": day.date().isoformat(), "count": count}
+            for day, count in session.execute(
+                select(day_expr.label("d"), func.count(VisitorEvent.id))
+                .where(VisitorEvent.event_type == "page_view")
+                .where(VisitorEvent.created_at >= since)
+                .group_by("d")
+                .order_by("d")
+            ).all()
+            if day is not None
+        ]
+
+        return {
+            "total_events": total_events,
+            "total_sessions": total_sessions,
+            "by_event_type": by_event_type,
+            "top_countries": top_countries,
+            "top_referrers": top_referrers,
+            "top_utm_sources": top_utm_sources,
+            "daily": daily,
+        }
+
+
+# ── Conversion funnel ────────────────────────────────────────────────────────
+
+_FUNNEL_PAYING_STATUSES = ("active", "past_due")
+
+
+@router.get("/funnel")
+def conversion_funnel(
+    days: int = Query(default=30, ge=1, le=365),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Compute the visitor → paying-customer funnel over the trailing window.
+
+    Each stage is a single grouped/aggregate query (no per-row Python loops).
+    ``pct`` is each stage's value as a percentage of the first stage (Sessions),
+    rounded to one decimal; it is ``0.0`` when the baseline is ``0``.
+    """
+    since = datetime.now(UTC) - timedelta(days=days)
+
+    with get_session() as session:
+        sessions_total = (
+            session.execute(select(func.count(ChatSession.id)).where(ChatSession.created_at >= since)).scalar() or 0
+        )
+
+        # Sessions with >= 2 messages, scoped to the window via the session's
+        # own created_at (one grouped subquery, no per-row loop).
+        engaged = (
+            session.execute(
+                select(func.count()).select_from(
+                    select(ChatMessage.session_id)
+                    .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+                    .where(ChatSession.created_at >= since)
+                    .group_by(ChatMessage.session_id)
+                    .having(func.count(ChatMessage.id) >= 2)
+                    .subquery()
+                )
+            ).scalar()
+            or 0
+        )
+
+        # Sessions with >= 1 user message.
+        asked = (
+            session.execute(
+                select(func.count(func.distinct(ChatMessage.session_id)))
+                .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+                .where(ChatSession.created_at >= since)
+                .where(ChatMessage.role == "user")
+            ).scalar()
+            or 0
+        )
+
+        leads = session.execute(select(func.count(LeadInfo.id)).where(LeadInfo.created_at >= since)).scalar() or 0
+
+        meetings = (
+            session.execute(select(func.count(MeetingBooking.id)).where(MeetingBooking.created_at >= since)).scalar()
+            or 0
+        )
+
+        paying = (
+            session.execute(
+                select(func.count(Subscription.id))
+                .where(Subscription.created_at >= since)
+                .where(Subscription.status.in_(_FUNNEL_PAYING_STATUSES))
+            ).scalar()
+            or 0
+        )
+
+    raw_stages = [
+        ("Sessions", sessions_total),
+        ("Engaged", engaged),
+        ("Asked a question", asked),
+        ("Captured as lead", leads),
+        ("Booked a meeting", meetings),
+        ("Converted to paying", paying),
+    ]
+    baseline = sessions_total
+    stages = [
+        {
+            "label": label,
+            "value": value,
+            "pct": round(value / baseline * 100, 1) if baseline else 0.0,
+        }
+        for label, value in raw_stages
+    ]
+    return {"days": days, "stages": stages}
+
+
+# ── Crawl jobs ───────────────────────────────────────────────────────────────
+
+
+@router.get("/crawls")
+def list_crawls(_admin: Client = Depends(get_superadmin)):
+    """List crawl jobs grouped from ``source == "crawl"`` document chunks.
+
+    A single crawled URL is stored as many ``Document`` rows (one per chunk)
+    that share ``(bot_id, document_name, file_hash)``. We group by ``file_hash``
+    to collapse them back into one job per crawl, count the chunks, and take the
+    earliest ``created_at`` as the job start. Bot / client names are batch-loaded
+    in one query each to avoid N+1 lookups.
+    """
+    with get_session() as session:
+        rows = session.execute(
+            select(
+                Document.file_hash,
+                Document.bot_id,
+                Document.document_name,
+                func.count(Document.id).label("chunk_count"),
+                func.min(Document.created_at).label("created_at"),
+            )
+            .where(Document.source == "crawl")
+            .group_by(Document.file_hash, Document.bot_id, Document.document_name)
+            .order_by(desc(func.min(Document.created_at)))
+            .limit(200)
+        ).all()
+
+        bot_ids = {row.bot_id for row in rows if row.bot_id is not None}
+        bot_names: dict[int, str | None] = {}
+        client_names: dict[int, str | None] = {}
+        if bot_ids:
+            bot_rows = session.execute(
+                select(Bot.id, Bot.name, Client.name)
+                .outerjoin(Client, Bot.client_id == Client.id)
+                .where(Bot.id.in_(bot_ids))
+            ).all()
+            for bot_id, bot_name, client_name in bot_rows:
+                bot_names[bot_id] = bot_name
+                client_names[bot_id] = client_name
+
+        return [
+            {
+                "id": row.file_hash,
+                "bot_id": row.bot_id,
+                "bot_name": bot_names.get(row.bot_id),
+                "client_name": client_names.get(row.bot_id),
+                "url": row.document_name,
+                "chunk_count": row.chunk_count,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+
+
+# ── API key registry ─────────────────────────────────────────────────────────
+
+
+@router.get("/api-keys")
+def api_key_registry(_admin: Client = Depends(get_superadmin)):
+    """Masked registry of client (``X-API-Key``) and operator keys.
+
+    Keys are never returned in full — only the trailing 4 characters are shown
+    (``••••••1a2b``); a missing operator key renders as ``—``.
+    """
+    with get_session() as session:
+        client_rows = session.execute(
+            select(Client.id, Client.name, Client.email, Client.api_key, Client.created_at)
+            .order_by(desc(Client.created_at))
+            .limit(200)
+        ).all()
+        clients = [
+            {
+                "id": cid,
+                "name": name,
+                "email": email,
+                "api_key_masked": _mask_api_key(api_key),
+                "created_at": created_at.isoformat() if created_at else None,
+            }
+            for cid, name, email, api_key, created_at in client_rows
+        ]
+
+        operator_rows = session.execute(
+            select(
+                Operator.id,
+                Operator.name,
+                Client.name,
+                Operator.operator_api_key,
+                Operator.is_active,
+            )
+            .outerjoin(Client, Operator.client_id == Client.id)
+            .order_by(desc(Operator.created_at))
+            .limit(200)
+        ).all()
+        operators = [
+            {
+                "id": oid,
+                "name": name,
+                "client_name": client_name,
+                "api_key_masked": _mask_api_key(operator_api_key),
+                "is_active": bool(is_active),
+            }
+            for oid, name, client_name, operator_api_key, is_active in operator_rows
+        ]
+
+        return {"clients": clients, "operators": operators}
+
+
+@router.post("/clients/{client_id}/rotate-api-key")
+def rotate_client_api_key(
+    client_id: int,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Regenerate a client's ``api_key``, invalidating their current key.
+
+    SECURITY: this immediately invalidates the client's existing ``X-API-Key`` —
+    any embed / integration using the old key stops authenticating until updated
+    with the new value. The freshly generated key is NOT returned in the response
+    body (only its masked form); retrieve the full value out-of-band if needed.
+    The new key is generated with ``uuid.uuid4().hex`` — the same generator used
+    when a client is first created at registration.
+    """
+    _require_write(admin)
+    with get_session() as session:
+        client = session.get(Client, client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        old_masked = _mask_api_key(client.api_key)
+        new_key = str(uuid.uuid4().hex)
+        client.api_key = new_key
+        session.flush()
+        new_masked = _mask_api_key(new_key)
+
+        record_audit(
+            session,
+            actor=admin,
+            action="client.rotate_api_key",
+            target_type="client",
+            target_id=client_id,
+            before={"api_key_masked": old_masked},
+            after={"api_key_masked": new_masked},
+            request=request,
+        )
+        session.commit()
+        return {"ok": True, "api_key_masked": new_masked}
