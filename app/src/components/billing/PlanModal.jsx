@@ -1187,10 +1187,15 @@ function ctasFor({
 // to align with credit budgets — see the migration's docstring for the
 // reasoning. Depth stays per a7c1e9f3b210 since that's a workload
 // protection, not a cost one.
+// ``-1`` (UNLIMITED) means the plan has no per-crawl page cap — page
+// spend is governed entirely by credits (5 credits per page). Starter
+// and Standard moved to UNLIMITED in migration c5d7a9e2b104; the
+// fallback table reflects that so the bullet renders correctly even
+// on environments where ``plan.limits`` couldn't be loaded.
 const CRAWL_FALLBACK_BY_SLUG = {
-    free:       { pages: 100,   depth: 3 },
-    starter:    { pages: 600,   depth: 4 },
-    standard:   { pages: 1500,  depth: 4 },
+    free:       { pages: 20,    depth: 2 },
+    starter:    { pages: -1,    depth: 4 },
+    standard:   { pages: -1,    depth: 4 },
     enterprise: { pages: 10000, depth: 5 },
 };
 
@@ -1215,7 +1220,9 @@ function buildFeatureList(plan) {
     if (plan.slug === 'enterprise') {
         out.push('Custom credit allocation');
         out.push('Unlimited operator seats');
-        if (maxCrawlPages != null) {
+        if (maxCrawlPages === -1) {
+            out.push(`Unlimited pages per crawl (depth ${maxCrawlDepth ?? 5})`);
+        } else if (maxCrawlPages != null) {
             out.push(`Crawl up to ${maxCrawlPages.toLocaleString()} pages (depth ${maxCrawlDepth ?? 5})`);
         }
         out.push('BANT lead qualification scoring');
@@ -1238,7 +1245,15 @@ function buildFeatureList(plan) {
                 : `${seats} operator seat${seats === 1 ? '' : 's'} included`,
         );
     }
-    if (maxCrawlPages != null) {
+    if (maxCrawlPages === -1) {
+        // UNLIMITED — paid tiers spend credits per page instead of
+        // hitting a fixed plan cap. Bullet copy mirrors KnowledgeBase's
+        // crawl-form hint so customers see the same language end-to-end.
+        out.push(
+            'Unlimited pages per crawl (5 credits each)' +
+                (maxCrawlDepth != null ? ` · depth ${maxCrawlDepth}` : ''),
+        );
+    } else if (maxCrawlPages != null) {
         out.push(
             `Crawl up to ${maxCrawlPages.toLocaleString()} pages` +
                 (maxCrawlDepth != null ? ` (depth ${maxCrawlDepth})` : ''),

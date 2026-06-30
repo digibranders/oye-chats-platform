@@ -101,7 +101,10 @@ _PLAN_DATA = {
             "documents": 15,
             "chat_history_days": 30,
             "max_crawl_depth": 3,
-            "max_crawl_pages": 300,
+            # ``-1`` (UNLIMITED): paid tiers no longer cap pages per crawl —
+            # spend is governed solely by the per-page credit deduction
+            # (see migration ``c5d7a9e2b104``). Free keeps a concrete cap.
+            "max_crawl_pages": -1,
             "max_crawl_js_pages": 60,
             "max_crawl_concurrency": 3,
         },
@@ -135,7 +138,8 @@ _PLAN_DATA = {
             "documents": 35,
             "chat_history_days": 90,
             "max_crawl_depth": 4,
-            "max_crawl_pages": 1200,
+            # ``-1`` (UNLIMITED): see migration ``c5d7a9e2b104``.
+            "max_crawl_pages": -1,
             "max_crawl_js_pages": 150,
             "max_crawl_concurrency": 4,
         },

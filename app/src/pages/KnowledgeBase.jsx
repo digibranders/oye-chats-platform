@@ -97,6 +97,9 @@ export default function KnowledgeBase() {
           // The hint UI is conservative on purpose: if we can't read the
           // plan, show the smallest plausible cap so a Standard customer
           // doesn't see "75 pages" and panic.
+          // ``-1`` is the UNLIMITED sentinel: paid tiers no longer cap
+          // pages per crawl — the hint copy switches to credit-based
+          // language in that case (see render below).
           maxPages: limits.max_crawl_pages ?? 100,
           maxDepth: limits.max_crawl_depth ?? 3,
           jsMaxPages: limits.max_crawl_js_pages ?? 25,
@@ -639,18 +642,35 @@ export default function KnowledgeBase() {
                 </div>
                 {crawlLimits && (
                   <p className="mt-2 text-xs text-surface-500 dark:text-surface-400">
-                    Your <span className="font-medium text-surface-700 dark:text-surface-200">{crawlLimits.planName}</span> plan: up to{' '}
-                    <span className="font-medium text-surface-700 dark:text-surface-200">
-                      {crawlLimits.maxPages.toLocaleString()} pages
-                    </span>{' '}
-                    per crawl
-                    {useJs && (
+                    Your <span className="font-medium text-surface-700 dark:text-surface-200">{crawlLimits.planName}</span> plan:{' '}
+                    {crawlLimits.maxPages === -1 ? (
                       <>
-                        {' '}({crawlLimits.jsMaxPages.toLocaleString()} in JS mode)
+                        <span className="font-medium text-surface-700 dark:text-surface-200">unlimited pages per crawl</span>
+                        {' '}— each page uses{' '}
+                        <span className="font-medium text-surface-700 dark:text-surface-200">5 credits</span>
+                        {useJs && (
+                          <>
+                            {' '}(JS mode capped at {crawlLimits.jsMaxPages.toLocaleString()} pages)
+                          </>
+                        )}
+                        , depth {crawlLimits.maxDepth}.
+                      </>
+                    ) : (
+                      <>
+                        up to{' '}
+                        <span className="font-medium text-surface-700 dark:text-surface-200">
+                          {crawlLimits.maxPages.toLocaleString()} pages
+                        </span>{' '}
+                        per crawl
+                        {useJs && (
+                          <>
+                            {' '}({crawlLimits.jsMaxPages.toLocaleString()} in JS mode)
+                          </>
+                        )}
+                        , depth {crawlLimits.maxDepth}.
                       </>
                     )}
-                    , depth {crawlLimits.maxDepth}.
-                    {crawlLimits.planSlug !== 'enterprise' && (
+                    {crawlLimits.planSlug !== 'enterprise' && crawlLimits.maxPages !== -1 && (
                       <>
                         {' '}
                         <a
