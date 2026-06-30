@@ -7,7 +7,13 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
-from app.core.feedback import FEEDBACK_RESOLVED_STATES, FEEDBACK_STATUSES
+from app.core.feedback import (
+    FEEDBACK_AREAS,
+    FEEDBACK_RESOLVED_STATES,
+    FEEDBACK_SEVERITIES,
+    FEEDBACK_STATUSES,
+    FEEDBACK_TYPES,
+)
 from app.core.security import get_password_hash
 from app.db.models import ChatMessage, ChatSession, Client, PlatformFeedback
 from app.db.session import get_session
@@ -172,25 +178,41 @@ def get_global_feedback(superadmin: Client = Depends(get_superadmin)):
         raise HTTPException(status_code=500, detail="Failed to load feedback data.") from e
 
 
+def _validate_feedback_filter(value: str | None, allowed: tuple[str, ...], field: str) -> None:
+    if value is not None and value not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field}. Must be one of: {', '.join(allowed)}",
+        )
+
+
 @router.get("/platform-feedback")
 def get_platform_feedback(
     status_filter: str | None = Query(None, alias="status"),
+    type_filter: str | None = Query(None, alias="type"),
+    area_filter: str | None = Query(None, alias="area"),
+    severity_filter: str | None = Query(None, alias="severity"),
     superadmin: Client = Depends(get_superadmin),
 ):
     """
-    Superadmin only: Get all free-text feedback submitted via the admin
-    dashboard "Feedback" side tab. Optionally filter by resolution ``status``.
+    Superadmin only: Get all customer-submitted platform feedback. Optionally
+    filter by resolution ``status`` and/or taxonomy (``type``/``area``/``severity``).
     """
-    if status_filter is not None and status_filter not in FEEDBACK_STATUSES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid status. Must be one of: {', '.join(FEEDBACK_STATUSES)}",
-        )
+    _validate_feedback_filter(status_filter, FEEDBACK_STATUSES, "status")
+    _validate_feedback_filter(type_filter, FEEDBACK_TYPES, "type")
+    _validate_feedback_filter(area_filter, FEEDBACK_AREAS, "area")
+    _validate_feedback_filter(severity_filter, FEEDBACK_SEVERITIES, "severity")
     try:
         from app.db.repository import get_all_platform_feedback
 
         with get_session() as session:
-            return get_all_platform_feedback(session, status=status_filter)
+            return get_all_platform_feedback(
+                session,
+                status=status_filter,
+                type_=type_filter,
+                area=area_filter,
+                severity=severity_filter,
+            )
     except Exception as e:
         logger.error(f"Failed to fetch platform feedback: {e}")
         raise HTTPException(status_code=500, detail="Failed to load platform feedback.") from e
@@ -199,6 +221,10 @@ def get_platform_feedback(
 class PlatformFeedbackUpdate(BaseModel):
     status: str | None = None
     admin_response: str | None = None
+    # Optional re-classification during triage.
+    type: str | None = None
+    area: str | None = None
+    severity: str | None = None
 
     @field_validator("admin_response")
     @classmethod
@@ -230,14 +256,14 @@ def update_platform_feedback(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Read-only super-admin: writes are not permitted.",
         )
-    if body.status is not None and body.status not in FEEDBACK_STATUSES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid status. Must be one of: {', '.join(FEEDBACK_STATUSES)}",
-        )
-    if body.status is None and body.admin_response is None:
-        raise HTTPException(status_code=400, detail="Provide status and/or admin_response to update.")
+    _validate_feedback_filter(body.status, FEEDBACK_STATUSES, "status")
+    _validate_feedback_filter(body.type, FEEDBACK_TYPES, "type")
+    _validate_feedback_filter(body.area, FEEDBACK_AREAS, "area")
+    _validate_feedback_filter(body.severity, FEEDBACK_SEVERITIES, "severity")
+    if all(v is None for v in (body.status, body.admin_response, body.type, body.area, body.severity)):
+        raise HTTPException(status_code=400, detail="Provide a field to update.")
 
+    from app.db.repository import _serialize_platform_feedback
     from app.services.notification_service import notify_feedback_resolved
 
     with get_session() as session:
@@ -248,6 +274,9 @@ def update_platform_feedback(
         before = {
             "status": feedback.status,
             "admin_response": feedback.admin_response,
+            "type": feedback.type,
+            "area": feedback.area,
+            "severity": feedback.severity,
             "resolved_at": feedback.resolved_at.isoformat() if feedback.resolved_at else None,
             "resolved_by": feedback.resolved_by,
         }
@@ -258,6 +287,16 @@ def update_platform_feedback(
             feedback.admin_response = body.admin_response
         if body.status is not None:
             feedback.status = body.status
+        if body.type is not None:
+            feedback.type = body.type
+        if body.area is not None:
+            feedback.area = body.area
+        if body.severity is not None:
+            feedback.severity = body.severity
+        # Severity is bug-only — clear it whenever the (possibly re-classified)
+        # type is not a bug, regardless of which field changed this request.
+        if feedback.type != "bug":
+            feedback.severity = None
 
         now_resolved = feedback.status in FEEDBACK_RESOLVED_STATES
         # Stamp resolver metadata on the transition INTO a resolved state.
@@ -281,6 +320,9 @@ def update_platform_feedback(
             after={
                 "status": feedback.status,
                 "admin_response": feedback.admin_response,
+                "type": feedback.type,
+                "area": feedback.area,
+                "severity": feedback.severity,
                 "resolved_at": feedback.resolved_at.isoformat() if feedback.resolved_at else None,
                 "resolved_by": feedback.resolved_by,
             },
@@ -303,14 +345,7 @@ def update_platform_feedback(
         result = {
             "client_id": feedback.client_id,
             "resolved_by": feedback.resolved_by,
-            "id": feedback.id,
-            "message": feedback.message,
-            "attachment_url": feedback.attachment_url,
-            "category": feedback.category,
-            "status": feedback.status,
-            "admin_response": feedback.admin_response,
-            "resolved_at": feedback.resolved_at.isoformat() if feedback.resolved_at else None,
-            "created_at": feedback.created_at.isoformat() if feedback.created_at else None,
+            **_serialize_platform_feedback(feedback),
         }
         session.commit()
 

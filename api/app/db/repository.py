@@ -911,13 +911,30 @@ def save_platform_feedback(
     message: str,
     attachment_url: str | None = None,
     category: str | None = None,
+    type_: str = "other",
+    area: str | None = None,
+    severity: str | None = None,
+    context: dict | None = None,
+    attachments: list[dict] | None = None,
 ) -> PlatformFeedback:
-    """Persist a free-text feedback entry from an admin dashboard user."""
+    """Persist a classified feedback entry from an admin dashboard user.
+
+    ``severity`` is bug-only — it is dropped unless ``type_`` is ``"bug"``. When
+    ``attachments`` are provided, the first URL is mirrored into the legacy
+    ``attachment_url`` column for back-compat with the single-attachment readers.
+    """
+    if attachments:
+        attachment_url = attachment_url or attachments[0].get("url")
     entry = PlatformFeedback(
         client_id=client_id,
         message=message,
         attachment_url=attachment_url,
         category=category,
+        type=type_,
+        area=area,
+        severity=severity if type_ == "bug" else None,
+        context=context or None,
+        attachments=attachments or None,
     )
     session.add(entry)
     session.commit()
@@ -926,12 +943,22 @@ def save_platform_feedback(
 
 
 def _serialize_platform_feedback(fb: PlatformFeedback) -> dict:
-    """Shared serialization for a platform feedback row (status loop fields)."""
+    """Shared serialization for a platform feedback row (taxonomy + status loop)."""
+    # Coalesce the multi-attachment array from the legacy single column so old
+    # rows render in the new gallery UI without a data migration.
+    attachments = fb.attachments
+    if not attachments:
+        attachments = [{"url": fb.attachment_url}] if fb.attachment_url else []
     return {
         "id": fb.id,
         "message": fb.message,
         "attachment_url": fb.attachment_url,
+        "attachments": attachments,
         "category": fb.category,
+        "type": fb.type,
+        "area": fb.area,
+        "severity": fb.severity,
+        "context": fb.context or None,
         "status": fb.status,
         "admin_response": fb.admin_response,
         "resolved_at": fb.resolved_at.isoformat() if fb.resolved_at else None,
@@ -939,10 +966,17 @@ def _serialize_platform_feedback(fb: PlatformFeedback) -> dict:
     }
 
 
-def get_all_platform_feedback(session, status: str | None = None) -> list[dict]:
+def get_all_platform_feedback(
+    session,
+    status: str | None = None,
+    type_: str | None = None,
+    area: str | None = None,
+    severity: str | None = None,
+) -> list[dict]:
     """Return all platform feedback for the superadmin, newest first.
 
-    ``status`` optionally filters to a single resolution state.
+    Each of ``status`` / ``type_`` / ``area`` / ``severity`` optionally narrows
+    the result to a single value.
     """
     stmt = (
         select(
@@ -955,6 +989,12 @@ def get_all_platform_feedback(session, status: str | None = None) -> list[dict]:
     )
     if status:
         stmt = stmt.where(PlatformFeedback.status == status)
+    if type_:
+        stmt = stmt.where(PlatformFeedback.type == type_)
+    if area:
+        stmt = stmt.where(PlatformFeedback.area == area)
+    if severity:
+        stmt = stmt.where(PlatformFeedback.severity == severity)
     results = session.execute(stmt).all()
     return [
         {

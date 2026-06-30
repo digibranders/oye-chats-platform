@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from pydantic import BaseModel, field_validator
 
 from app.api.auth import get_current_client
+from app.core.feedback import CONTEXT_KEYS, FEEDBACK_AREAS, FEEDBACK_SEVERITIES, FEEDBACK_TYPES
 from app.db.models import Bot, Client
 from app.db.session import get_session
 from app.schemas.client import ClientSettingsUpdate
@@ -110,7 +111,12 @@ def update_client_settings(
 class PlatformFeedbackCreate(BaseModel):
     message: str
     attachment_url: str | None = None
-    category: str | None = None
+    category: str | None = None  # deprecated; kept for back-compat with old clients
+    type: str = "other"
+    area: str | None = None
+    severity: str | None = None
+    context: dict | None = None
+    attachments: list | None = None
 
     @field_validator("message")
     @classmethod
@@ -122,13 +128,62 @@ class PlatformFeedbackCreate(BaseModel):
             raise ValueError("message must be 5000 characters or fewer")
         return v
 
+    @field_validator("type")
+    @classmethod
+    def type_valid(cls, v: str) -> str:
+        if v not in FEEDBACK_TYPES:
+            raise ValueError(f"type must be one of: {', '.join(FEEDBACK_TYPES)}")
+        return v
+
+    @field_validator("area")
+    @classmethod
+    def area_valid(cls, v: str | None) -> str | None:
+        if v is not None and v not in FEEDBACK_AREAS:
+            raise ValueError(f"area must be one of: {', '.join(FEEDBACK_AREAS)}")
+        return v
+
+    @field_validator("severity")
+    @classmethod
+    def severity_valid(cls, v: str | None) -> str | None:
+        if v is not None and v not in FEEDBACK_SEVERITIES:
+            raise ValueError(f"severity must be one of: {', '.join(FEEDBACK_SEVERITIES)}")
+        return v
+
+    @field_validator("context")
+    @classmethod
+    def context_whitelist(cls, v: dict | None) -> dict | None:
+        if not v:
+            return None
+        # Only persist the known metadata keys; coerce values to short strings.
+        cleaned = {k: str(v[k])[:500] for k in CONTEXT_KEYS if v.get(k) is not None}
+        return cleaned or None
+
+    @field_validator("attachments")
+    @classmethod
+    def attachments_normalize(cls, v: list | None) -> list | None:
+        if not v:
+            return None
+        out: list[dict] = []
+        for item in v[:10]:  # hard cap to keep the row bounded
+            if isinstance(item, str):
+                out.append({"url": item})
+            elif isinstance(item, dict) and item.get("url"):
+                out.append(
+                    {
+                        "url": str(item["url"]),
+                        **({"name": str(item["name"])} if item.get("name") else {}),
+                        **({"content_type": str(item["content_type"])} if item.get("content_type") else {}),
+                    }
+                )
+        return out or None
+
 
 @router.post("/feedback", status_code=201)
 def submit_platform_feedback(
     body: PlatformFeedbackCreate,
     client: Client = Depends(get_current_client),
 ):
-    """Save free-text feedback from an admin dashboard user."""
+    """Save a classified feedback entry from an admin dashboard user."""
     try:
         from app.db.repository import save_platform_feedback
 
@@ -139,6 +194,11 @@ def submit_platform_feedback(
                 message=body.message,
                 attachment_url=body.attachment_url,
                 category=body.category,
+                type_=body.type,
+                area=body.area,
+                severity=body.severity,
+                context=body.context,
+                attachments=body.attachments,
             )
         return {"ok": True}
     except Exception as e:
