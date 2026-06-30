@@ -1541,7 +1541,26 @@ class PlatformFeedback(Base):
     category = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
 
+    # ── Resolution loop ──────────────────────────────────────────────────
+    # A superadmin can triage and resolve customer-submitted feedback; the
+    # submitting client sees the status + written response back in the app.
+    status = Column(
+        String(20),
+        nullable=False,
+        default="open",
+        server_default="open",
+        index=True,
+    )  # open | in_progress | resolved | closed
+    admin_response = Column(Text, nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_by = Column(
+        Integer,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     client = relationship("Client", foreign_keys=[client_id])
+    resolver = relationship("Client", foreign_keys=[resolved_by])
 
 
 # ── Web Push subscriptions (operator notifications) ──────────────────────────

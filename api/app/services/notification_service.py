@@ -38,6 +38,7 @@ TYPE_PLAN_PURCHASED = "plan_purchased"
 TYPE_BOT_CREATED = "bot_created"
 TYPE_OFFLINE_MESSAGE = "offline_message_received"
 TYPE_HANDOFF_REQUEST = "handoff_request"
+TYPE_FEEDBACK_RESOLVED = "feedback_resolved"
 
 KNOWN_TYPES = frozenset(
     {
@@ -45,6 +46,7 @@ KNOWN_TYPES = frozenset(
         TYPE_BOT_CREATED,
         TYPE_OFFLINE_MESSAGE,
         TYPE_HANDOFF_REQUEST,
+        TYPE_FEEDBACK_RESOLVED,
     }
 )
 
@@ -313,6 +315,36 @@ def notify_handoff_request(
             "bot_name": bot_name,
             "department_id": department_id,
             "department_name": department_name,
+        },
+    )
+
+
+def notify_feedback_resolved(
+    session: Session,
+    *,
+    client_id: int,
+    feedback_id: int,
+    message_preview: str,
+    admin_response: str | None = None,
+) -> dict[str, Any]:
+    """Tell the submitting client their platform feedback was resolved."""
+    preview = (message_preview or "").strip()
+    if len(preview) > 140:
+        preview = preview[:137] + "…"
+    body = "Our team has responded to your feedback." if admin_response else "Your feedback has been marked resolved."
+    return create_notification(
+        session,
+        client_id=client_id,
+        type_=TYPE_FEEDBACK_RESOLVED,
+        title="Your feedback was resolved",
+        body=body,
+        # Opens the "My Feedback" view in the dashboard (handled in AdminLayout);
+        # note ``/feedback`` is a separate route that redirects to visitor CSAT.
+        link=f"/?feedback={feedback_id}",
+        data={
+            "feedback_id": feedback_id,
+            "message_preview": preview,
+            "has_response": bool(admin_response),
         },
     )
 

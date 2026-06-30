@@ -802,6 +802,7 @@ def llm_usage(
                 func.percentile_disc(0.5).within_group(LLMCallLog.latency_ms).label("p50"),
                 func.percentile_disc(0.95).within_group(LLMCallLog.latency_ms).label("p95"),
                 func.coalesce(func.sum(func.case((LLMCallLog.fallback_used, 1), else_=0)), 0).label("fallbacks"),
+                func.coalesce(func.sum(func.case((LLMCallLog.error.isnot(None), 1), else_=0)), 0).label("errors"),
             )
             .where(LLMCallLog.created_at >= cutoff)
             .group_by("d", LLMCallLog.model)
@@ -850,6 +851,7 @@ def llm_usage(
                 "p50_latency_ms": int(r.p50) if r.p50 is not None else None,
                 "p95_latency_ms": int(r.p95) if r.p95 is not None else None,
                 "fallback_count": int(r.fallbacks),
+                "error_count": int(r.errors),
             }
             for r in rows
         ]

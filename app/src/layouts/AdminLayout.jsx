@@ -34,6 +34,8 @@ function AdminLayoutInner() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackTab, setFeedbackTab] = useState('send');
+  const [feedbackHighlightId, setFeedbackHighlightId] = useState(null);
 
   // Push notifications — registers the service worker, surfaces the
   // permission state, and re-subscribes the operator on every mount when
@@ -74,6 +76,24 @@ function AdminLayoutInner() {
     navigator.serviceWorker.addEventListener('message', handler);
     return () => navigator.serviceWorker.removeEventListener('message', handler);
   }, [navigate]);
+
+  // Deep-link from the "feedback resolved" notification: ``/?feedback=<id>``
+  // opens the modal on the "My Feedback" tab and highlights the row, then
+  // strips the param so a refresh/back doesn't re-open it.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('feedback')) return;
+    const raw = params.get('feedback');
+    const id = Number(raw);
+    /* eslint-disable react-hooks/set-state-in-effect -- opening the modal in response to a URL deep-link is an external-event sync */
+    setFeedbackTab('mine');
+    setFeedbackHighlightId(Number.isInteger(id) && id > 0 ? id : null);
+    setFeedbackOpen(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    params.delete('feedback');
+    const qs = params.toString();
+    navigate(`${location.pathname}${qs ? `?${qs}` : ''}`, { replace: true });
+  }, [location.search, location.pathname, navigate]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -189,7 +209,11 @@ function AdminLayoutInner() {
 
       {/* Floating right-edge feedback tab */}
       <button
-        onClick={() => setFeedbackOpen(true)}
+        onClick={() => {
+          setFeedbackTab('send');
+          setFeedbackHighlightId(null);
+          setFeedbackOpen(true);
+        }}
         aria-label="Send feedback"
         title="Send feedback"
         className="fixed right-0 top-1/2 -translate-y-1/2 hover:translate-x-[-4px] hover:brightness-110 active:brightness-95 transition-all duration-300 ease-in-out flex flex-col items-center justify-center gap-3.5 py-6 w-[44px] rounded-l-2xl rounded-r-none bg-gradient-to-b from-[#6d6bfa] to-[#3b32b3] shadow-[-6px_0_30px_rgba(99,102,241,0.5)] z-40 cursor-pointer"
@@ -208,9 +232,12 @@ function AdminLayoutInner() {
       </button>
 
       <FeedbackModal
+        key={feedbackOpen ? `feedback-${feedbackTab}` : 'feedback-closed'}
         isOpen={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
         onSubmit={handleFeedbackSubmit}
+        defaultTab={feedbackTab}
+        highlightId={feedbackHighlightId}
       />
 
       {/* Floating in-app banner for incoming live-chat handoffs. Suppresses

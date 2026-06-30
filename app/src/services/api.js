@@ -738,6 +738,22 @@ export const uploadFeedbackAttachment = async (file) => {
 };
 
 /**
+ * Client: Fetch the logged-in user's own platform feedback, newest first.
+ * Each item includes the resolution status and the admin's written response
+ * so the customer can see that their issue was handled.
+ * @returns {Promise<Array>} List of the caller's feedback objects
+ */
+export const getMyFeedback = async () => {
+    try {
+        const response = await api.get('/client/feedback');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching my feedback:', error);
+        throw buildApiError(error, 'Failed to load your feedback');
+    }
+};
+
+/**
  * Superadmin: Fetches all platform feedback submitted via the admin dashboard.
  * @returns {Promise<Array>} List of platform feedback objects
  */

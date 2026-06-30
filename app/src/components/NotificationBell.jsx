@@ -24,6 +24,7 @@ import {
     Headphones,
     Inbox,
     MailOpen,
+    MessageSquare,
     Trash2,
     X,
 } from 'lucide-react';
@@ -54,6 +55,12 @@ const TYPE_META = {
         ring: 'ring-rose-500/30 dark:ring-rose-400/30',
         wrap: 'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400',
         label: 'Live chat',
+    },
+    feedback_resolved: {
+        icon: MessageSquare,
+        ring: 'ring-emerald-500/30 dark:ring-emerald-400/30',
+        wrap: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
+        label: 'Feedback',
     },
 };
 
