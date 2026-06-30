@@ -790,6 +790,7 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         # the upstream event-id dedupe so the same id never lands twice.
         "refund.created": _handle_refund_created,
         "refund.processed": _handle_refund_created,
+        "refund.failed": _handle_refund_failed,
         # Disputes / chargebacks. Razorpay withdraws the funds on ``lost`` —
         # that's when we claw the credits back. ``created`` / ``won`` only move
         # the invoice's dispute status (H6).
@@ -1080,7 +1081,12 @@ def _emit_plan_purchased_notification(session: Session, client_id: int, plan_id:
         )
 
 
-def _grant_subscription_period(session: Session, subscription: Subscription, period_end: datetime | None) -> bool:
+def _grant_subscription_period(
+    session: Session,
+    subscription: Subscription,
+    period_end: datetime | None,
+    invoice_id: int | None = None,
+) -> bool:
     """Reset + grant the plan's monthly credits for ``period_end``, once.
 
     Idempotent per billing period (remediation H4): if the subscription's
@@ -1100,7 +1106,7 @@ def _grant_subscription_period(session: Session, subscription: Subscription, per
         return False
 
     credit_service.reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
-    credit_service.grant_for_subscription(session, subscription)
+    credit_service.grant_for_subscription(session, subscription, reference_id=invoice_id)
     if period_end is not None:
         subscription.last_granted_period_end = period_end
     else:
@@ -1289,34 +1295,39 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         datetime.fromtimestamp(sub_entity["current_end"], tz=UTC) if sub_entity.get("current_end") else None
     )
 
-    # Record the invoice if a payment entity was included.
+    # Record the invoice if a payment entity was included. Flushed so its id can
+    # link the period grant for precise refund clawback (C2 / NV5).
+    period_invoice_id: int | None = None
     if pay_entity and pay_entity.get("id"):
         rzp_payment_id = pay_entity["id"]
         existing = (
             session.execute(select(Invoice).where(Invoice.razorpay_payment_id == rzp_payment_id)).scalars().first()
         )
-        if not existing:
-            session.add(
-                Invoice(
-                    client_id=local.client_id,
-                    subscription_id=local.id,
-                    bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
-                    amount_cents=int(pay_entity.get("amount", 0)),
-                    currency=str(pay_entity.get("currency", "INR")).lower(),
-                    status="paid",
-                    razorpay_payment_id=rzp_payment_id,
-                    period_start=new_period_start,
-                    period_end=new_period_end,
-                    description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
-                    paid_at=datetime.now(UTC),
-                )
+        if existing:
+            period_invoice_id = existing.id
+        else:
+            period_invoice = Invoice(
+                client_id=local.client_id,
+                subscription_id=local.id,
+                bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
+                amount_cents=int(pay_entity.get("amount", 0)),
+                currency=str(pay_entity.get("currency", "INR")).lower(),
+                status="paid",
+                razorpay_payment_id=rzp_payment_id,
+                period_start=new_period_start,
+                period_end=new_period_end,
+                description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
+                paid_at=datetime.now(UTC),
             )
+            session.add(period_invoice)
+            session.flush()
+            period_invoice_id = period_invoice.id
 
     # Grant this period's credits at most once, keyed on the period end marker
     # (replaces the old fragile 24h time-window heuristic — H4). The activation
     # grant set the marker for the first period, so the first charged event for
     # that period is a no-op; each later renewal advances to a new period.
-    if _grant_subscription_period(session, local, new_period_end):
+    if _grant_subscription_period(session, local, new_period_end, invoice_id=period_invoice_id):
         logger.info(
             "Renewed monthly credits for client %s from subscription.charged (%s)",
             local.client_id,
@@ -1525,6 +1536,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         credits,
         note=f"Top-up ₹{amount_inr} pack (Razorpay {rzp_order_id or rzp_payment_id})",
         bot_id=target_bot_id,
+        reference_id=invoice.id,  # link grant → invoice for precise refund clawback (C2)
     )
     logger.info(
         "Granted %d top-up credits to client %s bot %s via Razorpay payment %s",
@@ -1608,6 +1620,7 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         note=f"Refund clawback for Razorpay refund {refund_entity.get('id', '?')}",
         bot_id=inv.bot_id,
         reasons=reasons,
+        invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
     )
 
     # Razorpay refunds may be partial; mirror Stripe's distinction so the
@@ -1624,6 +1637,40 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         entry_id,
     )
     return f"Refund processed: {clawed} credit(s) clawed back from invoice {inv.id}"
+
+
+def _handle_refund_failed(session: Session, payload: dict[str, Any]) -> str:
+    """A previously-initiated refund FAILED at the gateway — restore the credits
+    we clawed on ``refund.created`` (remediation N1).
+
+    Deduped on ``refund_failed:<id>`` so a replay can't over-restore. Matches the
+    original clawback rows by the deterministic note we wrote, mirrors them back,
+    and re-marks the invoice ``paid`` since the money was never actually returned.
+    """
+    refund_entity = (payload.get("refund") or {}).get("entity") or {}
+    refund_id = refund_entity.get("id")
+    if not refund_id:
+        return "refund.failed missing id"
+    if not _record_or_skip_event(session, f"refund_failed:{refund_id}"):
+        return f"Refund {refund_id} failure already handled"
+
+    payment_id = refund_entity.get("payment_id")
+    inv = _invoice_for_payment(session, payment_id) if payment_id else None
+    if inv is None:
+        logger.warning("refund.failed for unknown razorpay payment %s (refund %s)", payment_id, refund_id)
+        return f"Payment {payment_id} not found locally"
+
+    restored = credit_service.reverse_refund_clawback(
+        session,
+        client_id=inv.client_id,
+        bot_id=inv.bot_id,
+        clawback_note=f"Refund clawback for Razorpay refund {refund_id}",
+    )
+    if inv.status in ("refunded", "partially_refunded"):
+        inv.status = "paid"
+    session.flush()
+    logger.info("Razorpay refund %s failed → restored %s credits to invoice %s", refund_id, restored, inv.id)
+    return f"Refund {refund_id} failed: restored {restored} credit(s) to invoice {inv.id}"
 
 
 # ── Dispute / chargeback handling ────────────────────────────────────────────
@@ -1681,6 +1728,7 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
         note=f"Chargeback clawback for Razorpay dispute {dispute_id or '?'}",
         bot_id=inv.bot_id,
         reasons=reasons,
+        invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
     )
     inv.status = "dispute_lost"
     session.flush()

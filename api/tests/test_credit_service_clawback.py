@@ -504,3 +504,76 @@ def test_reconcile_topup_rejects_foreign_client(db, monkeypatch):
         rzp.reconcile_topup_from_razorpay(db, "order_x", "pay_x", expected_client_id=attacker.id)
     db.rollback()
     assert _balances(db, owner.id, None) == 0
+
+
+def test_refund_claws_invoice_linked_topup_not_most_recent(db):
+    """C2 precision — with two same-bot top-ups, refunding the OLDER invoice must
+    claw the grant LINKED to it (via reference_id), not the most-recent grant."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-c2p")
+
+    inv_a = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_A",
+    )
+    db.add(inv_a)
+    db.flush()
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id, reference_id=inv_a.id)
+
+    inv_b = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=8000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_B",
+    )
+    db.add(inv_b)
+    db.flush()
+    credit_service.grant_topup(db, client.id, 900, bot_id=bot.id, reference_id=inv_b.id)
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 1400
+
+    # Fully refund the OLDER invoice A → claws its linked 500 grant, leaving 900.
+    rzp._handle_refund_created(db, _refund_payload("pay_A", 4000, refund_id="rf_A"))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 900
+
+
+def test_refund_failed_restores_clawed_credits(db):
+    """N1 — refund.created claws on initiation; if the refund then FAILS at the
+    gateway, the clawed credits must be restored (idempotently)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-n1")
+    inv = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_n1",
+    )
+    db.add(inv)
+    db.flush()
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id, reference_id=inv.id)
+    db.commit()
+
+    rzp._handle_refund_created(db, _refund_payload("pay_n1", 4000, refund_id="rf_n1"))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 0
+    assert db.get(Invoice, inv.id).status == "refunded"
+
+    failed = {"refund": {"entity": {"id": "rf_n1", "payment_id": "pay_n1", "amount": 4000}}}
+    rzp._handle_refund_failed(db, failed)
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 500
+    assert db.get(Invoice, inv.id).status == "paid"
+
+    # Idempotent: a duplicate refund.failed must not over-restore.
+    rzp._handle_refund_failed(db, failed)
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 500

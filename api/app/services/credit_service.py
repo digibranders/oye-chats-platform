@@ -444,8 +444,14 @@ def grant_plan_credits(
     amount: int,
     note: str | None = None,
     bot_id: int | None = None,
+    reference_id: int | None = None,
 ) -> CreditLedger:
-    """Grant plan credits (subscription renewal). Never expire individually."""
+    """Grant plan credits (subscription renewal). Never expire individually.
+
+    ``reference_id`` links the grant to the originating ``Invoice.id`` so a
+    later refund can claw back *this* grant precisely instead of the most-recent
+    plan_grant in scope (remediation C2 / NV5).
+    """
     if amount <= 0:
         raise ValueError("grant_plan_credits requires positive amount")
     _acquire_client_lock(session, client_id, bot_id)
@@ -456,6 +462,7 @@ def grant_plan_credits(
         reason="plan_grant",
         expires_at=None,
         note=note,
+        reference_id=reference_id,
     )
     session.add(entry)
     session.flush()
@@ -468,6 +475,7 @@ def grant_topup(
     amount: int,
     note: str | None = None,
     bot_id: int | None = None,
+    reference_id: int | None = None,
 ) -> CreditLedger:
     """Grant top-up credits with an N-calendar-month expiry from now.
 
@@ -477,6 +485,10 @@ def grant_topup(
 
     Per-bot top-ups land in that bot's isolated ledger when ``bot_id`` is
     set; account-level top-ups (``bot_id=None``) land in the client pool.
+
+    ``reference_id`` links the grant to the originating ``Invoice.id`` so a
+    refund claws back *this* top-up rather than the most-recent one in scope
+    (remediation C2 — fixes refunding the older of two same-bot top-ups).
     """
     if amount <= 0:
         raise ValueError("grant_topup requires positive amount")
@@ -491,6 +503,7 @@ def grant_topup(
         reason="topup",
         expires_at=expires_at,
         note=note,
+        reference_id=reference_id,
     )
     session.add(entry)
     session.flush()
@@ -619,7 +632,9 @@ def expire_old_topups(session: Session) -> int:
 # ── High-level helpers used by webhook handlers ───────────────────────────────
 
 
-def grant_for_subscription(session: Session, subscription: Subscription) -> CreditLedger | None:
+def grant_for_subscription(
+    session: Session, subscription: Subscription, reference_id: int | None = None
+) -> CreditLedger | None:
     """Grant the subscription's plan credits for the current period.
 
     Used on initial signup and by the cron-fallback monthly grant. Idempotency
@@ -639,6 +654,7 @@ def grant_for_subscription(session: Session, subscription: Subscription) -> Cred
         int(plan.credits_per_month),
         note=f"{plan.name} monthly grant",
         bot_id=subscription.bot_id,
+        reference_id=reference_id,
     )
 
 
@@ -651,6 +667,7 @@ def clawback_refund(
     note: str,
     bot_id: int | None = None,
     reasons: tuple[str, ...] = ("plan_grant", "topup"),
+    invoice_id: int | None = None,
 ) -> tuple[int, int | None]:
     """Reverse credits on a refunded subscription / top-up invoice.
 
@@ -688,24 +705,47 @@ def clawback_refund(
     # clamp instead of multiplying past the original grant.
     refund_fraction = min(1.0, float(refund_minor) / float(charge_minor))
 
-    # Pick the most recent positive matching grant in this (client, bot) scope.
-    # We don't have a hard FK from invoice → ledger today, and a renewal cron
-    # runs at most once per period, so the latest grant of the right type is in
-    # practice the one this invoice paid for.
-    grant = (
-        session.execute(
-            select(CreditLedger)
-            .where(
-                *_scope_clause(client_id, bot_id),
-                CreditLedger.reason.in_(reasons),
-                CreditLedger.delta > 0,
+    # Prefer the grant LINKED to this invoice (remediation C2 / NV5): grants
+    # stamp ``reference_id = Invoice.id`` at grant time, so we can claw back the
+    # exact grant the refunded invoice paid for — not the most-recent grant of
+    # the same type, which mis-attributes when a client holds two same-scope
+    # top-ups or refunds an old subscription invoice after a renewal.
+    grant = None
+    if invoice_id is not None:
+        grant = (
+            session.execute(
+                select(CreditLedger)
+                .where(
+                    *_scope_clause(client_id, bot_id),
+                    CreditLedger.reason.in_(reasons),
+                    CreditLedger.delta > 0,
+                    CreditLedger.reference_id == invoice_id,
+                )
+                .order_by(CreditLedger.created_at.desc())
+                .limit(1)
             )
-            .order_by(CreditLedger.created_at.desc())
-            .limit(1)
+            .scalars()
+            .first()
         )
-        .scalars()
-        .first()
-    )
+
+    # Fallback for legacy / unlinked grants (rows created before C2 linking, or
+    # an activation grant with no invoice): the most-recent matching grant in
+    # scope is in practice the one this invoice paid for.
+    if grant is None:
+        grant = (
+            session.execute(
+                select(CreditLedger)
+                .where(
+                    *_scope_clause(client_id, bot_id),
+                    CreditLedger.reason.in_(reasons),
+                    CreditLedger.delta > 0,
+                )
+                .order_by(CreditLedger.created_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
     if grant is None:
         return (0, None)
 
@@ -730,3 +770,56 @@ def clawback_refund(
     session.add(entry)
     session.flush()
     return (clawback, entry.id)
+
+
+def reverse_refund_clawback(
+    session: Session,
+    *,
+    client_id: int,
+    bot_id: int | None,
+    clawback_note: str,
+) -> int:
+    """Restore credits previously clawed for a refund that later FAILED (N1).
+
+    ``refund.created`` claws credits on initiation so the customer can't spend
+    during settlement; if the gateway then *rejects* the refund, those credits
+    must come back. This finds the negative ``reason='refund'`` ledger rows this
+    refund wrote (matched by their exact ``clawback_note``) and writes a
+    mirroring positive row against the SAME ``grant_id`` — restoring the grant's
+    remaining balance and keeping :func:`get_balance_breakdown` accurate.
+
+    Idempotency is the caller's responsibility (a ``refund_failed:<id>`` marker
+    in ``processed_webhooks``); given that, re-running is still safe because the
+    restore is keyed on the original clawback rows. Returns total credits restored.
+    """
+    _acquire_client_lock(session, client_id, bot_id)
+    clawback_rows = (
+        session.execute(
+            select(CreditLedger).where(
+                *_scope_clause(client_id, bot_id),
+                CreditLedger.reason == "refund",
+                CreditLedger.delta < 0,
+                CreditLedger.note == clawback_note,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    restored = 0
+    for row in clawback_rows:
+        amount = -int(row.delta)
+        if amount <= 0:
+            continue
+        session.add(
+            CreditLedger(
+                client_id=client_id,
+                bot_id=bot_id,
+                delta=amount,
+                reason="refund",
+                grant_id=row.grant_id,
+                note=f"Re-grant after failed refund (reverses ledger {row.id})",
+            )
+        )
+        session.flush()
+        restored += amount
+    return restored
