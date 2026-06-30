@@ -220,6 +220,59 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
     return {"total": total, "succeeded": succeeded, "failed": failed}
 
 
+async def task_reembed_document(ctx: dict, document_id: int) -> dict:
+    """Re-run embedding for a single document row.
+
+    Documents are stored one chunk per row (``documents.content`` +
+    ``documents.embedding``). Super-admin "reindex" recomputes the chunk's
+    vector with the current embedding provider — useful after a provider /
+    dimension change or when a row's embedding is stale or NULL.
+
+    Returns a summary dict the ARQ result store keeps for status polling.
+    """
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.db.database import SessionLocal
+    from app.ingestion.embedder import embed_chunks
+
+    logger.info("task_reembed_document: document_id=%d", document_id)
+
+    with SessionLocal() as session:
+        row = session.execute(
+            text("SELECT content FROM documents WHERE id = :id"),
+            {"id": document_id},
+        ).fetchone()
+
+    if row is None:
+        logger.warning("task_reembed_document: document %d not found", document_id)
+        return {"document_id": document_id, "status": "not_found"}
+
+    content = row[0] or ""
+    try:
+        embeddings = await asyncio.to_thread(embed_chunks, [content])
+    except Exception as exc:
+        logger.error(
+            "task_reembed_document: embedding failed for document %d — %s: %s",
+            document_id,
+            type(exc).__name__,
+            exc,
+        )
+        return {"document_id": document_id, "status": "failed", "error": str(exc)}
+
+    emb_str = "[" + ",".join(str(v) for v in embeddings[0]) + "]"
+    with SessionLocal() as session:
+        session.execute(
+            text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
+            {"emb": emb_str, "id": document_id},
+        )
+        session.commit()
+
+    logger.info("task_reembed_document: document %d re-embedded", document_id)
+    return {"document_id": document_id, "status": "complete"}
+
+
 # ── Webhook Delivery ────────────────────────────────────────────────────────
 
 

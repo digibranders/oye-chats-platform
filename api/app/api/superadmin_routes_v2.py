@@ -647,6 +647,16 @@ class CouponCreate(BaseModel):
     applies_to_plan_ids: list[int] | None = None
 
 
+class CouponPatch(BaseModel):
+    code: str | None = None
+    percent_off: int | None = None
+    amount_off_cents: int | None = None
+    max_redemptions: int | None = None
+    expires_at: datetime | None = None
+    applies_to_plan_ids: list[int] | None = None
+    is_active: bool | None = None
+
+
 @router.get("/coupons")
 def list_coupons(_admin: Client = Depends(get_superadmin)):
     with get_session() as session:
@@ -685,6 +695,89 @@ def create_coupon(
         )
         session.commit()
         return _coupon_dict(coupon)
+
+
+@router.patch("/coupons/{coupon_id}")
+def update_coupon(
+    coupon_id: int,
+    body: CouponPatch,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Partial update of a coupon. Only provided fields are modified."""
+    _require_write(admin)
+    with get_session() as session:
+        coupon = session.get(Coupon, coupon_id)
+        if not coupon:
+            raise HTTPException(status_code=404, detail="Coupon not found")
+
+        update_data = body.model_dump(exclude_unset=True)
+        if not update_data:
+            return _coupon_dict(coupon)
+
+        # A coupon must always carry exactly one discount kind. Validate the
+        # resulting state (post-merge) so a PATCH can't leave it with both or
+        # neither — mirrors the create-time guard.
+        percent_off = update_data.get("percent_off", coupon.percent_off)
+        amount_off_cents = update_data.get("amount_off_cents", coupon.amount_off_cents)
+        if percent_off is None and amount_off_cents is None:
+            raise HTTPException(status_code=400, detail="Either percent_off or amount_off_cents must be set.")
+
+        before = _coupon_dict(coupon)
+        for field, value in update_data.items():
+            setattr(coupon, field, value)
+        session.flush()
+
+        record_audit(
+            session,
+            actor=admin,
+            action="coupon.update",
+            target_type="coupon",
+            target_id=coupon.id,
+            before=before,
+            after=_coupon_dict(coupon),
+            request=request,
+        )
+        session.commit()
+        return _coupon_dict(coupon)
+
+
+@router.delete("/coupons/{coupon_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_coupon(
+    coupon_id: int,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Delete a coupon.
+
+    A coupon that was never redeemed is hard-deleted. Once it has redemptions
+    it is instead soft-deactivated (``is_active=False``) so historical
+    attribution stays intact — same reasoning as the plan soft-delete.
+    """
+    _require_write(admin)
+    with get_session() as session:
+        coupon = session.get(Coupon, coupon_id)
+        if not coupon:
+            raise HTTPException(status_code=404, detail="Coupon not found")
+
+        before = _coupon_dict(coupon)
+        soft_deleted = (coupon.redemptions or 0) > 0
+        if soft_deleted:
+            coupon.is_active = False
+        else:
+            session.delete(coupon)
+        session.flush()
+
+        record_audit(
+            session,
+            actor=admin,
+            action="coupon.deactivate" if soft_deleted else "coupon.delete",
+            target_type="coupon",
+            target_id=coupon_id,
+            before=before,
+            request=request,
+        )
+        session.commit()
 
 
 # ── LLM usage (read-only) ───────────────────────────────────────────────────
