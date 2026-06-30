@@ -146,6 +146,23 @@ def submit_platform_feedback(
         raise HTTPException(status_code=500, detail="Failed to save feedback.") from e
 
 
+@router.get("/feedback")
+def list_my_feedback(client: Client = Depends(get_current_client)):
+    """List the logged-in client's own platform feedback, newest first.
+
+    Includes the resolution ``status`` and the superadmin's ``admin_response``
+    so the customer can see that their issue was handled.
+    """
+    try:
+        from app.db.repository import get_client_platform_feedback
+
+        with get_session() as session:
+            return get_client_platform_feedback(session, client_id=client.id)
+    except Exception as e:
+        logger.error(f"Failed to fetch client feedback: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load feedback.") from e
+
+
 @router.post("/feedback/upload")
 async def upload_feedback_attachment(
     request: Request,

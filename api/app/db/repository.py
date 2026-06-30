@@ -925,8 +925,25 @@ def save_platform_feedback(
     return entry
 
 
-def get_all_platform_feedback(session) -> list[dict]:
-    """Return all platform feedback for the superadmin, newest first."""
+def _serialize_platform_feedback(fb: PlatformFeedback) -> dict:
+    """Shared serialization for a platform feedback row (status loop fields)."""
+    return {
+        "id": fb.id,
+        "message": fb.message,
+        "attachment_url": fb.attachment_url,
+        "category": fb.category,
+        "status": fb.status,
+        "admin_response": fb.admin_response,
+        "resolved_at": fb.resolved_at.isoformat() if fb.resolved_at else None,
+        "created_at": fb.created_at.isoformat() if fb.created_at else None,
+    }
+
+
+def get_all_platform_feedback(session, status: str | None = None) -> list[dict]:
+    """Return all platform feedback for the superadmin, newest first.
+
+    ``status`` optionally filters to a single resolution state.
+    """
     stmt = (
         select(
             PlatformFeedback,
@@ -936,19 +953,30 @@ def get_all_platform_feedback(session) -> list[dict]:
         .outerjoin(Client, PlatformFeedback.client_id == Client.id)
         .order_by(desc(PlatformFeedback.created_at))
     )
+    if status:
+        stmt = stmt.where(PlatformFeedback.status == status)
     results = session.execute(stmt).all()
     return [
         {
-            "id": row.PlatformFeedback.id,
+            "client_id": row.PlatformFeedback.client_id,
             "client_name": row.client_name or "Unknown",
             "client_email": row.client_email or "",
-            "message": row.PlatformFeedback.message,
-            "attachment_url": row.PlatformFeedback.attachment_url,
-            "category": row.PlatformFeedback.category,
-            "created_at": row.PlatformFeedback.created_at.isoformat(),
+            "resolved_by": row.PlatformFeedback.resolved_by,
+            **_serialize_platform_feedback(row.PlatformFeedback),
         }
         for row in results
     ]
+
+
+def get_client_platform_feedback(session, client_id: int) -> list[dict]:
+    """Return the given client's own feedback, newest first (status loop view)."""
+    stmt = (
+        select(PlatformFeedback)
+        .where(PlatformFeedback.client_id == client_id)
+        .order_by(desc(PlatformFeedback.created_at))
+    )
+    rows = session.execute(stmt).scalars().all()
+    return [_serialize_platform_feedback(fb) for fb in rows]
 
 
 def get_visitor_data(session, client_id: int = None, bot_id: int = None):
