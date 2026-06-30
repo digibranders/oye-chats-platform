@@ -210,6 +210,47 @@ def test_no_ledger_scope_goes_negative_after_partial_refund(db):
     assert _balances(db, client.id, None) == 0
 
 
+def test_payment_captured_fetches_order_notes_when_absent(db, monkeypatch):
+    """payment.captured carries only the payment entity; top-up metadata lives on
+    the order's notes. The handler must fetch the order so a top-up grants from
+    payment.captured alone, not only from order.paid (H5)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-h5")
+    db.commit()
+
+    # payment.captured shape: payment entity with an order_id but no notes.
+    payload = {"payment": {"entity": {"id": "pay_h5", "order_id": "order_h5", "amount": 399900, "currency": "INR"}}}
+    fetched_order = {
+        "id": "order_h5",
+        "amount": 399900,
+        "currency": "INR",
+        "notes": {
+            "purpose": "topup",
+            "client_id": str(client.id),
+            "credits": "2000",
+            "amount_inr": "3999",
+            "bot_id": str(bot.id),
+        },
+    }
+
+    class _FakeRzp:
+        class order:
+            @staticmethod
+            def fetch(order_id):
+                assert order_id == "order_h5"
+                return fetched_order
+
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: _FakeRzp())
+
+    rzp._handle_payment_captured(db, payload)
+    db.commit()
+
+    inv = db.execute(select(Invoice).where(Invoice.razorpay_payment_id == "pay_h5")).scalars().first()
+    assert inv is not None
+    assert inv.bot_id == bot.id
+    assert _balances(db, client.id, bot.id) == 2000
+
+
 def test_refund_claws_once_across_created_and_processed_events(db):
     """refund.created and refund.processed are distinct webhook events for the
     same refund. A grant that lands between them must not be clawed twice (N2)."""
@@ -241,6 +282,89 @@ def test_refund_claws_once_across_created_and_processed_events(db):
     # refund.processed (same refund id, different webhook event) must be a
     # no-op — the new grant is untouched.
     rzp._handle_refund_created(db, _refund_payload("pay_n2", 4000, refund_id="rfnd_n2"))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 500
+
+
+def _dispute_payload(payment_id, dispute_id="dp_1", amount=None, status="lost"):
+    ent = {"id": dispute_id, "payment_id": payment_id, "status": status}
+    if amount is not None:
+        ent["amount"] = amount
+    return {"dispute": {"entity": ent}}
+
+
+def test_dispute_lost_claws_back_credits(db):
+    client = _client(db)
+    bot = _bot(db, client, key="bot-h6")
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+    inv = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_h6",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_dispute_lost(db, _dispute_payload("pay_h6", amount=4000))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 0
+    db.refresh(inv)
+    assert inv.status == "dispute_lost"
+
+
+def test_dispute_created_flags_invoice_without_clawing(db):
+    client = _client(db)
+    bot = _bot(db, client, key="bot-h6b")
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+    inv = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_h6b",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_dispute_created(db, _dispute_payload("pay_h6b", dispute_id="dp_b", status="open"))
+    db.commit()
+
+    assert _balances(db, client.id, bot.id) == 500  # not clawed yet
+    db.refresh(inv)
+    assert inv.status == "disputed"
+
+
+def test_dispute_lost_is_idempotent(db):
+    client = _client(db)
+    bot = _bot(db, client, key="bot-h6c")
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+    inv = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_h6c",
+    )
+    db.add(inv)
+    db.commit()
+
+    rzp._handle_dispute_lost(db, _dispute_payload("pay_h6c", dispute_id="dp_c", amount=4000))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 0
+
+    # A new grant arrives, then the same dispute event replays → no second claw.
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+    rzp._handle_dispute_lost(db, _dispute_payload("pay_h6c", dispute_id="dp_c", amount=4000))
     db.commit()
     assert _balances(db, client.id, bot.id) == 500
 

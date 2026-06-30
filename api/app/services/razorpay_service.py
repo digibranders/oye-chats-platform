@@ -790,6 +790,12 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         # the upstream event-id dedupe so the same id never lands twice.
         "refund.created": _handle_refund_created,
         "refund.processed": _handle_refund_created,
+        # Disputes / chargebacks. Razorpay withdraws the funds on ``lost`` —
+        # that's when we claw the credits back. ``created`` / ``won`` only move
+        # the invoice's dispute status (H6).
+        "payment.dispute.created": _handle_dispute_created,
+        "payment.dispute.lost": _handle_dispute_lost,
+        "payment.dispute.won": _handle_dispute_won,
     }
     handler = handlers.get(event_name)
     if handler is None:
@@ -1339,6 +1345,18 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     if not notes and order_entity:
         notes = order_entity.get("notes") or {}
 
+    # A ``payment.captured`` webhook carries only the PAYMENT entity, but top-up
+    # metadata lives on the ORDER's notes. When the order entity isn't in the
+    # payload (the common payment.captured shape), fetch the order so a top-up
+    # can be granted from payment.captured alone — not only from order.paid (H5).
+    order_id_for_notes = (pay_entity or {}).get("order_id")
+    if not notes and order_id_for_notes:
+        try:
+            fetched_order = _get_razorpay().order.fetch(order_id_for_notes)
+            notes = (fetched_order or {}).get("notes") or {}
+        except Exception:
+            logger.warning("Could not fetch Razorpay order %s for top-up notes", order_id_for_notes)
+
     purpose = notes.get("purpose")
 
     if purpose != "topup":
@@ -1496,3 +1514,80 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         entry_id,
     )
     return f"Refund processed: {clawed} credit(s) clawed back from invoice {inv.id}"
+
+
+# ── Dispute / chargeback handling ────────────────────────────────────────────
+
+
+def _extract_dispute_entity(payload: dict[str, Any]) -> dict[str, Any]:
+    return (payload.get("dispute") or {}).get("entity") or {}
+
+
+def _invoice_for_payment(session: Session, payment_id: str) -> Invoice | None:
+    return session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+
+
+def _handle_dispute_created(session: Session, payload: dict[str, Any]) -> str:
+    """A dispute/chargeback was opened. Razorpay withdraws the funds only on
+    ``lost``, so here we just flag the invoice; the credit clawback happens in
+    :func:`_handle_dispute_lost` (H6)."""
+    dispute = _extract_dispute_entity(payload)
+    payment_id = dispute.get("payment_id")
+    if not payment_id:
+        return "dispute missing payment_id"
+    inv = _invoice_for_payment(session, payment_id)
+    if inv is None:
+        logger.warning("dispute.created for unknown razorpay payment %s", payment_id)
+        return f"Payment {payment_id} not found locally"
+    inv.status = "disputed"
+    session.flush()
+    return f"Dispute {dispute.get('id')} opened on invoice {inv.id}"
+
+
+def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
+    """Dispute lost — Razorpay has withdrawn the funds, so reverse the credits
+    the payment granted, from the SAME ledger scope and grant type a refund
+    would use (C2). Deduped on the dispute id so a replay (or created→lost
+    sequence) can't double-claw."""
+    dispute = _extract_dispute_entity(payload)
+    dispute_id = dispute.get("id")
+    payment_id = dispute.get("payment_id")
+    if not payment_id:
+        return "dispute missing payment_id"
+    if dispute_id and not _record_or_skip_event(session, f"dispute_lost:{dispute_id}"):
+        return f"Dispute {dispute_id} already clawed back"
+    inv = _invoice_for_payment(session, payment_id)
+    if inv is None:
+        logger.warning("dispute.lost for unknown razorpay payment %s", payment_id)
+        return f"Payment {payment_id} not found locally"
+    charge_minor = int(inv.amount_cents or 0)
+    dispute_minor = int(dispute.get("amount") or charge_minor)
+    reasons = ("plan_grant",) if inv.subscription_id is not None else ("topup",)
+    clawed, _entry = credit_service.clawback_refund(
+        session,
+        client_id=inv.client_id,
+        charge_minor=charge_minor,
+        refund_minor=dispute_minor,
+        note=f"Chargeback clawback for Razorpay dispute {dispute_id or '?'}",
+        bot_id=inv.bot_id,
+        reasons=reasons,
+    )
+    inv.status = "dispute_lost"
+    session.flush()
+    return f"Dispute {dispute_id} lost: {clawed} credit(s) clawed from invoice {inv.id}"
+
+
+def _handle_dispute_won(session: Session, payload: dict[str, Any]) -> str:
+    """Dispute won — funds retained. We never clawed (clawback is on ``lost``),
+    so just clear the dispute flag."""
+    dispute = _extract_dispute_entity(payload)
+    payment_id = dispute.get("payment_id")
+    if not payment_id:
+        return "dispute missing payment_id"
+    inv = _invoice_for_payment(session, payment_id)
+    if inv is None:
+        return f"Payment {payment_id} not found locally"
+    if inv.status == "disputed":
+        inv.status = "paid"
+    session.flush()
+    return f"Dispute {dispute.get('id')} won on invoice {inv.id}"
