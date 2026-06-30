@@ -104,3 +104,18 @@ def test_create_plan_included_operator_seats_default(db, monkeypatch):
     listing = c.get("/superadmin/plans").json()
     plan = next(p for p in listing if p["id"] == plan_id)
     assert plan["included_operator_seats"] == 1
+
+
+def test_pricing_content_round_trip(db, monkeypatch):
+    c = _client(db, monkeypatch)
+    payload = {
+        "faq": [{"q": "Refunds?", "a": "Pro-rated."}],
+        "feature_matrix": [{"label": "SSO", "category": "security", "values": {"free": False, "enterprise": True}}],
+        "topup_packs": [{"usd": 19, "credits": 2000, "bonusPct": 0, "perThousandUsd": 9.5}],
+        "credit_costs": [{"action": "1 AI reply", "credits": 1}],
+    }
+    put = c.put("/superadmin/pricing-content", json=payload)
+    assert put.status_code == 200, put.text
+    got = c.get("/superadmin/pricing-content").json()
+    assert got["faq"][0]["q"] == "Refunds?"
+    assert got["feature_matrix"][0]["label"] == "SSO"

@@ -16,6 +16,7 @@ from app.config import DISPLAY_USD_TO_INR
 from app.core.pricing import display_price
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
+from app.services.plan_service import get_pricing_content, set_pricing_content
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,13 @@ class UpdateSubscriptionRequest(BaseModel):
     operator_quantity: int | None = Field(default=None, ge=0, le=1000)
     billing_cycle: str | None = None
     extend_trial_days: int | None = Field(default=None, ge=0, le=365)
+
+
+class PricingContentRequest(BaseModel):
+    faq: list | None = None
+    feature_matrix: list | None = None
+    topup_packs: list | None = None
+    credit_costs: list | None = None
 
 
 # ── Plan CRUD ──
@@ -287,6 +295,25 @@ def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
         logger.info(f"Superadmin {superadmin.id} deactivated plan {plan_id} ({plan.name})")
 
         return {"message": f"Plan '{plan.name}' deactivated successfully."}
+
+
+# ── Pricing Content ──
+
+
+@router.get("/pricing-content")
+def read_pricing_content(superadmin: Client = Depends(get_superadmin)):
+    """Editable website pricing copy (FAQ, comparison matrix, top-ups, costs)."""
+    with get_session() as session:
+        return get_pricing_content(session)
+
+
+@router.put("/pricing-content")
+def write_pricing_content(request: PricingContentRequest, superadmin: Client = Depends(get_superadmin)):
+    """Upsert any subset of the website pricing-content blobs."""
+    with get_session() as session:
+        set_pricing_content(session, request.model_dump(exclude_none=True))
+        logger.info(f"Superadmin {superadmin.id} updated pricing content")
+        return {"message": "Pricing content updated successfully."}
 
 
 # ── Subscription Management ──
