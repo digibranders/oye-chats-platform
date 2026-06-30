@@ -284,7 +284,8 @@ export default function KnowledgeBase() {
         return;
       }
       // Network/auth failure — still let the user proceed with a plain confirm.
-      setRecrawlDiff({ docName, crawlUrl, replaceSource, error: true });
+      const errorMessage = err?.message || err?.detail || (typeof err === 'string' ? err : null);
+      setRecrawlDiff({ docName, crawlUrl, replaceSource, error: true, errorMessage });
       setActiveTab('urls');
     } finally {
       setRecrawlDiffLoading(null);
@@ -293,10 +294,10 @@ export default function KnowledgeBase() {
 
   const handleConfirmRecrawl = async () => {
     if (!recrawlDiff) return;
-    const { docName } = recrawlDiff;
+    const { docName, new_pages: expectedNewPages = null } = recrawlDiff;
     setRecrawlDiff(null);
     setRecrawlDiffViewing(null);
-    await handleRecrawl(docName);
+    await handleRecrawl(docName, expectedNewPages);
   };
 
   const dismissRecrawlDiff = () => {
@@ -304,7 +305,7 @@ export default function KnowledgeBase() {
     setRecrawlDiffViewing(null);
   };
 
-  const handleRecrawl = async (docName) => {
+  const handleRecrawl = async (docName, expectedNewPages = null) => {
     setRecrawlingDoc(docName);
     const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
     // Normalize to root domain so the backend knows what stale chunks to sweep after success
@@ -315,9 +316,28 @@ export default function KnowledgeBase() {
       setActiveTab('urls');
       // Delegate to CrawlContext — it owns the lifecycle, the global toast
       // follows the user across routes, and the page just observes state.
-      await startCrawl({ url: crawlUrl, botId: selectedBot?.id, botName: selectedBot?.name, useJs: false, replaceSource });
+      // expectedNewPages comes from the /crawl/diff result and right-sizes
+      // the backend's credit pre-flight so a recrawl with 9 new pages isn't
+      // blocked by the plan's worst-case (e.g. 1200-page) reservation.
+      await startCrawl({
+        url: crawlUrl,
+        botId: selectedBot?.id,
+        botName: selectedBot?.name,
+        useJs: false,
+        replaceSource,
+        expectedNewPages,
+      });
     } catch (err) {
-      showToast('error', `Recrawl failed: ${err?.detail || err?.message || err}`);
+      // buildApiError flattens structured FastAPI errors (e.g. 402 insufficient_credits)
+      // into err.message — use that. Falling back to err.detail risks rendering an
+      // object into JSX (React #31) when detail is the raw {error, required, ...} bag.
+      const detailMessage =
+        err?.detail && typeof err.detail === 'object' && typeof err.detail.message === 'string'
+          ? err.detail.message
+          : typeof err?.detail === 'string'
+            ? err.detail
+            : null;
+      showToast('error', `Recrawl failed: ${err?.message || detailMessage || 'unknown error'}`);
       setActiveTab('list');
       setRecrawlingDoc(null);
     }
@@ -363,7 +383,18 @@ export default function KnowledgeBase() {
         );
         return;
       }
-      showToast('error', error.detail || error.message || 'Failed to start crawl.');
+      // buildApiError already extracts detail.message into error.message for
+      // structured FastAPI errors (e.g. 402 insufficient_credits). Rendering
+      // raw error.detail here used to land an object inside <p>{message}</p>
+      // and trigger React error #31. Prefer the flattened string; fall back
+      // to detail.message only if shape is unexpected.
+      const fallback =
+        detail && typeof detail === 'object' && typeof detail.message === 'string'
+          ? detail.message
+          : typeof detail === 'string'
+            ? detail
+            : null;
+      showToast('error', error.message || fallback || 'Failed to start crawl.');
     }
   };
 
@@ -782,9 +813,16 @@ export default function KnowledgeBase() {
                   <div className="h-px bg-slate-200 dark:bg-slate-800/80 my-5" />
 
                   {recrawlDiff.error ? (
-                    <div className="p-4 rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/50 dark:bg-rose-500/5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm">
-                      Couldn&apos;t fetch the page diff. You can still proceed — only
-                      changed pages will be re-embedded.
+                    <div className="p-4 rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/50 dark:bg-rose-500/5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm space-y-1.5">
+                      <div>
+                        Couldn&apos;t fetch the page diff. You can still proceed — only
+                        changed pages will be re-embedded.
+                      </div>
+                      {recrawlDiff.errorMessage && (
+                        <div className="font-mono text-[11px] leading-snug break-words opacity-80">
+                          {recrawlDiff.errorMessage}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <>

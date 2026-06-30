@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 
@@ -631,18 +632,70 @@ async def crawl_diff_endpoint(
         norm = _normalize(raw)
         stored_norm_to_raw.setdefault(norm, raw)
 
-    # ── Step 2: HEAD-check stored URLs (authoritative liveness) ───────────
-    # This is the key correctness change vs the previous URL-set-only diff:
-    # discovery and the original crawler use different traversal strategies
-    # and will find different URL sets even when the site hasn't changed,
-    # which made the diff hallucinate "removed" / "new" pages.
-    try:
-        liveness = await check_urls_alive(list(stored_norm_to_raw.values()))
-    except Exception as exc:
-        logger.warning("HEAD liveness check failed for %s: %s", diff_request.url, exc)
-        # Conservative fallback: assume every stored URL is still alive so a
-        # transient outage cannot make the UI suggest a destructive sweep.
-        liveness = {raw: True for raw in stored_norm_to_raw.values()}
+    # ── Steps 2 & 3 run concurrently with an overall budget ──────────────
+    # HEAD-checking N stored URLs at concurrency=15 with an 8s per-request
+    # timeout is the dominant cost on large knowledge bases — for 500+ URLs
+    # against a slow origin the wall-clock can blow past the client's 30s
+    # timeout. Two mitigations:
+    #   (a) Run HEAD liveness AND sitemap discovery concurrently with
+    #       asyncio.gather — they share no state.
+    #   (b) Cap the whole liveness pass at 20s. Anything not resolved in
+    #       time inherits the existing "assume alive" fallback policy,
+    #       which is conservative (never recommends deleting a page on a
+    #       transient blip) and matches the existing exception handler.
+    HEAD_BUDGET_SECONDS = 20.0
+    DISCOVERY_BUDGET_SECONDS = 20.0
+    head_partial = False
+    raw_urls_to_check = list(stored_norm_to_raw.values())
+
+    async def _liveness_with_budget() -> dict[str, bool]:
+        nonlocal head_partial
+        if not raw_urls_to_check:
+            return {}
+        try:
+            return await asyncio.wait_for(
+                check_urls_alive(raw_urls_to_check),
+                timeout=HEAD_BUDGET_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "HEAD liveness check exceeded %.0fs budget for %s (%d URLs) — falling back to assume-alive",
+                HEAD_BUDGET_SECONDS,
+                diff_request.url,
+                len(raw_urls_to_check),
+            )
+            head_partial = True
+            return {raw: True for raw in raw_urls_to_check}
+        except Exception as exc:
+            logger.warning("HEAD liveness check failed for %s: %s", diff_request.url, exc)
+            head_partial = True
+            return {raw: True for raw in raw_urls_to_check}
+
+    async def _discovery_with_budget() -> list[str]:
+        try:
+            return await asyncio.wait_for(
+                discover_website_urls(
+                    diff_request.url,
+                    max_urls=discovery_cap,
+                    timeout=DISCOVERY_BUDGET_SECONDS,
+                ),
+                timeout=DISCOVERY_BUDGET_SECONDS + 2.0,
+            )
+        except TimeoutError:
+            logger.warning(
+                "URL discovery exceeded %.0fs budget for %s",
+                DISCOVERY_BUDGET_SECONDS,
+                diff_request.url,
+            )
+            return []
+        except Exception as exc:
+            logger.warning("URL discovery failed for %s: %s", diff_request.url, exc)
+            return []
+
+    liveness, sitemap_urls = await asyncio.gather(
+        _liveness_with_budget(),
+        _discovery_with_budget(),
+    )
 
     unchanged_norm: set[str] = set()
     removed_norm: set[str] = set()
@@ -651,17 +704,6 @@ async def crawl_diff_endpoint(
             unchanged_norm.add(norm)
         else:
             removed_norm.add(norm)
-
-    # ── Step 3: discover live URLs to find what's net-new ─────────────────
-    try:
-        sitemap_urls = await discover_website_urls(
-            diff_request.url,
-            max_urls=discovery_cap,
-            timeout=20.0,
-        )
-    except Exception as exc:
-        logger.warning("URL discovery failed for %s: %s", diff_request.url, exc)
-        sitemap_urls = []
 
     discovery_norm_to_raw: dict[str, str] = {}
     for u in sitemap_urls:
@@ -694,6 +736,10 @@ async def crawl_diff_endpoint(
         "preview_cap": _PREVIEW_CAP,
         "capped": len(discovery_norm_to_raw) >= discovery_cap,
         "plan_max": plan_max,
+        # True when the HEAD liveness pass timed out or errored and we fell
+        # back to "assume alive" for some/all stored URLs. The UI uses this
+        # to hint the removed-count may be undercounted.
+        "head_partial": head_partial,
     }
 
 
@@ -770,21 +816,52 @@ async def crawl_endpoint(
         # pre-flight honest — without this, an Enterprise customer who
         # passed ``max_pages=5000`` could be blocked here because we
         # mis-multiplied by the unclamped request.
+        #
+        # Recrawl exception: when ``replace_source`` is set the ingestion
+        # pipeline SHA-256-skips every unchanged page (see
+        # ingestion/pipeline.py: is_document_processed), so charging for the
+        # full plan ceiling massively over-reserves. If the caller supplies
+        # ``expected_new_pages`` (sourced from a server-authoritative
+        # /crawl/diff call moments earlier), size the pre-flight against that
+        # plus a small buffer. The atomic per-page deduction inside
+        # batch_web_ingestion remains the real safety net — if the diff was
+        # stale or new pages appeared in between, ingestion stops cleanly on
+        # InsufficientCredits at that point.
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
-        required = cost_per_page * max(effective_max_pages, 1)
+        precheck_pages = effective_max_pages
+        precheck_is_recrawl = False
+        if crawl_request.replace_source and crawl_request.expected_new_pages is not None:
+            # 10-page buffer absorbs minor drift between diff time and crawl
+            # time without re-opening the over-reservation hole.
+            RECRAWL_PRECHECK_BUFFER = 10
+            precheck_pages = min(
+                effective_max_pages,
+                max(crawl_request.expected_new_pages + RECRAWL_PRECHECK_BUFFER, 1),
+            )
+            precheck_is_recrawl = True
+        required = cost_per_page * max(precheck_pages, 1)
         available = credit_service.get_balance(db, client_id)
         if available < required:
+            if precheck_is_recrawl:
+                message = (
+                    f"This re-crawl needs up to {required} credits "
+                    f"({cost_per_page} per page × {precheck_pages} pages — "
+                    f"{crawl_request.expected_new_pages} new + buffer). "
+                    f"You have {available}. Upgrade your plan or buy a top-up to proceed."
+                )
+            else:
+                message = (
+                    f"This crawl needs up to {required} credits "
+                    f"({cost_per_page} per page × {precheck_pages} pages). "
+                    f"You have {available}. Upgrade your plan or buy a top-up to proceed."
+                )
             raise HTTPException(
                 status_code=402,
                 detail={
                     "error": "insufficient_credits",
                     "required": required,
                     "available": available,
-                    "message": (
-                        f"This crawl needs up to {required} credits "
-                        f"({cost_per_page} per page × {effective_max_pages} pages). "
-                        f"You have {available}. Upgrade your plan or buy a top-up to proceed."
-                    ),
+                    "message": message,
                 },
             )
 
