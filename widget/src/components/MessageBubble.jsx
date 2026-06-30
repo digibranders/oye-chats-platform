@@ -49,16 +49,26 @@ const _FOLLOW_UP_OPENERS_RE = _FOLLOW_UP_OPENERS
     .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|');
 
-// Fires when the opener follows sentence-ending punctuation (existing case).
+// Fires when the opener follows sentence-ending punctuation.
+//
+// Whitespace gap is ``\s+`` (not ``[ \t]+``) so we also catch the
+// single-newline case the LLM hits constantly:
+//   "...Support305.\nWhich part of technical SEO…"
+// Markdown collapses a single newline between two sentences into a
+// space — so without the newline-aware match the follow-up question
+// rendered glued onto the previous sentence on the same visual line.
+// The replacement ``$1\n\n`` always emits exactly one paragraph break,
+// so re-running on already-formatted text is a no-op (idempotent).
 const _FOLLOW_UP_REGEX = new RegExp(
-    `([.!?])[ \\t]+(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
+    `([.!?])\\s+(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
     'g',
 );
 
 // Fires when the opener is glued directly after a word (no punctuation gap) —
 // e.g. the LLM emits "add-onDo you need…" with no newline or space.
+// Same whitespace widening rationale as ``_FOLLOW_UP_REGEX``.
 const _FOLLOW_UP_INLINE_REGEX = new RegExp(
-    `([a-z])[ \\t]*(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
+    `([a-z])\\s*(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
     'g',
 );
 
@@ -153,6 +163,15 @@ const formatBotMarkdown = (text) => {
         // Only fires when a lowercase letter precedes ** and an uppercase follows,
         // so it won't touch closing ** or intra-word patterns like "re**start**".
         .replace(/([a-z])\*\*(?=[A-Z])/g, '$1 **')
+        // Strip em-dashes from bot output. LLMs over-use them ("we offer SEO —
+        // including technical, on-page, and content") and the brand prefers a
+        // plain comma cadence. ``\s*—\s*`` collapses any surrounding whitespace
+        // so the replacement reads as a single comma break, never as ", , ".
+        // Runs before the follow-up paragraph rules so a question like "...we
+        // offer SEO — which area interests you?" still gets the proper break
+        // after em-dash normalisation. Only applied here in the bot renderer;
+        // user-typed em-dashes are preserved.
+        .replace(/\s*—\s*/g, ', ')
         .replace(_FOLLOW_UP_REGEX, '$1\n\n')
         .replace(_FOLLOW_UP_INLINE_REGEX, '$1\n\n');
 };

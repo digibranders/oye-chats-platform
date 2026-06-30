@@ -800,9 +800,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     // Escalating waiting-state copy. Tiered against the 35 s ceiling:
     //   0–11 s  → bot's configured waiting_message
     //   12–22 s → "still connecting"
-    //   23–35 s → "taking a bit longer" + visible "Leave a message" CTA
+    //   23–35 s → "taking a bit longer" (form auto-opens at 35 s via
+    //             ``chatMode → 'unavailable'``, no need to advertise it in
+    //             the copy — clients found "you can leave a message
+    //             instead" too pushy in the waiting state)
     const getWaitingMessage = () => {
-        if (waitingSeconds >= 23) return "Taking a bit longer than usual — you can leave a message if you'd prefer";
+        if (waitingSeconds >= 23) return 'Taking a bit longer than usual — hang tight';
         if (waitingSeconds >= 12) return 'Still connecting — our team will be right with you';
         return settings.waiting_message || 'Please wait a moment';
     };

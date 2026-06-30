@@ -160,6 +160,13 @@ def get_crawl_limits(plan: Plan) -> dict[str, int]:
     ``max_crawl_concurrency``. Missing keys fall back to the free-tier
     floor — never to UNLIMITED — because the crawler subprocess always
     needs a concrete integer ceiling.
+
+    ``max_crawl_pages`` may legitimately be ``UNLIMITED`` (``-1``) for paid
+    tiers: the per-crawl page cap was lifted on Starter/Standard so that
+    spend is governed purely by the credit pre-flight + per-page atomic
+    deduction. Callers MUST resolve ``-1`` to a concrete int (typically
+    via the available credit balance) before forwarding to the crawler
+    subprocess.
     """
     limits: dict = plan.limits or {}
     return {key: int(limits.get(key, default)) for key, default in _DEFAULT_CRAWL_LIMITS.items()}

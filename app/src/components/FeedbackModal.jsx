@@ -17,6 +17,8 @@ import {
   Inbox,
   RefreshCw,
   ImagePlus,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
 import { uploadFeedbackAttachment, getMyFeedback } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
@@ -225,6 +227,84 @@ function MyFeedbackList({ highlightId }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+// Custom dropdown (not the browser-native <select>) so the menu matches the
+// modal's dark theme. Controlled: `value` is the selected option id, `""` for
+// the placeholder/none option.
+function SelectMenu({ id, value, onChange, options, placeholder = 'Select…' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const selected = options.find((o) => o.id === value);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        id={id}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="w-full h-10 flex items-center justify-between gap-2 rounded-xl bg-[#13131c] border border-[#232335] px-3 text-[13px] text-left outline-none hover:border-[#2f2f47] focus:border-[#6366f1] focus:ring-1 focus:ring-[#6366f1]/20 transition-colors cursor-pointer"
+      >
+        <span className={cn('truncate', selected && selected.id ? 'text-white' : 'text-[#8f8f9e]')}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <ChevronDown
+          size={15}
+          className={cn('shrink-0 text-[#8f8f9e] transition-transform duration-150', open && 'rotate-180')}
+        />
+      </button>
+
+      {open && (
+        <ul
+          role="listbox"
+          className="absolute z-30 mt-1.5 w-full max-h-56 overflow-auto rounded-xl border border-[#232335] bg-[#13131c] p-1 shadow-2xl shadow-black/50"
+        >
+          {options.map((o) => {
+            const active = o.id === value;
+            return (
+              <li key={o.id || 'none'}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => {
+                    onChange(o.id);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    'w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] text-left transition-colors cursor-pointer',
+                    active ? 'bg-[#6366f1]/15 text-white' : 'text-[#c0c0cc] hover:bg-[#1b1b29]'
+                  )}
+                >
+                  <span className="truncate">{o.label}</span>
+                  {active && <Check size={14} className="shrink-0 text-[#817bfb]" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -463,55 +543,48 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                 </div>
               </div>
 
-              {/* Area (optional) + Severity (bug-only) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label htmlFor="fb-area" className="block text-[13px] font-semibold text-[#efeff1]">
-                    Area <span className="text-[#8f8f9e] font-normal">(optional)</span>
-                  </label>
-                  <select
-                    id="fb-area"
-                    value={area}
-                    onChange={(e) => setArea(e.target.value)}
-                    className="w-full h-10 rounded-xl bg-[#13131c] border border-[#232335] px-3 text-[13px] text-white outline-none focus:border-[#6366f1] focus:ring-1 focus:ring-[#6366f1]/20"
-                  >
-                    <option value="">Not sure / unspecified</option>
-                    {AREAS.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {type === 'bug' && (
-                  <div className="space-y-2">
-                    <label className="block text-[13px] font-semibold text-[#efeff1]">
-                      Severity <span className="text-[#8f8f9e] font-normal">(optional)</span>
-                    </label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {SEVERITIES.map((s) => {
-                        const selected = severity === s.id;
-                        return (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => setSeverity(selected ? null : s.id)}
-                            className={cn(
-                              'px-2.5 h-8 rounded-lg text-[12px] font-medium border transition-all cursor-pointer',
-                              selected
-                                ? 'bg-[#6366f1]/10 border-[#6366f1] text-white'
-                                : 'bg-[#13131c]/50 hover:bg-[#181826] border-[#232335] text-[#a0a0b0]'
-                            )}
-                          >
-                            {s.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
+              {/* Area (optional) — custom dropdown */}
+              <div className="space-y-2">
+                <label htmlFor="fb-area" className="block text-[13px] font-semibold text-[#efeff1]">
+                  Area <span className="text-[#8f8f9e] font-normal">(optional)</span>
+                </label>
+                <SelectMenu
+                  id="fb-area"
+                  value={area}
+                  onChange={setArea}
+                  placeholder="Not sure / unspecified"
+                  options={[{ id: '', label: 'Not sure / unspecified' }, ...AREAS]}
+                />
               </div>
+
+              {/* Severity (bug-only) — one line */}
+              {type === 'bug' && (
+                <div className="space-y-2">
+                  <label className="block text-[13px] font-semibold text-[#efeff1]">
+                    Severity <span className="text-[#8f8f9e] font-normal">(optional)</span>
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {SEVERITIES.map((s) => {
+                      const selected = severity === s.id;
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setSeverity(selected ? null : s.id)}
+                          className={cn(
+                            'h-9 rounded-lg text-[12px] font-medium border transition-all cursor-pointer text-center',
+                            selected
+                              ? 'bg-[#6366f1]/10 border-[#6366f1] text-white ring-1 ring-[#6366f1]/30'
+                              : 'bg-[#13131c]/50 hover:bg-[#181826] border-[#232335] text-[#a0a0b0]'
+                          )}
+                        >
+                          {s.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Message + attachments */}
               <div className="space-y-2">
