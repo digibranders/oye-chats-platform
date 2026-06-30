@@ -10,7 +10,7 @@ import OnboardingWizard from '../components/OnboardingWizard';
 import TrialBanner from '../components/TrialBanner';
 import PushPermissionBanner from '../components/PushPermissionBanner';
 import FeedbackModal from '../components/FeedbackModal';
-import usePushNotifications from '../hooks/usePushNotifications';
+import { PushProvider, usePush } from '../context/PushContext';
 import { BotProvider, useBotContext } from '../context/BotContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import LiveChatRequestBanner from '../components/LiveChatRequestBanner';
@@ -37,13 +37,11 @@ function AdminLayoutInner() {
   const [feedbackTab, setFeedbackTab] = useState('send');
   const [feedbackHighlightId, setFeedbackHighlightId] = useState(null);
 
-  // Push notifications — registers the service worker, surfaces the
-  // permission state, and re-subscribes the operator on every mount when
-  // permission is already granted. Returns null-shaped state for clients,
-  // unsupported browsers, and operators who haven't enabled push yet — the
-  // PushPermissionBanner inspects all three to decide what (if anything) to
-  // render. See usePushNotifications.js for the full lifecycle.
-  const push = usePushNotifications();
+  // Push notifications — the subscription lifecycle now lives in PushContext
+  // (mounted by the PushProvider wrapping this layout) so the
+  // PushPermissionBanner here and the Settings → Notifications tab share one
+  // source of truth. See PushContext.jsx / usePushNotifications.js.
+  const push = usePush();
 
   const handleFeedbackSubmit = async (payload) => {
     await submitPlatformFeedback(payload);
@@ -252,7 +250,9 @@ export default function AdminLayout() {
   return (
     <NotificationProvider>
       <BotProvider>
-        <AdminLayoutInner />
+        <PushProvider>
+          <AdminLayoutInner />
+        </PushProvider>
       </BotProvider>
     </NotificationProvider>
   );
