@@ -188,8 +188,8 @@ class UpdateBotRequest(BaseModel):
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = None
-    live_chat_queue_timeout_seconds: int | None = None
-    live_chat_max_queue_size: int | None = None
+    live_chat_queue_timeout_seconds: int | None = Field(None, ge=5, le=600)
+    live_chat_max_queue_size: int | None = Field(None, ge=1, le=100)
     # Business hours
     business_hours: dict | None = None
     # Feature flags — partial merge applied on PATCH (existing flags are preserved)

@@ -215,6 +215,8 @@ export default function BotSettings({ embedded = false }) {
         branding_url: draft.branding_url,
         widget_messages: draft.widget_messages,
         widget_config: draft.widget_config,
+        feature_flags: draft.feature_flags,
+        services: draft.services,
     }), [draft]);
 
     // Listen for the widget's ready signal so we flush the initial draft.
