@@ -10,12 +10,22 @@ const FIELD_LABEL = "text-[13px] font-bold text-surface-700 dark:text-surface-30
 const FIELD_INPUT = "w-full h-10 px-3 text-sm text-surface-600 dark:text-surface-300 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg focus:outline-none focus:border-primary-400 dark:placeholder:text-surface-500";
 const FIELD_HELP = "text-[11px] text-surface-400";
 
-const MessagesTab = ({ settings, onSettingsChange }) => {
-    const messages = settings?.widget_messages || {};
+/**
+ * MessagesTab — visitor-facing copy.
+ *
+ * Standardized to the shell ↔ tab contract: reads `widget_messages` and
+ * `services` from `draft` and writes them back via `set(field, value)`. The
+ * `handleMessageChange` / `handleServiceChange` helpers preserve the original
+ * per-field merge behaviour.
+ *
+ * @param {{ draft: object, set: (field: string, value: unknown) => void }} props
+ */
+const MessagesTab = ({ draft, set }) => {
+    const messages = draft?.widget_messages || {};
     // ``services`` is now ``[{name, url}]`` per service. Tolerate stale legacy
     // string entries by coercing them to objects on render — keeps the UI
     // working if the parent hasn't yet been updated to the new shape.
-    const services = (Array.isArray(settings?.services) ? settings.services : []).map((s) =>
+    const services = (Array.isArray(draft?.services) ? draft.services : []).map((s) =>
         typeof s === 'string' ? { name: s, url: '' } : { name: s?.name || '', url: s?.url || '' }
     );
 
@@ -25,11 +35,9 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
             : DEFAULT_SUGGESTIONS;
 
     const handleMessageChange = (key, value) => {
-        onSettingsChange({
-            widget_messages: {
-                ...messages,
-                [key]: value,
-            },
+        set('widget_messages', {
+            ...messages,
+            [key]: value,
         });
     };
 
@@ -52,15 +60,15 @@ const MessagesTab = ({ settings, onSettingsChange }) => {
     // keystroke just updates local state via onSettingsChange.
     const handleServiceChange = (index, field, value) => {
         const next = services.map((s, i) => (i === index ? { ...s, [field]: value } : s));
-        onSettingsChange({ services: next });
+        set('services', next);
     };
 
     const addService = () => {
-        onSettingsChange({ services: [...services, { name: '', url: '' }] });
+        set('services', [...services, { name: '', url: '' }]);
     };
 
     const removeService = (index) => {
-        onSettingsChange({ services: services.filter((_, i) => i !== index) });
+        set('services', services.filter((_, i) => i !== index));
     };
 
     return (
