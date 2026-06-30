@@ -2088,3 +2088,70 @@ export const unsubscribePush = async (endpoint, keys) => {
         throw buildApiError(error, 'Failed to remove push subscription');
     }
 };
+
+// --- CLIENT ACCOUNT (Settings → Profile / Security / Workspace) ---
+
+/**
+ * Update the authenticated client's profile (name and/or email). Only the
+ * provided fields are changed; the backend rejects a duplicate email with 400.
+ * @param {{ name?: string, email?: string }} patch
+ * @returns {Promise<{ id: number, name: string, email: string }>}
+ */
+export const updateClientProfile = async (patch) => {
+    try {
+        const response = await api.patch('/client/profile', patch);
+        return response.data;
+    } catch (error) {
+        console.error('API Error updating client profile:', error);
+        throw buildApiError(error, 'Failed to update profile');
+    }
+};
+
+/**
+ * Change the authenticated client's password. The backend verifies the current
+ * password and enforces strength (≥8 chars, a letter and a number).
+ * @param {string} currentPassword
+ * @param {string} newPassword
+ * @returns {Promise<{ ok: boolean }>}
+ */
+export const changeClientPassword = async (currentPassword, newPassword) => {
+    try {
+        const response = await api.post('/client/change-password', {
+            current_password: currentPassword,
+            new_password: newPassword,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error changing client password:', error);
+        throw buildApiError(error, 'Failed to change password');
+    }
+};
+
+/**
+ * Fetch the authenticated client's API key in masked form.
+ * @returns {Promise<{ api_key_masked: string }>}
+ */
+export const getClientApiKey = async () => {
+    try {
+        const response = await api.get('/client/api-key');
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching client API key:', error);
+        throw buildApiError(error, 'Failed to load API key');
+    }
+};
+
+/**
+ * Rotate the client's API key. The response contains the full new key exactly
+ * once so the UI can offer a copy-to-clipboard reveal; later reads are masked.
+ * @returns {Promise<{ ok: boolean, api_key: string, api_key_masked: string }>}
+ */
+export const regenerateClientApiKey = async () => {
+    try {
+        const response = await api.post('/client/api-key/regenerate');
+        return response.data;
+    } catch (error) {
+        console.error('API Error regenerating client API key:', error);
+        throw buildApiError(error, 'Failed to regenerate API key');
+    }
+};

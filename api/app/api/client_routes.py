@@ -1,10 +1,13 @@
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, field_validator
+from sqlalchemy import select
 
 from app.api.auth import get_current_client
 from app.core.feedback import CONTEXT_KEYS, FEEDBACK_AREAS, FEEDBACK_SEVERITIES, FEEDBACK_TYPES
+from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, Client
 from app.db.session import get_session
 from app.schemas.client import ClientSettingsUpdate
@@ -269,3 +272,100 @@ async def upload_logo_endpoint(
     except Exception as e:
         logger.error(f"Logo upload failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to upload logo.") from e
+
+
+# ── Account: profile / password / API key ────────────────────────────────────
+
+
+class ClientProfilePatch(BaseModel):
+    name: str | None = None
+    email: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("Name cannot be empty.")
+        return v
+
+
+@router.patch("/profile")
+def update_client_profile(
+    body: ClientProfilePatch,
+    client: Client = Depends(get_current_client),
+):
+    """Update the authenticated client's name and/or email."""
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Client not found.")
+
+        if body.email and body.email.lower() != (row.email or "").lower():
+            existing = (
+                session.execute(select(Client).where(Client.email == body.email, Client.id != row.id)).scalars().first()
+            )
+            if existing:
+                raise HTTPException(status_code=400, detail="A client with this email already exists.")
+            row.email = body.email
+
+        if body.name:
+            row.name = body.name
+
+        session.commit()
+        session.refresh(row)
+        return {"id": row.id, "name": row.name, "email": row.email}
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_is_strong(cls, v: str) -> str:
+        if len(v) < 8 or not any(c.isalpha() for c in v) or not any(c.isdigit() for c in v):
+            raise ValueError("Password must be at least 8 characters and include a letter and a number.")
+        return v
+
+
+@router.post("/change-password")
+def change_client_password(
+    body: ChangePasswordRequest,
+    client: Client = Depends(get_current_client),
+):
+    """Change the authenticated client's password (verifies the current one)."""
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        if not verify_password(body.current_password, row.hashed_password or ""):
+            raise HTTPException(status_code=400, detail="Current password is incorrect.")
+        row.hashed_password = get_password_hash(body.new_password)
+        session.commit()
+        return {"ok": True}
+
+
+def _mask_key(key: str | None) -> str:
+    return ("••••••" + key[-4:]) if key else "—"
+
+
+@router.get("/api-key")
+def get_client_api_key(client: Client = Depends(get_current_client)):
+    """Return the authenticated client's API key in masked form."""
+    return {"api_key_masked": _mask_key(client.api_key)}
+
+
+@router.post("/api-key/regenerate")
+def regenerate_client_api_key(client: Client = Depends(get_current_client)):
+    """Rotate the client's API key. Returns the full new key ONCE for copy."""
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        new_key = uuid.uuid4().hex
+        row.api_key = new_key
+        session.commit()
+        return {"ok": True, "api_key": new_key, "api_key_masked": _mask_key(new_key)}
