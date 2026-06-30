@@ -847,7 +847,12 @@ def _plan_id_from_notes(notes: dict[str, Any] | None) -> int | None:
         return None
 
 
-def reconcile_subscription_from_razorpay(session: Session, razorpay_subscription_id: str) -> Subscription | None:
+def reconcile_subscription_from_razorpay(
+    session: Session,
+    razorpay_subscription_id: str,
+    *,
+    expected_client_id: int | None = None,
+) -> Subscription | None:
     """Idempotently fetch a Razorpay subscription and upsert it locally.
 
     Closes the window where a customer pays via Razorpay Checkout but the
@@ -890,6 +895,24 @@ def reconcile_subscription_from_razorpay(session: Session, razorpay_subscription
         )
         return None
 
+    # L2 — defense-in-depth ownership check. The Razorpay HMAC already gates the
+    # verify endpoint, but an authenticated caller passing someone else's
+    # ``razorpay_subscription_id`` must not be able to upsert a row owned by the
+    # ``notes.oyechats_client_id`` it carries. When the caller's identity is
+    # known, refuse to materialise a subscription whose notes name a different
+    # client (the webhook path, which has no caller, passes None and is trusted).
+    if expected_client_id is not None:
+        notes = sub_entity.get("notes") or {}
+        notes_client_id = _client_id_from_notes(notes)
+        if notes_client_id is not None and int(notes_client_id) != int(expected_client_id):
+            logger.warning(
+                "Reconcile ownership mismatch: caller %s tried to reconcile subscription %s owned by %s",
+                expected_client_id,
+                razorpay_subscription_id,
+                notes_client_id,
+            )
+            raise RazorpayBillingError("Subscription does not belong to the requesting client.")
+
     # Synthesize a webhook-shaped payload and reuse the canonical handler so
     # the create-or-update logic stays in one place. ``_handle_subscription_activated``
     # consults ``notes.oyechats_client_id`` / ``oyechats_plan_id`` set at
@@ -897,6 +920,75 @@ def reconcile_subscription_from_razorpay(session: Session, razorpay_subscription
     synthetic_payload = {"subscription": {"entity": sub_entity}}
     _handle_subscription_activated(session, synthetic_payload)
     return _resolve_local_subscription(session, razorpay_subscription_id)
+
+
+def reconcile_topup_from_razorpay(
+    session: Session,
+    razorpay_order_id: str,
+    razorpay_payment_id: str,
+    *,
+    expected_client_id: int | None = None,
+) -> bool:
+    """Idempotently grant a top-up from a verified Checkout callback (L3).
+
+    Safety net mirroring :func:`reconcile_subscription_from_razorpay` for the
+    top-up path: if the ``payment.captured`` / ``order.paid`` webhook is dropped
+    (delayed delivery, worker outage), the browser's ``/credits/topup/verify``
+    call still credits the customer instead of leaving paid-but-no-credits.
+
+    Idempotency is twofold: a synthetic ``reconcile:topup:<order_id>`` event in
+    ``processed_webhooks`` collapses concurrent verify calls, and
+    :func:`_handle_payment_captured` itself early-returns when the payment's
+    Invoice already exists — so this and the real webhook can never double-grant.
+
+    Returns ``True`` when this call performed (or attempted) the grant, ``False``
+    when another path already handled it or the payment isn't a captured top-up.
+    """
+    synthetic_event_id = f"reconcile:topup:{razorpay_order_id}"
+    if not _record_or_skip_event(session, synthetic_event_id):
+        return False  # webhook or another verify call already reconciled
+
+    rzp = _get_razorpay()
+    try:
+        order = rzp.order.fetch(razorpay_order_id)
+        payment = rzp.payment.fetch(razorpay_payment_id)
+    except Exception as exc:
+        logger.exception(
+            "Razorpay fetch failed during top-up reconcile for order %s / payment %s",
+            razorpay_order_id,
+            razorpay_payment_id,
+        )
+        raise RazorpayBillingError("Could not fetch top-up from Razorpay.") from exc
+
+    notes = (order or {}).get("notes") or {}
+    if notes.get("purpose") != "topup":
+        return False
+
+    # L2-style ownership check: a caller must not reconcile someone else's order.
+    if expected_client_id is not None:
+        notes_client_id = _client_id_from_notes(notes)
+        if notes_client_id is not None and int(notes_client_id) != int(expected_client_id):
+            logger.warning(
+                "Top-up reconcile ownership mismatch: caller %s, order %s owned by %s",
+                expected_client_id,
+                razorpay_order_id,
+                notes_client_id,
+            )
+            raise RazorpayBillingError("Top-up does not belong to the requesting client.")
+
+    # Only a genuinely captured payment grants credits — an authorized-but-not-
+    # captured payment must wait for the webhook (or it never captures at all).
+    if (payment or {}).get("status") != "captured":
+        return False
+
+    # Reuse the canonical handler so the invoice insert, NV2 amount
+    # reconciliation, bot-scope resolution, and grant all stay in one place.
+    synthetic_payload = {
+        "payment": {"entity": {**payment, "notes": notes}},
+        "order": {"entity": order},
+    }
+    _handle_payment_captured(session, synthetic_payload)
+    return True
 
 
 def _create_bot_from_subscription_notes(
@@ -1382,6 +1474,24 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
 
     amount_paise = int((pay_entity or {}).get("amount") or (order_entity or {}).get("amount") or 0)
     amount_inr = int(notes.get("amount_inr") or (amount_paise // 100))
+
+    # Defense-in-depth (NV2): the credits to grant come from server-set order
+    # notes, but the money actually captured comes from Razorpay. Reconcile the
+    # two before granting so a future order-create bug — or any path that lets
+    # notes drift from the charged amount — can never mint credits the customer
+    # didn't pay for. ``CHECKOUT_TEST_CLIENT_IDS`` orders are deliberately
+    # charged ₹1 (100 paise) while their notes carry the real pack price, so we
+    # exempt exactly that documented override and nothing else.
+    notes_amount_inr = notes.get("amount_inr")
+    if notes_amount_inr is not None:
+        expected_paise = int(notes_amount_inr) * 100
+        is_test_override = client_id in CHECKOUT_TEST_CLIENT_IDS and amount_paise == 100
+        if not is_test_override and amount_paise != expected_paise:
+            raise RazorpayBillingError(
+                f"Top-up amount mismatch for client {client_id}: captured {amount_paise} paise "
+                f"but order notes declare ₹{notes_amount_inr} ({expected_paise} paise); "
+                f"refusing to grant {credits} credits (payment {rzp_payment_id})"
+            )
 
     # Notes may carry ``bot_id`` for per-bot top-ups (set by
     # ``create_topup_order(bot_id=...)``). Default to None → client pool.

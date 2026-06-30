@@ -380,7 +380,9 @@ def verify_razorpay_subscription(
         )
         if sub is None:
             try:
-                sub = razorpay_service.reconcile_subscription_from_razorpay(session, payload.razorpay_subscription_id)
+                sub = razorpay_service.reconcile_subscription_from_razorpay(
+                    session, payload.razorpay_subscription_id, expected_client_id=client.id
+                )
                 session.commit()
             except razorpay_service.RazorpayBillingError:
                 # Reconcile failed — the webhook may still arrive. Don't fail
@@ -591,6 +593,11 @@ def create_checkout(
 
     with get_session() as session:
         from app.services.plan_service import get_plan_by_id
+
+        # Serialize billing mutations for this client (NV1, finishes H1). Without
+        # this a double-clicked / concurrent checkout creates two Razorpay
+        # subscriptions and two ReferralConversion rows for one client.
+        lock_client_for_billing(session, client.id)
 
         plan = get_plan_by_id(session, request.plan_id)
         if not plan:
@@ -1230,35 +1237,6 @@ def _assert_no_stacking(client, coupon_code: str | None) -> None:
         )
 
 
-def _resolve_referral_discount(session, client: Client) -> tuple[int, dict[str, str]]:
-    """Return ``(discount_bps, audit_meta)`` for this client's active referral.
-
-    Returns ``(0, {})`` when:
-      * the client isn't attributed to any code
-      * the attributed code carries no customer discount (commission-only)
-
-    The discount is applied later, inside each provider service, against
-    the minor unit (cents/paise) so we retain sub-currency precision —
-    e.g. 10% off $19 yields $17.10, not $18 (which whole-unit flooring
-    would produce).
-    """
-    from app.db.models import ReferralCode
-
-    if not getattr(client, "referral_code_id", None):
-        return 0, {}
-
-    code_row = session.get(ReferralCode, client.referral_code_id)
-    if code_row is None or not code_row.customer_discount_bps:
-        return 0, {}
-
-    bps = int(code_row.customer_discount_bps)
-    return bps, {
-        "referral_code_id": str(code_row.id),
-        "referral_code": code_row.code,
-        "discount_bps": str(bps),
-    }
-
-
 @credits_router.post("/topup")
 def initiate_topup(request: TopupRequest, client: Client = Depends(get_current_client)):
     """Initiate a top-up purchase via Razorpay.
@@ -1339,9 +1317,15 @@ class TopupVerifyRequest(BaseModel):
 @credits_router.post("/topup/verify")
 def verify_topup_payment(
     body: TopupVerifyRequest,
-    _: Client = Depends(get_current_client),
+    client: Client = Depends(get_current_client),
 ):
-    """Verify a Razorpay Checkout success callback. Returns 204 on success."""
+    """Verify a Razorpay Checkout success callback and reconcile the grant.
+
+    The credit grant normally lands via the ``payment.captured`` / ``order.paid``
+    webhook. This endpoint signature-verifies the modal callback and then runs
+    an idempotent reconcile (L3) so a dropped webhook still credits the customer
+    instead of leaving them paid-but-no-credits.
+    """
     from app.services import razorpay_service
 
     try:
@@ -1352,6 +1336,26 @@ def verify_topup_payment(
         )
     except razorpay_service.SignatureMismatch as exc:
         raise HTTPException(status_code=400, detail="Signature verification failed.") from exc
+
+    # Idempotent safety net for a dropped capture webhook. The webhook remains
+    # the canonical path; this reconcile is gated so the two can't double-grant.
+    with get_session() as session:
+        try:
+            razorpay_service.reconcile_topup_from_razorpay(
+                session,
+                body.razorpay_order_id,
+                body.razorpay_payment_id,
+                expected_client_id=client.id,
+            )
+            session.commit()
+        except razorpay_service.RazorpayBillingError:
+            # Reconcile failed (e.g. Razorpay fetch blip) — the webhook may still
+            # arrive. Don't fail verify; the UI polls /credits/balance.
+            logger.warning(
+                "Top-up reconcile failed for client %s, order %s — falling back to webhook",
+                client.id,
+                body.razorpay_order_id,
+            )
     return {"status": "verified"}
 
 

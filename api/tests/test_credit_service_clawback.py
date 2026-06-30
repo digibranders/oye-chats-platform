@@ -402,3 +402,105 @@ def test_topup_captured_stamps_bot_id_on_invoice(db):
     # Credits landed in the bot's isolated ledger, not the client pool.
     assert _balances(db, client.id, bot.id) == 2000
     assert _balances(db, client.id, None) == 0
+
+
+def test_topup_amount_mismatch_refuses_grant(db):
+    """NV2 — the grant trusts notes['credits'], but the money actually captured
+    must match the notes' declared price. A captured amount that disagrees with
+    notes.amount_inr must refuse to grant (no invoice, no credits)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-nv2")
+    db.commit()
+
+    # Notes declare a ₹3999 pack, but only ₹39 (3900 paise) was captured.
+    payload = {
+        "payment": {
+            "entity": {
+                "id": "pay_nv2",
+                "order_id": "order_nv2",
+                "amount": 3900,
+                "currency": "INR",
+                "notes": {
+                    "purpose": "topup",
+                    "client_id": str(client.id),
+                    "credits": "2000",
+                    "amount_inr": "3999",
+                    "bot_id": str(bot.id),
+                },
+            }
+        }
+    }
+    with pytest.raises(rzp.RazorpayBillingError, match="amount mismatch"):
+        rzp._handle_payment_captured(db, payload)
+    db.rollback()
+
+    assert db.execute(select(Invoice).where(Invoice.razorpay_payment_id == "pay_nv2")).scalars().first() is None
+    assert _balances(db, client.id, bot.id) == 0
+
+
+def _fake_rzp_for_topup(order, payment):
+    class _FakeRzp:
+        class order:
+            @staticmethod
+            def fetch(_):
+                return order
+
+        class payment:
+            @staticmethod
+            def fetch(_):
+                return payment
+
+    return _FakeRzp()
+
+
+def test_reconcile_topup_grants_when_webhook_dropped(db, monkeypatch):
+    """L3 — if the capture webhook is dropped, the browser's topup/verify call
+    reconciles the grant. A second reconcile (or the late webhook) is a no-op."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-l3")
+    db.commit()
+
+    order = {
+        "id": "order_l3",
+        "amount": 399900,
+        "currency": "INR",
+        "notes": {
+            "purpose": "topup",
+            "client_id": str(client.id),
+            "credits": "2000",
+            "amount_inr": "3999",
+            "bot_id": str(bot.id),
+        },
+    }
+    payment = {"id": "pay_l3", "order_id": "order_l3", "amount": 399900, "currency": "INR", "status": "captured"}
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: _fake_rzp_for_topup(order, payment))
+
+    assert rzp.reconcile_topup_from_razorpay(db, "order_l3", "pay_l3", expected_client_id=client.id) is True
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 2000
+
+    # Idempotent: a second reconcile must not double-grant.
+    rzp.reconcile_topup_from_razorpay(db, "order_l3", "pay_l3", expected_client_id=client.id)
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 2000
+
+
+def test_reconcile_topup_rejects_foreign_client(db, monkeypatch):
+    """L2/L3 — a caller must not reconcile a top-up whose notes name another client."""
+    owner = _client(db, n=1)
+    attacker = _client(db, n=2)
+    db.commit()
+
+    order = {
+        "id": "order_x",
+        "amount": 399900,
+        "currency": "INR",
+        "notes": {"purpose": "topup", "client_id": str(owner.id), "credits": "2000", "amount_inr": "3999"},
+    }
+    payment = {"id": "pay_x", "order_id": "order_x", "amount": 399900, "currency": "INR", "status": "captured"}
+    monkeypatch.setattr(rzp, "_get_razorpay", lambda: _fake_rzp_for_topup(order, payment))
+
+    with pytest.raises(rzp.RazorpayBillingError, match="does not belong"):
+        rzp.reconcile_topup_from_razorpay(db, "order_x", "pay_x", expected_client_id=attacker.id)
+    db.rollback()
+    assert _balances(db, owner.id, None) == 0
