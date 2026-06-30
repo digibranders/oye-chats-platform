@@ -516,6 +516,10 @@ async def crawl_discover_endpoint(
     The ``total_found`` count is capped at the caller's plan ``max_crawl_pages``
     ceiling so the number is always actionable and never exceeds what the plan
     allows. ``capped=true`` signals that there may be more pages than shown.
+
+    Paid plans (Starter/Standard) carry an UNLIMITED (-1) page cap because
+    crawling is metered purely by credits; for them the discovery query falls
+    back to a fixed 1000-URL ceiling so the preview stays bounded.
     """
     _require_knowledge_management_access(auth)
     client_id = auth["client_id"]
@@ -523,6 +527,7 @@ async def crawl_discover_endpoint(
     _check_memory()
 
     from app.services import plan_service
+    from app.services.plan_service import UNLIMITED
     from app.services.url_discovery import discover_website_urls
 
     with get_session() as db:
@@ -530,7 +535,8 @@ async def crawl_discover_endpoint(
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
 
-    discovery_cap = min(plan_max, 1000)
+    _DISCOVERY_HARD_CAP = 1000
+    discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
     try:
         urls = await discover_website_urls(
             discover_request.url,
@@ -584,6 +590,7 @@ async def crawl_diff_endpoint(
 
     from app.services import plan_service
     from app.services.crawler_script import normalize_url
+    from app.services.plan_service import UNLIMITED
     from app.services.url_discovery import check_urls_alive, discover_website_urls
 
     with get_session() as db:
@@ -591,7 +598,8 @@ async def crawl_diff_endpoint(
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
 
-    discovery_cap = min(plan_max, 1000)
+    _DISCOVERY_HARD_CAP = 1000
+    discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
 
     # Stored ``document_name`` values were written through the crawler's
     # ``normalize_url`` (strip www., drop tracking params, remove trailing
@@ -770,9 +778,23 @@ async def crawl_endpoint(
     # pre-flight so an over-the-limit request is rejected with a clear
     # upgrade signal instead of a generic "out of credits" error. The
     # ceiling is also used to fill in ``max_pages`` when the request
-    # didn't specify one — that's how Free-tier callers get 75-page
-    # behavior without sending a body field.
+    # didn't specify one — that's how Free-tier callers get the full
+    # 20-page allowance without sending a body field.
+    #
+    # Paid plans (Starter/Standard) carry ``max_crawl_pages == UNLIMITED``
+    # (-1) because their crawl budget is set by credits, not a per-crawl
+    # page cap. For those plans we skip the over-limit gate and derive a
+    # concrete ceiling from the available balance — the crawler subprocess
+    # always needs an integer, and we never want a runaway "max pages
+    # left blank" request to enumerate a 100k-URL sitemap.
     from app.services import credit_service, plan_service
+    from app.services.plan_service import UNLIMITED
+
+    # Safety bound so an unlimited-plan caller who passes an absurd
+    # ``max_pages`` (or whose credit balance happens to be huge after a
+    # large top-up) can't accidentally spawn a multi-day crawl. Sits well
+    # above the largest practical customer sitemap.
+    _UNLIMITED_PLAN_SAFETY_CEILING = 10_000
 
     with get_session() as db:
         plan = plan_service.get_client_plan(db, client_id)
@@ -781,9 +803,14 @@ async def crawl_endpoint(
         plan_max_depth = crawl_limits["max_crawl_depth"]
         plan_js_max_pages = crawl_limits["max_crawl_js_pages"]
         plan_concurrency = crawl_limits["max_crawl_concurrency"]
+        unlimited_pages = plan_max_pages == UNLIMITED
 
         requested_pages = crawl_request.max_pages
-        if requested_pages is not None and int(requested_pages) > plan_max_pages:
+        # Hard plan cap rejection only fires for plans that actually have
+        # a concrete cap (currently just Free). Unlimited-plan callers
+        # skip straight to the credit pre-flight below — that's the real
+        # gate on Starter/Standard.
+        if not unlimited_pages and requested_pages is not None and int(requested_pages) > plan_max_pages:
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -801,11 +828,30 @@ async def crawl_endpoint(
                 },
             )
 
-        # Clamp to plan ceiling (covers the None case: callers that didn't
-        # specify ``max_pages`` get the full tier allowance) and to the
-        # JS-mode memory cap when applicable.
-        effective_max_pages = min(int(requested_pages or plan_max_pages), plan_max_pages)
+        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        if unlimited_pages:
+            # No plan cap — let the caller request what they want, but
+            # always cap at the safety ceiling so a typo can't ignite a
+            # runaway job. If ``max_pages`` is omitted, fall back to what
+            # the caller's current balance can afford (one page = one
+            # ``cost_per_page`` deduction). ``cost_per_page`` is clamped
+            # to ``>= 1`` to guard against a zero-cost misconfiguration.
+            per_page = max(int(cost_per_page), 1)
+            if requested_pages is not None:
+                effective_max_pages = max(int(requested_pages), 1)
+            else:
+                available_now = credit_service.get_balance(db, client_id)
+                effective_max_pages = max(int(available_now) // per_page, 1)
+            effective_max_pages = min(effective_max_pages, _UNLIMITED_PLAN_SAFETY_CEILING)
+        else:
+            # Fixed-cap plan (Free): clamp to plan ceiling — covers the
+            # None case so callers that didn't specify ``max_pages`` get
+            # the full tier allowance.
+            effective_max_pages = min(int(requested_pages or plan_max_pages), plan_max_pages)
+
         if crawl_request.use_js:
+            # JS mode is memory-bound regardless of plan tier, so the
+            # JS-specific cap always applies on top.
             effective_max_pages = min(effective_max_pages, plan_js_max_pages)
 
         # ── Credit pre-flight: reserve enough for the worst-case crawl ──
@@ -827,7 +873,8 @@ async def crawl_endpoint(
         # batch_web_ingestion remains the real safety net — if the diff was
         # stale or new pages appeared in between, ingestion stops cleanly on
         # InsufficientCredits at that point.
-        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        # ``cost_per_page`` was already resolved above so we could derive
+        # the unlimited-plan ceiling from the caller's balance; reuse it.
         precheck_pages = effective_max_pages
         precheck_is_recrawl = False
         if crawl_request.replace_source and crawl_request.expected_new_pages is not None:

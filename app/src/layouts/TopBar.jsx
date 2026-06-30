@@ -165,7 +165,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                 className="absolute right-0 mt-1 w-72 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl shadow-xl z-50 overflow-hidden"
               >
                 {/* Identity header */}
-                <div className="px-4 py-4 border-b border-surface-100 dark:border-surface-800 flex items-start gap-3">
+                <div className="px-4 py-4 border-b border-surface-100 dark:border-surface-800 flex items-center gap-3">
                   <Avatar name={profile?.name || adminName} size="md" status={isOnline ? 'online' : 'offline'} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">

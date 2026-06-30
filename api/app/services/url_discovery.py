@@ -1,5 +1,5 @@
 """
-Lightweight URL discovery — sitemap-first, BFS fallback.
+Lightweight URL discovery — strictly robots.txt + sitemap.xml.
 
 Used by POST /crawl/discover to count pages before a full crawl starts.
 Does NOT extract page content; only discovers URLs. Intentionally avoids
@@ -7,9 +7,15 @@ Playwright so it completes in a few seconds even for large sites.
 
 Algorithm:
   1. Fetch robots.txt → extract Sitemap: directives
-  2. Try standard sitemap paths (/sitemap.xml, /sitemap_index.xml)
-  3. Parse sitemaps (handles sitemap index, one level deep)
-  4. If < 5 URLs from sitemap: shallow HTTP BFS from the seed page (depth 1)
+  2. Try standard sitemap paths (/sitemap.xml, /sitemap_index.xml) if
+     robots.txt declared none
+  3. Parse sitemaps (handles sitemap index, two levels deep)
+  4. Guarantee the seed URL itself is included in the result so the
+     customer's typed entry point is never silently dropped — even when
+     the sitemap omits it. No HTML link-scanning, no BFS expansion: if
+     a page isn't in the sitemap (or wasn't typed by the customer), it
+     won't be discovered or crawled. This matches the contract that
+     ``/crawl/discover`` and the real crawler now both follow.
 
 Also exports ``check_urls_alive`` for the recrawl-diff endpoint, which
 needs an authoritative liveness verdict for previously-stored URLs rather
@@ -202,96 +208,16 @@ async def discover_website_urls(
                 break
             await _parse_sitemap(s, depth=0)
 
-        # ── Step 3: BFS pass — always scan seed page for links not in sitemap ──
-        # Even when the sitemap is populated we do a shallow scan of the seed
-        # page so we catch pages that are linked from the homepage but missing
-        # from the sitemap (common on WordPress / theme nav menus).
-        # Always include the seed URL itself
-        if seed_url not in seen_pages:
+        # ── Step 3: guarantee the seed URL is included ──────────────────────
+        # Even when the customer's sitemap omits the seed URL (homepages
+        # sometimes are; vanity URLs nearly always are), we keep it in the
+        # result list so the page they typed is always part of the
+        # discoverable set. No further expansion — same-domain HTML link
+        # scanning was removed so the discovery scope is exactly
+        # "robots.txt-declared sitemap ∪ {seed_url}".
+        if _is_html_url(seed_url) and seed_url not in seen_pages:
             seen_pages.add(seed_url)
             page_urls.insert(0, seed_url)
-
-        async def _scan_page_links(page_url: str) -> list[str]:
-            """Fetch *page_url* and return any new same-domain HTML links."""
-            found: list[str] = []
-            if len(page_urls) >= max_urls:
-                return found
-            try:
-                async with session.get(page_url, allow_redirects=True, ssl=False) as r:
-                    if r.status != 200:
-                        return found
-                    html = await r.text(errors="replace")
-                    # Capture absolute and root-relative hrefs from anchor tags
-                    # only. ``<link rel="shortlink" href="?p=51">`` and similar
-                    # ``<link>`` / ``<area>`` / ``<base>`` elements were being
-                    # slurped before and surfaced as bogus "new" pages
-                    # (WordPress shortlinks, RSS alternates, canonical hints).
-                    # Query strings are preserved (only fragments stripped) so
-                    # a link like ``/contact?intent=enterprise`` matches what
-                    # the real crawler stored.
-                    hrefs = re.findall(
-                        r"""<a\b[^>]*?\shref=['"]((?:https?://|/)[^'"#]+)['"]""",
-                        html,
-                        flags=re.IGNORECASE,
-                    )
-                    for href in hrefs:
-                        href = href.strip()
-                        if not href:
-                            continue
-                        if href.startswith("/"):
-                            href = f"{base}{href}"
-                        if _norm_netloc(urlparse(href).netloc) != base_netloc:
-                            continue
-                        if not _is_html_url(href):
-                            continue
-                        if href not in seen_pages:
-                            seen_pages.add(href)
-                            page_urls.append(href)
-                            found.append(href)
-                            if len(page_urls) >= max_urls:
-                                return found
-            except Exception as exc:
-                logger.debug("Link scan failed for %s: %s", page_url, exc)
-            return found
-
-        # ── Step 3: BFS scan from the seed page, up to depth 2 ────────────
-        # The previous shallow scan (seed page + 5 sample sitemap pages) missed
-        # pages reachable in 2+ clicks but absent from the sitemap, which made
-        # the recrawl-diff falsely report those pages as "removed". A bounded
-        # BFS catches more of what the real crawler will find without slipping
-        # into a full Playwright run.
-        _MAX_PAGES_SCANNED = 60  # hard ceiling so a large site can't blow the time budget
-        _MAX_DEPTH = 2
-        _BATCH_SIZE = 10
-
-        scanned: set[str] = set()
-        # Start the queue with the seed and (when sitemap returned content)
-        # the first handful of sitemap children — same as the old behaviour
-        # but feeds into a deeper scan instead of stopping there.
-        queue: list[tuple[str, int]] = [(seed_url, 0)]
-        for u in page_urls[1:6]:
-            queue.append((u, 0))
-
-        while queue and len(scanned) < _MAX_PAGES_SCANNED and len(page_urls) < max_urls:
-            # Pull the next batch, skipping anything already scanned or past depth cap.
-            batch: list[tuple[str, int]] = []
-            while queue and len(batch) < _BATCH_SIZE:
-                next_url, next_depth = queue.pop(0)
-                if next_url in scanned or next_depth > _MAX_DEPTH:
-                    continue
-                scanned.add(next_url)
-                batch.append((next_url, next_depth))
-                if len(scanned) >= _MAX_PAGES_SCANNED:
-                    break
-            if not batch:
-                continue
-            results = await asyncio.gather(*[_scan_page_links(u) for u, _ in batch])
-            for (_parent_url, parent_depth), new_links in zip(batch, results, strict=True):
-                if parent_depth + 1 > _MAX_DEPTH:
-                    continue
-                for link in new_links:
-                    if link not in scanned:
-                        queue.append((link, parent_depth + 1))
 
         return page_urls[:max_urls]
 

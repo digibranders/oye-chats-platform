@@ -6,12 +6,11 @@ import os
 import re
 import socket
 import sys
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
 import aiohttp
 import html2text
-from bs4 import BeautifulSoup
 from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 
 # Force stdin, stdout, stderr to use UTF-8 safely
@@ -189,16 +188,14 @@ def url_priority(depth: int, *, from_sitemap: bool = False) -> int:
     """Lower number = higher priority (crawled first).
 
     Priority ladder (lowest number wins):
-      0 → seed URL (depth 0)
+      0 → seed URL (the customer's typed entry point, depth 0)
       1 → URLs the site owner curated in sitemap.xml
-      2 → BFS-discovered URLs at depth 1
-      3 → BFS-discovered URLs at depth 2
-      ...
 
-    Previously sitemap URLs shared priority ``1`` with BFS-depth-1 URLs, which
-    meant a small ``max_pages`` budget could be exhausted on arbitrary footer
-    links before the site owner's curated sitemap entries (About, Pricing,
-    Contact) were ever processed.
+    BFS-discovered URLs are no longer pushed onto the queue, so the
+    ladder only has two rungs in practice. The ``depth`` parameter is
+    retained for caller compatibility and audit logging; any value
+    other than 0 with ``from_sitemap=False`` is unreachable through the
+    current crawl path.
     """
     if depth == 0:
         return 0
@@ -229,52 +226,6 @@ def _make_html2text() -> html2text.HTML2Text:
     h.body_width = 0  # No wrapping
     h.skip_internal_links = False
     return h
-
-
-def extract_links_from_html(html: str, base_url: str) -> list[str]:
-    """Extract navigable URLs from HTML using BeautifulSoup.
-
-    Covers the patterns that modern WordPress / agency themes use beyond
-    plain <a href>:
-      - <area href> (image maps)
-      - data-href / data-url on any element (JS-powered menus, sliders)
-      - <link rel="alternate" hreflang> (multilingual canonical pages)
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    seen: set[str] = set()
-    links: list[str] = []
-
-    def _add(href: str | None) -> None:
-        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
-            return
-        full_url = urljoin(base_url, href.strip())
-        if full_url not in seen:
-            seen.add(full_url)
-            links.append(full_url)
-
-    # <a href> — standard navigation
-    for tag in soup.find_all("a", href=True):
-        _add(tag["href"])
-
-    # <area href> — image maps
-    for tag in soup.find_all("area", href=True):
-        _add(tag["href"])
-
-    # data-href / data-url — JS-powered menus (common in WordPress themes)
-    for tag in soup.find_all(attrs={"data-href": True}):
-        _add(tag["data-href"])
-    for tag in soup.find_all(attrs={"data-url": True}):
-        _add(tag["data-url"])
-
-    # <link rel="alternate" hreflang> — multilingual pages not linked anywhere else
-    for tag in soup.find_all("link", rel=True, href=True):
-        rel = tag.get("rel", [])
-        if isinstance(rel, list):
-            rel = " ".join(rel)
-        if "alternate" in rel:
-            _add(tag["href"])
-
-    return links
 
 
 # ---------------------------------------------------------------------------
@@ -1123,6 +1074,22 @@ async def crawl_recursive(
     if sitemap_seeded:
         mode_label = "sitemap-seed mode" if sitemap_mode else "sitemap"
         print(json.dumps({"log": f"Seeded {sitemap_seeded} URLs from {mode_label}"}))
+    else:
+        # Sitemap-only crawl with no sitemap available — the customer's
+        # typed entry point is all we'll ingest. Surface this clearly so
+        # they understand why the result is a single page rather than
+        # the whole site.
+        print(
+            json.dumps(
+                {
+                    "log": (
+                        f"No URLs found in robots.txt or {urlparse(start_url).scheme}://"
+                        f"{urlparse(start_url).netloc}/sitemap.xml — crawling only the "
+                        f"seed URL. Add a sitemap to your site to crawl more pages."
+                    )
+                }
+            )
+        )
 
     if _is_cancelled(cancel_file):
         print(json.dumps({"cancelled": True, "results": [], "recommended_colors": []}))
@@ -1164,15 +1131,8 @@ async def crawl_recursive(
                         fallback_colors = extract_colors_from_html(fb_result["html"])
                         for c in fallback_colors:
                             extracted_colors.add(c.lower())
-                        # Discover links
-                        if seed_depth < max_depth:
-                            for href in extract_links_from_html(fb_result["html"], seed_url):
-                                parsed_url = urlparse(href)
-                                if get_base_domain(parsed_url.netloc) == start_domain and parsed_url.scheme in (
-                                    "http",
-                                    "https",
-                                ):
-                                    push_url(href, seed_depth + 1)
+                    # No link discovery — crawl frontier is strictly
+                    # ``{seed_url} ∪ sitemap`` per the sitemap-only contract.
             else:
                 result = seed_result["result"]
                 # Capture raw HTML for SPA fingerprint detection (used after Phase 1)
@@ -1208,34 +1168,13 @@ async def crawl_recursive(
                         if extracted_colors:
                             print(json.dumps({"log": f"Python fallback extracted {len(extracted_colors)} colors"}))
 
-                    # Discover links from seed page
-                    if seed_depth < max_depth:
-                        links: list[str] = []
-
-                        # Method 1: crawl4ai built-in links
-                        if hasattr(result, "links") and isinstance(result.links, dict):
-                            links_internal = result.links.get("internal", [])
-                            for link in links_internal:
-                                if isinstance(link, dict):
-                                    href = link.get("href")
-                                    if href:
-                                        links.append(href)
-                                elif isinstance(link, str):
-                                    links.append(link)
-
-                        # Method 2: Fallback via BeautifulSoup
-                        if not links and hasattr(result, "html") and result.html:
-                            links = extract_links_from_html(result.html, seed_url)
-                            print(json.dumps({"log": f"Fallback: Found {len(links)} links via BeautifulSoup"}))
-
-                        for href in links:
-                            if not href:
-                                continue
-                            full_url = urljoin(seed_url, href)
-                            parsed_url = urlparse(full_url)
-                            link_domain = get_base_domain(parsed_url.netloc)
-                            if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
-                                push_url(full_url, seed_depth + 1)
+                    # No link discovery — crawl frontier is strictly
+                    # ``{seed_url} ∪ sitemap`` per the sitemap-only contract.
+                    # If the site owner wants more pages crawled, they add
+                    # them to their sitemap; this used to fan out via the
+                    # seed page's `<a href>` graph, which led to crawling
+                    # unrelated /blog/* archives, paginated /tag/* views,
+                    # and stale shortlink URLs.
 
     print(json.dumps({"log": f"Phase 1 complete. Browser destroyed. {pages_crawled} page(s), {len(pq)} URLs queued."}))
 
@@ -1378,23 +1317,8 @@ async def crawl_recursive(
                             )
                         )
 
-                        # Discover new links
-                        if depth < max_depth:
-                            page_links: list[str] = []
-                            if isinstance(links_dict, dict):
-                                for _link in links_dict.get("internal", []):
-                                    _href = _link.get("href") if isinstance(_link, dict) else _link
-                                    if _href:
-                                        page_links.append(urljoin(current_url, _href))
-                            if not page_links and html:
-                                page_links = extract_links_from_html(html, current_url)
-                            for href in page_links:
-                                parsed_url = urlparse(href)
-                                if get_base_domain(parsed_url.netloc) == start_domain and parsed_url.scheme in (
-                                    "http",
-                                    "https",
-                                ):
-                                    push_url(href, depth + 1)
+                        # No per-page link discovery — frontier is fixed at
+                        # ``{seed_url} ∪ sitemap`` for the entire crawl.
 
                 if session_count >= recycle_every and pq:
                     print(json.dumps({"log": f"Phase 2 (browser): recycled browser after {session_count} pages"}))
@@ -1496,17 +1420,8 @@ async def crawl_recursive(
                         if progress_file:
                             _write_progress(progress_file, results)
 
-                        # Discover new links if not at max depth — done per-page
-                        # so deeper URLs hit the queue sooner, which also keeps
-                        # the BFS frontier topped up while later batches are
-                        # still running on the current batch's slow pages.
-                        if info["depth"] < max_depth and crawl_result["html"]:
-                            page_links = extract_links_from_html(crawl_result["html"], info["url"])
-                            for href in page_links:
-                                parsed_url = urlparse(href)
-                                link_domain = get_base_domain(parsed_url.netloc)
-                                if link_domain == start_domain and parsed_url.scheme in ("http", "https"):
-                                    push_url(href, info["depth"] + 1)
+                        # No per-page link discovery — frontier is fixed at
+                        # ``{seed_url} ∪ sitemap`` for the entire crawl.
 
                     if cancel_seen:
                         # Cancel was raised mid-batch. Emit what we have and
