@@ -471,6 +471,74 @@ def revenue_cohorts(_admin: Client = Depends(get_superadmin)):
         ]
 
 
+_TIMESERIES_METRICS = ("revenue", "messages", "signups")
+
+
+@router.get("/stats/timeseries")
+def stats_timeseries(
+    metric: str = Query(default="revenue"),
+    days: int = Query(default=30, ge=1, le=365),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Daily time-series for a single platform metric over a trailing window.
+
+    Replaces the dashboard's previously-synthetic sparklines with real data.
+
+    * ``metric=revenue``  — paid-invoice value per day, **USD cents** (by paid_at,
+      falling back to created_at), normalised via ``_to_usd_cents``.
+    * ``metric=messages`` — chat messages created per day.
+    * ``metric=signups``  — client accounts created per day.
+
+    Returns a gap-filled list ``[{date: "YYYY-MM-DD", value: int}]`` covering
+    every day in the window (missing days are 0) so charts render continuously.
+    """
+    if metric not in _TIMESERIES_METRICS:
+        raise HTTPException(status_code=400, detail=f"metric must be one of {_TIMESERIES_METRICS}")
+
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(days=days - 1)
+    start_day = cutoff.date()
+    buckets: dict[str, int] = {(start_day + timedelta(days=i)).isoformat(): 0 for i in range(days)}
+
+    with get_session() as session:
+        if metric == "revenue":
+            rows = session.execute(
+                select(Invoice.amount_cents, Invoice.currency, Invoice.paid_at, Invoice.created_at).where(
+                    Invoice.status == "paid",
+                    func.coalesce(Invoice.paid_at, Invoice.created_at) >= cutoff,
+                )
+            ).all()
+            for amount_cents, currency, paid_at, created_at in rows:
+                ts = paid_at or created_at
+                if ts is None:
+                    continue
+                key = ts.date().isoformat()
+                if key in buckets:
+                    buckets[key] += _to_usd_cents(amount_cents, currency)
+        elif metric == "messages":
+            rows = session.execute(
+                select(func.date_trunc("day", ChatMessage.created_at).label("d"), func.count().label("n"))
+                .where(ChatMessage.created_at >= cutoff)
+                .group_by("d")
+            ).all()
+            for d, n in rows:
+                key = d.date().isoformat() if hasattr(d, "date") else str(d)
+                if key in buckets:
+                    buckets[key] = int(n)
+        else:  # signups
+            rows = session.execute(
+                select(func.date_trunc("day", Client.created_at).label("d"), func.count().label("n"))
+                .where(Client.created_at >= cutoff)
+                .group_by("d")
+            ).all()
+            for d, n in rows:
+                key = d.date().isoformat() if hasattr(d, "date") else str(d)
+                if key in buckets:
+                    buckets[key] = int(n)
+
+    return [{"date": day, "value": buckets[day]} for day in sorted(buckets)]
+
+
 # ── Visitors (behavioral analytics) ──────────────────────────────────────────
 
 
