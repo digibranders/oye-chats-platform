@@ -210,6 +210,41 @@ def test_no_ledger_scope_goes_negative_after_partial_refund(db):
     assert _balances(db, client.id, None) == 0
 
 
+def test_refund_claws_once_across_created_and_processed_events(db):
+    """refund.created and refund.processed are distinct webhook events for the
+    same refund. A grant that lands between them must not be clawed twice (N2)."""
+    client = _client(db)
+    bot = _bot(db, client, key="bot-n2")
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+
+    inv = Invoice(
+        client_id=client.id,
+        bot_id=bot.id,
+        amount_cents=4000,
+        currency="inr",
+        status="paid",
+        razorpay_payment_id="pay_n2",
+    )
+    db.add(inv)
+    db.commit()
+
+    # refund.created → claws the 500 top-up (full refund of a ₹40 charge).
+    rzp._handle_refund_created(db, _refund_payload("pay_n2", 4000, refund_id="rfnd_n2"))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 0
+
+    # A NEW top-up grant arrives before the bank settles the refund.
+    credit_service.grant_topup(db, client.id, 500, bot_id=bot.id)
+    db.commit()
+
+    # refund.processed (same refund id, different webhook event) must be a
+    # no-op — the new grant is untouched.
+    rzp._handle_refund_created(db, _refund_payload("pay_n2", 4000, refund_id="rfnd_n2"))
+    db.commit()
+    assert _balances(db, client.id, bot.id) == 500
+
+
 def test_topup_captured_stamps_bot_id_on_invoice(db):
     """The top-up handler records the bot ledger scope on the invoice so a later
     refund can claw credits back from that same scope (wiring for C2)."""

@@ -1406,11 +1406,11 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     needs is not required here: each refund event represents exactly its
     own amount.
 
-    Both ``refund.created`` and ``refund.processed`` route here. Created
-    fires the moment the refund is initiated; processed fires when the
-    bank settles it. We claw back on the FIRST event so the customer
-    can't keep using credits during the settlement window — the second
-    event's clawback is a no-op (already-clawed delta returns 0).
+    Both ``refund.created`` and ``refund.processed`` route here. Created fires
+    the moment the refund is initiated; processed fires when the bank settles
+    it. We claw back on the FIRST event so the customer can't keep using credits
+    during the settlement window, and dedupe on the refund id so the second
+    event never claws again — even if a fresh grant arrived in between (N2).
     """
     refund_entity = (payload.get("refund") or {}).get("entity") or {}
     if not refund_entity:
@@ -1420,6 +1420,15 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     refund_minor = int(refund_entity.get("amount") or 0)
     if not payment_id or refund_minor <= 0:
         return "refund missing payment_id or amount"
+
+    # Dedupe by REFUND id, not just webhook event id. ``refund.created`` and
+    # ``refund.processed`` are distinct events (distinct ``x-razorpay-event-id``)
+    # for the SAME refund, so the top-level event dedup lets both through.
+    # Without this, a grant that lands between the two events would be clawed a
+    # second time (remediation N2). First event to arrive claws; the rest no-op.
+    refund_id = refund_entity.get("id")
+    if refund_id and not _record_or_skip_event(session, f"refund:{refund_id}"):
+        return f"Refund {refund_id} already clawed back"
 
     inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
     if inv is None:

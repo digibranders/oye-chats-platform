@@ -1066,15 +1066,21 @@ def accept_invite_for_existing_client(
     # dashboard with a "you're already a Partner" toast instead of an error.
     existing = session.execute(select(Affiliate).where(Affiliate.client_id == client.id)).scalars().first()
     if existing is not None and existing.deactivated_at is None:
-        # Mark the invite consumed even though we didn't create a new row,
-        # so a third click hits InviteAlreadyUsed. The mutation must be
-        # COMMITTED before we raise — the outer session context-manager
-        # rolls back on exception, so a plain assignment + raise would
-        # silently lose the write and the invite would stay pending until
-        # expiry, defeating the comment's promise.
+        # Mark the invite consumed even though we didn't create a new row, so a
+        # third click hits InviteAlreadyUsed. We need it durable across the
+        # AlreadyAffiliate raise (which the caller's context-manager turns into
+        # a rollback), but we must NOT ``session.commit()`` here — that would
+        # commit the caller's other pending work too, hijacking its transaction
+        # boundary (remediation H3). Persist the mark in its own transaction on
+        # the same engine instead.
         if invite.accepted_at is None:
-            invite.accepted_at = datetime.now(UTC)
-            session.commit()
+            from sqlalchemy.orm import Session as _Session
+
+            with _Session(session.get_bind()) as side:
+                side_invite = side.get(AffiliateInvite, invite.id)
+                if side_invite is not None and side_invite.accepted_at is None:
+                    side_invite.accepted_at = datetime.now(UTC)
+                    side.commit()
         raise AlreadyAffiliate(f"{client.email} is already an active affiliate.")
 
     # Re-check the cap at accept-time.

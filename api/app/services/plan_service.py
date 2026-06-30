@@ -59,14 +59,24 @@ def get_default_plan(session: Session) -> Plan | None:
 
 
 def get_client_subscription(session: Session, client_id: int) -> Subscription | None:
-    """Return the client's current active/trialing/past_due subscription, if any."""
+    """Return the client's account subscription, preferring the HIGHEST tier.
+
+    Under per-bot billing a client may hold several active subscriptions at once
+    (one account-level + one per paid bot). Account-level entitlements must
+    follow the highest-tier active subscription (by plan price), NOT whichever
+    row was created most recently — otherwise adding a Free second bot would
+    silently downgrade the account's features to Free (remediation H2). Ties
+    break on most-recent. ``plan_id`` is non-null (FK RESTRICT), so the inner
+    join never drops a valid subscription.
+    """
     stmt = (
         select(Subscription)
+        .join(Plan, Plan.id == Subscription.plan_id)
         .where(
             Subscription.client_id == client_id,
             Subscription.status.in_(("active", "trialing", "past_due")),
         )
-        .order_by(Subscription.created_at.desc())
+        .order_by(Plan.monthly_price_cents.desc(), Subscription.created_at.desc())
         .limit(1)
     )
     return session.execute(stmt).scalars().first()
