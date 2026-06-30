@@ -162,7 +162,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     ? [{ path: '/team', name: 'Team', icon: UsersRound }]
     : [
         { path: '/chatbot', name: 'My Bots', icon: Bot, children: [
-          { path: '/chatbot?tab=appearance', name: 'Appearance', icon: Palette },
+          { path: '/chatbot?tab=appearance', name: 'Bot Settings', icon: Palette },
         ] },
         // Team management (operators, departments, canned responses) only
         // makes sense when live chat is on. Locking at the sidebar gives

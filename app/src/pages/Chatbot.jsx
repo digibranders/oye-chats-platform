@@ -27,7 +27,7 @@ import DomainRestrictions from '../components/DomainRestrictions';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 
-import Interface from './Interface';
+import BotSettings from './BotSettings';
 import { cn, normalizeUrl } from '../lib/utils';
 
 export default function Chatbot() {
@@ -293,9 +293,9 @@ export default function Chatbot() {
                         <ArrowLeft size={14} />
                         My Bots
                     </button>
-                    <PageHeader title="Appearance" subtitle="Customize your chatbot's look and feel" />
+                    <PageHeader title="Bot Settings" subtitle="Configure your chatbot's personality, appearance, and behavior" />
                 </div>
-                <Interface embedded />
+                <BotSettings embedded />
             </div>
         );
     }

@@ -339,7 +339,7 @@ export default function Interface({ embedded = false }) {
     }, [activeTab, liveChatAllowed, leadFormLocked, ent.isFree]);
 
     if (!botsLoading && bots.length === 0) {
-        return <EmptyState title="Appearance" description="Create a chatbot first, then customize its colors, logo, and appearance here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
+        return <EmptyState title="Bot Settings" description="Create a chatbot first, then configure its personality, appearance, and behavior here." actionLabel="Create Chatbot" actionTo="/chatbot" />;
     }
 
     // Tab list is computed per-render so plan upgrades take effect without a
@@ -503,8 +503,8 @@ export default function Interface({ embedded = false }) {
             {!embedded && (
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div>
-                        <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">Appearance</h1>
-                        <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm">Customize how your chatbot looks</p>
+                        <h1 className="text-2xl font-bold text-surface-900 dark:text-surface-50 tracking-tight">Bot Settings</h1>
+                        <p className="text-surface-500 dark:text-surface-400 mt-1 text-sm">Configure your chatbot's personality, appearance, and behavior</p>
                         {!isBotManager && (
                             <p className="mt-2 text-sm text-surface-500 dark:text-surface-400">
                                 You have read-only access to this bot configuration.

@@ -4,7 +4,7 @@ import { ChevronRight } from 'lucide-react';
 const routeLabels = {
   knowledge: 'Sources',
   chatbot: 'My Bots',
-  interface: 'Appearance',
+  interface: 'Bot Settings',
   analytics: 'Analytics',
   users: 'Conversations',
   feedback: 'Feedback',
