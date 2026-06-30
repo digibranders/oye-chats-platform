@@ -849,6 +849,11 @@ class Subscription(Base):
     # Billing period
     current_period_start = Column(DateTime(timezone=True), nullable=True)
     current_period_end = Column(DateTime(timezone=True), nullable=True)
+    # The billing period (by ``current_period_end``) the plan's monthly credits
+    # were last granted for. Makes the renewal grant idempotent per period —
+    # ``subscription.charged`` / ``activated`` grant at most once per distinct
+    # period regardless of event timing, ordering, or replays (remediation H4).
+    last_granted_period_end = Column(DateTime(timezone=True), nullable=True)
 
     # Trial tracking
     trial_start = Column(DateTime(timezone=True), nullable=True)
