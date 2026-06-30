@@ -779,9 +779,14 @@ def list_code_referrals(
         if full_cents > 0:
             distribution_currency = distribution_currency or currency
 
-        aff_cents = int(full_cents * aff_share)
-        cust_saved_cents = int(full_cents * cust_share)
-        platform_cents = int(full_cents * platform_share) if include_platform else 0
+        # Round half-up to the nearest cent rather than truncating (M1) — these
+        # are display-only earnings estimates, and flooring each independently
+        # dropped up to a cent per bucket. (The three shares intentionally do
+        # NOT partition the whole: ``platform_share`` is the unallocated pool
+        # remainder, so they are not forced to sum to ``full_cents``.)
+        aff_cents = int(full_cents * aff_share + 0.5)
+        cust_saved_cents = int(full_cents * cust_share + 0.5)
+        platform_cents = int(full_cents * platform_share + 0.5) if include_platform else 0
         paid_cents = full_cents - cust_saved_cents
 
         if full_cents > 0:
