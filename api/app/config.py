@@ -57,14 +57,21 @@ else:
 # ─────────────────────────────────────────────────────────────────────────────
 # Embeddings & RAG
 # ─────────────────────────────────────────────────────────────────────────────
-# Primary provider: "fastembed" (local ONNX, no API cost) or "openai" (API).
-# FastEmbed runs BAAI/bge-base-en-v1.5 locally — 768-dim, ~420MB RAM per worker.
-# OpenAI text-embedding-3-small is used as fallback when FastEmbed fails, and
-# as the sole provider when EMBED_PROVIDER=openai.
-EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "fastembed")
+# "google" (Gemini API, off-box) is the sole embedding provider. It reuses the
+# same GOOGLE_API_KEY as the Gemini LLM fallback — no GCP/Vertex setup. Model:
+# gemini-embedding-001 at 768-dim (Matryoshka-truncated + L2-normalized in the
+# client). There is NO cross-model fallback: mixing embedding models corrupts
+# vector search, so on failure we rely on ARQ retry (ingestion) and full-text
+# degradation (query — see rag_service).
+EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "google").strip().lower()
+GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+GEMINI_EMBED_URL = os.getenv(
+    "GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta"
+).rstrip("/")
+EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "768"))  # matches Vector(768) column
+# Legacy — removed together with the FastEmbed/OpenAI embedder in the cleanup task.
 FASTEMBED_MODEL = os.getenv("FASTEMBED_MODEL", "BAAI/bge-base-en-v1.5")
-EMBED_MODEL = "text-embedding-3-small"  # OpenAI fallback model
-EMBED_DIMENSIONS = 768  # bge-base-en-v1.5 output dimensions
+EMBED_MODEL = "text-embedding-3-small"
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
