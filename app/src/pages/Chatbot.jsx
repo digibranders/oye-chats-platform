@@ -8,22 +8,16 @@ import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import {
-    createBot,
     deleteBot,
-    crawlWebsite,
     updateBot,
-    getSubscriptionPlans,
-    createBotCheckout,
-    verifyBotCheckout,
 } from '../services/api';
-import { openRazorpayCheckout } from '../lib/razorpay';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import InstallDrawer from './my-bots/InstallDrawer';
-import { useBotPricing } from './my-bots/useBotPricing';
+import CreateBotWizard from './my-bots/CreateBotWizard';
 
 import BotSettings from './BotSettings';
-import { cn, normalizeUrl } from '../lib/utils';
+import { cn } from '../lib/utils';
 
 export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading, error: botError } = useBotContext();
@@ -32,18 +26,6 @@ export default function Chatbot() {
     const [searchParams, setSearchParams] = useSearchParams();
     const botTab = searchParams.get('tab') || 'bots';
     const [isCreateOpen, setIsCreateOpen] = useState(false);
-    const [newBotName, setNewBotName] = useState('');
-    const [newBotWebsite, setNewBotWebsite] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [error, setError] = useState('');
-    // Two-step create flow for the 2nd+ bot: 'details' (name/website) →
-    // 'plan' (plan picker + monthly/annual toggle + checkout CTA). The
-    // first bot on an account skips step 2 entirely (no payment needed
-    // for the included Free bot).
-    const [createStep, setCreateStep] = useState('details');
-    const [billingCycle, setBillingCycle] = useState('monthly');
-    const [selectedPlanSlug, setSelectedPlanSlug] = useState('starter');
-    const [paidPlans, setPaidPlans] = useState([]);
     const isFirstBot = bots.length === 0;
     const [installBot, setInstallBot] = useState(null);
     const [deletingBot, setDeletingBot] = useState(null);
@@ -54,151 +36,33 @@ export default function Chatbot() {
     const [renameValue, setRenameValue] = useState('');
     const renameInputRef = useRef(null);
 
+    // Open the create flow. The wizard self-adapts:
+    //   * First bot (bots.length === 0) → one-screen Free path.
+    //   * 2nd+ bot → two-step wizard with the plan picker + Razorpay.
+    const openCreate = () => setIsCreateOpen(true);
+
     // Open the create flow if the user reached this page via the
     // ?create=true querystring (clicked "Create new bot" from the sidebar
-    // dropdown or a deep link). The plan-limit gate runs HERE rather than
-    // only on the visible Add button so URL-walkers and deep links hit the
-    // same upgrade upsell as everyone else.
-    const tryOpenCreate = () => {
-        // Open the create wizard for everyone. It self-adapts:
-        //   * First bot (bots.length === 0) → one-screen Free path.
-        //   * 2nd+ bot → two-step wizard with the plan picker + Razorpay.
-        // The generic UpgradeModal isn't routed for ``add_bot`` anymore —
-        // it would just be an extra click before the same pricing step
-        // the wizard already shows.
-        setIsCreateOpen(true);
-        setCreateStep('details');
-        return true;
-    };
-
+    // dropdown or a deep link).
     useEffect(() => {
         if (searchParams.get('create') === 'true') {
-            tryOpenCreate();
+            setIsCreateOpen(true);
             setSearchParams({}, { replace: true });
         }
-        // The effect's job is purely to react to the URL flag; the wizard
-        // adapts itself based on the current bots list (no dependency on
-        // entitlements needed here).
     }, [searchParams, setSearchParams]);
 
-    // Pre-load the active plans the first time the create modal opens so
-    // the pricing step renders without a flash. Falls back silently to
-    // the hardcoded starter/standard slugs if the call fails.
-    useEffect(() => {
-        if (!isCreateOpen || isFirstBot || paidPlans.length > 0) return;
-        getSubscriptionPlans()
-            .then((all) => {
-                const paid = (all || [])
-                    .filter((p) => p.slug !== 'free' && p.slug !== 'enterprise')
-                    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-                setPaidPlans(paid);
-                if (paid.length > 0 && !paid.find((p) => p.slug === selectedPlanSlug)) {
-                    setSelectedPlanSlug(paid[0].slug);
-                }
-            })
-            .catch((err) => console.error('Failed to load plans for bot checkout:', err));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isCreateOpen, isFirstBot]);
-
-    const { price } = useBotPricing();
-    const selectedPlan = paidPlans.find((p) => p.slug === selectedPlanSlug) || null;
-    const { cents: planPriceCents, symbol: planCurrencySymbol } = price(selectedPlan, billingCycle);
-    const planPriceLabel = `${planCurrencySymbol}${(planPriceCents / 100).toFixed(0)}/mo`;
-
-    // Dismiss path: close the modal, reset all wizard state, and snap the
-    // sidebar selection back to bot 1 so the user lands somewhere
-    // concrete after abandoning the create flow.
-    const closeCreateAndReturnToBot1 = () => {
+    // After the wizard creates a bot: refresh the list, then open the install
+    // slide-over for the new bot so the user lands on next steps immediately.
+    const handleCreated = async (newBotId) => {
         setIsCreateOpen(false);
-        setCreateStep('details');
-        setError('');
-        setNewBotName('');
-        setNewBotWebsite('');
-        setBillingCycle('monthly');
-        if (bots.length > 0) selectBot(bots[0]);
-    };
-
-    const handleContinueToPricing = (e) => {
-        e.preventDefault();
-        if (!newBotName.trim()) return;
-        setError('');
-        if (isFirstBot) {
-            // First bot path — skip checkout; create directly under the Free plan.
-            handleCreateFreeBot();
-            return;
+        const refreshed = await refreshBots();
+        const created = Array.isArray(refreshed)
+            ? refreshed.find((b) => b.id === newBotId)
+            : bots.find((b) => b.id === newBotId);
+        if (created) {
+            selectBot(created);
+            setInstallBot(created);
         }
-        setCreateStep('plan');
-    };
-
-    const handleCreateFreeBot = async () => {
-        const normalizedWebsite = normalizeUrl(newBotWebsite);
-        setIsSubmitting(true);
-        try {
-            const result = await createBot({ name: newBotName.trim(), website: normalizedWebsite || undefined });
-            if (normalizedWebsite) {
-                crawlWebsite(normalizedWebsite, result.bot_id).catch((err) => {
-                    console.error('Background website crawl failed:', err);
-                    showToast('error', err.message || 'Failed to crawl website');
-                });
-            }
-            await refreshBots();
-            setNewBotName(''); setNewBotWebsite(''); setIsCreateOpen(false);
-            showToast('success', `Bot "${result.name}" created!`);
-        } catch (err) {
-            // Edge case — Free bot path should never 402 (bot count was 0
-            // when the modal opened) but handle defensively if a sibling
-            // tab raced and created the first bot just now.
-            if (err?.status === 402 && err?.data?.detail?.must_subscribe) {
-                setCreateStep('plan');
-                return;
-            }
-            setError(err.message || 'Failed to create bot');
-        } finally { setIsSubmitting(false); }
-    };
-
-    const handleSubscribeAndCreate = async () => {
-        if (!newBotName.trim() || !selectedPlan) return;
-        const normalizedWebsite = normalizeUrl(newBotWebsite);
-        setError(''); setIsSubmitting(true);
-        try {
-            const order = await createBotCheckout({
-                name: newBotName.trim(),
-                website: normalizedWebsite || undefined,
-                plan_slug: selectedPlan.slug,
-                billing_cycle: billingCycle,
-            });
-            const callback = await openRazorpayCheckout({
-                key: order.key_id,
-                subscription_id: order.subscription_id,
-                name: order.name || 'OyeChats',
-                description: order.description,
-                prefill: order.prefill || {},
-                theme: order.theme || { color: '#6366f1' },
-            });
-            const verifyResult = await verifyBotCheckout({
-                razorpay_payment_id: callback.razorpay_payment_id,
-                razorpay_subscription_id: callback.razorpay_subscription_id,
-                razorpay_signature: callback.razorpay_signature,
-            });
-            await refreshBots();
-            const newBotId = verifyResult?.bot_id;
-            if (normalizedWebsite && newBotId) {
-                crawlWebsite(normalizedWebsite, newBotId).catch((err) => {
-                    console.error('Background website crawl failed:', err);
-                });
-            }
-            setIsCreateOpen(false);
-            setCreateStep('details');
-            setNewBotName(''); setNewBotWebsite('');
-            showToast('success', `Bot "${newBotName.trim()}" created and subscribed!`);
-        } catch (err) {
-            // Razorpay modal dismissed — treat as abandon and snap back to bot 1.
-            if (err?.code === 'dismissed') {
-                closeCreateAndReturnToBot1();
-                return;
-            }
-            setError(err.message || 'Could not complete bot subscription. Try again.');
-        } finally { setIsSubmitting(false); }
     };
 
     const handleDelete = async (botId, botName) => {
@@ -267,7 +131,7 @@ export default function Chatbot() {
             <PageHeader title="My Bots" subtitle="Manage your chatbot instances">
                 {isBotManager && (
                     <button
-                        onClick={tryOpenCreate}
+                        onClick={openCreate}
                         className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium shadow-sm transition-all hover:shadow-md"
                     >
                         <Plus size={16} /> Add Chatbot
@@ -311,7 +175,7 @@ export default function Chatbot() {
                         ? 'Create your first chatbot to get started. Each bot gets its own embed code and knowledge base.'
                         : 'No chatbots are currently available for this workspace.'}
                     actionLabel={isBotManager ? 'Create Chatbot' : undefined}
-                    onAction={isBotManager ? tryOpenCreate : undefined}
+                    onAction={isBotManager ? openCreate : undefined}
                 />
             ) : (
                 <div className="space-y-3">
@@ -404,179 +268,13 @@ export default function Chatbot() {
                 onClose={() => setInstallBot(null)}
             />
 
-            {/* Create Bot Modal — simple two-step wizard.
-                Step 1: name + website. Step 2 (2nd+ bot only): plan picker
-                + monthly/annual toggle → Razorpay Checkout. */}
-            {isBotManager && isCreateOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden animate-scale-in">
-                        <div className="p-6">
-                            <div className="flex items-center gap-3 mb-5">
-                                <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
-                                    <Bot size={20} className="text-primary-600 dark:text-primary-400" />
-                                </div>
-                                <div>
-                                    <h2 className="text-base font-semibold text-surface-900 dark:text-surface-100">
-                                        {createStep === 'plan' ? 'Pick a plan' : 'Create new chatbot'}
-                                    </h2>
-                                    <p className="text-xs text-surface-500 dark:text-surface-400">
-                                        {createStep === 'plan'
-                                            ? 'Each bot is its own subscription'
-                                            : isFirstBot
-                                                ? 'Included free on every account'
-                                                : 'Step 1 of 2 — name your bot'}
-                                    </p>
-                                </div>
-                            </div>
-
-                            {error && (
-                                <div className="mb-4 p-3 bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 text-sm rounded-xl border border-rose-500/20 dark:border-rose-500/30 flex items-center gap-2">
-                                    <AlertCircle size={14} />{error}
-                                </div>
-                            )}
-
-                            {createStep === 'details' ? (
-                                <form onSubmit={handleContinueToPricing} className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">
-                                            Bot name <span className="text-rose-500">*</span>
-                                        </label>
-                                        <input
-                                            type="text"
-                                            required
-                                            value={newBotName}
-                                            onChange={(e) => setNewBotName(e.target.value)}
-                                            className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500"
-                                            placeholder="e.g. Support Bot"
-                                            maxLength={50}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">
-                                            Website <span className="text-xs font-normal text-surface-400">(optional)</span>
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={newBotWebsite}
-                                            onChange={(e) => setNewBotWebsite(e.target.value)}
-                                            className="w-full h-11 px-3 rounded-xl border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-800 text-surface-900 dark:text-surface-100 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:border-primary-400 outline-none transition-all text-sm placeholder:text-surface-400 dark:placeholder:text-surface-500"
-                                            placeholder="https://yourwebsite.com"
-                                        />
-                                    </div>
-                                    <div className="flex gap-3 pt-2">
-                                        <button
-                                            type="button"
-                                            onClick={closeCreateAndReturnToBot1}
-                                            className="flex-1 py-2.5 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700"
-                                        >
-                                            Cancel
-                                        </button>
-                                        <button
-                                            type="submit"
-                                            disabled={isSubmitting || !newBotName.trim()}
-                                            className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium transition-colors flex justify-center items-center disabled:opacity-70"
-                                        >
-                                            {isSubmitting
-                                                ? <Loader2 size={16} className="animate-spin" />
-                                                : isFirstBot ? 'Create bot' : 'Continue'}
-                                        </button>
-                                    </div>
-                                </form>
-                            ) : (
-                                <div className="space-y-4">
-                                    {/* Monthly / Annual toggle */}
-                                    <div className="flex items-center justify-center">
-                                        <div className="inline-flex p-1 rounded-lg bg-surface-100 dark:bg-surface-800">
-                                            {['monthly', 'annual'].map((cycle) => (
-                                                <button
-                                                    key={cycle}
-                                                    type="button"
-                                                    onClick={() => setBillingCycle(cycle)}
-                                                    className={cn(
-                                                        'px-4 py-1.5 rounded-md text-xs font-medium transition-colors',
-                                                        billingCycle === cycle
-                                                            ? 'bg-white dark:bg-surface-700 text-surface-900 dark:text-surface-100 shadow-sm'
-                                                            : 'text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-300',
-                                                    )}
-                                                >
-                                                    {cycle === 'monthly' ? 'Monthly' : 'Annual'}
-                                                    {cycle === 'annual' && (
-                                                        <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">Save 20%</span>
-                                                    )}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    {/* Plan cards */}
-                                    {paidPlans.length === 0 ? (
-                                        <div className="py-6 flex justify-center text-surface-400">
-                                            <Loader2 size={20} className="animate-spin" />
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            {paidPlans.map((plan) => {
-                                                const { cents: monthlyCents, symbol } = price(plan, billingCycle);
-                                                const isSelected = selectedPlanSlug === plan.slug;
-                                                return (
-                                                    <button
-                                                        key={plan.slug}
-                                                        type="button"
-                                                        onClick={() => setSelectedPlanSlug(plan.slug)}
-                                                        className={cn(
-                                                            'w-full text-left p-3.5 rounded-xl border transition-all flex items-center justify-between gap-3',
-                                                            isSelected
-                                                                ? 'border-primary-500 bg-primary-50/40 dark:bg-primary-500/10'
-                                                                : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600',
-                                                        )}
-                                                    >
-                                                        <div>
-                                                            <div className="text-sm font-semibold text-surface-900 dark:text-surface-100">{plan.name}</div>
-                                                            <div className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
-                                                                {(plan.credits_per_month ?? 0).toLocaleString()} credits / month
-                                                            </div>
-                                                        </div>
-                                                        <div className="text-right shrink-0">
-                                                            <div className="text-sm font-semibold text-surface-900 dark:text-surface-100">
-                                                                {symbol}{(monthlyCents / 100).toFixed(0)}
-                                                                <span className="text-xs font-normal text-surface-500 dark:text-surface-400">/mo</span>
-                                                            </div>
-                                                        </div>
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-
-                                    <p className="text-xs text-surface-500 dark:text-surface-400">
-                                        Charged immediately. No free trial on additional bots.
-                                    </p>
-
-                                    <div className="flex gap-3 pt-1">
-                                        <button
-                                            type="button"
-                                            onClick={() => { setCreateStep('details'); setError(''); }}
-                                            disabled={isSubmitting}
-                                            className="py-2.5 px-4 bg-white dark:bg-surface-800 border border-surface-200 dark:border-surface-600 text-surface-700 dark:text-surface-300 rounded-xl text-sm font-medium transition-colors hover:bg-surface-50 dark:hover:bg-surface-700 disabled:opacity-60"
-                                        >
-                                            Back
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleSubscribeAndCreate}
-                                            disabled={isSubmitting || !selectedPlan}
-                                            className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white rounded-xl text-sm font-medium transition-colors flex justify-center items-center disabled:opacity-70"
-                                        >
-                                            {isSubmitting
-                                                ? <Loader2 size={16} className="animate-spin" />
-                                                : `Subscribe · ${planPriceLabel}`}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
+            {isBotManager && (
+                <CreateBotWizard
+                    open={isCreateOpen}
+                    isFirstBot={isFirstBot}
+                    onClose={() => setIsCreateOpen(false)}
+                    onCreated={handleCreated}
+                />
             )}
         </div>
     );
