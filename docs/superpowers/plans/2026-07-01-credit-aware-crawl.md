@@ -12,6 +12,8 @@
 
 **Refinement vs spec:** The spec proposed a backend `crawl_order` enum. During planning we found `discover_website_urls` returns plain URL strings and `/crawl/discover` already runs discovery — so ordering is done frontend-side by sorting the returned list, and the backend only needs an `ordered_urls` param. Simpler, fewer moving parts, same UX.
 
+**Revised after CTO review (2026-07-01):** fixes applied inline — (1) skip orphan-sweep on partial crawls to prevent data loss; (2) Playwright fallback reuses recursive `crawl_website` (the assumed `crawl_single_http`/`aiohttp` path was in the wrong module and used an undeclared dep); (3) discover balance is **bot-scoped**; (4) tests use the real `TestClient` + dependency-override harness (mirroring `tests/test_document_routes.py`); (5) `fetch_urls` honors the cancel flag; (6) discover credit lookups sit in the pre-discovery session block; (7) Task 2 verifies Spider's `/scrape` shape first; (8) discover rate-limit raised; (9) modal shows "capped" state.
+
 ---
 
 ## Pre-flight
@@ -25,9 +27,8 @@
 - `api/app/api/document_routes.py` — `/crawl/discover` response gains credit math + `urls`; `/crawl` accepts `ordered_urls`.
 - `api/app/schemas/client.py` — `CrawlRequest.ordered_urls`; new `CrawlDiscoverResponse` fields.
 - `api/app/services/spider_service.py` — add `fetch_urls()` (scrape an explicit list).
-- `api/app/services/crawl_provider.py` — add `fetch_urls()` dispatch + fallback.
-- `api/app/services/crawler_service.py` — add `fetch_urls()` (Playwright fallback, reuses `crawl_single_http`).
-- `api/app/services/crawl_orchestrator.py` — `run_full_crawl` branches to fetch-list when `ordered_urls` given.
+- `api/app/services/crawl_provider.py` — add `fetch_urls()` dispatch; fallback reuses recursive `crawl_website` (no new `crawler_service.fetch_urls`).
+- `api/app/services/crawl_orchestrator.py` — `run_full_crawl` branches to fetch-list when `ordered_urls` given, **and skips the orphan-sweep on partial crawls**.
 - `api/app/worker/tasks.py` — `task_crawl_and_ingest` passes `ordered_urls` through.
 
 **Frontend (modify):**
@@ -46,23 +47,60 @@
 
 ```python
 # api/tests/test_crawl_discover_credits.py
-from unittest.mock import patch
+# Mirrors the harness in tests/test_document_routes.py: bare FastAPI app +
+# router + dependency overrides + monkeypatched get_session. No async_client.
+from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
-import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.api import document_routes
+from app.api.auth import get_current_client_or_operator, require_active_subscription_for_workspace
+from app.api.document_routes import router
+from app.services.plan_service import UNLIMITED
 
 
-@pytest.mark.asyncio
-async def test_discover_returns_credit_math(async_client, standard_client_auth_headers):
-    """/crawl/discover must return cost_per_page, balance, max_affordable_pages,
-    credits_required_full, exceeds_balance, and the urls list."""
+@contextmanager
+def _session_ctx(session):
+    yield session
+
+
+def _build_app():
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_client_or_operator] = lambda: {
+        "type": "client", "entity": SimpleNamespace(id=1), "client_id": 1, "operator_id": None,
+    }
+    app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
+    return app
+
+
+def test_discover_returns_credit_math(monkeypatch):
+    """/crawl/discover returns cost_per_page, (bot-scoped) balance,
+    max_affordable_pages, credits_required_full, exceeds_balance, and urls."""
     fake_urls = [f"https://acme.test/p{i}" for i in range(30)]  # 30 pages
-    with patch("app.services.url_discovery.discover_website_urls", return_value=fake_urls), \
-         patch("app.services.credit_service.get_credit_cost", return_value=5), \
-         patch("app.services.credit_service.get_balance", return_value=100):  # 100 cr -> 20 pages
-        resp = await async_client.post(
-            "/crawl/discover", json={"url": "https://acme.test"},
-            headers=standard_client_auth_headers,
-        )
+
+    monkeypatch.setattr(document_routes, "get_session", lambda: _session_ctx(MagicMock()))
+    monkeypatch.setattr(
+        "app.services.plan_service.get_client_plan", lambda db, cid: SimpleNamespace(name="Standard")
+    )
+    monkeypatch.setattr(
+        "app.services.plan_service.get_crawl_limits", lambda plan: {"max_crawl_pages": UNLIMITED}
+    )
+
+    async def _fake_discover(url, max_urls, timeout):
+        return fake_urls
+
+    monkeypatch.setattr("app.services.url_discovery.discover_website_urls", _fake_discover)
+    monkeypatch.setattr("app.services.credit_service.get_credit_cost", lambda db, action: 5)
+    # 100 credits -> 20 affordable pages; assert bot_id is threaded through.
+    monkeypatch.setattr(
+        "app.services.credit_service.get_balance", lambda db, cid, bot_id=None: 100
+    )
+
+    resp = TestClient(_build_app()).post("/crawl/discover", json={"url": "https://acme.test"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["total_found"] == 30
@@ -74,7 +112,7 @@ async def test_discover_returns_credit_math(async_client, standard_client_auth_h
     assert body["urls"] == fake_urls
 ```
 
-> **Fixture note:** `async_client` and `standard_client_auth_headers` — reuse the patterns in `api/tests/conftest.py`. If a Standard-plan auth fixture does not exist, add one there mirroring the existing client-auth fixture, assigning the Standard plan. Inspect `conftest.py` first and follow its exact style.
+> **Harness note:** this exactly mirrors `tests/test_document_routes.py` (`_build_app` + `TestClient` + `monkeypatch.setattr(document_routes, "get_session", ...)`). The endpoint imports `plan_service`, `url_discovery`, and `credit_service` *inside* the function, so patch them on their source modules (as above). Open `test_document_routes.py` first and match its style.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -83,23 +121,34 @@ Expected: FAIL — response lacks `cost_per_page` (KeyError on assertion).
 
 - [ ] **Step 3: Add credit math to the discover endpoint**
 
-In `api/app/api/document_routes.py`, replace the final `return {...}` of `crawl_discover_endpoint` with:
+Two edits in `crawl_discover_endpoint`:
+
+**(a)** Read the credit inputs **inside the existing pre-discovery `with get_session() as db:` block** (the one that resolves `plan`). Discovery runs *after* that block (a ~20s network call — do not hold a DB connection across it), so read the credit numbers first. Balance is **bot-scoped** (`bot_id` is already a param of this endpoint):
 
 ```python
-        from app.services import credit_service
-
+    with get_session() as db:
+        plan = plan_service.get_client_plan(db, client_id)
+        crawl_limits = plan_service.get_crawl_limits(plan)
+        plan_max = crawl_limits["max_crawl_pages"]
+        # Credit inputs — read here, before the long discovery call.
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
-        balance = credit_service.get_balance(db, client_id)
-        per_page = max(int(cost_per_page), 1)
-        max_affordable_pages = int(balance) // per_page
-        credits_required_full = total * cost_per_page
+        balance = credit_service.get_balance(db, client_id, bot_id=bot_id)
+```
+(add `from app.services import credit_service` to the local imports already present in this function.)
+
+**(b)** After discovery, compute the derived values (pure arithmetic — no session) and return them. Also initialise `urls = []` before the `try` so the field is always safe:
+
+```python
+    per_page = max(int(cost_per_page), 1)
+    max_affordable_pages = int(balance) // per_page
+    credits_required_full = total * cost_per_page
 
     return {
         "url": discover_request.url,
         "total_found": total,
         "capped": total >= discovery_cap,
         "plan_max": plan_max,
-        "urls": urls if total else [],
+        "urls": urls,
         "cost_per_page": cost_per_page,
         "balance": balance,
         "max_affordable_pages": max_affordable_pages,
@@ -108,7 +157,9 @@ In `api/app/api/document_routes.py`, replace the final `return {...}` of `crawl_
     }
 ```
 
-> Note: `credit_service.get_credit_cost` / `get_balance` take the `db` session, so this block must run inside the existing `with get_session() as db:` context (the same one that resolves `plan`). Move the credit lookups into that block and keep the discovery call where it is; `urls` is already in scope from the discovery step.
+> Ensure `urls = []` is initialised before the `try:` that assigns it (on discovery failure `total` stays 0 and `urls` stays `[]`).
+
+**(c)** Raise the discover rate limit — the new flow calls `/crawl/discover` before *every* crawl, so 30/hour will pinch a user onboarding several bots. Change the decorator on `crawl_discover_endpoint` from `@limiter.limit("30/hour", ...)` to `@limiter.limit("120/hour", ...)`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -129,6 +180,23 @@ git commit -m "feat(crawl): return credit math + url list from /crawl/discover"
 **Files:**
 - Modify: `api/app/services/spider_service.py`
 - Test: `api/tests/test_spider_fetch_urls.py` (create)
+
+- [ ] **Step 0: Verify Spider's single-URL scrape contract (do this FIRST)**
+
+The implementation below assumes `POST {SPIDER_API_URL}/scrape` with a JSON body returns a JSON **list** of page objects (`[{"url","content"}]`). Confirm the real endpoint path and response shape before coding, using the funded key already in `api/.env`:
+
+```bash
+cd api
+.venv/bin/python - <<'PY'
+import os, httpx
+key = [l.split('=',1)[1].strip() for l in open('.env') if l.startswith('SPIDER_API_KEY=')][0]
+r = httpx.post("https://api.spider.cloud/scrape",
+    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    json={"url": "https://example.com", "return_format": "markdown", "request": "http"}, timeout=60)
+print("status", r.status_code); print("type", type(r.json()).__name__); print(str(r.json())[:400])
+PY
+```
+If it returns an object (not a list), adjust `_scrape_one`'s parse line accordingly (`page = data if isinstance(data, dict) else (data[0] if data else None)`). If the endpoint name differs, use the confirmed one. Do not proceed until the shape is confirmed.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -247,6 +315,11 @@ async def fetch_urls(
         raise CrawlerError("SPIDER_API_KEY is not configured")
     if not urls:
         return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
+    # Honor a cancel requested before we start spending (mirrors crawl_website).
+    # is_cancellation_requested is already imported in spider_service.
+    if client_id is not None and is_cancellation_requested(client_id):
+        logger.info("Spider fetch_urls aborted before start (cancel requested) client=%s", client_id)
+        return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
 
     owns_client = _client is None
     client = _client or httpx.AsyncClient(timeout=SPIDER_TIMEOUT)
@@ -286,12 +359,13 @@ git commit -m "feat(crawl): Spider fetch_urls — scrape an explicit ordered URL
 
 ---
 
-### Task 3: Provider dispatch + Playwright fallback for `fetch_urls`
+### Task 3: Provider dispatch + fallback for `fetch_urls`
 
 **Files:**
-- Modify: `api/app/services/crawler_service.py` (add `fetch_urls` using existing `crawl_single_http`)
-- Modify: `api/app/services/crawl_provider.py` (add `fetch_urls` dispatch + fallback)
+- Modify: `api/app/services/crawl_provider.py` (add `fetch_urls` dispatch; fallback reuses recursive `crawl_website`)
 - Test: `api/tests/test_crawl_provider_fetch_urls.py` (create)
+
+> **Why no `crawler_service.fetch_urls`:** the explicit per-URL fetch primitive (`crawl_single_http`) lives in `crawler_script.py` (the standalone subprocess) and uses `aiohttp`, which is **not a declared dependency**. Rather than import across that boundary or add a dep, the fallback reuses the fully-supported recursive `crawl_website(seed, max_pages=len(urls))`. It can't replay an arbitrary URL list, so order/exact-set isn't guaranteed in fallback — acceptable because the fallback only fires during a Spider outage.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -318,21 +392,43 @@ async def test_fetch_urls_uses_spider(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fetch_urls_falls_back_to_playwright(monkeypatch):
+async def test_fetch_urls_falls_back_to_recursive_crawl(monkeypatch):
+    """On Spider failure, fall back to a recursive crawl of the seed domain,
+    capped at the number of requested URLs."""
     monkeypatch.setattr(crawl_provider, "CRAWL_PROVIDER", "spider")
     monkeypatch.setattr(crawl_provider, "SPIDER_FALLBACK_TO_PLAYWRIGHT", True)
+    seen = {}
 
     async def boom(urls, **kw):
         raise CrawlerError("down")
 
-    async def fake_pw(urls, **kw):
-        return {"results": [{"url": urls[0], "content": "pw"}], "recommended_colors": [],
-                "discovered_total": len(urls), "queue_remaining": 0}
+    async def fake_recursive(url, **kw):
+        seen["seed"] = url
+        seen["max_pages"] = kw.get("max_pages")
+        return {"results": [{"url": url, "content": "pw"}], "recommended_colors": [],
+                "discovered_total": 1, "queue_remaining": 0}
 
     monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", boom)
-    monkeypatch.setattr(crawl_provider, "_playwright_fetch_urls", fake_pw)
-    data = await crawl_provider.fetch_urls(["https://a.test/x"], use_js=False, client_id=1)
+    monkeypatch.setattr(crawl_provider, "_playwright_crawl", fake_recursive)
+    data = await crawl_provider.fetch_urls(
+        ["https://a.test/x", "https://a.test/y"], use_js=False, client_id=1
+    )
     assert data["results"][0]["content"] == "pw"
+    assert seen["seed"] == "https://a.test"   # origin of the first URL
+    assert seen["max_pages"] == 2             # capped at len(urls)
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_reraises_without_fallback(monkeypatch):
+    monkeypatch.setattr(crawl_provider, "CRAWL_PROVIDER", "spider")
+    monkeypatch.setattr(crawl_provider, "SPIDER_FALLBACK_TO_PLAYWRIGHT", False)
+
+    async def boom(urls, **kw):
+        raise CrawlerError("down")
+
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", boom)
+    with pytest.raises(CrawlerError):
+        await crawl_provider.fetch_urls(["https://a.test/x"], use_js=False, client_id=1)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -340,64 +436,22 @@ async def test_fetch_urls_falls_back_to_playwright(monkeypatch):
 Run: `cd api && .venv/bin/python -m pytest tests/test_crawl_provider_fetch_urls.py -v --no-cov`
 Expected: FAIL — `crawl_provider` has no attribute `fetch_urls`.
 
-- [ ] **Step 3a: Add `fetch_urls` to `crawler_service.py` (Playwright fallback)**
+- [ ] **Step 3: Add `fetch_urls` dispatch to `crawl_provider.py`**
 
-Add to `api/app/services/crawler_service.py` (reuses the existing single-page HTTP fetch `crawl_single_http`; confirm its exact signature near line 755 before wiring — it takes `(session, url, depth, semaphore, page_timeout, h2t)` and returns a page dict with `url`/`content`):
-
-```python
-async def fetch_urls(
-    urls: list[str],
-    *,
-    use_js: bool = False,
-    client_id: int | None = None,
-) -> dict:
-    """Fetch an explicit URL list with the local crawler (fallback path).
-
-    Uses the HTTP fetch for each URL. Preserves order; drops empty pages.
-    """
-    import asyncio
-
-    import aiohttp
-    import html2text
-
-    if not urls:
-        return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
-
-    semaphore = asyncio.Semaphore(3)
-    h2t = html2text.HTML2Text()
-    h2t.ignore_links = False
-    results: list[dict] = []
-    async with aiohttp.ClientSession() as session:
-        fetched = await asyncio.gather(
-            *[crawl_single_http(session, u, 0, semaphore, 20, h2t) for u in urls],
-            return_exceptions=True,
-        )
-    for page in fetched:
-        if isinstance(page, dict) and page.get("url") and page.get("content"):
-            results.append({"url": page["url"], "content": page["content"]})
-    return {
-        "results": results,
-        "recommended_colors": [],
-        "discovered_total": len(urls),
-        "queue_remaining": 0,
-    }
-```
-
-> Before implementing, open `crawler_service.py` and confirm the real `crawl_single_http` signature and the html2text/aiohttp setup already used there (there is an existing `h2t` construction around the Phase-2 fallback). Match that exact usage rather than the illustrative version above if it differs.
-
-- [ ] **Step 3b: Add `fetch_urls` dispatch to `crawl_provider.py`**
-
-Append to `api/app/services/crawl_provider.py`:
+`_playwright_crawl` (= `crawler_service.crawl_website`) is already imported in `crawl_provider.py` from the Spider migration. Add the Spider fetch import and the dispatch:
 
 ```python
-from app.services.crawler_service import fetch_urls as _playwright_fetch_urls
+from urllib.parse import urlparse
+
 from app.services.spider_service import fetch_urls as _spider_fetch_urls
 
 
 async def fetch_urls(urls: list[str], **kwargs) -> dict:
-    """Dispatch an explicit ordered-URL fetch to the configured provider.
+    """Fetch an explicit ordered URL list.
 
-    Mirrors ``crawl_website`` dispatch (Spider primary, Playwright fallback).
+    Spider scrapes the exact list in order. On a Spider outage we can't replay
+    an arbitrary list with the recursive crawler, so we recursively crawl the
+    seed domain capped at len(urls) — best-effort, order not guaranteed.
     """
     if CRAWL_PROVIDER == "spider":
         try:
@@ -405,21 +459,34 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
         except CrawlerError:
             if not SPIDER_FALLBACK_TO_PLAYWRIGHT:
                 raise
-            logger.warning("Spider fetch_urls failed (%d urls) — falling back to Playwright", len(urls), exc_info=True)
-            return await _playwright_fetch_urls(urls, **kwargs)
-    return await _playwright_fetch_urls(urls, **kwargs)
+            logger.warning(
+                "Spider fetch_urls failed (%d urls) — falling back to recursive crawl",
+                len(urls), exc_info=True,
+            )
+    if not urls:
+        return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
+    parsed = urlparse(urls[0])
+    seed = f"{parsed.scheme}://{parsed.netloc}"
+    return await _playwright_crawl(
+        seed,
+        max_pages=len(urls),
+        use_js=kwargs.get("use_js", False),
+        client_id=kwargs.get("client_id"),
+    )
 ```
+
+> Move `from urllib.parse import urlparse` to the top-of-file imports.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd api && .venv/bin/python -m pytest tests/test_crawl_provider_fetch_urls.py -v --no-cov`
-Expected: PASS (2 passed)
+Expected: PASS (3 passed)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api/app/services/crawler_service.py api/app/services/crawl_provider.py api/tests/test_crawl_provider_fetch_urls.py
-git commit -m "feat(crawl): provider fetch_urls dispatch with Playwright fallback"
+git add api/app/services/crawl_provider.py api/tests/test_crawl_provider_fetch_urls.py
+git commit -m "feat(crawl): provider fetch_urls dispatch (Spider) with recursive-crawl fallback"
 ```
 
 ---
@@ -475,7 +542,43 @@ async def test_ordered_urls_uses_fetch_urls_not_recursive_crawl(monkeypatch):
     assert seen["urls"] == ["https://acme.test/a", "https://acme.test/b"]
     assert "recursive" not in seen                       # recursive path skipped
     assert result["chunks"] == 2
+
+
+@pytest.mark.asyncio
+async def test_partial_crawl_skips_orphan_sweep(monkeypatch):
+    """A partial (ordered_urls) re-crawl with replace_source must NOT run the
+    orphan sweep — otherwise it deletes pages outside the fetched slice."""
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
+    del_session = MagicMock()
+
+    @contextmanager
+    def fake_session():
+        yield del_session
+
+    async def fake_fetch_urls(urls, **kw):
+        return {"results": [{"url": u, "content": "c"} for u in urls],
+                "recommended_colors": [], "discovered_total": len(urls), "queue_remaining": 0}
+
+    monkeypatch.setattr(orch, "fetch_urls", fake_fetch_urls)
+    monkeypatch.setattr(orch, "batch_web_ingestion",
+                        lambda cid, pages, **kw: {"chunks": len(pages), "pages_charged": len(pages),
+                                                  "credits_deducted": 5 * len(pages)})
+    monkeypatch.setattr(orch, "get_session", fake_session)
+    monkeypatch.setattr(orch, "set_crawl_progress", lambda *a, **k: None)
+    monkeypatch.setattr(orch, "release_crawl_lock", lambda *a, **k: None)
+
+    await orch.run_full_crawl(
+        client_id=1, bot_id=None, url="https://acme.test", max_pages=1,
+        use_js=False, replace_source="acme.test", cost_per_page=5,
+        ordered_urls=["https://acme.test/a"],
+    )
+    # The sweep issues del_session.query(Document)...delete(); assert it never ran.
+    del_session.query.assert_not_called()
 ```
+
+> `bot_id=None` here so the brand/bot-persistence block (its own `get_session` use) is skipped, leaving the orphan sweep as the only `get_session` consumer — so `query.assert_not_called()` is a clean signal. Confirm this while implementing; if `run_full_crawl` gained another `get_session` call in the `bot_id=None` path, assert on the delete chain instead (`del_session.query.return_value.filter.return_value.delete.assert_not_called()`).
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -509,7 +612,16 @@ In `run_full_crawl`'s signature add `ordered_urls: list[str] | None = None`. The
             )
 ```
 
-Everything downstream (`valid_pages`, `batch_web_ingestion` with `cost_per_page`, brand extraction, orphan sweep) is unchanged — the fetch-list path reuses the identical ingest+billing.
+Everything downstream (`valid_pages`, `batch_web_ingestion` with `cost_per_page`, brand extraction) is unchanged — the fetch-list path reuses the identical ingest+billing.
+
+**⚠️ Step 3b-guard (data-loss prevention): skip the orphan sweep on partial crawls.** The orphan sweep (currently `if replace_source and total_chunks > 0:`) deletes every stored page for the domain that isn't in `valid_pages`. On a partial `ordered_urls` crawl, `valid_pages` is only the affordable slice, so the sweep would **delete all the pages the user chose not to re-crawl this time**. Change the condition to also require a full crawl:
+
+```python
+        # Orphan sweep only makes sense for a FULL re-crawl. A partial
+        # (ordered_urls) crawl intentionally fetches a subset, so sweeping
+        # would delete pages the user still wants. Skip it in that case.
+        if replace_source and total_chunks > 0 and not ordered_urls:
+```
 
 - [ ] **Step 3c: Add `ordered_urls` to the schema**
 
@@ -607,7 +719,7 @@ const sliceForCrawl = (urls, order, count) => orderUrls(urls, order).slice(0, co
 - [ ] **Step 3: Wire the modal**
 
 On "Scan", call `discoverCrawlUrls`. If `exceeds_balance` is true, open a modal (follow the existing modal/dialog pattern already used elsewhere in the app — reuse the shared Modal component; do not hand-roll a new dialog). Modal contents:
-- Headline: `Found {total_found} pages · full crawl = {credits_required_full} credits · you have {balance} (max {max_affordable_pages} pages)`.
+- Headline: `Found {total_found}{capped ? '+' : ''} pages · full crawl = {credits_required_full} credits · you have {balance} (max {max_affordable_pages} pages)`. When `capped` is true, append a subtle note "(site has more than {total_found} pages; showing the first {total_found})" so the number isn't misleading.
 - Count control: a number input + range slider, `min={1}`, `max={max_affordable_pages}`, default `Math.min(total_found, max_affordable_pages)`. Clamp on change so it can never exceed `max_affordable_pages`.
 - Order: a radio group over `ORDER_OPTIONS`, default `shallow`.
 - Live cost line: `{count} pages × {cost_per_page} = {count * cost_per_page} credits`.
@@ -678,3 +790,4 @@ Open a PR `development → main`; the user merges. No new env/secrets required (
 - **Placeholder scan:** every code step has concrete code; where an existing signature must be matched (`crawl_single_http`, conftest fixtures, enqueue kwargs, shared Modal), the step says to open the file and match it — no invented APIs. ✓
 - **Type consistency:** `fetch_urls(urls, *, use_js, client_id)` identical across `spider_service`, `crawler_service`, `crawl_provider`, and `run_full_crawl`'s call; all return `{results, recommended_colors, discovered_total, queue_remaining}`; `batch_web_ingestion` consumes `[{url, content}]` — matched. `ordered_urls` name consistent from schema → route → task → orchestrator. ✓
 - **Scope:** single feature on top of existing crawl+credit systems; one plan. ✓
+- **CTO-review fixes incorporated:** (1) orphan-sweep skipped on partial crawls + test [Task 4]; (2) fallback reuses recursive `crawl_website`, no `crawl_single_http`/`aiohttp` [Task 3]; (3) bot-scoped balance [Task 1]; (4) real `TestClient`+override harness [all backend tests]; (5) `fetch_urls` cancel pre-check [Task 2]; (6) credit lookups in the pre-discovery session block [Task 1]; (7) verify Spider `/scrape` shape first [Task 2 Step 0]; (8) discover rate limit 30→120/hour [Task 1]; (9) capped-site modal copy [Task 5]. ✓
