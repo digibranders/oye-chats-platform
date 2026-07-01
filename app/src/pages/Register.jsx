@@ -23,6 +23,7 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
@@ -56,6 +57,10 @@ export default function Register() {
     }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
+      return;
+    }
+    if (!agreedToTerms) {
+      setError('Please agree to the Terms and Privacy Policy to continue.');
       return;
     }
 
@@ -351,21 +356,53 @@ export default function Register() {
               )}
             </div>
 
-            <p className="text-xs text-white/35 text-center pt-1">
-              By creating an account, you agree to our{' '}
-              <a href="#" tabIndex={-1} className="text-blue-400 hover:underline">Terms</a>{' '}
-              and{' '}
-              <a href="#" tabIndex={-1} className="text-blue-400 hover:underline">Privacy Policy</a>.
-            </p>
+            <label className="flex items-start gap-2.5 pt-1 cursor-pointer group">
+              <div className="relative flex items-center justify-center mt-0.5 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="peer appearance-none w-4 h-4 border border-white/20 rounded bg-white/[.04] checked:bg-blue-600 checked:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/25 transition-all cursor-pointer"
+                  tabIndex={7}
+                />
+                <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <span className="text-xs text-white/45 leading-relaxed">
+                I agree to the{' '}
+                <a
+                  href="https://oyechats.com/legal/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  tabIndex={-1}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-blue-400 hover:underline"
+                >
+                  Terms
+                </a>{' '}
+                and{' '}
+                <a
+                  href="https://oyechats.com/legal/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  tabIndex={-1}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-blue-400 hover:underline"
+                >
+                  Privacy Policy
+                </a>.
+              </span>
+            </label>
 
             <button
-              type="submit" disabled={isLoading}
+              type="submit" disabled={isLoading || !agreedToTerms}
               className={cn(
                 'w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl',
                 'shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]',
                 'flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm'
               )}
-              tabIndex={7}
+              tabIndex={8}
             >
               {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>Create Account <ArrowRight size={15} /></>}
             </button>
@@ -373,7 +410,7 @@ export default function Register() {
 
           <p className="text-center text-sm text-white/40 mt-6">
             Already have an account?{' '}
-            <Link to="/login" tabIndex={8} className="font-semibold text-blue-400 hover:text-blue-300 transition-colors">
+            <Link to="/login" tabIndex={9} className="font-semibold text-blue-400 hover:text-blue-300 transition-colors">
               Sign in
             </Link>
           </p>

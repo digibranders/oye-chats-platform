@@ -275,19 +275,20 @@ export default function BotSettings({ embedded = false }) {
         { id: 'personality', label: 'AI & Personality' },
         { id: 'appearance', label: 'Appearance' },
         { id: 'messages', label: 'Messages' },
-        { id: 'behavior', label: 'Behavior' },
+        { id: 'behavior', label: 'Behavior', locked: advancedLocked, intent: 'widget_behavior' },
         { id: 'leads', label: 'Leads', locked: leadFormLocked, intent: 'leads_form' },
         { id: 'live_chat', label: 'Live Chat', locked: !liveChatAllowed, intent: 'live_chat_appearance' },
-    ], [leadFormLocked, liveChatAllowed]);
+    ], [advancedLocked, leadFormLocked, liveChatAllowed]);
 
-    // If the active tab just became locked (Leads / Live Chat gate on Free),
-    // bounce the user back to General.
+    // If the active tab just became locked (Behavior / Leads / Live Chat gate
+    // on Free), bounce the user back to General.
     useEffect(() => {
-        if ((activeTab === 'leads' && leadFormLocked) ||
+        if ((activeTab === 'behavior' && advancedLocked) ||
+            (activeTab === 'leads' && leadFormLocked) ||
             (activeTab === 'live_chat' && !liveChatAllowed)) {
             setActiveTab('general');
         }
-    }, [activeTab, leadFormLocked, liveChatAllowed]);
+    }, [activeTab, advancedLocked, leadFormLocked, liveChatAllowed]);
 
     const handleTabClick = (tab) => {
         // Locked tabs never become active — they open the upgrade modal so the
@@ -757,18 +758,13 @@ export default function BotSettings({ embedded = false }) {
                                     <span className="font-semibold underline text-gray-500">Privacy Policy</span>.
                                 </p>
 
-                                {/* Footer — Live chat + Branding */}
-                                <div className="flex items-center justify-between gap-3 mt-3 pt-1 px-1">
-                                    {draft.live_chat_enabled && liveChatAllowed ? (
-                                        <div className="flex items-center gap-1 text-[11px] text-gray-400">
-                                            <Headphones size={12} />
-                                            <span>{draft.widget_messages.live_chat_label || 'Live chat'}</span>
-                                        </div>
-                                    ) : (
-                                        <div />
-                                    )}
-                                    <span className="text-[10px] text-gray-300">Powered by OyeChats</span>
-                                </div>
+                                {/* Footer — Live chat */}
+                                {draft.live_chat_enabled && liveChatAllowed && (
+                                    <div className="flex items-center gap-1 text-[11px] text-gray-400 mt-3 pt-1 px-1">
+                                        <Headphones size={12} />
+                                        <span>{draft.widget_messages.live_chat_label || 'Live chat'}</span>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
