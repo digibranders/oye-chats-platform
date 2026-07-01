@@ -25,11 +25,69 @@ than relying on whether discovery happens to find them again.
 import asyncio
 import logging
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
 _USER_AGENT = "OyeChats-Bot/1.0 (+https://oyechats.com)"
+
+# Query params dropped during URL normalization (tracking/analytics noise).
+TRACKING_PARAMS: frozenset[str] = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "fbclid",
+        "gclid",
+        "msclkid",
+        "_ga",
+        "_gl",
+        "_hsenc",
+        "_hsmi",
+        "mc_cid",
+        "mc_eid",
+        "ref",
+        "source",
+    }
+)
+
+
+def normalize_url(url: str) -> str:
+    """Normalize a URL for deduplication.
+
+    - Lowercases scheme and netloc
+    - Strips ``www.`` prefix
+    - Removes default ports (:80, :443)
+    - Removes fragments
+    - Strips trailing ``/``
+    - Drops tracking query parameters and sorts the remainder
+    """
+    parsed = urlparse(url)
+
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower().removeprefix("www.")
+
+    # Strip default ports
+    if netloc.endswith(":80") and scheme == "http":
+        netloc = netloc[:-3]
+    elif netloc.endswith(":443") and scheme == "https":
+        netloc = netloc[:-4]
+
+    # Normalize path (collapse double slashes, remove trailing /)
+    path = re.sub(r"/+", "/", parsed.path).rstrip("/") or "/"
+
+    # Remove index.html / index.htm from path tail
+    if path.endswith(("/index.html", "/index.htm")):
+        path = path.rsplit("/", 1)[0] or "/"
+
+    # Strip tracking params, sort remaining
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    clean_params = {k: v for k, v in params.items() if k.lower() not in TRACKING_PARAMS}
+    sorted_query = urlencode(clean_params, doseq=True) if clean_params else ""
+
+    return urlunparse((scheme, netloc, path, "", sorted_query, ""))
 
 _SKIP_EXTENSIONS = frozenset(
     {

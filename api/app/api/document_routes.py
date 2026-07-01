@@ -611,9 +611,8 @@ async def crawl_diff_endpoint(
     from urllib.parse import urlparse
 
     from app.services import plan_service
-    from app.services.crawler_script import normalize_url
     from app.services.plan_service import UNLIMITED
-    from app.services.url_discovery import check_urls_alive, discover_website_urls
+    from app.services.url_discovery import check_urls_alive, discover_website_urls, normalize_url
 
     with get_session() as db:
         plan = plan_service.get_client_plan(db, client_id)

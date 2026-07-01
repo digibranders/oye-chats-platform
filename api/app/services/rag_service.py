@@ -681,6 +681,54 @@ def _keyword_search(cid: int | None, bid: int | None, query: str, k: int = 15) -
     return results
 
 
+def _query_embed_cache_key(bid: int | None, cid: int | None, search_query: str) -> str:
+    return f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
+
+
+def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> list | None:
+    """Embed the query (with short-TTL cache), returning None on any embedding
+    failure so the caller degrades to keyword-only retrieval. A Gemini embeddings
+    outage must not take down every chat — the hybrid pipeline survives one half
+    being unavailable.
+    """
+    emb_key = _query_embed_cache_key(bid, cid, search_query)
+    cached = cache_get(emb_key)
+    if cached and isinstance(cached, list):
+        return cached
+    try:
+        embs = embed_chunks([search_query])
+    except Exception as exc:
+        logger.warning(
+            "Query embedding failed (%s) — falling back to keyword-only retrieval",
+            type(exc).__name__,
+        )
+        return None
+    query_embedding = embs[0] if embs else None
+    if query_embedding is not None:
+        cache_set(emb_key, query_embedding, _EMBED_CACHE_TTL)
+    return query_embedding
+
+
+async def _embed_query_cached_async(bid: int | None, cid: int | None, search_query: str) -> list | None:
+    """Async twin of :func:`_embed_query_cached` for the streaming path."""
+    emb_key = _query_embed_cache_key(bid, cid, search_query)
+    cached = cache_get(emb_key)
+    if cached and isinstance(cached, list):
+        return cached
+    try:
+        embs = await embed_chunks_async([search_query])
+    except Exception as exc:
+        logger.warning(
+            "Query embedding failed (%s) — streaming with keyword-only retrieval",
+            type(exc).__name__,
+        )
+        return None
+    query_embedding = embs[0] if embs else None
+    if query_embedding is not None:
+        cache_set(emb_key, query_embedding, _EMBED_CACHE_TTL)
+    return query_embedding
+
+
 def reciprocal_rank_fusion(vector_results, keyword_results, k=60):
     """Merge ranked lists using Reciprocal Rank Fusion (RRF).
 
@@ -2426,27 +2474,8 @@ def rag_pipeline(
                 search_query = rewrite_query(session_id, question, history)
                 search_query = _expand_company_query(search_query, _company_name)
 
-                # ── Phase 4B: embedding cache ─────────────────────────────
-                _emb_key = f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
-                _cached_emb = cache_get(_emb_key)
-                if _cached_emb and isinstance(_cached_emb, list):
-                    query_embedding = _cached_emb
-                else:
-                    # Guard the embedding call: an OpenAI embeddings outage
-                    # would otherwise crash every chat for every bot. Fall
-                    # back to keyword-only retrieval — the hybrid pipeline is
-                    # designed to survive one half being unavailable.
-                    try:
-                        _embs = embed_chunks([search_query])
-                        query_embedding = _embs[0] if _embs else None
-                        if query_embedding is not None:
-                            cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
-                    except Exception as _emb_err:
-                        logger.warning(
-                            "Query embedding failed (%s) — falling back to keyword-only retrieval",
-                            type(_emb_err).__name__,
-                        )
-                        query_embedding = None
+                # ── Phase 4B: embedding cache (degrades to keyword-only) ──────
+                query_embedding = _embed_query_cached(bid, cid, search_query)
 
                 # List/count questions ("how many clients", "list all
                 # services") used to be boosted to k=30 so the bot saw the
@@ -3051,26 +3080,8 @@ async def rag_pipeline_stream(
                 search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
                 search_query = _expand_company_query(search_query, _company_name)
 
-                # ── Phase 4B: embedding cache (async path) ────────────────────
-                _emb_key = f"oyechats:emb:{bid or cid}:{hashlib.sha256(search_query.encode()).hexdigest()[:32]}"
-                _cached_emb = cache_get(_emb_key)
-                if _cached_emb and isinstance(_cached_emb, list):
-                    query_embedding = _cached_emb
-                else:
-                    # Guard the embedding call so an OpenAI embeddings outage
-                    # doesn't take down every chat stream. Fall back to
-                    # keyword-only retrieval if embedding fails.
-                    try:
-                        _embs = await embed_chunks_async([search_query])
-                        query_embedding = _embs[0] if _embs else None
-                        if query_embedding is not None:
-                            cache_set(_emb_key, query_embedding, _EMBED_CACHE_TTL)
-                    except Exception as _emb_err:
-                        logger.warning(
-                            "Query embedding failed (%s) — streaming with keyword-only retrieval",
-                            type(_emb_err).__name__,
-                        )
-                        query_embedding = None
+                # ── Phase 4B: embedding cache (async; degrades to keyword-only) ─
+                query_embedding = await _embed_query_cached_async(bid, cid, search_query)
 
                 try:
                     suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0)

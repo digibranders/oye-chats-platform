@@ -4,10 +4,10 @@ import app.services.crawler_service as crawler_service
 
 
 def test_orchestrator_crawl_website_is_the_provider():
-    """run_full_crawl must resolve crawl_website to the provider seam (which
-    dispatches Playwright vs Spider), NOT the Playwright subprocess directly."""
+    """run_full_crawl must resolve crawl_website to the provider seam (Spider
+    primary, Jina fallback). The old local subprocess crawler is gone."""
     assert orch.crawl_website is provider.crawl_website
-    assert orch.crawl_website is not crawler_service.crawl_website
+    assert not hasattr(crawler_service, "crawl_website")  # subprocess launcher removed
 
 
 def test_orchestrator_still_imports_shared_helpers_from_crawler_service():
