@@ -37,14 +37,19 @@ jobs:
           CHUNK_ENRICHMENT_ENABLED: ${{ secrets.CHUNK_ENRICHMENT_ENABLED }}
           CRAWLER_JS_ALL_PAGES: ${{ secrets.CRAWLER_JS_ALL_PAGES }}
           RERANK_ENABLED: ${{ secrets.RERANK_ENABLED }}
-          # Crawl provider — "spider" routes crawling to Spider.cloud (managed,
-          # off-box Chromium); anything else keeps the local Playwright crawler.
-          # SPIDER_API_KEY is the prepaid Spider.cloud key. Unset values fall
-          # back to safe defaults in the .env generation step below.
-          CRAWL_PROVIDER: ${{ secrets.CRAWL_PROVIDER }}
+          # Embeddings — Google Gemini (off-box) is the sole provider, reusing
+          # GOOGLE_API_KEY. Unset values fall back to safe defaults below.
+          EMBED_PROVIDER: ${{ secrets.EMBED_PROVIDER }}
+          GEMINI_EMBED_MODEL: ${{ secrets.GEMINI_EMBED_MODEL }}
+          EMBED_DIMENSIONS: ${{ secrets.EMBED_DIMENSIONS }}
+          # Crawl — Spider.cloud managed API (sole primary crawler, off-box).
+          # SPIDER_API_KEY is the prepaid Spider.cloud key. On a Spider outage
+          # the crawl falls back to Jina Reader (PAYG markdown); JINA_API_KEY is
+          # optional (keyless works at lower RPM).
           SPIDER_API_KEY: ${{ secrets.SPIDER_API_KEY }}
           SPIDER_REQUEST_MODE: ${{ secrets.SPIDER_REQUEST_MODE }}
-          SPIDER_FALLBACK_TO_PLAYWRIGHT: ${{ secrets.SPIDER_FALLBACK_TO_PLAYWRIGHT }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+          JINA_FALLBACK_ENABLED: ${{ secrets.JINA_FALLBACK_ENABLED }}
           # ARQ concurrency. Default 5 (crawling runs off-box on Spider, so this
           # is no longer RAM/Chromium-bound). Real ceiling is embedding CPU on the
           # box + the DB pool (~15 conns for 1 worker). Go beyond ~5-6 only with a
@@ -82,7 +87,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,CRAWL_PROVIDER,SPIDER_API_KEY,SPIDER_REQUEST_MODE,SPIDER_FALLBACK_TO_PLAYWRIGHT,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,FRONTEND_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,FRONTEND_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -165,12 +170,15 @@ jobs:
               "RELEVANCE_GATE_ENABLED=${RELEVANCE_GATE_ENABLED}" \
               "CHUNK_ENRICHMENT_ENABLED=${CHUNK_ENRICHMENT_ENABLED}" \
               "CRAWLER_JS_ALL_PAGES=${CRAWLER_JS_ALL_PAGES}" \
-              "CRAWL_PROVIDER=${CRAWL_PROVIDER:-playwright}" \
+              "EMBED_PROVIDER=${EMBED_PROVIDER:-google}" \
+              "GEMINI_EMBED_MODEL=${GEMINI_EMBED_MODEL:-gemini-embedding-001}" \
+              "EMBED_DIMENSIONS=${EMBED_DIMENSIONS:-768}" \
               "SPIDER_API_KEY=${SPIDER_API_KEY}" \
               "SPIDER_API_URL=https://api.spider.cloud" \
               "SPIDER_REQUEST_MODE=${SPIDER_REQUEST_MODE:-smart}" \
               "SPIDER_TIMEOUT=1600" \
-              "SPIDER_FALLBACK_TO_PLAYWRIGHT=${SPIDER_FALLBACK_TO_PLAYWRIGHT:-false}" \
+              "JINA_API_KEY=${JINA_API_KEY}" \
+              "JINA_FALLBACK_ENABLED=${JINA_FALLBACK_ENABLED:-true}" \
               "WORKER_MAX_JOBS=${WORKER_MAX_JOBS:-5}" \
               "WORKER_ENABLED=true" \
               "MODERATION_ENABLED=true" \
@@ -194,13 +202,12 @@ jobs:
             cd api
             /root/.local/bin/uv sync
 
-            # NOTE: No Playwright/Chromium browser install. Crawling runs on
-            # Spider.cloud (CRAWL_PROVIDER=spider, SPIDER_FALLBACK_TO_PLAYWRIGHT=false),
-            # so no headless browser executes on this box — reclaiming ~400MB and
-            # the RAM/CPU that previously caused OOM. The playwright/crawl4ai
-            # Python packages remain (crawl4ai depends on them) but are dormant.
-            # To re-enable the local fallback, set the secret back to true AND
-            # restore `uv run playwright install --with-deps chromium` here.
+            # NOTE: No headless browser or local embedding model runs on this
+            # box. Crawling runs on Spider.cloud (Jina Reader fallback), and
+            # embeddings run on Google Gemini — both off-box. The playwright/
+            # crawl4ai/fastembed packages have been removed from the dependency
+            # set, so `uv sync` installs a leaner tree and no Chromium/ONNX RAM
+            # is consumed here (this was the original OOM cause).
 
             # Run migrations
             /root/.local/bin/uv run alembic upgrade head

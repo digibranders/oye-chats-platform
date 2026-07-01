@@ -312,6 +312,32 @@ class TestBatchWebIngestion:
         assert result["credits_deducted"] == 0
         session.commit.assert_called()
 
+    def test_reports_embed_progress(self):
+        session = MagicMock()
+        mock_chunk = MagicMock(page_content="chunk", metadata={"page": 1})
+        calls = []
+
+        with (
+            patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
+            patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
+            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
+            patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
+            patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1]]),
+            patch("app.ingestion.pipeline.insert_documents"),
+            patch("app.ingestion.pipeline.delete_chunks_for_url"),
+            patch("app.ingestion.pipeline.cache_delete_prefix"),
+        ):
+            batch_web_ingestion(
+                1,
+                [{"url": "https://a.com", "content": "text"}],
+                bot_id=5,
+                embed_progress_cb=lambda done, total: calls.append((done, total)),
+            )
+
+        # One batch of one chunk → progress reported as (done, total).
+        assert calls == [(1, 1)]
+
     def test_atomic_per_page_credit_deduction(self):
         session = MagicMock()
         mock_chunk = MagicMock(page_content="chunk", metadata={"page": 1})

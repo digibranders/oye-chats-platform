@@ -611,9 +611,8 @@ async def crawl_diff_endpoint(
     from urllib.parse import urlparse
 
     from app.services import plan_service
-    from app.services.crawler_script import normalize_url
     from app.services.plan_service import UNLIMITED
-    from app.services.url_discovery import check_urls_alive, discover_website_urls
+    from app.services.url_discovery import check_urls_alive, discover_website_urls, normalize_url
 
     with get_session() as db:
         plan = plan_service.get_client_plan(db, client_id)
@@ -956,8 +955,21 @@ async def crawl_endpoint(
         raise HTTPException(status_code=429, detail="A crawl job is already running for your account. Please wait.")
 
     # Publish an immediate "running" state so the UI's progress poll picks up
-    # the job before the worker even starts.
-    set_crawl_progress(client_id, status="running", urls=[])
+    # the job before the worker even starts. Seed started_at + max_pages so the
+    # progress bar has a denominator right away, and a fresh heartbeat so the
+    # reaper doesn't fire during any lag before the worker claims the job.
+    import time as _time
+
+    set_crawl_progress(
+        client_id,
+        status="running",
+        urls=[],
+        pages_crawled=0,
+        max_pages=effective_max_pages,
+        phase="Starting crawl",
+        cancellable=True,
+        started_at=_time.time(),
+    )
 
     job_id: str | None = None
     try:

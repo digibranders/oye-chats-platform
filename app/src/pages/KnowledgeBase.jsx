@@ -162,17 +162,23 @@ export default function KnowledgeBase() {
   // visible regardless — this guard only affects the detail panel here.
   const isThisBotCrawl = crawl.botId === null || crawl.botId === selectedBot?.id;
   const isCrawling = isCrawlActive && isThisBotCrawl;
+  // Once we're in the embedding phase, every page has already been fetched — so
+  // no row should show the "scanning" spinner (that read as "stuck crawling").
+  const isEmbedding = crawl.phase?.startsWith('Embedding') ?? false;
   const scanningUrls = (crawl.urls || []).map((u, i, arr) => ({
     url: u,
     // The most-recently-discovered URL is the one actively being crawled;
-    // everything before it has been pulled successfully.
-    status: isCrawlActive && i === arr.length - 1 ? 'scanning' : 'done',
+    // everything before it has been pulled successfully. During embedding all
+    // pages are done.
+    status: isCrawlActive && !isEmbedding && i === arr.length - 1 ? 'scanning' : 'done',
   }));
   const crawlStatus = (() => {
     if (crawl.status === 'done') {
+      const dropped = crawl.result?.pages_dropped ?? 0;
+      const droppedNote = dropped > 0 ? ` ${dropped} page${dropped === 1 ? '' : 's'} couldn't be fetched (server errors).` : '';
       return {
         type: 'success',
-        message: `Crawled ${crawl.result?.pages_processed ?? crawl.urls.length} pages and ingested ${crawl.result?.chunks_processed ?? 0} chunks.`,
+        message: `Crawled ${crawl.result?.pages_processed ?? crawl.urls.length} pages and ingested ${crawl.result?.chunks_processed ?? 0} chunks.${droppedNote}`,
       };
     }
     if (crawl.status === 'cancelled') {
@@ -336,10 +342,16 @@ export default function KnowledgeBase() {
 
   const handleConfirmRecrawl = async () => {
     if (!recrawlDiff) return;
-    const { docName, new_pages: expectedNewPages = null } = recrawlDiff;
+    const { docName, new_pages: expectedNewPages = null, new_urls: newUrls = [] } = recrawlDiff;
     setRecrawlDiff(null);
     setRecrawlDiffViewing(null);
-    await handleRecrawl(docName, expectedNewPages);
+    // Diff-based re-crawl: fetch ONLY the new pages so unchanged pages aren't
+    // re-scraped or re-billed. If nothing is new, there's nothing to do.
+    if (!newUrls.length) {
+      showToast('success', 'Knowledge base is already up to date — no new pages to crawl.');
+      return;
+    }
+    await handleRecrawl(docName, expectedNewPages, newUrls);
   };
 
   const dismissRecrawlDiff = () => {
@@ -347,7 +359,7 @@ export default function KnowledgeBase() {
     setRecrawlDiffViewing(null);
   };
 
-  const handleRecrawl = async (docName, expectedNewPages = null) => {
+  const handleRecrawl = async (docName, expectedNewPages = null, orderedUrls = null) => {
     setRecrawlingDoc(docName);
     const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
     // Normalize to root domain so the backend knows what stale chunks to sweep after success
@@ -361,6 +373,9 @@ export default function KnowledgeBase() {
       // expectedNewPages comes from the /crawl/diff result and right-sizes
       // the backend's credit pre-flight so a recrawl with 9 new pages isn't
       // blocked by the plan's worst-case (e.g. 1200-page) reservation.
+      //
+      // orderedUrls (diff-based re-crawl): when set, ONLY these new pages are
+      // fetched + charged — unchanged pages are never re-scraped or re-billed.
       await startCrawl({
         url: crawlUrl,
         botId: selectedBot?.id,
@@ -368,6 +383,7 @@ export default function KnowledgeBase() {
         useJs: false,
         replaceSource,
         expectedNewPages,
+        orderedUrls,
       });
     } catch (err) {
       // buildApiError flattens structured FastAPI errors (e.g. 402 insufficient_credits)
@@ -389,6 +405,20 @@ export default function KnowledgeBase() {
   const handleCrawlSubmit = async (e) => {
     e.preventDefault();
     if (!url.trim() || isDiscovering) return;
+
+    // If this domain is already ingested, route through the diff flow so a
+    // re-scan only fetches + charges NEW pages instead of re-crawling (and
+    // re-billing) the whole site.
+    const enteredHost = url.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+    const alreadyIngested = documents.find((d) => {
+      if (!(d.name.startsWith('http://') || d.name.startsWith('https://'))) return false;
+      const dHost = d.name.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+      return dHost === enteredHost;
+    });
+    if (alreadyIngested) {
+      await handleRequestRecrawl(alreadyIngested.name);
+      return;
+    }
 
     setDiscoveredTotal(null);
     setShowCrawlConfirm(false);
@@ -1229,10 +1259,12 @@ export default function KnowledgeBase() {
                   <div className="px-4 py-3 bg-surface-50 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 flex items-center gap-2">
                     <Globe size={14} className={isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500'} />
                     <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">
-                      {isCrawling ? 'Crawling website…' : 'Pages discovered'}
+                      {isEmbedding ? 'Embedding content…' : isCrawling ? 'Crawling website…' : 'Pages discovered'}
                     </span>
                     <span className={cn('text-[10px] ml-auto font-medium tabular-nums', isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500')}>
-                      {isCrawling
+                      {isEmbedding
+                        ? (crawl.phase ?? `${scanningUrls.length} pages`)
+                        : isCrawling
                         ? (() => {
                             const denominator = crawl.discoveredTotal || crawl.maxPages;
                             return denominator
@@ -1304,7 +1336,7 @@ export default function KnowledgeBase() {
             </div>
 
             {isLoadingDocs ? (
-              <SkeletonTable rows={4} cols={3} />
+              <SkeletonTable rows={4} cols={5} />
             ) : documents.length === 0 ? (
               <div className="text-center py-12 border-2 border-dashed border-surface-200 dark:border-surface-800 rounded-xl">
                 <FileText className="mx-auto text-surface-600 dark:text-surface-300 mb-3" size={28} />
@@ -1324,15 +1356,17 @@ export default function KnowledgeBase() {
               <div className="overflow-hidden border border-surface-200 dark:border-surface-800 rounded-xl">
                 <table className="w-full text-left table-fixed">
                   <colgroup>
-                    <col className="w-[50%]" />
+                    <col className="w-[42%]" />
+                    <col className="w-[13%]" />
                     <col className="w-[15%]" />
                     <col className="w-[15%]" />
-                    <col className="w-[20%]" />
+                    <col className="w-[15%]" />
                   </colgroup>
                   <thead className="bg-surface-50 dark:bg-surface-800/50 border-b border-surface-200 dark:border-surface-800">
                     <tr>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Source</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Type</th>
+                      <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Pages</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Date</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider text-right">Actions</th>
                     </tr>
@@ -1369,6 +1403,11 @@ export default function KnowledgeBase() {
                             )}>
                               {isUrl ? 'Website' : 'Document'}
                             </span>
+                          </td>
+                          <td className="px-5 py-3.5 text-sm text-surface-500 dark:text-surface-400">
+                            {isUrl
+                              ? `${(doc.page_count ?? 0).toLocaleString()} ${doc.page_count === 1 ? 'page' : 'pages'}`
+                              : `${(doc.chunk_count ?? 0).toLocaleString()} ${doc.chunk_count === 1 ? 'chunk' : 'chunks'}`}
                           </td>
                           <td className="px-5 py-3.5 text-sm text-surface-400">{dateStr}</td>
                           <td className="px-5 py-3.5 text-right">

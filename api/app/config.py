@@ -57,14 +57,16 @@ else:
 # ─────────────────────────────────────────────────────────────────────────────
 # Embeddings & RAG
 # ─────────────────────────────────────────────────────────────────────────────
-# Primary provider: "fastembed" (local ONNX, no API cost) or "openai" (API).
-# FastEmbed runs BAAI/bge-base-en-v1.5 locally — 768-dim, ~420MB RAM per worker.
-# OpenAI text-embedding-3-small is used as fallback when FastEmbed fails, and
-# as the sole provider when EMBED_PROVIDER=openai.
-EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "fastembed")
-FASTEMBED_MODEL = os.getenv("FASTEMBED_MODEL", "BAAI/bge-base-en-v1.5")
-EMBED_MODEL = "text-embedding-3-small"  # OpenAI fallback model
-EMBED_DIMENSIONS = 768  # bge-base-en-v1.5 output dimensions
+# "google" (Gemini API, off-box) is the sole embedding provider. It reuses the
+# same GOOGLE_API_KEY as the Gemini LLM fallback — no GCP/Vertex setup. Model:
+# gemini-embedding-001 at 768-dim (Matryoshka-truncated + L2-normalized in the
+# client). There is NO cross-model fallback: mixing embedding models corrupts
+# vector search, so on failure we rely on ARQ retry (ingestion) and full-text
+# degradation (query — see rag_service).
+EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "google").strip().lower()
+GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+GEMINI_EMBED_URL = os.getenv("GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "768"))  # matches Vector(768) column
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
@@ -344,11 +346,9 @@ PRORATED_UPGRADES_ENABLED = _env_flag("PRORATED_UPGRADES_ENABLED", default=False
 # ─────────────────────────────────────────────────────────────────────────────
 DOCUMENTS_DIR = "documents"
 ARCHIVE_DIR = "archive"
-# Crawler defaults (read by crawler_script.py subprocess via os.getenv):
-# MAX_CRAWL_PAGES=50, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=20,
-# MAX_CRAWL_DEPTH=3, CRAWL_SUBPROCESS_TIMEOUT=600
-# CRAWLER_JS_ALL_PAGES=false   — set true to use Playwright for all depths (Next.js/SPAs)
-# CRAWLER_BROWSER_RECYCLE=10   — recycle Chromium every N pages (memory leak prevention)
+# Crawl page cap / depth are enforced per-plan and passed through the crawl
+# orchestrator; CRAWL_SUBPROCESS_TIMEOUT (default 1600s) bounds a single crawl
+# job and derives the Redis cancel/lock TTLs in crawler_service.
 # ─────────────────────────────────────────────────────────────────────────────
 # Retrieval & Reranking
 # ─────────────────────────────────────────────────────────────────────────────
@@ -361,22 +361,24 @@ ARCHIVE_DIR = "archive"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Crawl provider (Playwright self-host vs Spider.cloud managed API)
+# Crawl provider — Spider.cloud managed API (sole primary crawler)
 # ─────────────────────────────────────────────────────────────────────────────
-# "playwright" (default, existing subprocess crawler) or "spider" (managed API).
-CRAWL_PROVIDER = os.getenv("CRAWL_PROVIDER", "playwright").strip().lower()
 SPIDER_API_KEY = os.getenv("SPIDER_API_KEY")
 SPIDER_API_URL = os.getenv("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
 # Spider request engine: "http" (fast, no JS), "chrome" (JS render), "smart" (auto).
 SPIDER_REQUEST_MODE = os.getenv("SPIDER_REQUEST_MODE", "smart").strip().lower()
-# Per-crawl wall-clock budget (seconds). Mirrors CRAWL_SUBPROCESS_TIMEOUT.
+# Per-crawl wall-clock budget (seconds).
 SPIDER_TIMEOUT = int(os.getenv("SPIDER_TIMEOUT", "1600"))
-# If Spider raises, fall back to the local Playwright crawler for that crawl.
-# Defaults to false: production no longer installs Chromium (Spider is the sole
-# crawler), so the fallback path has no browser to run. Set true ONLY in an
-# environment that still has Playwright browsers installed.
-SPIDER_FALLBACK_TO_PLAYWRIGHT = os.getenv("SPIDER_FALLBACK_TO_PLAYWRIGHT", "false").strip().lower() in (
+
+# ── Crawl fallback: Jina Reader (PAYG markdown) ──────────────────────────────
+# When Spider fails, fetch pages via https://r.jina.ai/<url>. PAYG, off-box,
+# markdown-native. Works keyless (~20 RPM); a key raises limits (~500 RPM) and
+# unlocks free tokens. Multi-page coverage comes from url_discovery upstream.
+JINA_API_KEY = os.getenv("JINA_API_KEY")
+JINA_READER_URL = os.getenv("JINA_READER_URL", "https://r.jina.ai").rstrip("/")
+JINA_FALLBACK_ENABLED = os.getenv("JINA_FALLBACK_ENABLED", "true").strip().lower() in (
     "1",
     "true",
     "yes",
 )
+JINA_FETCH_CONCURRENCY = int(os.getenv("JINA_FETCH_CONCURRENCY", "5"))
