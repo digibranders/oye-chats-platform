@@ -113,6 +113,13 @@ class CrawlRequest(BaseModel):
         "pipeline remains authoritative — this only loosens the upfront ceiling so a "
         "9-new-page recrawl isn't blocked by a 1200-page worst-case reservation.",
     )
+    ordered_urls: list[str] | None = Field(
+        default=None,
+        description="Explicit, pre-ordered list of URLs to crawl (from a prior "
+        "/crawl/discover, sorted client-side by the user's chosen order and truncated "
+        "to the affordable count). When set, the recursive crawl is skipped and exactly "
+        "these URLs are fetched in order. Validated same-origin and capped server-side.",
+    )
 
     @field_validator("url")
     @classmethod

@@ -262,6 +262,8 @@ export const CrawlProvider = ({ children }) => {
             replaceSource = null,
             discoveredTotal = null,
             expectedNewPages = null,
+            orderedUrls = null,
+            maxPages = null,
         } = {}) => {
             cancelledByUserRef.current = false;
             // Brand-new crawl → forget which terminal we already handled so
@@ -298,7 +300,15 @@ export const CrawlProvider = ({ children }) => {
                 cancelInFlight: false,
             }));
             try {
-                const response = await crawlWebsite(url, botId, useJs, replaceSource, expectedNewPages);
+                const response = await crawlWebsite(
+                    url,
+                    botId,
+                    useJs,
+                    replaceSource,
+                    expectedNewPages,
+                    orderedUrls,
+                    maxPages,
+                );
                 // Kick a poll immediately so the bar advances faster than the
                 // background tick.
                 poll();

@@ -500,7 +500,7 @@ def crawl_cancel_endpoint(
 
 
 @router.post("/crawl/discover")
-@limiter.limit("30/hour", key_func=key_from_api_key)
+@limiter.limit("120/hour", key_func=key_from_api_key)
 async def crawl_discover_endpoint(
     discover_request: CrawlDiscoverRequest,
     request: Request,
@@ -526,7 +526,7 @@ async def crawl_discover_endpoint(
     _verify_bot_ownership(bot_id, client_id)
     _check_memory()
 
-    from app.services import plan_service
+    from app.services import credit_service, plan_service
     from app.services.plan_service import UNLIMITED
     from app.services.url_discovery import discover_website_urls
 
@@ -534,9 +534,21 @@ async def crawl_discover_endpoint(
         plan = plan_service.get_client_plan(db, client_id)
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
+        # Credit inputs — read before the long (network) discovery call so we
+        # never hold a DB connection across it. Resolve the SAME ledger bucket
+        # the crawl will actually deduct from: a per-bot subscription drains the
+        # bot ledger, but a client-level/Free bot drains the client pool. Using
+        # the raw bot_id here reported 0 for client-level subs (credits live in
+        # the pool). Mirror batch_web_ingestion's resolve_bot_ledger_bot_id.
+        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        ledger_bot_id = None
+        if bot_id is not None:
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
+        balance = credit_service.get_balance(db, client_id, bot_id=ledger_bot_id)
 
     _DISCOVERY_HARD_CAP = 1000
     discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
+    urls: list[str] = []
     try:
         urls = await discover_website_urls(
             discover_request.url,
@@ -548,11 +560,21 @@ async def crawl_discover_endpoint(
         logger.warning("URL discovery failed for %s: %s", discover_request.url, exc)
         total = 0
 
+    per_page = max(int(cost_per_page), 1)
+    max_affordable_pages = int(balance) // per_page
+    credits_required_full = total * cost_per_page
+
     return {
         "url": discover_request.url,
         "total_found": total,
         "capped": total >= discovery_cap,
         "plan_max": plan_max,
+        "urls": urls,
+        "cost_per_page": cost_per_page,
+        "balance": balance,
+        "max_affordable_pages": max_affordable_pages,
+        "credits_required_full": credits_required_full,
+        "exceeds_balance": credits_required_full > balance,
     }
 
 
@@ -912,6 +934,20 @@ async def crawl_endpoint(
                 },
             )
 
+    # Explicit ordered-URL slice (credit-aware partial crawl). Validate the
+    # client-supplied list is same-origin as the seed (blocks SSRF / crawling
+    # someone else's domain on this client's credits) and cap it to what the
+    # credit pre-flight above reserved, so it can never overspend.
+    ordered_urls = crawl_request.ordered_urls
+    if ordered_urls:
+        from urllib.parse import urlparse
+
+        seed_host = urlparse(str(crawl_request.url)).netloc.lower().removeprefix("www.")
+        same_origin = [u for u in ordered_urls if urlparse(u).netloc.lower().removeprefix("www.") == seed_host]
+        if not same_origin:
+            raise HTTPException(status_code=400, detail={"error": "ordered_urls_off_domain"})
+        ordered_urls = same_origin[:effective_max_pages]
+
     # Per-client crawl lock — held in Redis so the ARQ worker and the API
     # process see the same state. SETNX with TTL means a crashed holder
     # eventually frees the lock automatically. The lock is released by
@@ -939,6 +975,7 @@ async def crawl_endpoint(
                 cost_per_page,
                 plan_max_depth,
                 plan_concurrency,
+                ordered_urls=ordered_urls,
             )
             job_id = job.job_id if job is not None else None
             logger.info(
@@ -967,6 +1004,7 @@ async def crawl_endpoint(
                 cost_per_page=cost_per_page,
                 max_depth=plan_max_depth,
                 concurrency=plan_concurrency,
+                ordered_urls=ordered_urls,
             )
             logger.info(
                 "Crawl scheduled inline (WORKER_ENABLED=false) for client %s (plan=%s, pages=%d, depth=%d)",

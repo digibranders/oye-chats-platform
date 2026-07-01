@@ -338,7 +338,15 @@ export const diffRecrawl = async (url, replaceSource, botId) => {
  * @param {boolean} useJs - Enable JavaScript mode for Next.js / React / SPA sites
  * @returns {Promise<Object>} The API response with crawling results
  */
-export const crawlWebsite = async (url, botId, useJs = false, replaceSource = null, expectedNewPages = null) => {
+export const crawlWebsite = async (
+    url,
+    botId,
+    useJs = false,
+    replaceSource = null,
+    expectedNewPages = null,
+    orderedUrls = null,
+    maxPages = null,
+) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
         const body = { url, use_js: useJs };
@@ -349,6 +357,15 @@ export const crawlWebsite = async (url, botId, useJs = false, replaceSource = nu
         // pipeline still enforces the real spend.
         if (replaceSource && Number.isFinite(expectedNewPages) && expectedNewPages >= 0) {
             body.expected_new_pages = expectedNewPages;
+        }
+        // Credit-aware partial crawl: an explicit, pre-ordered slice of the
+        // discovered URLs plus the chosen page count. The backend validates
+        // same-origin and caps to what the credit pre-flight reserved.
+        if (Array.isArray(orderedUrls) && orderedUrls.length > 0) {
+            body.ordered_urls = orderedUrls;
+        }
+        if (Number.isFinite(maxPages) && maxPages >= 1) {
+            body.max_pages = maxPages;
         }
         const response = await api.post(endpoint, body, { timeout: 300000 });
         return response.data;
