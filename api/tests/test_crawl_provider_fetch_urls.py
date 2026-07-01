@@ -6,9 +6,6 @@ from app.services.crawler_service import CrawlerError
 
 @pytest.mark.asyncio
 async def test_fetch_urls_uses_spider(monkeypatch):
-    monkeypatch.setattr(crawl_provider, "CRAWL_PROVIDER", "spider")
-    monkeypatch.setattr(crawl_provider, "SPIDER_FALLBACK_TO_PLAYWRIGHT", False)
-
     async def fake_spider(urls, **kw):
         return {
             "results": [{"url": urls[0], "content": "s"}],
@@ -23,38 +20,34 @@ async def test_fetch_urls_uses_spider(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fetch_urls_falls_back_to_recursive_crawl(monkeypatch):
-    """On Spider failure, fall back to a recursive crawl of the seed domain,
-    capped at the number of requested URLs."""
-    monkeypatch.setattr(crawl_provider, "CRAWL_PROVIDER", "spider")
-    monkeypatch.setattr(crawl_provider, "SPIDER_FALLBACK_TO_PLAYWRIGHT", True)
+async def test_fetch_urls_falls_back_to_jina(monkeypatch):
+    """On Spider failure, replay the exact list via Jina Reader (order preserved)."""
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", True)
     seen = {}
 
     async def boom(urls, **kw):
         raise CrawlerError("down")
 
-    async def fake_recursive(url, **kw):
-        seen["seed"] = url
-        seen["max_pages"] = kw.get("max_pages")
+    async def fake_jina(urls, **kw):
+        seen["urls"] = urls
         return {
-            "results": [{"url": url, "content": "pw"}],
+            "results": [{"url": u, "content": "md"} for u in urls],
             "recommended_colors": [],
-            "discovered_total": 1,
+            "discovered_total": len(urls),
             "queue_remaining": 0,
         }
 
     monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", boom)
-    monkeypatch.setattr(crawl_provider, "_playwright_crawl", fake_recursive)
-    data = await crawl_provider.fetch_urls(["https://a.test/x", "https://a.test/y"], use_js=False, client_id=1)
-    assert data["results"][0]["content"] == "pw"
-    assert seen["seed"] == "https://a.test"  # origin of the first URL
-    assert seen["max_pages"] == 2  # capped at len(urls)
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", fake_jina)
+    urls = ["https://a.test/x", "https://a.test/y"]
+    data = await crawl_provider.fetch_urls(urls, use_js=False, client_id=1)
+    assert [p["url"] for p in data["results"]] == urls  # order preserved
+    assert seen["urls"] == urls
 
 
 @pytest.mark.asyncio
 async def test_fetch_urls_reraises_without_fallback(monkeypatch):
-    monkeypatch.setattr(crawl_provider, "CRAWL_PROVIDER", "spider")
-    monkeypatch.setattr(crawl_provider, "SPIDER_FALLBACK_TO_PLAYWRIGHT", False)
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", False)
 
     async def boom(urls, **kw):
         raise CrawlerError("down")

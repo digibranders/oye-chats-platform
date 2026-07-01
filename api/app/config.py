@@ -365,25 +365,14 @@ ARCHIVE_DIR = "archive"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Crawl provider (Playwright self-host vs Spider.cloud managed API)
+# Crawl provider — Spider.cloud managed API (sole primary crawler)
 # ─────────────────────────────────────────────────────────────────────────────
-# "playwright" (default, existing subprocess crawler) or "spider" (managed API).
-CRAWL_PROVIDER = os.getenv("CRAWL_PROVIDER", "playwright").strip().lower()
 SPIDER_API_KEY = os.getenv("SPIDER_API_KEY")
 SPIDER_API_URL = os.getenv("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
 # Spider request engine: "http" (fast, no JS), "chrome" (JS render), "smart" (auto).
 SPIDER_REQUEST_MODE = os.getenv("SPIDER_REQUEST_MODE", "smart").strip().lower()
-# Per-crawl wall-clock budget (seconds). Mirrors CRAWL_SUBPROCESS_TIMEOUT.
+# Per-crawl wall-clock budget (seconds).
 SPIDER_TIMEOUT = int(os.getenv("SPIDER_TIMEOUT", "1600"))
-# If Spider raises, fall back to the local Playwright crawler for that crawl.
-# Defaults to false: production no longer installs Chromium (Spider is the sole
-# crawler), so the fallback path has no browser to run. Set true ONLY in an
-# environment that still has Playwright browsers installed.
-SPIDER_FALLBACK_TO_PLAYWRIGHT = os.getenv("SPIDER_FALLBACK_TO_PLAYWRIGHT", "false").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
 
 # ── Crawl fallback: Jina Reader (PAYG markdown) ──────────────────────────────
 # When Spider fails, fetch pages via https://r.jina.ai/<url>. PAYG, off-box,
