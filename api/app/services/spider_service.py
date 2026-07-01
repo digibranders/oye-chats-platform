@@ -126,7 +126,7 @@ async def crawl_website(
 
 # ── Explicit ordered-URL fetch (for credit-aware partial crawls) ─────────────
 
-_FETCH_CONCURRENCY = 5  # parallel scrape calls; Spider handles the render load
+_FETCH_CONCURRENCY = 10  # parallel scrape calls; Spider handles the render load
 
 
 async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: asyncio.Semaphore) -> dict | None:
