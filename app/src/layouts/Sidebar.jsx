@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
   Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, CreditCard,
-  Gift, Palette, Lock,
+  Gift, Palette, Lock, List,
 } from 'lucide-react';
 import OyeChatsMark from '../components/OyeChatsMark';
 import { useBotContext } from '../context/BotContext';
