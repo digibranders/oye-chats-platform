@@ -19,6 +19,36 @@ import { cn } from '../lib/utils';
 // invalid query values from breaking the tab UI.
 const VALID_TABS = new Set(['list', 'urls', 'files']);
 
+// Credit-aware partial crawl: order the discovered URLs by the user's choice,
+// then take the first `count`. Ordering is derived from the URL strings — the
+// discover endpoint returns plain strings, so we sort by path depth for
+// "shallow-first" and keep discovery order for "as-discovered".
+const CRAWL_ORDER_OPTIONS = [
+  { key: 'shallow', label: 'Shallow-first (homepage & top pages first)' },
+  { key: 'discovered', label: 'As discovered (site order)' },
+];
+
+const pathDepth = (u) => {
+  try {
+    return new URL(u).pathname.replace(/\/+$/, '').split('/').filter(Boolean).length;
+  } catch {
+    return 99;
+  }
+};
+
+const orderCrawlUrls = (urls, order) => {
+  if (order === 'shallow') {
+    // Stable sort by path depth; ties keep discovery order.
+    return urls
+      .map((u, i) => [u, i])
+      .sort((a, b) => pathDepth(a[0]) - pathDepth(b[0]) || a[1] - b[1])
+      .map(([u]) => u);
+  }
+  return urls; // 'discovered' = as-is
+};
+
+const sliceForCrawl = (urls, order, count) => orderCrawlUrls(urls, order).slice(0, count);
+
 export default function KnowledgeBase() {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const { showToast } = useToast();
@@ -75,9 +105,18 @@ export default function KnowledgeBase() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveredTotal, setDiscoveredTotal] = useState(null);
   const [showCrawlConfirm, setShowCrawlConfirm] = useState(false);
+  // Full discover payload (credit math + urls) used to drive the credit-aware
+  // picker when the site has more pages than the balance can crawl.
+  const [crawlEstimate, setCrawlEstimate] = useState(null);
+  const [crawlCount, setCrawlCount] = useState(0);
+  const [crawlOrder, setCrawlOrder] = useState('shallow');
 
   // Dismiss the confirmation banner whenever the URL or JS-mode changes
-  const resetDiscovery = () => { setDiscoveredTotal(null); setShowCrawlConfirm(false); };
+  const resetDiscovery = () => {
+    setDiscoveredTotal(null);
+    setShowCrawlConfirm(false);
+    setCrawlEstimate(null);
+  };
 
   // Plan-aware crawl ceiling — shown inline so the user knows their cap
   // before they kick off a crawl, and used to render an upgrade-CTA toast
@@ -353,12 +392,21 @@ export default function KnowledgeBase() {
 
     setDiscoveredTotal(null);
     setShowCrawlConfirm(false);
+    setCrawlEstimate(null);
     setIsDiscovering(true);
     try {
       const result = await discoverCrawlUrls(url, selectedBot?.id);
       // Preserve 0 as a meaningful value: "sitemap found but empty / no sitemap"
       // so the dialog can show a helpful note rather than the generic fallback.
       setDiscoveredTotal(typeof result.total_found === 'number' ? result.total_found : null);
+      setCrawlEstimate(result);
+      // When the site exceeds the balance, default the picker to the most the
+      // user can afford (never above the affordable cap).
+      if (result?.exceeds_balance) {
+        const affordable = Math.max(0, Number(result.max_affordable_pages) || 0);
+        setCrawlCount(Math.min(Number(result.total_found) || 0, affordable));
+        setCrawlOrder('shallow');
+      }
     } catch (err) {
       if (err?.status === 429) {
         showToast('error', 'Too many scan requests — please wait a few minutes before scanning again.');
@@ -366,6 +414,7 @@ export default function KnowledgeBase() {
       }
       // Other failures (network blip, auth) — still allow crawl without count.
       setDiscoveredTotal(null);
+      setCrawlEstimate(null);
     } finally {
       setIsDiscovering(false);
       setShowCrawlConfirm(true);
@@ -375,8 +424,24 @@ export default function KnowledgeBase() {
   // Step 2: user confirmed — actually start the crawl
   const handleConfirmCrawl = async () => {
     setShowCrawlConfirm(false);
+    // Credit-aware partial crawl: when the site exceeds the balance, send the
+    // chosen ordered slice + count so the backend fetches exactly that much.
+    let orderedUrls = null;
+    let maxPages = null;
+    if (crawlEstimate?.exceeds_balance && Array.isArray(crawlEstimate.urls) && crawlCount > 0) {
+      orderedUrls = sliceForCrawl(crawlEstimate.urls, crawlOrder, crawlCount);
+      maxPages = crawlCount;
+    }
     try {
-      await startCrawl({ url, botId: selectedBot?.id, botName: selectedBot?.name, useJs, discoveredTotal });
+      await startCrawl({
+        url,
+        botId: selectedBot?.id,
+        botName: selectedBot?.name,
+        useJs,
+        discoveredTotal,
+        orderedUrls,
+        maxPages,
+      });
     } catch (error) {
       const detail = error?.detail;
       if (detail && typeof detail === 'object' && detail.error === 'plan_limit_exceeded') {
@@ -1037,17 +1102,110 @@ export default function KnowledgeBase() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Credit-aware picker — only when the site exceeds the balance */}
+                  {crawlEstimate?.exceeds_balance && (
+                    <div className="mt-3 rounded-lg border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 space-y-3">
+                      <p className="text-xs text-amber-900 dark:text-amber-200">
+                        This site has{' '}
+                        <span className="font-semibold tabular-nums">
+                          {(crawlEstimate.total_found ?? 0).toLocaleString()}{crawlEstimate.capped ? '+' : ''}
+                        </span>{' '}
+                        pages ({(crawlEstimate.credits_required_full ?? 0).toLocaleString()} credits). You have{' '}
+                        <span className="font-semibold tabular-nums">{(crawlEstimate.balance ?? 0).toLocaleString()}</span>{' '}
+                        credits — enough for{' '}
+                        <span className="font-semibold tabular-nums">{(crawlEstimate.max_affordable_pages ?? 0).toLocaleString()}</span>{' '}
+                        pages.{crawlEstimate.capped ? ' (Site has more pages than shown.)' : ''}
+                      </p>
+                      {(crawlEstimate.max_affordable_pages ?? 0) > 0 ? (
+                        <>
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs font-medium text-amber-900 dark:text-amber-200">
+                              <span>Pages to crawl</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={crawlEstimate.max_affordable_pages}
+                                value={crawlCount}
+                                onChange={(e) => {
+                                  const n = Math.max(
+                                    1,
+                                    Math.min(crawlEstimate.max_affordable_pages, Number(e.target.value) || 1),
+                                  );
+                                  setCrawlCount(n);
+                                }}
+                                className="w-20 text-right rounded-md border border-amber-300 dark:border-amber-500/30 bg-white dark:bg-surface-900 px-2 py-1 text-xs tabular-nums"
+                              />
+                            </div>
+                            <input
+                              type="range"
+                              min={1}
+                              max={crawlEstimate.max_affordable_pages}
+                              value={crawlCount}
+                              onChange={(e) => setCrawlCount(Number(e.target.value))}
+                              className="w-full accent-primary-600"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            {CRAWL_ORDER_OPTIONS.map((opt) => (
+                              <label key={opt.key} className="flex items-center gap-2 text-xs text-amber-900 dark:text-amber-200 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="crawl-order"
+                                  value={opt.key}
+                                  checked={crawlOrder === opt.key}
+                                  onChange={() => setCrawlOrder(opt.key)}
+                                  className="accent-primary-600"
+                                />
+                                {opt.label}
+                              </label>
+                            ))}
+                          </div>
+                          <p className="text-xs text-amber-800/80 dark:text-amber-300/80 tabular-nums">
+                            {crawlCount.toLocaleString()} pages × {crawlEstimate.cost_per_page} ={' '}
+                            {(crawlCount * crawlEstimate.cost_per_page).toLocaleString()} credits
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs font-medium text-amber-900 dark:text-amber-200">
+                          You need credits to crawl this site. Top up to continue.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2 mt-3">
-                    <button
-                      type="button"
-                      onClick={handleConfirmCrawl}
-                      className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition-colors"
-                    >
-                      <Globe size={13} />
-                      {discoveredTotal > 0
-                        ? `Crawl ${discoveredTotal.toLocaleString()} page${discoveredTotal === 1 ? '' : 's'}`
-                        : 'Yes, crawl it'}
-                    </button>
+                    {crawlEstimate?.exceeds_balance && (crawlEstimate.max_affordable_pages ?? 0) === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => window.location.assign('/billing')}
+                        className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition-colors"
+                      >
+                        Top up credits
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleConfirmCrawl}
+                        className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white transition-colors"
+                      >
+                        <Globe size={13} />
+                        {crawlEstimate?.exceeds_balance
+                          ? `Crawl ${crawlCount.toLocaleString()} page${crawlCount === 1 ? '' : 's'}`
+                          : discoveredTotal > 0
+                            ? `Crawl ${discoveredTotal.toLocaleString()} page${discoveredTotal === 1 ? '' : 's'}`
+                            : 'Yes, crawl it'}
+                      </button>
+                    )}
+                    {crawlEstimate?.exceeds_balance && (crawlEstimate.max_affordable_pages ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => window.location.assign('/billing')}
+                        className="text-sm font-medium px-4 py-2 rounded-lg bg-white/60 dark:bg-white/5 hover:bg-white dark:hover:bg-white/10 text-primary-800 dark:text-primary-200 border border-primary-200 dark:border-primary-500/20 transition-colors"
+                      >
+                        Top up
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setShowCrawlConfirm(false)}
