@@ -290,13 +290,24 @@ def _owner_filter(model, bot_id=None, client_id=None):
 
 
 def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
-    """Get a list of unique ingested documents and their chunk counts."""
+    """Get a list of unique ingested sources with page and chunk counts.
+
+    ``page_count`` is the number of distinct pages/files under the source (for a
+    website, one per crawled URL; for an uploaded file, always 1). ``chunk_count``
+    is the total embedded chunks under the source. The UI shows "N pages" for
+    websites and "N chunks" for documents.
+    """
     root_name_expr = func.coalesce(
         func.replace(func.substring(Document.document_name, r"^(https?://[^/]+)"), "www.", ""), Document.document_name
     )
 
     stmt = (
-        select(root_name_expr.label("root_name"), func.max(Document.created_at).label("last_ingested_at"))
+        select(
+            root_name_expr.label("root_name"),
+            func.max(Document.created_at).label("last_ingested_at"),
+            func.count(func.distinct(Document.document_name)).label("page_count"),
+            func.count().label("chunk_count"),
+        )
         .where(_owner_filter(Document, bot_id, client_id))
         .group_by(root_name_expr)
         .order_by(desc("last_ingested_at"))
@@ -304,7 +315,12 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
 
     results = session.execute(stmt).all()
     return [
-        {"name": r.root_name, "ingested_at": r.last_ingested_at.isoformat() if r.last_ingested_at else None}
+        {
+            "name": r.root_name,
+            "ingested_at": r.last_ingested_at.isoformat() if r.last_ingested_at else None,
+            "page_count": int(r.page_count),
+            "chunk_count": int(r.chunk_count),
+        }
         for r in results
     ]
 

@@ -1304,7 +1304,7 @@ export default function KnowledgeBase() {
             </div>
 
             {isLoadingDocs ? (
-              <SkeletonTable rows={4} cols={3} />
+              <SkeletonTable rows={4} cols={5} />
             ) : documents.length === 0 ? (
               <div className="text-center py-12 border-2 border-dashed border-surface-200 dark:border-surface-800 rounded-xl">
                 <FileText className="mx-auto text-surface-600 dark:text-surface-300 mb-3" size={28} />
@@ -1324,15 +1324,17 @@ export default function KnowledgeBase() {
               <div className="overflow-hidden border border-surface-200 dark:border-surface-800 rounded-xl">
                 <table className="w-full text-left table-fixed">
                   <colgroup>
-                    <col className="w-[50%]" />
+                    <col className="w-[42%]" />
+                    <col className="w-[13%]" />
                     <col className="w-[15%]" />
                     <col className="w-[15%]" />
-                    <col className="w-[20%]" />
+                    <col className="w-[15%]" />
                   </colgroup>
                   <thead className="bg-surface-50 dark:bg-surface-800/50 border-b border-surface-200 dark:border-surface-800">
                     <tr>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Source</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Type</th>
+                      <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Pages</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Date</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider text-right">Actions</th>
                     </tr>
@@ -1369,6 +1371,11 @@ export default function KnowledgeBase() {
                             )}>
                               {isUrl ? 'Website' : 'Document'}
                             </span>
+                          </td>
+                          <td className="px-5 py-3.5 text-sm text-surface-500 dark:text-surface-400">
+                            {isUrl
+                              ? `${(doc.page_count ?? 0).toLocaleString()} ${doc.page_count === 1 ? 'page' : 'pages'}`
+                              : `${(doc.chunk_count ?? 0).toLocaleString()} ${doc.chunk_count === 1 ? 'chunk' : 'chunks'}`}
                           </td>
                           <td className="px-5 py-3.5 text-sm text-surface-400">{dateStr}</td>
                           <td className="px-5 py-3.5 text-right">
