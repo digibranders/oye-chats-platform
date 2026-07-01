@@ -57,7 +57,14 @@ export default function BotCard({
     }, [menuOpen]);
 
     useEffect(() => {
-        if (!menuOpen) setConfirmDelete(false);
+        if (!menuOpen) {
+            setConfirmDelete(false);
+            return;
+        }
+        // Move focus to the first action so the menu is immediately keyboard-
+        // navigable when opened via the keyboard.
+        const first = menuRef.current?.querySelector('[role="menuitem"]');
+        first?.focus();
     }, [menuOpen]);
 
     const maskKey = (key) => (key ? `${key.substring(0, 6)}••••••••${key.substring(key.length - 4)}` : '');
@@ -100,6 +107,21 @@ export default function BotCard({
             e.preventDefault();
             onManage(bot);
         }
+    };
+
+    // Roving focus for the ⋯ menu: Up/Down move between items, Home/End jump.
+    const handleMenuKeyDown = (e) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+        e.preventDefault();
+        const items = Array.from(menuRef.current?.querySelectorAll('[role="menuitem"]') || []);
+        if (items.length === 0) return;
+        const currentIndex = items.indexOf(document.activeElement);
+        let nextIndex;
+        if (e.key === 'Home') nextIndex = 0;
+        else if (e.key === 'End') nextIndex = items.length - 1;
+        else if (e.key === 'ArrowDown') nextIndex = (currentIndex + 1) % items.length;
+        else nextIndex = (currentIndex - 1 + items.length) % items.length;
+        items[nextIndex]?.focus();
     };
 
     const stop = (e) => e.stopPropagation();
@@ -190,6 +212,7 @@ export default function BotCard({
                                 role="menu"
                                 aria-label={`Actions for ${bot.name}`}
                                 onClick={stop}
+                                onKeyDown={handleMenuKeyDown}
                                 className="absolute right-0 top-full mt-1.5 z-20 w-48 py-1.5 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 shadow-lg animate-scale-in origin-top-right"
                             >
                                 <a

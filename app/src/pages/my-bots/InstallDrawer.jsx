@@ -33,13 +33,37 @@ export default function InstallDrawer({ bot, open, onClose }) {
     const [embedTab, setEmbedTab] = useState('production');
     const [copiedField, setCopiedField] = useState(null);
 
-    // Esc to close + body scroll-lock while open; move focus into the panel on
-    // open and restore it to whatever was focused (the trigger) on close.
+    // Esc to close + Tab focus-trap + body scroll-lock while open; move focus
+    // into the panel on open and restore it to the trigger on close.
     useEffect(() => {
         if (!open) return undefined;
         triggerRef.current = document.activeElement;
         const onKey = (e) => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') {
+                onClose();
+                return;
+            }
+            if (e.key !== 'Tab') return;
+            const panel = panelRef.current;
+            if (!panel) return;
+            const focusable = panel.querySelectorAll(
+                'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            );
+            if (focusable.length === 0) {
+                e.preventDefault();
+                panel.focus();
+                return;
+            }
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement;
+            if (e.shiftKey && (active === first || active === panel)) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && active === last) {
+                e.preventDefault();
+                first.focus();
+            }
         };
         document.addEventListener('keydown', onKey);
         const prevOverflow = document.body.style.overflow;

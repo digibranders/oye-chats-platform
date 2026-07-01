@@ -38,14 +38,38 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
     const [paidPlans, setPaidPlans] = useState([]);
 
     const nameInputRef = useRef(null);
+    const panelRef = useRef(null);
     const triggerRef = useRef(null);
 
-    // Esc-to-close + body scroll-lock + focus management while open. Focus the
-    // bot-name field on open; restore focus to the trigger on close.
+    // Esc-to-close + Tab focus-trap + body scroll-lock + focus management while
+    // open. Focus the bot-name field on open; restore focus to the trigger on
+    // close.
     useEffect(() => {
         if (!open) return undefined;
         triggerRef.current = document.activeElement;
-        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        const onKey = (e) => {
+            if (e.key === 'Escape') {
+                onClose();
+                return;
+            }
+            if (e.key !== 'Tab') return;
+            const panel = panelRef.current;
+            if (!panel) return;
+            const focusable = panel.querySelectorAll(
+                'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            );
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement;
+            if (e.shiftKey && active === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && active === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        };
         document.addEventListener('keydown', onKey);
         const prevOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
@@ -182,7 +206,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
             aria-labelledby="create-bot-title"
             onMouseDown={(e) => { if (e.target === e.currentTarget) resetAndClose(); }}
         >
-            <div className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden animate-scale-in">
+            <div ref={panelRef} className="bg-white dark:bg-surface-900 rounded-2xl shadow-xl w-full max-w-md border border-surface-200 dark:border-surface-700 overflow-hidden animate-scale-in">
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-5">
                         <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
