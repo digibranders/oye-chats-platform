@@ -39,6 +39,7 @@ TYPE_BOT_CREATED = "bot_created"
 TYPE_OFFLINE_MESSAGE = "offline_message_received"
 TYPE_HANDOFF_REQUEST = "handoff_request"
 TYPE_FEEDBACK_RESOLVED = "feedback_resolved"
+TYPE_CRAWL_COMPLETED = "crawl_completed"
 
 KNOWN_TYPES = frozenset(
     {
@@ -47,6 +48,7 @@ KNOWN_TYPES = frozenset(
         TYPE_OFFLINE_MESSAGE,
         TYPE_HANDOFF_REQUEST,
         TYPE_FEEDBACK_RESOLVED,
+        TYPE_CRAWL_COMPLETED,
     }
 )
 
@@ -231,6 +233,37 @@ def notify_bot_created(
         body=f"“{bot_name}” is ready. Add a knowledge base to start answering questions.",
         link=f"/knowledge?bot={bot_key}",
         data={"bot_id": bot_id, "bot_key": bot_key, "bot_name": bot_name},
+    )
+
+
+def notify_crawl_completed(
+    session: Session,
+    *,
+    client_id: int,
+    source: str,
+    pages: int,
+    chunks: int,
+    duration_seconds: int | None = None,
+    bot_id: int | None = None,
+) -> dict[str, Any]:
+    dur = ""
+    if duration_seconds is not None:
+        s = max(0, int(duration_seconds))
+        dur = f" in {s // 60}m {s % 60}s" if s >= 60 else f" in {s}s"
+    return create_notification(
+        session,
+        client_id=client_id,
+        type_=TYPE_CRAWL_COMPLETED,
+        title="Website crawl complete",
+        body=f"{source} — {pages} page{'' if pages == 1 else 's'}, {chunks} chunks ingested{dur}.",
+        link="/knowledge?tab=list",
+        data={
+            "source": source,
+            "pages": pages,
+            "chunks": chunks,
+            "duration_seconds": duration_seconds,
+            "bot_id": bot_id,
+        },
     )
 
 

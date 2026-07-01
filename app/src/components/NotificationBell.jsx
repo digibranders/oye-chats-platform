@@ -21,6 +21,7 @@ import {
     BotIcon,
     CheckCheck,
     CreditCard,
+    Globe,
     Headphones,
     Inbox,
     MailOpen,
@@ -61,6 +62,12 @@ const TYPE_META = {
         ring: 'ring-emerald-500/30 dark:ring-emerald-400/30',
         wrap: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
         label: 'Feedback',
+    },
+    crawl_completed: {
+        icon: Globe,
+        ring: 'ring-sky-500/30 dark:ring-sky-400/30',
+        wrap: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400',
+        label: 'Crawl',
     },
 };
 
