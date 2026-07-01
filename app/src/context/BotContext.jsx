@@ -34,6 +34,9 @@ export function BotProvider({ children }) {
                     return saved || data[0];
                 });
             }
+            // Return the freshly-loaded list so callers (e.g. the create flow)
+            // can resolve a just-created bot without re-reading stale state.
+            return data;
         } catch (err) {
             console.error('Failed to fetch bots:', err);
             setBots([]);
@@ -42,6 +45,7 @@ export function BotProvider({ children }) {
                 message: err?.message || 'Failed to load bots',
                 status: err?.status || null,
             });
+            return [];
         } finally {
             setLoading(false);
         }

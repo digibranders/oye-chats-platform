@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
   Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, CreditCard,
-  Gift, Palette, Lock,
+  Gift, Palette, Lock, List,
 } from 'lucide-react';
 import OyeChatsMark from '../components/OyeChatsMark';
 import { useBotContext } from '../context/BotContext';
@@ -162,7 +162,8 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     ? [{ path: '/team', name: 'Team', icon: UsersRound }]
     : [
         { path: '/chatbot', name: 'My Bots', icon: Bot, children: [
-          { path: '/chatbot?tab=appearance', name: 'Appearance', icon: Palette },
+          { path: '/chatbot?tab=bots', name: 'All Bots', icon: List },
+          { path: '/chatbot?tab=appearance', name: 'Bot Settings', icon: Palette },
         ] },
         // Team management (operators, departments, canned responses) only
         // makes sense when live chat is on. Locking at the sidebar gives

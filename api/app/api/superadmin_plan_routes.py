@@ -16,6 +16,7 @@ from app.config import DISPLAY_USD_TO_INR
 from app.core.pricing import display_price
 from app.db.models import Client, Invoice, Plan, Subscription
 from app.db.session import get_session
+from app.services.plan_service import get_pricing_content, set_pricing_content
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +75,18 @@ class CreatePlanRequest(BaseModel):
     annual_price_cents: int = 0
     monthly_price_usd_cents: int | None = None
     annual_price_usd_cents: int | None = None
+    extra_seat_price_usd_cents: int | None = None
     annual_discount_percent: int = 30
     trial_days: int = 14
     limits: dict | None = None
     features: dict | None = None
+    marketing: dict | None = None
     overage_rate_cents: int = 0
+    credits_per_month: int = 0
+    included_operator_seats: int = 1
+    extra_seat_price_cents: int = 1500
+    razorpay_plan_id_monthly: str | None = None
+    razorpay_plan_id_annual: str | None = None
     is_active: bool = True
     is_default: bool = False
     sort_order: int = 0
@@ -93,11 +101,16 @@ class UpdatePlanRequest(BaseModel):
     annual_price_cents: int | None = None
     monthly_price_usd_cents: int | None = None
     annual_price_usd_cents: int | None = None
+    extra_seat_price_usd_cents: int | None = None
     annual_discount_percent: int | None = None
     trial_days: int | None = None
     limits: dict | None = None
     features: dict | None = None
+    marketing: dict | None = None
     overage_rate_cents: int | None = None
+    credits_per_month: int | None = None
+    included_operator_seats: int | None = None
+    extra_seat_price_cents: int | None = None
     is_active: bool | None = None
     is_default: bool | None = None
     sort_order: int | None = None
@@ -113,6 +126,13 @@ class UpdateSubscriptionRequest(BaseModel):
     operator_quantity: int | None = Field(default=None, ge=0, le=1000)
     billing_cycle: str | None = None
     extend_trial_days: int | None = Field(default=None, ge=0, le=365)
+
+
+class PricingContentRequest(BaseModel):
+    faq: list | None = None
+    feature_matrix: list | None = None
+    topup_packs: list | None = None
+    credit_costs: list | None = None
 
 
 # ── Plan CRUD ──
@@ -151,6 +171,11 @@ def list_all_plans(superadmin: Client = Depends(get_superadmin)):
                 "limits": p.limits,
                 "features": p.features,
                 "overage_rate_cents": p.overage_rate_cents,
+                "marketing": p.marketing,
+                "credits_per_month": p.credits_per_month,
+                "included_operator_seats": p.included_operator_seats,
+                "extra_seat_price_cents": p.extra_seat_price_cents,
+                "extra_seat_price_usd_cents": p.extra_seat_price_usd_cents,
                 "is_active": p.is_active,
                 "is_default": p.is_default,
                 "sort_order": p.sort_order,
@@ -188,6 +213,7 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
             annual_price_cents=request.annual_price_cents,
             monthly_price_usd_cents=request.monthly_price_usd_cents,
             annual_price_usd_cents=request.annual_price_usd_cents,
+            extra_seat_price_usd_cents=request.extra_seat_price_usd_cents,
             annual_discount_percent=request.annual_discount_percent,
             trial_days=request.trial_days,
             # Explicit literals (N5): reaching into the SQLAlchemy Column.default
@@ -195,7 +221,13 @@ def create_plan(request: CreatePlanRequest, superadmin: Client = Depends(get_sup
             # callable or server_default — ``or {}`` is correct and safe.
             limits=request.limits or {},
             features=request.features or {},
+            marketing=request.marketing or {},
             overage_rate_cents=request.overage_rate_cents,
+            credits_per_month=request.credits_per_month,
+            included_operator_seats=request.included_operator_seats,
+            extra_seat_price_cents=request.extra_seat_price_cents,
+            razorpay_plan_id_monthly=request.razorpay_plan_id_monthly,
+            razorpay_plan_id_annual=request.razorpay_plan_id_annual,
             is_active=request.is_active,
             is_default=request.is_default,
             sort_order=request.sort_order,
@@ -263,6 +295,25 @@ def delete_plan(plan_id: int, superadmin: Client = Depends(get_superadmin)):
         logger.info(f"Superadmin {superadmin.id} deactivated plan {plan_id} ({plan.name})")
 
         return {"message": f"Plan '{plan.name}' deactivated successfully."}
+
+
+# ── Pricing Content ──
+
+
+@router.get("/pricing-content")
+def read_pricing_content(superadmin: Client = Depends(get_superadmin)):
+    """Editable website pricing copy (FAQ, comparison matrix, top-ups, costs)."""
+    with get_session() as session:
+        return get_pricing_content(session)
+
+
+@router.put("/pricing-content")
+def write_pricing_content(request: PricingContentRequest, superadmin: Client = Depends(get_superadmin)):
+    """Upsert any subset of the website pricing-content blobs."""
+    with get_session() as session:
+        set_pricing_content(session, request.model_dump(exclude_none=True))
+        logger.info(f"Superadmin {superadmin.id} updated pricing content")
+        return {"message": "Pricing content updated successfully."}
 
 
 # ── Subscription Management ──

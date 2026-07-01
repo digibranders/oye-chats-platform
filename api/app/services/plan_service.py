@@ -7,7 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Bot, Operator, Plan, Subscription, UsageRecord
+from app.db.models import Bot, Operator, Plan, PricingConfig, Subscription, UsageRecord
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,44 @@ def get_active_plans(session: Session) -> list[Plan]:
     """Return all active plans ordered by sort_order (for pricing page display)."""
     stmt = select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order)
     return list(session.execute(stmt).scalars().all())
+
+
+_PRICING_CONTENT_KEYS: dict[str, str] = {
+    "faq": "pricing_faq",
+    "feature_matrix": "pricing_feature_matrix",
+    "topup_packs": "pricing_topup_packs",
+    "credit_costs": "pricing_credit_costs",
+}
+
+
+def get_pricing_content(session: Session) -> dict:
+    """Return the editable site pricing-content blobs keyed by short name.
+
+    Missing keys default to an empty list so callers never KeyError on a
+    fresh database.
+    """
+    rows: dict[str, object] = {
+        row.key: row.value
+        for row in session.execute(select(PricingConfig).where(PricingConfig.key.in_(_PRICING_CONTENT_KEYS.values())))
+        .scalars()
+        .all()
+    }
+    return {short: rows.get(full, []) for short, full in _PRICING_CONTENT_KEYS.items()}
+
+
+def set_pricing_content(session: Session, content: dict) -> None:
+    """Upsert provided pricing-content blobs. Only known keys are written."""
+    for short, full in _PRICING_CONTENT_KEYS.items():
+        if short not in content:
+            continue
+        row: PricingConfig | None = (
+            session.execute(select(PricingConfig).where(PricingConfig.key == full)).scalars().first()
+        )
+        if row is None:
+            session.add(PricingConfig(key=full, value=content[short]))
+        else:
+            row.value = content[short]
+    session.commit()
 
 
 def get_plan_by_slug(session: Session, slug: str) -> Plan | None:

@@ -188,6 +188,8 @@ class UpdateBotRequest(BaseModel):
     # Live chat settings
     live_chat_enabled: bool | None = None
     operator_timeout_seconds: int | None = None
+    live_chat_queue_timeout_seconds: int | None = Field(None, ge=5, le=600)
+    live_chat_max_queue_size: int | None = Field(None, ge=1, le=100)
     # Business hours
     business_hours: dict | None = None
     # Feature flags — partial merge applied on PATCH (existing flags are preserved)
@@ -252,6 +254,8 @@ class BotResponse(BaseModel):
     website: str | None
     system_prompt: str | None
     brand_tone: str | None = None
+    company_name: str | None = None
+    company_description: str | None = None
     bot_logo: str | None
     launcher_name: str
     launcher_logo: str | None
@@ -276,6 +280,8 @@ class BotResponse(BaseModel):
     email_visitor_confirmation: bool = True
     live_chat_enabled: bool = True
     operator_timeout_seconds: int = 120
+    live_chat_queue_timeout_seconds: int = 20
+    live_chat_max_queue_size: int = 10
     business_hours: dict | None = None
     feature_flags: dict = {}
     widget_messages: dict = {}
@@ -981,6 +987,9 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     name=b.name,
                     website=b.website,
                     system_prompt=b.system_prompt,
+                    brand_tone=b.brand_tone,
+                    company_name=b.company_name,
+                    company_description=b.company_description,
                     bot_logo=bl,
                     launcher_name=b.launcher_name or "Have Questions?",
                     launcher_logo=ll,
@@ -1005,6 +1014,8 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     email_visitor_confirmation=b.email_visitor_confirmation,
                     live_chat_enabled=b.live_chat_enabled,
                     operator_timeout_seconds=b.operator_timeout_seconds,
+                    live_chat_queue_timeout_seconds=b.live_chat_queue_timeout_seconds,
+                    live_chat_max_queue_size=b.live_chat_max_queue_size,
                     business_hours=b.business_hours,
                     feature_flags=b.feature_flags or {},
                     widget_messages=b.widget_messages or {},
@@ -1340,6 +1351,9 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             name=bot.name,
             website=bot.website,
             system_prompt=bot.system_prompt,
+            brand_tone=bot.brand_tone,
+            company_name=bot.company_name,
+            company_description=bot.company_description,
             bot_logo=bl,
             launcher_name=bot.launcher_name or "Have Questions?",
             launcher_logo=ll,
@@ -1364,6 +1378,8 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             email_visitor_confirmation=bot.email_visitor_confirmation,
             live_chat_enabled=bot.live_chat_enabled,
             operator_timeout_seconds=bot.operator_timeout_seconds,
+            live_chat_queue_timeout_seconds=bot.live_chat_queue_timeout_seconds,
+            live_chat_max_queue_size=bot.live_chat_max_queue_size,
             business_hours=bot.business_hours,
             feature_flags=bot.feature_flags or {},
             widget_messages=bot.widget_messages or {},
