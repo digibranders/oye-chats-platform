@@ -20,7 +20,8 @@ def test_spider_defaults(monkeypatch):
     assert cfg.CRAWL_PROVIDER == "playwright"  # safe default: no behavior change on deploy
     assert cfg.SPIDER_API_URL == "https://api.spider.cloud"
     assert cfg.SPIDER_TIMEOUT == 1600
-    assert cfg.SPIDER_FALLBACK_TO_PLAYWRIGHT is True
+    # Default false: prod has no Chromium to fall back to (Spider is sole crawler).
+    assert cfg.SPIDER_FALLBACK_TO_PLAYWRIGHT is False
 
 
 def test_spider_enabled_via_env(monkeypatch):

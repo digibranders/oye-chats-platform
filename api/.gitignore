@@ -1,0 +1,3 @@
+
+# Local .env backups (may contain secrets)
+.env.bak*

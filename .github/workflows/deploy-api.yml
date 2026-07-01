@@ -169,7 +169,7 @@ jobs:
               "SPIDER_API_URL=https://api.spider.cloud" \
               "SPIDER_REQUEST_MODE=${SPIDER_REQUEST_MODE:-smart}" \
               "SPIDER_TIMEOUT=1600" \
-              "SPIDER_FALLBACK_TO_PLAYWRIGHT=${SPIDER_FALLBACK_TO_PLAYWRIGHT:-true}" \
+              "SPIDER_FALLBACK_TO_PLAYWRIGHT=${SPIDER_FALLBACK_TO_PLAYWRIGHT:-false}" \
               "WORKER_MAX_JOBS=${WORKER_MAX_JOBS:-2}" \
               "WORKER_ENABLED=true" \
               "MODERATION_ENABLED=true" \
@@ -193,10 +193,13 @@ jobs:
             cd api
             /root/.local/bin/uv sync
 
-            # Install Playwright only if not already present
-            if ! /root/.local/bin/uv run python -c "from playwright.sync_api import sync_playwright" 2>/dev/null; then
-              /root/.local/bin/uv run playwright install --with-deps chromium
-            fi
+            # NOTE: No Playwright/Chromium browser install. Crawling runs on
+            # Spider.cloud (CRAWL_PROVIDER=spider, SPIDER_FALLBACK_TO_PLAYWRIGHT=false),
+            # so no headless browser executes on this box — reclaiming ~400MB and
+            # the RAM/CPU that previously caused OOM. The playwright/crawl4ai
+            # Python packages remain (crawl4ai depends on them) but are dormant.
+            # To re-enable the local fallback, set the secret back to true AND
+            # restore `uv run playwright install --with-deps chromium` here.
 
             # Run migrations
             /root/.local/bin/uv run alembic upgrade head
