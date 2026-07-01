@@ -342,10 +342,16 @@ export default function KnowledgeBase() {
 
   const handleConfirmRecrawl = async () => {
     if (!recrawlDiff) return;
-    const { docName, new_pages: expectedNewPages = null } = recrawlDiff;
+    const { docName, new_pages: expectedNewPages = null, new_urls: newUrls = [] } = recrawlDiff;
     setRecrawlDiff(null);
     setRecrawlDiffViewing(null);
-    await handleRecrawl(docName, expectedNewPages);
+    // Diff-based re-crawl: fetch ONLY the new pages so unchanged pages aren't
+    // re-scraped or re-billed. If nothing is new, there's nothing to do.
+    if (!newUrls.length) {
+      showToast('success', 'Knowledge base is already up to date — no new pages to crawl.');
+      return;
+    }
+    await handleRecrawl(docName, expectedNewPages, newUrls);
   };
 
   const dismissRecrawlDiff = () => {
@@ -353,7 +359,7 @@ export default function KnowledgeBase() {
     setRecrawlDiffViewing(null);
   };
 
-  const handleRecrawl = async (docName, expectedNewPages = null) => {
+  const handleRecrawl = async (docName, expectedNewPages = null, orderedUrls = null) => {
     setRecrawlingDoc(docName);
     const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
     // Normalize to root domain so the backend knows what stale chunks to sweep after success
@@ -367,6 +373,9 @@ export default function KnowledgeBase() {
       // expectedNewPages comes from the /crawl/diff result and right-sizes
       // the backend's credit pre-flight so a recrawl with 9 new pages isn't
       // blocked by the plan's worst-case (e.g. 1200-page) reservation.
+      //
+      // orderedUrls (diff-based re-crawl): when set, ONLY these new pages are
+      // fetched + charged — unchanged pages are never re-scraped or re-billed.
       await startCrawl({
         url: crawlUrl,
         botId: selectedBot?.id,
@@ -374,6 +383,7 @@ export default function KnowledgeBase() {
         useJs: false,
         replaceSource,
         expectedNewPages,
+        orderedUrls,
       });
     } catch (err) {
       // buildApiError flattens structured FastAPI errors (e.g. 402 insufficient_credits)
@@ -395,6 +405,20 @@ export default function KnowledgeBase() {
   const handleCrawlSubmit = async (e) => {
     e.preventDefault();
     if (!url.trim() || isDiscovering) return;
+
+    // If this domain is already ingested, route through the diff flow so a
+    // re-scan only fetches + charges NEW pages instead of re-crawling (and
+    // re-billing) the whole site.
+    const enteredHost = url.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+    const alreadyIngested = documents.find((d) => {
+      if (!(d.name.startsWith('http://') || d.name.startsWith('https://'))) return false;
+      const dHost = d.name.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+      return dHost === enteredHost;
+    });
+    if (alreadyIngested) {
+      await handleRequestRecrawl(alreadyIngested.name);
+      return;
+    }
 
     setDiscoveredTotal(null);
     setShowCrawlConfirm(false);
