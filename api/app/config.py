@@ -69,9 +69,6 @@ GEMINI_EMBED_URL = os.getenv(
     "GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta"
 ).rstrip("/")
 EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "768"))  # matches Vector(768) column
-# Legacy — removed together with the FastEmbed/OpenAI embedder in the cleanup task.
-FASTEMBED_MODEL = os.getenv("FASTEMBED_MODEL", "BAAI/bge-base-en-v1.5")
-EMBED_MODEL = "text-embedding-3-small"
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
