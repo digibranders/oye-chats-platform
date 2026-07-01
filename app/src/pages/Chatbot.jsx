@@ -1,23 +1,22 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { getAuthState } from '../utils/auth';
-import {
-    Bot, Plus, Check, Trash2, Code2, Loader2, ArrowLeft,
-    X, AlertCircle
-} from 'lucide-react';
+import { Plus, Loader2, ArrowLeft, AlertCircle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import {
     deleteBot,
     updateBot,
+    getBotDemoUrl,
+    trackDemoShareClick,
 } from '../services/api';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
+import BotCard from './my-bots/BotCard';
 import InstallDrawer from './my-bots/InstallDrawer';
 import CreateBotWizard from './my-bots/CreateBotWizard';
 
 import BotSettings from './BotSettings';
-import { cn } from '../lib/utils';
 
 export default function Chatbot() {
     const { bots, selectedBot, selectBot, refreshBots, loading, error: botError } = useBotContext();
@@ -25,28 +24,22 @@ export default function Chatbot() {
     const { isBotManager } = getAuthState();
     const [searchParams, setSearchParams] = useSearchParams();
     const botTab = searchParams.get('tab') || 'bots';
-    const [isCreateOpen, setIsCreateOpen] = useState(false);
+    // Seed the create flow open when the user arrives via the ?create=true
+    // deep-link (sidebar "Create new bot"); the effect below then strips the
+    // flag from the URL so a refresh doesn't reopen it.
+    const [isCreateOpen, setIsCreateOpen] = useState(() => searchParams.get('create') === 'true');
     const isFirstBot = bots.length === 0;
     const [installBot, setInstallBot] = useState(null);
-    const [deletingBot, setDeletingBot] = useState(null);
-    const [confirmDelete, setConfirmDelete] = useState(null);
-
-    // Inline bot rename state
-    const [renamingBot, setRenamingBot] = useState(null);   // botId | null
-    const [renameValue, setRenameValue] = useState('');
-    const renameInputRef = useRef(null);
 
     // Open the create flow. The wizard self-adapts:
     //   * First bot (bots.length === 0) → one-screen Free path.
     //   * 2nd+ bot → two-step wizard with the plan picker + Razorpay.
     const openCreate = () => setIsCreateOpen(true);
 
-    // Open the create flow if the user reached this page via the
-    // ?create=true querystring (clicked "Create new bot" from the sidebar
-    // dropdown or a deep link).
+    // Strip the ?create=true flag from the URL once consumed so a refresh
+    // doesn't reopen the wizard. This only mutates the URL (no local setState).
     useEffect(() => {
         if (searchParams.get('create') === 'true') {
-            setIsCreateOpen(true);
             setSearchParams({}, { replace: true });
         }
     }, [searchParams, setSearchParams]);
@@ -65,48 +58,47 @@ export default function Chatbot() {
         }
     };
 
-    const handleDelete = async (botId, botName) => {
-        setDeletingBot(botId);
+    // Manage = set the bot active and open its Bot Settings editor.
+    const handleManage = (bot) => {
+        selectBot(bot);
+        setSearchParams({ tab: 'appearance' });
+    };
+
+    const handleDelete = async (bot) => {
         try {
-            await deleteBot(botId);
+            await deleteBot(bot.id);
             await refreshBots();
-            showToast('success', `Bot "${botName}" deleted.`);
-            setConfirmDelete(null);
-            setInstallBot((prev) => (prev?.id === botId ? null : prev));
+            showToast('success', `Bot "${bot.name}" deleted.`);
+            setInstallBot((prev) => (prev?.id === bot.id ? null : prev));
         } catch (err) {
             showToast('error', err.message || 'Failed to delete bot');
-        } finally { setDeletingBot(null); setConfirmDelete(null); }
+        }
     };
 
-    const startRename = (bot) => {
-        setRenamingBot(bot.id);
-        setRenameValue(bot.name);
-        // Focus the input after React paints
-        setTimeout(() => renameInputRef.current?.focus(), 30);
-    };
-
-    const cancelRename = () => {
-        setRenamingBot(null);
-        setRenameValue('');
-    };
-
-    const commitRename = async (botId) => {
-        const trimmed = renameValue.trim();
-        if (!trimmed) { cancelRename(); return; }
-        const originalBot = bots.find(b => b.id === botId);
-        if (trimmed === originalBot?.name) { cancelRename(); return; }
+    const handleRename = async (bot, name) => {
         try {
-            await updateBot(botId, { name: trimmed });
+            await updateBot(bot.id, { name });
             await refreshBots();
             showToast('success', 'Bot renamed successfully.');
         } catch (err) {
             showToast('error', err.message || 'Failed to rename bot');
-        } finally {
-            cancelRename();
         }
     };
 
-    const maskKey = (key) => key ? key.substring(0, 6) + '••••••••' + key.substring(key.length - 4) : '';
+    // Copy a bot's demo/share link and record the share click. The card's ⋯
+    // menu owns the interaction; this handler owns the clipboard + tracking.
+    const handleDemoCopy = async (bot) => {
+        try {
+            await navigator.clipboard.writeText(getBotDemoUrl(bot.bot_key));
+            showToast('success', 'Demo link copied to clipboard');
+            trackDemoShareClick(bot.id).catch((err) => {
+                console.error('Failed to track demo share click:', err);
+            });
+        } catch (err) {
+            console.error('Failed to copy demo link:', err);
+            showToast('error', 'Failed to copy to clipboard');
+        }
+    };
 
     if (botTab === 'appearance') {
         return (
@@ -179,85 +171,19 @@ export default function Chatbot() {
                 />
             ) : (
                 <div className="space-y-3">
-                    {bots.map((bot) => {
-                        const isSelected = selectedBot?.id === bot.id;
-                        return (
-                            <div
-                                key={bot.id}
-                                className={cn(
-                                    'bg-white dark:bg-surface-900 rounded-2xl border shadow-sm transition-all overflow-hidden',
-                                    isSelected
-                                        ? 'border-primary-300 dark:border-primary-500/50 ring-1 ring-primary-200/50 dark:ring-primary-500/20'
-                                        : 'border-surface-200 dark:border-surface-700'
-                                )}
-                            >
-                                <div className="p-5 flex items-center gap-4">
-                                    <div className={cn(
-                                        'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
-                                        isSelected
-                                            ? 'bg-primary-100 dark:bg-primary-500/15'
-                                            : 'bg-surface-100 dark:bg-surface-800'
-                                    )}>
-                                        {bot.bot_logo ? <img src={bot.bot_logo} alt="" className="w-full h-full object-cover rounded-xl" /> : <Bot size={20} className={isSelected ? 'text-primary-600 dark:text-primary-400' : 'text-surface-400 dark:text-surface-500'} />}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            {renamingBot === bot.id ? (
-                                                <input
-                                                    ref={renameInputRef}
-                                                    type="text"
-                                                    value={renameValue}
-                                                    onChange={(e) => setRenameValue(e.target.value)}
-                                                    onKeyDown={(e) => {
-                                                        if (e.key === 'Enter') { e.preventDefault(); commitRename(bot.id); }
-                                                        else if (e.key === 'Escape') cancelRename();
-                                                    }}
-                                                    onBlur={() => commitRename(bot.id)}
-                                                    maxLength={50}
-                                                    className="text-sm font-bold text-surface-900 dark:text-surface-100 bg-white dark:bg-surface-800 border border-primary-400 dark:border-primary-500 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:focus:ring-primary-400/30 w-48"
-                                                />
-                                            ) : (
-                                                <h3
-                                                    className={cn(
-                                                        'text-sm font-bold text-surface-900 dark:text-surface-100 truncate',
-                                                        isBotManager && 'cursor-text hover:underline decoration-dashed underline-offset-2'
-                                                    )}
-                                                    title={isBotManager ? 'Click to rename' : undefined}
-                                                    onClick={isBotManager ? () => startRename(bot) : undefined}
-                                                >
-                                                    {bot.name}
-                                                </h3>
-                                            )}
-                                            {isSelected && <span className="px-2 py-0.5 text-[9px] font-bold text-primary-600 dark:text-primary-400 bg-primary-100 dark:bg-primary-500/15 rounded-full uppercase">Active</span>}
-                                        </div>
-                                        <div className="flex items-center gap-3 mt-0.5">
-                                            <span className="text-[11px] text-surface-400 dark:text-surface-500 font-mono">{maskKey(bot.bot_key)}</span>
-                                            <span className="text-[10px] text-surface-400 dark:text-surface-500">Created {new Date(bot.created_at).toLocaleDateString()}</span>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2 flex-shrink-0">
-                                        {!isSelected && (
-                                            <button onClick={() => selectBot(bot)} className="px-3 py-1.5 text-[11px] font-bold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-500/10 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors">Set Active</button>
-                                        )}
-                                        <button onClick={() => setInstallBot(bot)} className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors">
-                                            <Code2 size={13} /> Embed
-                                        </button>
-                                        {isBotManager && (
-                                            confirmDelete === bot.id ? (
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="text-[10px] text-surface-400 dark:text-surface-500">Sure?</span>
-                                                    <button onClick={() => handleDelete(bot.id, bot.name)} disabled={deletingBot === bot.id} className="p-1.5 rounded-lg bg-rose-500 text-white hover:bg-rose-600 dark:hover:bg-rose-400 transition-colors">{deletingBot === bot.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>
-                                                    <button onClick={() => setConfirmDelete(null)} className="p-1.5 rounded-lg bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 transition-colors"><X size={12} /></button>
-                                                </div>
-                                            ) : (
-                                                <button onClick={() => setConfirmDelete(bot.id)} className="p-1.5 rounded-lg text-surface-400 dark:text-surface-500 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
-                                            )
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })}
+                    {bots.map((bot) => (
+                        <BotCard
+                            key={bot.id}
+                            bot={bot}
+                            isActive={selectedBot?.id === bot.id}
+                            isBotManager={isBotManager}
+                            onManage={handleManage}
+                            onInstall={setInstallBot}
+                            onRename={handleRename}
+                            onDelete={handleDelete}
+                            onDemo={handleDemoCopy}
+                        />
+                    ))}
                 </div>
             )}
 
