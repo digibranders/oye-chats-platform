@@ -115,7 +115,9 @@ async def run_full_crawl(
         if ordered_urls:
             logger.info(
                 "Fetching %d explicit ordered URLs for client %s, bot_id=%s",
-                len(ordered_urls), client_id, bot_id,
+                len(ordered_urls),
+                client_id,
+                bot_id,
             )
             crawl_data = await fetch_urls(ordered_urls, use_js=use_js, client_id=client_id)
         else:

@@ -23,7 +23,7 @@ async def test_fetch_urls_returns_results_in_order(monkeypatch):
 
     urls = ["https://acme.test/a", "https://acme.test/b"]
     data = await spider_service.fetch_urls(urls, use_js=False, client_id=1, _client=_mock_client(handler))
-    assert [p["url"] for p in data["results"]] == urls          # order preserved
+    assert [p["url"] for p in data["results"]] == urls  # order preserved
     assert data["results"][0]["content"] == "md:https://acme.test/a"
     assert data["discovered_total"] == 2
 

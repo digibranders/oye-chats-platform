@@ -129,9 +129,7 @@ async def crawl_website(
 _FETCH_CONCURRENCY = 5  # parallel scrape calls; Spider handles the render load
 
 
-async def _scrape_one(
-    client: httpx.AsyncClient, url: str, use_js: bool, sem: asyncio.Semaphore
-) -> dict | None:
+async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: asyncio.Semaphore) -> dict | None:
     """Scrape a single URL to markdown. Returns {url, content} or None on failure."""
     payload = {
         "url": url,

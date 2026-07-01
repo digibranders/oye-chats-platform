@@ -937,10 +937,7 @@ async def crawl_endpoint(
         from urllib.parse import urlparse
 
         seed_host = urlparse(str(crawl_request.url)).netloc.lower().removeprefix("www.")
-        same_origin = [
-            u for u in ordered_urls
-            if urlparse(u).netloc.lower().removeprefix("www.") == seed_host
-        ]
+        same_origin = [u for u in ordered_urls if urlparse(u).netloc.lower().removeprefix("www.") == seed_host]
         if not same_origin:
             raise HTTPException(status_code=400, detail={"error": "ordered_urls_off_domain"})
         ordered_urls = same_origin[:effective_max_pages]

@@ -22,7 +22,10 @@ def _build_app():
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_current_client_or_operator] = lambda: {
-        "type": "client", "entity": SimpleNamespace(id=1), "client_id": 1, "operator_id": None,
+        "type": "client",
+        "entity": SimpleNamespace(id=1),
+        "client_id": 1,
+        "operator_id": None,
     }
     app.dependency_overrides[require_active_subscription_for_workspace] = lambda: None
     return app
@@ -36,12 +39,8 @@ def test_discover_returns_credit_math(monkeypatch):
     # Skip the SSRF DNS resolution check in the request validator (hermetic test).
     monkeypatch.setattr("app.schemas.client._is_public_hostname", lambda h: True)
     monkeypatch.setattr(document_routes, "get_session", lambda: _session_ctx(MagicMock()))
-    monkeypatch.setattr(
-        "app.services.plan_service.get_client_plan", lambda db, cid: SimpleNamespace(name="Standard")
-    )
-    monkeypatch.setattr(
-        "app.services.plan_service.get_crawl_limits", lambda plan: {"max_crawl_pages": UNLIMITED}
-    )
+    monkeypatch.setattr("app.services.plan_service.get_client_plan", lambda db, cid: SimpleNamespace(name="Standard"))
+    monkeypatch.setattr("app.services.plan_service.get_crawl_limits", lambda plan: {"max_crawl_pages": UNLIMITED})
 
     async def _fake_discover(url, max_urls, timeout):
         return fake_urls
@@ -49,9 +48,7 @@ def test_discover_returns_credit_math(monkeypatch):
     monkeypatch.setattr("app.services.url_discovery.discover_website_urls", _fake_discover)
     monkeypatch.setattr("app.services.credit_service.get_credit_cost", lambda db, action: 5)
     # 100 credits -> 20 affordable pages; bot_id must be threaded through.
-    monkeypatch.setattr(
-        "app.services.credit_service.get_balance", lambda db, cid, bot_id=None: 100
-    )
+    monkeypatch.setattr("app.services.credit_service.get_balance", lambda db, cid, bot_id=None: 100)
 
     resp = TestClient(_build_app()).post("/crawl/discover", json={"url": "https://acme.test"})
     assert resp.status_code == 200
@@ -59,7 +56,7 @@ def test_discover_returns_credit_math(monkeypatch):
     assert body["total_found"] == 30
     assert body["cost_per_page"] == 5
     assert body["balance"] == 100
-    assert body["max_affordable_pages"] == 20          # 100 // 5
-    assert body["credits_required_full"] == 150        # 30 * 5
-    assert body["exceeds_balance"] is True             # 150 > 100
+    assert body["max_affordable_pages"] == 20  # 100 // 5
+    assert body["credits_required_full"] == 150  # 30 * 5
+    assert body["exceeds_balance"] is True  # 150 > 100
     assert body["urls"] == fake_urls
