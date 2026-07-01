@@ -5,7 +5,7 @@ import { RadialBarChart, RadialBar, ResponsiveContainer, Tooltip as ReTooltip } 
 import { getLeads, getLeadDetail, getLeadStats, exportLeadsCsv, markLeadViewed, markAllLeadsViewed } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
-import { cn } from '../lib/utils';
+import { cn, formatVisitorLocation } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import { Lock, Crown, ArrowRight } from 'lucide-react';
@@ -318,7 +318,7 @@ export default function Leads() {
                 l.contact?.email || '',
                 l.score,
                 l.status,
-                (l.location || '').replace(/,/g, ''),
+                formatVisitorLocation(l.location).replace(/,/g, ''),
                 formatDate(l.last_active_at),
             ].join(',')))
             .join('\n');
@@ -595,7 +595,7 @@ export default function Leads() {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-[12px] text-surface-600 dark:text-surface-400 max-w-[120px] truncate" onClick={() => handleViewLead(lead.session_id)}>
-                                            {(lead.location || '').replace(/\s*\|.*$/, '') || '—'}
+                                            {formatVisitorLocation(lead.location) || '—'}
                                         </td>
                                         <td className="px-4 py-3 text-[12px] text-surface-500 dark:text-surface-400" onClick={() => handleViewLead(lead.session_id)}>
                                             {formatDate(lead.last_active_at)}
@@ -853,7 +853,7 @@ export default function Leads() {
 
                                     {/* Meta */}
                                     <div className="flex gap-4 text-[12px] text-surface-500 dark:text-surface-400">
-                                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{(leadDetail.location || '').replace(/\s*\|.*$/, '') || '—'}</span>
+                                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{formatVisitorLocation(leadDetail.location) || '—'}</span>
                                         <span className="flex items-center gap-1"><Monitor className="w-3 h-3" />{leadDetail.device || '—'}</span>
                                         <span className="flex items-center gap-1"><MessageCircle className="w-3 h-3" />{leadDetail.chats} msgs</span>
                                     </div>
@@ -905,7 +905,7 @@ export default function Leads() {
                                             {chatDetail?.contact?.name || 'Anonymous'}
                                         </p>
                                         <p className="text-[12px] text-surface-500 dark:text-surface-400 truncate">
-                                            {(chatDetail?.location || '').replace(/\s*\|.*$/, '') || 'Unknown'}
+                                            {formatVisitorLocation(chatDetail?.location) || 'Unknown'}
                                             {chatDetail?.device ? ` · ${chatDetail.device}` : ''}
                                         </p>
                                         {(tagsByLead[chatLead] || []).length > 0 && (

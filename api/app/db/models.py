@@ -460,7 +460,12 @@ class ChatSession(Base):
     lead_viewed_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    last_active_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # No `onupdate=func.now()` here on purpose: that fires on ANY UPDATE to
+    # this row (e.g. marking a lead viewed, editing notes/tags), not just
+    # real visitor activity, which made "Last Active" jump every time an
+    # admin opened a lead. Genuine activity explicitly bumps this in
+    # `ensure_chat_session` (repository.py) on each visitor chat turn.
+    last_active_at = Column(DateTime(timezone=True), server_default=func.now())
 
     client = relationship("Client", back_populates="chat_sessions", foreign_keys=[client_id])
     bot = relationship("Bot", back_populates="chat_sessions")
