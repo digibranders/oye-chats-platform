@@ -162,6 +162,7 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
     ? [{ path: '/team', name: 'Team', icon: UsersRound }]
     : [
         { path: '/chatbot', name: 'My Bots', icon: Bot, children: [
+          { path: '/chatbot?tab=bots', name: 'All Bots', icon: List },
           { path: '/chatbot?tab=appearance', name: 'Bot Settings', icon: Palette },
         ] },
         // Team management (operators, departments, canned responses) only
