@@ -133,10 +133,40 @@ async def crawl_website(
 # ── Explicit ordered-URL fetch (for credit-aware partial crawls) ─────────────
 
 _FETCH_CONCURRENCY = 10  # parallel scrape calls; Spider handles the render load
+# Transient scrape failures (a burst 502/503/504 from the origin under crawl
+# load, a timeout, or a 200-with-empty-content that masks an upstream 5xx) are
+# retried — verified: pages that 502 mid-crawl return 200 when re-fetched. Only
+# these statuses retry; a real 4xx (404/401) drops immediately.
+_SCRAPE_ATTEMPTS = 3
+_SCRAPE_RETRY_BASE = 1.5  # seconds; delay = base * attempt (backoff between tries)
+_RETRYABLE_SCRAPE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+def _extract_page_content(resp: httpx.Response) -> tuple[str | None, int | None]:
+    """Return (content, upstream_status) from a Spider /scrape response.
+
+    ``content`` is None when the body is unparseable or the page came back empty
+    (which usually masks an upstream 5xx). ``upstream_status`` is the per-page
+    status Spider reports, when present.
+    """
+    try:
+        data = resp.json()
+    except ValueError:
+        return None, None
+    # /scrape returns a JSON list of page objects (verified Task 2 Step 0).
+    page = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+    if not isinstance(page, dict):
+        return None, None
+    upstream = page.get("status")
+    content = page.get("content")
+    return (content if content else None), upstream
 
 
 async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: asyncio.Semaphore) -> dict | None:
-    """Scrape a single URL to markdown. Returns {url, content} or None on failure."""
+    """Scrape a single URL to markdown, retrying transient failures.
+
+    Returns ``{url, content}`` or None once the page is confirmed unfetchable.
+    """
     payload = {
         "url": url,
         "return_format": "markdown",
@@ -145,29 +175,36 @@ async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: as
         "store_data": False,
     }
     headers = {"Authorization": f"Bearer {SPIDER_API_KEY}", "Content-Type": "application/json"}
-    async with sem:
-        try:
-            resp = await client.post(f"{SPIDER_API_URL}/scrape", json=payload, headers=headers)
-        except httpx.HTTPError as exc:
-            logger.warning("Spider scrape failed for %s: %s", url, exc)
-            return None
-    if resp.status_code >= 400:
-        logger.warning("Spider scrape %s returned %s", url, resp.status_code)
-        return None
-    try:
-        data = resp.json()
-    except ValueError:
-        logger.warning("Spider scrape %s returned non-JSON body", url)
-        return None
-    # /scrape returns a JSON list of page objects (verified Task 2 Step 0).
-    page = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
-    if isinstance(page, dict) and page.get("content"):
-        return {"url": url, "content": page["content"]}
-    # 200 from Spider but no content — the upstream page usually errored (e.g. a
-    # 502 from the target site). Log it so these silent drops are visible when
-    # reconciling "N discovered vs M ingested".
-    upstream = page.get("status") if isinstance(page, dict) else None
-    logger.warning("Spider scrape %s returned no content (upstream status=%s) — dropped", url, upstream)
+    last_reason = "unknown"
+    for attempt in range(1, _SCRAPE_ATTEMPTS + 1):
+        resp: httpx.Response | None = None
+        async with sem:  # hold a concurrency slot only for the request, not the backoff
+            try:
+                resp = await client.post(f"{SPIDER_API_URL}/scrape", json=payload, headers=headers)
+            except httpx.HTTPError as exc:
+                last_reason = f"{type(exc).__name__}"
+        if resp is not None:
+            if resp.status_code < 400:
+                content, upstream = _extract_page_content(resp)
+                if content:
+                    return {"url": url, "content": content}
+                # 200 but empty — usually a transient upstream 5xx; worth a retry.
+                last_reason = f"empty content (upstream status={upstream})"
+            elif resp.status_code not in _RETRYABLE_SCRAPE_STATUS:
+                logger.warning("Spider scrape %s returned %s — dropped (not retryable)", url, resp.status_code)
+                return None
+            else:
+                last_reason = f"HTTP {resp.status_code}"
+        if attempt < _SCRAPE_ATTEMPTS:
+            await asyncio.sleep(_SCRAPE_RETRY_BASE * attempt)
+    # Exhausted retries — log so these drops are visible when reconciling
+    # "N discovered vs M ingested".
+    logger.warning(
+        "Spider scrape %s failed after %d attempts (%s) — dropped",
+        url,
+        _SCRAPE_ATTEMPTS,
+        last_reason,
+    )
     return None
 
 
