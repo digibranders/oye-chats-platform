@@ -2071,6 +2071,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
 
 
+                {/* Bottom-anchor spacer — flex-grow absorbs leftover height so a
+                    short conversation sits flush against the input instead of
+                    stranded at the top with a dead gap below it. It shrinks
+                    back to 0 once real content overflows the container, so
+                    long conversations still scroll from a natural top edge.
+                    Deliberately NOT `justify-end` on the container: that
+                    combined with overflow-y: auto has a known cross-browser
+                    bug (iOS Safari included) where content that overflows
+                    past the top becomes unreachable by scrolling. */}
+                {!isInitializing && <div aria-hidden="true" className="flex-1" />}
+
                 {/* Loading spinner */}
                 {isInitializing && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-3">
@@ -2622,7 +2633,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     aria-label="Scroll to latest message"
                     aria-hidden={isAtBottom}
                     tabIndex={isAtBottom ? -1 : 0}
-                    className={`sticky bottom-1 self-center mt-auto w-[34px] h-[34px] aspect-square rounded-full shrink-0 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-3 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
+                    className={`sticky bottom-1 self-center w-[34px] h-[34px] aspect-square rounded-full shrink-0 bg-white shadow-md flex items-center justify-center text-black cursor-pointer origin-center transform-gpu transition-all duration-300 ease-out z-10 ${isAtBottom ? 'opacity-0 translate-y-6 pointer-events-none' : 'opacity-100 translate-y-3 pointer-events-auto'} ${scrollBtnPulse ? 'scale-125' : 'hover:scale-125 active:scale-95'}`}
                 >
                     <ChevronDown className="w-4 h-4" strokeWidth={2} />
                 </button>
