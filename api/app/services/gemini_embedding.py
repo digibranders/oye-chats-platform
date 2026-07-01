@@ -9,14 +9,23 @@ At 768-dim the API returns Matryoshka-truncated but *un-normalized* vectors
 normalization — we do it here.
 """
 
+import contextlib
 import logging
 import math
 import re
 import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 
-from app.config import EMBED_DIMENSIONS, GEMINI_EMBED_MODEL, GEMINI_EMBED_URL, GOOGLE_API_KEY
+from app.config import (
+    EMBED_CONCURRENCY,
+    EMBED_DIMENSIONS,
+    GEMINI_EMBED_MODEL,
+    GEMINI_EMBED_URL,
+    GOOGLE_API_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,25 +120,51 @@ def _embed_one_batch(client: httpx.Client, batch: list[str]) -> list[list[float]
     raise RuntimeError(f"Gemini embedding failed after {_RETRY_ATTEMPTS} attempts: {last_err}")
 
 
-def embed_texts(texts: list[str], *, _client: httpx.Client | None = None) -> list[list[float]]:
+def embed_texts(
+    texts: list[str],
+    *,
+    progress_cb: Callable[[int, int], None] | None = None,
+    _client: httpx.Client | None = None,
+) -> list[list[float]]:
     """Embed ``texts`` → EMBED_DIMENSIONS-wide, L2-normalized vectors.
+
+    Batches of ``_MAX_BATCH`` are sent to Gemini **concurrently** (up to
+    ``EMBED_CONCURRENCY``) since embedding is network-bound — this is the main
+    lever on large-crawl wall-clock. Output order matches input order regardless
+    of completion order. ``progress_cb(done, total)`` fires as batches finish.
 
     Raises RuntimeError on a missing key or persistent API failure. Callers rely
     on that: ingestion retries via ARQ; the query path degrades to full-text
-    search (see rag_service).
+    search (see rag_service). A single batch failure aborts the whole call.
     """
     if not texts:
         return []
     if not GOOGLE_API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is not configured for embeddings")
 
+    batches = [texts[i : i + _MAX_BATCH] for i in range(0, len(texts), _MAX_BATCH)]
+    # httpx.Client is thread-safe (pooled); share one across the worker threads.
     owns_client = _client is None
     client = _client or httpx.Client(timeout=_TIMEOUT)
+    results: list[list[list[float]]] = [[] for _ in batches]
+    total = len(texts)
+    done = 0
+    workers = max(1, min(EMBED_CONCURRENCY, len(batches)))
     try:
-        out: list[list[float]] = []
-        for i in range(0, len(texts), _MAX_BATCH):
-            out.extend(_embed_one_batch(client, texts[i : i + _MAX_BATCH]))
-        return out
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_to_idx = {pool.submit(_embed_one_batch, client, b): i for i, b in enumerate(batches)}
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                results[idx] = future.result()  # propagates a batch's terminal failure
+                if progress_cb is not None:
+                    done += len(batches[idx])
+                    with contextlib.suppress(Exception):
+                        progress_cb(done, total)
     finally:
         if owns_client:
             client.close()
+
+    out: list[list[float]] = []
+    for r in results:
+        out.extend(r)
+    return out

@@ -11,7 +11,7 @@ def test_embed_chunks_uses_google(monkeypatch):
     monkeypatch.setattr(embedder, "EMBED_PROVIDER", "google")
     captured = {}
 
-    def fake_embed(texts):
+    def fake_embed(texts, *, progress_cb=None):
         captured["texts"] = texts
         return [[0.1] * 768 for _ in texts]
 
@@ -33,6 +33,6 @@ def test_unsupported_provider_raises(monkeypatch):
 
 def test_embed_chunks_async(monkeypatch):
     monkeypatch.setattr(embedder, "EMBED_PROVIDER", "google")
-    monkeypatch.setattr(embedder, "_google_embed", lambda texts: [[0.2] * 768 for _ in texts])
+    monkeypatch.setattr(embedder, "_google_embed", lambda texts, **kw: [[0.2] * 768 for _ in texts])
     out = asyncio.run(embedder.embed_chunks_async(["a"]))
     assert len(out) == 1 and len(out[0]) == 768

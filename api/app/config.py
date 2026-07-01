@@ -8,6 +8,19 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+def _env(key: str, default: str) -> str:
+    """``os.getenv`` that also treats an empty string as unset.
+
+    Absent deploy secrets arrive as ``""`` (not ``None``) through the CI env, so
+    a bare ``int(_env(..., "768"))`` or ``.strip()`` would crash or silently
+    misconfigure on import — an empty ``EMBED_DIMENSIONS`` once took a prod deploy
+    down this way. Empty → default, always.
+    """
+    value = os.getenv(key)
+    return value if value not in (None, "") else default
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Database
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,12 +76,16 @@ else:
 # client). There is NO cross-model fallback: mixing embedding models corrupts
 # vector search, so on failure we rely on ARQ retry (ingestion) and full-text
 # degradation (query — see rag_service).
-EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "google").strip().lower()
-GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
-GEMINI_EMBED_URL = os.getenv("GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
-EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "768"))  # matches Vector(768) column
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+EMBED_PROVIDER = _env("EMBED_PROVIDER", "google").strip().lower()
+GEMINI_EMBED_MODEL = _env("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+GEMINI_EMBED_URL = _env("GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+EMBED_DIMENSIONS = int(_env("EMBED_DIMENSIONS", "768"))  # matches Vector(768) column
+# How many embed batches to send to Gemini concurrently. Embedding is I/O-bound
+# (network), so a large crawl's ~100 sequential batch calls are the crawl's long
+# pole; concurrency cuts that near-linearly. Kept well under the paid-tier RPM.
+EMBED_CONCURRENCY = int(_env("EMBED_CONCURRENCY", "8"))
+CHUNK_SIZE = int(_env("CHUNK_SIZE", "1000"))
+CHUNK_OVERLAP = int(_env("CHUNK_OVERLAP", "200"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File Storage (Cloudflare R2 via S3-compatible API)
@@ -161,10 +178,10 @@ VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", f"mailto:{SUPPORT_EMAIL}").strip()
 # How long after the operator's last WS heartbeat we still consider them
 # "actively watching the dashboard" (and therefore skip push, since the
 # in-dashboard toast covers them). Tunable; 30s matches the WS ping cadence.
-PUSH_WS_GRACE_SECONDS = int(os.getenv("PUSH_WS_GRACE_SECONDS", "30"))
+PUSH_WS_GRACE_SECONDS = int(_env("PUSH_WS_GRACE_SECONDS", "30"))
 # Visitor-message email debounce — if a visitor in a waiting/unattended session
 # sends multiple messages in quick succession, only one email per window.
-PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(os.getenv("PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS", "60"))
+PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS = int(_env("PUSH_VISITOR_MSG_EMAIL_DEBOUNCE_SECONDS", "60"))
 
 PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and (VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_FILE))
 if PUSH_ENABLED:
@@ -304,15 +321,15 @@ logger.info(f"Default billing provider: {BILLING_PROVIDER} ({BILLING_CURRENCY})"
 # Trial DURATION is sourced from ``Plan.trial_days`` (seeded by alembic), NOT
 # an env var — keeping it on the plan row lets super admins change trial
 # length per-tier without a redeploy.
-TRIAL_CREDITS = int(os.getenv("TRIAL_CREDITS", "750"))
-TRIAL_DATA_RETENTION_DAYS = int(os.getenv("TRIAL_DATA_RETENTION_DAYS", "15"))
+TRIAL_CREDITS = int(_env("TRIAL_CREDITS", "750"))
+TRIAL_DATA_RETENTION_DAYS = int(_env("TRIAL_DATA_RETENTION_DAYS", "15"))
 
 # Dunning grace window — how long a subscription stays in ``past_due`` (full
 # feature access for the customer) before the auto-expire cron flips it to
 # ``expired`` and the regular gates kick in. Stripe's own dunning sequence
 # is typically 3 retries over ~7 days, so the default lines up with "we've
 # given the gateway time to recover the card, now stop bleeding LLM credits".
-PAYMENT_FAILED_GRACE_DAYS = int(os.getenv("PAYMENT_FAILED_GRACE_DAYS", "7"))
+PAYMENT_FAILED_GRACE_DAYS = int(_env("PAYMENT_FAILED_GRACE_DAYS", "7"))
 
 
 def _env_flag(name: str, *, default: bool) -> bool:
@@ -364,21 +381,21 @@ ARCHIVE_DIR = "archive"
 # Crawl provider — Spider.cloud managed API (sole primary crawler)
 # ─────────────────────────────────────────────────────────────────────────────
 SPIDER_API_KEY = os.getenv("SPIDER_API_KEY")
-SPIDER_API_URL = os.getenv("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
+SPIDER_API_URL = _env("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
 # Spider request engine: "http" (fast, no JS), "chrome" (JS render), "smart" (auto).
-SPIDER_REQUEST_MODE = os.getenv("SPIDER_REQUEST_MODE", "smart").strip().lower()
+SPIDER_REQUEST_MODE = _env("SPIDER_REQUEST_MODE", "smart").strip().lower()
 # Per-crawl wall-clock budget (seconds).
-SPIDER_TIMEOUT = int(os.getenv("SPIDER_TIMEOUT", "1600"))
+SPIDER_TIMEOUT = int(_env("SPIDER_TIMEOUT", "1600"))
 
 # ── Crawl fallback: Jina Reader (PAYG markdown) ──────────────────────────────
 # When Spider fails, fetch pages via https://r.jina.ai/<url>. PAYG, off-box,
 # markdown-native. Works keyless (~20 RPM); a key raises limits (~500 RPM) and
 # unlocks free tokens. Multi-page coverage comes from url_discovery upstream.
 JINA_API_KEY = os.getenv("JINA_API_KEY")
-JINA_READER_URL = os.getenv("JINA_READER_URL", "https://r.jina.ai").rstrip("/")
-JINA_FALLBACK_ENABLED = os.getenv("JINA_FALLBACK_ENABLED", "true").strip().lower() in (
+JINA_READER_URL = _env("JINA_READER_URL", "https://r.jina.ai").rstrip("/")
+JINA_FALLBACK_ENABLED = _env("JINA_FALLBACK_ENABLED", "true").strip().lower() in (
     "1",
     "true",
     "yes",
 )
-JINA_FETCH_CONCURRENCY = int(os.getenv("JINA_FETCH_CONCURRENCY", "5"))
+JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))

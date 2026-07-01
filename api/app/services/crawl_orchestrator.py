@@ -223,6 +223,7 @@ async def run_full_crawl(
                     deduct_reason="url_scan",
                     deduct_reference_id=bot_id,
                     embed_progress_cb=_report_embed,
+                    crawl_started_at=started_at,
                 ),
             )
         total_chunks = ingest_result["chunks"]
@@ -346,6 +347,25 @@ async def run_full_crawl(
             urls=[p["url"] for p in valid_pages],
             result=result_payload,
         )
+
+        # Drop an in-app notification so the user sees the result in the bell
+        # even if they navigated away. Best-effort — never fail the crawl on it.
+        try:
+            from app.services.notification_service import notify_crawl_completed
+
+            with get_session() as notif_session:
+                notify_crawl_completed(
+                    notif_session,
+                    client_id=client_id,
+                    source=url,
+                    pages=pages_processed,
+                    chunks=total_chunks,
+                    duration_seconds=round(time.time() - started_at),
+                    bot_id=bot_id,
+                )
+        except Exception:
+            logger.warning("crawl-complete notification failed (non-fatal)", exc_info=True)
+
         return result_payload
     except CrawlCancelled as exc:
         # User pressed Cancel — honour it FAST. Cancel must feel instant; we

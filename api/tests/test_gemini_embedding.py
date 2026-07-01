@@ -42,7 +42,33 @@ def test_batches_over_max(monkeypatch):
 
     out = ge.embed_texts(["a", "b", "c", "d", "e"], _client=_client(handler))
     assert len(out) == 5
-    assert seen_batches == [2, 2, 1]  # 5 inputs chunked at _MAX_BATCH=2
+    # 5 inputs chunked at _MAX_BATCH=2 → batches of [2, 2, 1]; run concurrently so
+    # completion order is nondeterministic, hence sorted().
+    assert sorted(seen_batches) == [1, 2, 2]
+
+
+def test_embed_texts_preserves_order_and_reports_progress(monkeypatch):
+    monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
+    monkeypatch.setattr(ge, "EMBED_DIMENSIONS", 3)
+    monkeypatch.setattr(ge, "_MAX_BATCH", 1)  # one text per batch → 3 concurrent batches
+
+    def handler(request):
+        body = json.loads(request.content)
+        vals = []
+        for r in body["requests"]:
+            i = int(r["content"]["parts"][0]["text"])
+            v = [0.0, 0.0, 0.0]
+            v[i] = 1.0  # already a unit vector → survives normalization unchanged
+            vals.append({"values": v})
+        return httpx.Response(200, json={"embeddings": vals})
+
+    progress = []
+    out = ge.embed_texts(["0", "1", "2"], progress_cb=lambda d, t: progress.append((d, t)), _client=_client(handler))
+    # Output order matches input order despite concurrent completion.
+    assert out == [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    # Progress is cumulative up to the total, one tick per completed batch.
+    assert [p[1] for p in progress] == [3, 3, 3]
+    assert sorted(p[0] for p in progress) == [1, 2, 3]
 
 
 def test_empty_returns_empty():

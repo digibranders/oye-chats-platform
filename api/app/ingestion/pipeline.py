@@ -322,6 +322,7 @@ def batch_web_ingestion(
     deduct_reason: str = "url_scan",
     deduct_reference_id: int | None = None,
     embed_progress_cb: Callable[[int, int], None] | None = None,
+    crawl_started_at: float | None = None,
 ) -> dict:
     """
     Batch ingest multiple web pages: chunk all, embed all at once, insert all.
@@ -397,6 +398,10 @@ def batch_web_ingestion(
             page_meta = {"page": 1, "url": url}
             if title:
                 page_meta["title"] = title
+            if crawl_started_at is not None:
+                # Stamp the crawl start on every chunk so the source's total time
+                # taken = max(created_at) - crawl_started_at can be read back later.
+                page_meta["crawl_started_at"] = crawl_started_at
             pages_data = [{"text": cleaned, "metadata": page_meta}]
             chunks = chunk_text(pages_data, document_name=url)
 
@@ -433,23 +438,15 @@ def batch_web_ingestion(
             logger.info("No new content to process")
             return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
 
-        # Batch embed ALL chunks at once (major speedup)
+        # Embed all chunks. embed_chunks sub-batches internally and runs the
+        # batches concurrently (EMBED_CONCURRENCY), which is the main lever on
+        # large-crawl wall-clock. It drives embed_progress_cb(done, total) as
+        # batches complete so the UI keeps moving through this phase.
         logger.info(f"Batch embedding {len(all_chunk_contents)} chunks from {len(page_boundaries)} pages")
-
-        # Sub-batch if too many chunks (memory protection)
-        MAX_EMBED_BATCH = 100
-        total_to_embed = len(all_chunk_contents)
-        all_embeddings: list = []
-        for i in range(0, total_to_embed, MAX_EMBED_BATCH):
-            batch = all_chunk_contents[i : i + MAX_EMBED_BATCH]
-            all_embeddings.extend(embed_chunks(chunk_content_list=batch))
-            if embed_progress_cb is not None:
-                # Live embed progress so the UI moves during this multi-minute
-                # phase instead of sitting frozen at "N pages scanned".
-                try:
-                    embed_progress_cb(min(i + len(batch), total_to_embed), total_to_embed)
-                except Exception:
-                    logger.debug("embed_progress_cb failed", exc_info=True)
+        all_embeddings: list = embed_chunks(
+            chunk_content_list=all_chunk_contents,
+            progress_cb=embed_progress_cb,
+        )
 
         # Insert per-page with individual commits to prevent rollback cascade
         total = 0
