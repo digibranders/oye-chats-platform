@@ -24,6 +24,7 @@ import os
 import litellm
 
 from app.core.cache import cache_get, cache_set
+from app.core.langfuse_client import langfuse_generation
 
 logger = logging.getLogger(__name__)
 
@@ -128,15 +129,17 @@ def check_relevance(
 
     prompt = _build_gate_prompt(question, chunks)
     try:
-        response = litellm.completion(
-            model=GATE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=20,
-            response_format={"type": "json_object"},
-            timeout=_GATE_LLM_TIMEOUT_S,
-            metadata={"generation_name": "relevance-gate"},
-        )
-        raw = (response.choices[0].message.content or "").strip()
+        with langfuse_generation("relevance-gate", model=GATE_MODEL, prompt=prompt) as gen:
+            response = litellm.completion(
+                model=GATE_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=20,
+                response_format={"type": "json_object"},
+                timeout=_GATE_LLM_TIMEOUT_S,
+                metadata={"generation_name": "relevance-gate"},
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            gen.record_litellm(response, output=raw)
         data = json.loads(raw)
         score = float(data.get("score", 1.0))
         score = max(0.0, min(1.0, score))  # clamp to [0, 1]

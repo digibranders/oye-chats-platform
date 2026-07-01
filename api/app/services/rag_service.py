@@ -14,7 +14,7 @@ from sqlalchemy.orm import joinedload
 
 from app.config import LLM_FALLBACKS, LLM_MODEL
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
-from app.core.langfuse_client import get_langfuse
+from app.core.langfuse_client import get_langfuse, langfuse_generation
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
@@ -1003,25 +1003,27 @@ SCORING DISCIPLINE
 - Greetings, acknowledgments, fillers ("hi", "thanks", "okay", "interesting", "let me think") → return an empty signals list.
 - When in doubt, return NO signal. False positives are more harmful than false negatives — a missed signal is fixable on the next turn; a false signal corrupts the lead's score permanently because of the never-downgrade rule downstream."""
 
-        response = litellm.completion(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a qualification signal extractor. Return structured JSON."},
-                {"role": "user", "content": extraction_prompt},
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "QualificationExtractionResult",
-                    "strict": True,
-                    "schema": QualificationExtractionResult.model_json_schema(),
+        with langfuse_generation("bant-extraction-v2", model=LLM_MODEL, prompt=extraction_prompt) as gen:
+            response = litellm.completion(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a qualification signal extractor. Return structured JSON."},
+                    {"role": "user", "content": extraction_prompt},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "QualificationExtractionResult",
+                        "strict": True,
+                        "schema": QualificationExtractionResult.model_json_schema(),
+                    },
                 },
-            },
-            metadata={"generation_name": "bant-extraction-v2"},
-            fallbacks=LLM_FALLBACKS,
-        )
+                metadata={"generation_name": "bant-extraction-v2"},
+                fallbacks=LLM_FALLBACKS,
+            )
+            resp_text = response.choices[0].message.content
+            gen.record_litellm(response, output=resp_text)
 
-        resp_text = response.choices[0].message.content
         if not resp_text:
             logger.debug("[bant] extraction returned empty response for question=%r", question[:80])
             return []
