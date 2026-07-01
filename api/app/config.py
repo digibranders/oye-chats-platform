@@ -358,3 +358,20 @@ ARCHIVE_DIR = "archive"
 # RELEVANCE_GATE_ENABLED=false — set true to activate CRAG-style relevance gate (LLM judge, Gemini Flash)
 # GATE_MODEL=gemini/gemini-2.5-flash — model used for relevance scoring (cheapest capable)
 # RELEVANCE_THRESHOLD=0.5 — chunks scoring below this cause the gate to fire and block generation
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Crawl provider (Playwright self-host vs Spider.cloud managed API)
+# ─────────────────────────────────────────────────────────────────────────────
+# "playwright" (default, existing subprocess crawler) or "spider" (managed API).
+CRAWL_PROVIDER = os.getenv("CRAWL_PROVIDER", "playwright").strip().lower()
+SPIDER_API_KEY = os.getenv("SPIDER_API_KEY")
+SPIDER_API_URL = os.getenv("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
+# Spider request engine: "http" (fast, no JS), "chrome" (JS render), "smart" (auto).
+SPIDER_REQUEST_MODE = os.getenv("SPIDER_REQUEST_MODE", "smart").strip().lower()
+# Per-crawl wall-clock budget (seconds). Mirrors CRAWL_SUBPROCESS_TIMEOUT.
+SPIDER_TIMEOUT = int(os.getenv("SPIDER_TIMEOUT", "1600"))
+# If Spider raises, fall back to the local Playwright crawler for that crawl.
+SPIDER_FALLBACK_TO_PLAYWRIGHT = os.getenv(
+    "SPIDER_FALLBACK_TO_PLAYWRIGHT", "true"
+).strip().lower() in ("1", "true", "yes")
