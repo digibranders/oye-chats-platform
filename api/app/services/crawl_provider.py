@@ -27,8 +27,6 @@ async def crawl_website(url: str, **kwargs) -> dict:
         except CrawlerError:
             if not SPIDER_FALLBACK_TO_PLAYWRIGHT:
                 raise
-            logger.warning(
-                "Spider crawl failed for %s — falling back to Playwright", url, exc_info=True
-            )
+            logger.warning("Spider crawl failed for %s — falling back to Playwright", url, exc_info=True)
             return await _playwright_crawl(url, **kwargs)
     return await _playwright_crawl(url, **kwargs)

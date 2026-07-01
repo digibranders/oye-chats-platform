@@ -372,6 +372,8 @@ SPIDER_REQUEST_MODE = os.getenv("SPIDER_REQUEST_MODE", "smart").strip().lower()
 # Per-crawl wall-clock budget (seconds). Mirrors CRAWL_SUBPROCESS_TIMEOUT.
 SPIDER_TIMEOUT = int(os.getenv("SPIDER_TIMEOUT", "1600"))
 # If Spider raises, fall back to the local Playwright crawler for that crawl.
-SPIDER_FALLBACK_TO_PLAYWRIGHT = os.getenv(
-    "SPIDER_FALLBACK_TO_PLAYWRIGHT", "true"
-).strip().lower() in ("1", "true", "yes")
+SPIDER_FALLBACK_TO_PLAYWRIGHT = os.getenv("SPIDER_FALLBACK_TO_PLAYWRIGHT", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
