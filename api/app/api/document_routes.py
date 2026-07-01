@@ -500,7 +500,7 @@ def crawl_cancel_endpoint(
 
 
 @router.post("/crawl/discover")
-@limiter.limit("30/hour", key_func=key_from_api_key)
+@limiter.limit("120/hour", key_func=key_from_api_key)
 async def crawl_discover_endpoint(
     discover_request: CrawlDiscoverRequest,
     request: Request,
@@ -526,7 +526,7 @@ async def crawl_discover_endpoint(
     _verify_bot_ownership(bot_id, client_id)
     _check_memory()
 
-    from app.services import plan_service
+    from app.services import credit_service, plan_service
     from app.services.plan_service import UNLIMITED
     from app.services.url_discovery import discover_website_urls
 
@@ -534,9 +534,15 @@ async def crawl_discover_endpoint(
         plan = plan_service.get_client_plan(db, client_id)
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
+        # Credit inputs — read before the long (network) discovery call so we
+        # never hold a DB connection across it. Balance is bot-scoped so per-bot
+        # subscriptions get the ledger they will actually be charged against.
+        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        balance = credit_service.get_balance(db, client_id, bot_id=bot_id)
 
     _DISCOVERY_HARD_CAP = 1000
     discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
+    urls: list[str] = []
     try:
         urls = await discover_website_urls(
             discover_request.url,
@@ -548,11 +554,21 @@ async def crawl_discover_endpoint(
         logger.warning("URL discovery failed for %s: %s", discover_request.url, exc)
         total = 0
 
+    per_page = max(int(cost_per_page), 1)
+    max_affordable_pages = int(balance) // per_page
+    credits_required_full = total * cost_per_page
+
     return {
         "url": discover_request.url,
         "total_found": total,
         "capped": total >= discovery_cap,
         "plan_max": plan_max,
+        "urls": urls,
+        "cost_per_page": cost_per_page,
+        "balance": balance,
+        "max_affordable_pages": max_affordable_pages,
+        "credits_required_full": credits_required_full,
+        "exceeds_balance": credits_required_full > balance,
     }
 
 
