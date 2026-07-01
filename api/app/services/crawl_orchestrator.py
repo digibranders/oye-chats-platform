@@ -151,12 +151,13 @@ async def run_full_crawl(
                 )
                 crawl_data = await fetch_urls(ordered_urls, use_js=use_js, client_id=client_id, on_page=_report_page)
             else:
-                logger.info("Crawling URL recursively: %s for client %s, bot_id=%s", url, client_id, bot_id)
+                logger.info("Crawling URL (sitemap-first): %s for client %s, bot_id=%s", url, client_id, bot_id)
                 crawl_data = await crawl_website(
                     url,
                     max_pages=max_pages,
                     use_js=use_js,
                     client_id=client_id,
+                    on_page=_report_page,
                     max_depth=max_depth,
                     concurrency=concurrency,
                 )
