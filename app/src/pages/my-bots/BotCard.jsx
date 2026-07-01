@@ -31,6 +31,13 @@ export default function BotCard({
     const menuRef = useRef(null);
     const menuButtonRef = useRef(null);
     const renameInputRef = useRef(null);
+    const renameFocusTimeoutRef = useRef(null);
+
+    // Clear the rename-focus timeout on unmount (e.g. bot deleted mid-rename)
+    // so it never runs against a torn-down component.
+    useEffect(() => () => {
+        if (renameFocusTimeoutRef.current) clearTimeout(renameFocusTimeoutRef.current);
+    }, []);
 
     // Close the ⋯ menu on click-outside + Esc. Reset the delete-confirm step
     // whenever the menu closes so it never reopens mid-confirm.
@@ -44,6 +51,7 @@ export default function BotCard({
         };
         const onKey = (e) => {
             if (e.key === 'Escape') {
+                e.preventDefault();
                 setMenuOpen(false);
                 menuButtonRef.current?.focus();
             }
@@ -73,7 +81,8 @@ export default function BotCard({
         setMenuOpen(false);
         setRenameValue(bot.name);
         setIsRenaming(true);
-        setTimeout(() => renameInputRef.current?.focus(), 30);
+        if (renameFocusTimeoutRef.current) clearTimeout(renameFocusTimeoutRef.current);
+        renameFocusTimeoutRef.current = setTimeout(() => renameInputRef.current?.focus(), 30);
     };
 
     const cancelRename = () => {
@@ -257,8 +266,9 @@ export default function BotCard({
                                                     </button>
                                                     <button
                                                         onClick={() => setConfirmDelete(false)}
+                                                        disabled={isDeleting}
                                                         aria-label="Cancel delete"
-                                                        className="p-1 rounded-md bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+                                                        className="p-1 rounded-md bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
                                                     >
                                                         <X size={12} />
                                                     </button>

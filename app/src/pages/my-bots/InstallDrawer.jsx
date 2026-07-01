@@ -27,11 +27,18 @@ export default function InstallDrawer({ bot, open, onClose }) {
     const { showToast } = useToast();
     const panelRef = useRef(null);
     const triggerRef = useRef(null);
+    const copyTimeoutRef = useRef(null);
 
     const [showKey, setShowKey] = useState(false);
     const [selectedPlatform, setSelectedPlatform] = useState(null);
     const [embedTab, setEmbedTab] = useState('production');
     const [copiedField, setCopiedField] = useState(null);
+
+    // Clear the copy-confirmation timeout on unmount so it never fires after
+    // the drawer is gone (avoids a state update on an unmounted component).
+    useEffect(() => () => {
+        if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    }, []);
 
     // Esc to close + Tab focus-trap + body scroll-lock while open; move focus
     // into the panel on open and restore it to the trigger on close.
@@ -40,6 +47,7 @@ export default function InstallDrawer({ bot, open, onClose }) {
         triggerRef.current = document.activeElement;
         const onKey = (e) => {
             if (e.key === 'Escape') {
+                e.preventDefault();
                 onClose();
                 return;
             }
@@ -84,7 +92,8 @@ export default function InstallDrawer({ bot, open, onClose }) {
         try {
             await navigator.clipboard.writeText(text);
             setCopiedField(field);
-            setTimeout(() => setCopiedField(null), 2000);
+            if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+            copyTimeoutRef.current = setTimeout(() => setCopiedField(null), 2000);
             await onCopied?.();
         } catch (err) {
             console.error('Failed to copy text:', err);
