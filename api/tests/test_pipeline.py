@@ -20,6 +20,13 @@ def _session_ctx(session):
     yield session
 
 
+def _fake_embed_with_progress(chunk_content_list, *, progress_cb=None):
+    """Stand-in for embed_chunks that drives progress like the real (concurrent) one."""
+    if progress_cb is not None:
+        progress_cb(len(chunk_content_list), len(chunk_content_list))
+    return [[0.1] for _ in chunk_content_list]
+
+
 # ── Title extraction ─────────────────────────────────────────────────────────
 
 
@@ -323,7 +330,7 @@ class TestBatchWebIngestion:
             patch("app.ingestion.pipeline.is_document_processed", return_value=False),
             patch("app.ingestion.pipeline.chunk_text", return_value=[mock_chunk]),
             patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
-            patch("app.ingestion.pipeline.embed_chunks", return_value=[[0.1]]),
+            patch("app.ingestion.pipeline.embed_chunks", side_effect=_fake_embed_with_progress),
             patch("app.ingestion.pipeline.insert_documents"),
             patch("app.ingestion.pipeline.delete_chunks_for_url"),
             patch("app.ingestion.pipeline.cache_delete_prefix"),
@@ -335,7 +342,8 @@ class TestBatchWebIngestion:
                 embed_progress_cb=lambda done, total: calls.append((done, total)),
             )
 
-        # One batch of one chunk → progress reported as (done, total).
+        # embed_chunks (now concurrent internally) drives progress; pipeline
+        # forwards the callback. One chunk → one (done, total) tick.
         assert calls == [(1, 1)]
 
     def test_atomic_per_page_credit_deduction(self):

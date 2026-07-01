@@ -80,6 +80,10 @@ EMBED_PROVIDER = _env("EMBED_PROVIDER", "google").strip().lower()
 GEMINI_EMBED_MODEL = _env("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 GEMINI_EMBED_URL = _env("GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 EMBED_DIMENSIONS = int(_env("EMBED_DIMENSIONS", "768"))  # matches Vector(768) column
+# How many embed batches to send to Gemini concurrently. Embedding is I/O-bound
+# (network), so a large crawl's ~100 sequential batch calls are the crawl's long
+# pole; concurrency cuts that near-linearly. Kept well under the paid-tier RPM.
+EMBED_CONCURRENCY = int(_env("EMBED_CONCURRENCY", "8"))
 CHUNK_SIZE = int(_env("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(_env("CHUNK_OVERLAP", "200"))
 
