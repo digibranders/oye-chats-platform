@@ -157,11 +157,17 @@ async def _scrape_one(client: httpx.AsyncClient, url: str, use_js: bool, sem: as
     try:
         data = resp.json()
     except ValueError:
+        logger.warning("Spider scrape %s returned non-JSON body", url)
         return None
     # /scrape returns a JSON list of page objects (verified Task 2 Step 0).
     page = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
     if isinstance(page, dict) and page.get("content"):
         return {"url": url, "content": page["content"]}
+    # 200 from Spider but no content — the upstream page usually errored (e.g. a
+    # 502 from the target site). Log it so these silent drops are visible when
+    # reconciling "N discovered vs M ingested".
+    upstream = page.get("status") if isinstance(page, dict) else None
+    logger.warning("Spider scrape %s returned no content (upstream status=%s) — dropped", url, upstream)
     return None
 
 

@@ -134,6 +134,11 @@ const GlobalCrawlIndicator = () => {
     const pct = max ? Math.min(100, Math.round((pages / max) * 100)) : null;
     const eta = estimateEta({ pagesCrawled: pages, maxPages: max, startedAt: crawl.startedAt });
     const elapsed = formatElapsed(elapsedSeconds);
+    // During the embedding phase the page count is frozen (all pages already
+    // scanned) — surface the live "Embedding X/Y chunks" phase so the card keeps
+    // moving instead of looking stuck on the last scanned URL.
+    const isEmbedding = crawl.phase?.startsWith('Embedding');
+    const statusLine = isEmbedding ? crawl.phase : (crawl.currentUrl ?? 'Discovering URLs…');
 
     const handleCancel = async () => {
         try {
@@ -284,13 +289,13 @@ const GlobalCrawlIndicator = () => {
                             <div
                                 className={cn(
                                     'text-[11px] truncate font-mono',
-                                    crawl.currentUrl
+                                    (isEmbedding || crawl.currentUrl)
                                         ? 'text-slate-500 dark:text-slate-400'
                                         : 'text-slate-400 dark:text-slate-500 italic',
                                 )}
-                                title={crawl.currentUrl ?? undefined}
+                                title={statusLine}
                             >
-                                {crawl.currentUrl ?? 'Discovering URLs…'}
+                                {statusLine}
                             </div>
 
                             {/* Actions */}

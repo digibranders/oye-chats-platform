@@ -170,9 +170,11 @@ export default function KnowledgeBase() {
   }));
   const crawlStatus = (() => {
     if (crawl.status === 'done') {
+      const dropped = crawl.result?.pages_dropped ?? 0;
+      const droppedNote = dropped > 0 ? ` ${dropped} page${dropped === 1 ? '' : 's'} couldn't be fetched (server errors).` : '';
       return {
         type: 'success',
-        message: `Crawled ${crawl.result?.pages_processed ?? crawl.urls.length} pages and ingested ${crawl.result?.chunks_processed ?? 0} chunks.`,
+        message: `Crawled ${crawl.result?.pages_processed ?? crawl.urls.length} pages and ingested ${crawl.result?.chunks_processed ?? 0} chunks.${droppedNote}`,
       };
     }
     if (crawl.status === 'cancelled') {

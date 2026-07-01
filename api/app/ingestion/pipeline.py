@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -320,6 +321,7 @@ def batch_web_ingestion(
     cost_per_page: int = 0,
     deduct_reason: str = "url_scan",
     deduct_reference_id: int | None = None,
+    embed_progress_cb: Callable[[int, int], None] | None = None,
 ) -> dict:
     """
     Batch ingest multiple web pages: chunk all, embed all at once, insert all.
@@ -436,10 +438,18 @@ def batch_web_ingestion(
 
         # Sub-batch if too many chunks (memory protection)
         MAX_EMBED_BATCH = 100
+        total_to_embed = len(all_chunk_contents)
         all_embeddings: list = []
-        for i in range(0, len(all_chunk_contents), MAX_EMBED_BATCH):
+        for i in range(0, total_to_embed, MAX_EMBED_BATCH):
             batch = all_chunk_contents[i : i + MAX_EMBED_BATCH]
             all_embeddings.extend(embed_chunks(chunk_content_list=batch))
+            if embed_progress_cb is not None:
+                # Live embed progress so the UI moves during this multi-minute
+                # phase instead of sitting frozen at "N pages scanned".
+                try:
+                    embed_progress_cb(min(i + len(batch), total_to_embed), total_to_embed)
+                except Exception:
+                    logger.debug("embed_progress_cb failed", exc_info=True)
 
         # Insert per-page with individual commits to prevent rollback cascade
         total = 0

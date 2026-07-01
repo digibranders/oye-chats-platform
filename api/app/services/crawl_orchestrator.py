@@ -178,18 +178,36 @@ async def run_full_crawl(
 
         valid_pages = [p for p in results if p.get("url") and p.get("content")]
         pages_processed = len(valid_pages)
+        valid_urls = [p["url"] for p in valid_pages]
+
         # Publish the real page count and flip the UI to the embedding phase
         # before the (potentially multi-minute) embed step runs.
         set_crawl_progress(
             client_id,
             status="running",
-            urls=[p["url"] for p in valid_pages],
+            urls=valid_urls,
             pages_crawled=pages_processed,
             max_pages=progress_max,
             phase=f"Embedding {pages_processed} pages",
             cancellable=False,
             started_at=started_at,
         )
+
+        def _report_embed(done_chunks: int, total_chunks: int) -> None:
+            """Live embed progress — keeps the UI moving through the multi-minute
+            embedding phase (and refreshes the heartbeat) instead of sitting at
+            'N pages scanned'."""
+            set_crawl_progress(
+                client_id,
+                status="running",
+                urls=valid_urls,
+                pages_crawled=pages_processed,
+                max_pages=progress_max,
+                phase=f"Embedding {done_chunks:,}/{total_chunks:,} chunks",
+                cancellable=False,
+                started_at=started_at,
+            )
+
         logger.info("Batch ingesting %d pages", pages_processed)
         loop = asyncio.get_event_loop()
         # Heartbeat spans the embed loop — CPU/network-bound and the phase most
@@ -204,6 +222,7 @@ async def run_full_crawl(
                     cost_per_page=cost_per_page,
                     deduct_reason="url_scan",
                     deduct_reference_id=bot_id,
+                    embed_progress_cb=_report_embed,
                 ),
             )
         total_chunks = ingest_result["chunks"]
