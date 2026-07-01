@@ -337,6 +337,26 @@ def _compute(client_id: int, db_session: Session, *, include_usage: bool) -> Pla
     limits = dict(plan.limits or {})
     features = dict(plan.features or {})
 
+    # ``limits["operators"]`` is the hard CEILING an account can never
+    # exceed even with paid extra seats — it is NOT how many operators the
+    # client is currently entitled to create for free. That entitlement is
+    # whichever is higher: the plan's included seats (always free) or the
+    # seat count they've explicitly paid for via POST /subscription/seats
+    # (``subscription.operator_quantity``) — capped at the ceiling. Without
+    # this adjustment, `operator_routes.py`'s create-operator gate reads
+    # ``limits["operators"]`` directly and would let anyone add operators
+    # up to the ceiling for free, since it never looks at what was paid for.
+    operator_ceiling = limits.get("operators")
+    if isinstance(operator_ceiling, int) and operator_ceiling > 0:
+        included_seats = int(plan.included_operator_seats or 0)
+        paid_seats = (
+            int(subscription.operator_quantity)
+            if subscription is not None and subscription.operator_quantity is not None
+            else 0
+        )
+        entitled_seats = max(included_seats, paid_seats)
+        limits["operators"] = min(operator_ceiling, entitled_seats)
+
     result = PlanEntitlements(
         client_id=client_id,
         plan_slug=plan.slug,

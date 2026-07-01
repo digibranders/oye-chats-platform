@@ -76,7 +76,7 @@ export default function NotificationsTab() {
                 </span>
             </div>
             <p className="text-sm text-surface-500 dark:text-surface-400 mb-5">
-                Get alerted the moment a visitor wants to chat — even when the dashboard tab is in the background.
+                Get alerted the moment a visitor wants to chat, even when the dashboard tab is in the background.
             </p>
 
             {!supported ? (

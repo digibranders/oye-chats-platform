@@ -216,6 +216,78 @@ class TestComputeEntitlements:
         assert result.plan_slug == "free"
 
 
+class TestOperatorSeatEntitlement:
+    """``limits["operators"]`` on the Plan row is the hard ceiling (never
+    exceeded even with paid extras) — the actual entitlement a client gets
+    is ``max(included_operator_seats, subscription.operator_quantity)``,
+    capped at that ceiling. Without this, a client could add operators up
+    to the ceiling for free without ever paying for extra seats via
+    POST /subscription/seats.
+    """
+
+    def _make_plan(self, *, operators_ceiling, included_operator_seats):
+        return SimpleNamespace(
+            id=2,
+            slug="starter",
+            name="Starter",
+            limits={"bots": 1, "operators": operators_ceiling},
+            features={"live_chat": True},
+            included_operator_seats=included_operator_seats,
+        )
+
+    def _compute_with(self, plan, operator_quantity):
+        sub = SimpleNamespace(plan_id=plan.id, status="active", operator_quantity=operator_quantity)
+        session = MagicMock()
+        session.get.return_value = plan
+        with patch(
+            "app.services.plan_entitlements_service.get_client_subscription",
+            return_value=sub,
+        ):
+            return _compute(client_id=1, db_session=session, include_usage=False)
+
+    def test_defaults_to_included_seats_when_nothing_purchased(self):
+        """A client who never touched billing gets exactly their plan's
+        included seats for free — not the full ceiling."""
+        plan = self._make_plan(operators_ceiling=5, included_operator_seats=1)
+        result = self._compute_with(plan, operator_quantity=1)
+        assert result.limits["operators"] == 1
+
+    def test_paid_seats_raise_the_limit_up_to_the_ceiling(self):
+        """Buying extra seats raises the effective limit."""
+        plan = self._make_plan(operators_ceiling=5, included_operator_seats=1)
+        result = self._compute_with(plan, operator_quantity=3)
+        assert result.limits["operators"] == 3
+
+    def test_paid_seats_never_exceed_the_plan_ceiling(self):
+        """Even if operator_quantity is somehow set above the ceiling
+        (e.g. a stale/manual value), the effective limit is still capped."""
+        plan = self._make_plan(operators_ceiling=5, included_operator_seats=1)
+        result = self._compute_with(plan, operator_quantity=99)
+        assert result.limits["operators"] == 5
+
+    def test_stale_low_operator_quantity_never_drops_below_included_seats(self):
+        """Guards against the known subscription-creation quirk where
+        operator_quantity can be initialized to 1 regardless of plan —
+        the client must never get fewer than their included seats."""
+        plan = self._make_plan(operators_ceiling=10, included_operator_seats=2)
+        result = self._compute_with(plan, operator_quantity=1)
+        assert result.limits["operators"] == 2
+
+    def test_unlimited_ceiling_is_left_untouched(self):
+        """Enterprise-style ``-1`` ceilings bypass the seat math entirely."""
+        plan = self._make_plan(operators_ceiling=-1, included_operator_seats=5)
+        result = self._compute_with(plan, operator_quantity=1)
+        assert result.limits["operators"] == -1
+
+    def test_no_operators_key_in_limits_is_left_untouched(self):
+        """Plans without an ``operators`` limit key (e.g. malformed/legacy
+        rows) are skipped rather than crashing on missing attributes."""
+        plan = self._make_plan(operators_ceiling=5, included_operator_seats=1)
+        del plan.limits["operators"]
+        result = self._compute_with(plan, operator_quantity=1)
+        assert "operators" not in result.limits
+
+
 # ── Cache layer ────────────────────────────────────────────────────────────
 
 
