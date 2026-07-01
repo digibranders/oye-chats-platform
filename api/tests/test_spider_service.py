@@ -97,3 +97,24 @@ async def test_precancelled_crawl_returns_empty(monkeypatch):
     )
     assert data["results"] == []
     assert called["http"] is False   # we never hit Spider once cancel is set
+
+
+@pytest.mark.asyncio
+async def test_logs_page_count_for_cost_tracking(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+    monkeypatch.setattr(spider_service, "is_cancellation_requested", lambda cid: False)
+
+    def handler(request):
+        return httpx.Response(200, json=[
+            {"url": "u1", "content": "a", "status": 200},
+            {"url": "u2", "content": "b", "status": 200},
+        ])
+
+    with caplog.at_level(logging.INFO):
+        await spider_service.crawl_website(
+            "https://acme.test", max_pages=10, use_js=True, client_id=9,
+            _client=_mock_client(handler),
+        )
+    assert any("spider_cost" in r.message and "pages=2" in r.message for r in caplog.records)

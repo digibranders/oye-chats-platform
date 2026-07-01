@@ -107,6 +107,14 @@ async def crawl_website(
         len(pages),
         client_id,
     )
+    # Structured signal for reconciling usage against the Spider bill.
+    logger.info(
+        "spider_cost client=%s engine=%s pages=%d discovered=%d",
+        client_id,
+        _engine(use_js),
+        len(results),
+        len(pages),
+    )
     return {
         "results": results,
         "recommended_colors": [],  # Spider does not extract colors
