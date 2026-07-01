@@ -14,7 +14,9 @@ local Chromium — that is the whole point of the migration.
 """
 
 import asyncio
+import contextlib
 import logging
+from collections.abc import Callable
 
 import httpx
 
@@ -25,6 +27,10 @@ from app.config import (
     SPIDER_TIMEOUT,
 )
 from app.services.crawler_service import CrawlerError, is_cancellation_requested
+
+# Called once per page as it finishes fetching: ``(url, ok)`` where ``ok`` is
+# True if the page yielded content. Lets the orchestrator emit live progress.
+PageProgressCallback = Callable[[str, bool], None]
 
 logger = logging.getLogger(__name__)
 
@@ -164,12 +170,15 @@ async def fetch_urls(
     *,
     use_js: bool = False,
     client_id: int | None = None,
+    on_page: PageProgressCallback | None = None,
     _client: httpx.AsyncClient | None = None,
 ) -> dict:
     """Fetch an explicit, ordered list of URLs via Spider scrape → crawl_data shape.
 
     Preserves input order. Failed/empty pages are dropped (Spider bills $0 for
-    them). Returns the same shape as ``crawl_website``.
+    them). Returns the same shape as ``crawl_website``. ``on_page(url, ok)`` — if
+    given — fires as each page completes so callers can emit live progress; a
+    misbehaving callback is swallowed so it can never abort the crawl.
     """
     if not SPIDER_API_KEY:
         raise CrawlerError("SPIDER_API_KEY is not configured")
@@ -183,8 +192,18 @@ async def fetch_urls(
     owns_client = _client is None
     client = _client or httpx.AsyncClient(timeout=SPIDER_TIMEOUT)
     sem = asyncio.Semaphore(_FETCH_CONCURRENCY)
+
+    async def _scrape_and_report(url: str) -> dict | None:
+        page = await _scrape_one(client, url, use_js, sem)
+        if on_page is not None:
+            # asyncio is single-threaded, so this runs serially as each task
+            # resolves; a broken callback must not take the whole crawl down.
+            with contextlib.suppress(Exception):
+                on_page(url, page is not None)
+        return page
+
     try:
-        fetched = await asyncio.gather(*[_scrape_one(client, u, use_js, sem) for u in urls])
+        fetched = await asyncio.gather(*[_scrape_and_report(u) for u in urls])
     finally:
         if owns_client:
             await client.aclose()

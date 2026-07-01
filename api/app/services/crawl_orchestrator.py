@@ -4,7 +4,8 @@ Encapsulates the steps that used to live inline inside the ``POST /crawl``
 route handler, so the API and the ARQ worker can share the same code path.
 The orchestrator:
 
-1. Runs the crawler subprocess via :func:`crawler_service.crawl_website`.
+1. Runs the crawl via the crawl provider (Spider primary, Jina fallback),
+   emitting live per-page progress + a heartbeat so long crawls aren't reaped.
 2. Batch-ingests the discovered pages, deducting credits per page in the
    same DB transaction as the chunk insert (atomic billing).
 3. Optionally sweeps orphan chunks for pages that were removed from the
@@ -24,6 +25,7 @@ that point and releases it at the end.
 
 import asyncio
 import logging
+import time
 
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
@@ -32,6 +34,7 @@ from app.services.crawl_provider import crawl_website, fetch_urls
 from app.services.crawler_service import (
     CrawlCancelled,
     CrawlerError,
+    crawl_heartbeat,
     release_crawl_lock,
     set_crawl_progress,
 )
@@ -111,25 +114,52 @@ async def run_full_crawl(
     ``None`` means "let the crawler subprocess fall back to its env defaults".
     """
     result_payload: dict | None = None
+    started_at = time.time()
+    # Denominator for the UI progress bar: the explicit list length for an
+    # ordered crawl, else the plan-derived page cap (may be None for recursive).
+    progress_max = len(ordered_urls) if ordered_urls else max_pages
+    crawled_urls: list[str] = []
+
+    def _report_page(page_url: str, ok: bool) -> None:
+        """Live per-page progress for the fetch phase — this is what unfreezes
+        the UI's 'Discovering URLs… 0/N' and (via set_crawl_progress) refreshes
+        the heartbeat so a long fetch is never falsely reaped."""
+        if ok:
+            crawled_urls.append(page_url)
+        set_crawl_progress(
+            client_id,
+            status="running",
+            urls=list(crawled_urls),
+            pages_crawled=len(crawled_urls),
+            current_url=page_url,
+            max_pages=progress_max,
+            phase="Scanning pages",
+            cancellable=True,
+            started_at=started_at,
+        )
+
     try:
-        if ordered_urls:
-            logger.info(
-                "Fetching %d explicit ordered URLs for client %s, bot_id=%s",
-                len(ordered_urls),
-                client_id,
-                bot_id,
-            )
-            crawl_data = await fetch_urls(ordered_urls, use_js=use_js, client_id=client_id)
-        else:
-            logger.info("Crawling URL recursively: %s for client %s, bot_id=%s", url, client_id, bot_id)
-            crawl_data = await crawl_website(
-                url,
-                max_pages=max_pages,
-                use_js=use_js,
-                client_id=client_id,
-                max_depth=max_depth,
-                concurrency=concurrency,
-            )
+        # Heartbeat covers the single blocking recursive Spider /crawl call; the
+        # ordered path additionally reports real per-page progress via on_page.
+        async with crawl_heartbeat(client_id):
+            if ordered_urls:
+                logger.info(
+                    "Fetching %d explicit ordered URLs for client %s, bot_id=%s",
+                    len(ordered_urls),
+                    client_id,
+                    bot_id,
+                )
+                crawl_data = await fetch_urls(ordered_urls, use_js=use_js, client_id=client_id, on_page=_report_page)
+            else:
+                logger.info("Crawling URL recursively: %s for client %s, bot_id=%s", url, client_id, bot_id)
+                crawl_data = await crawl_website(
+                    url,
+                    max_pages=max_pages,
+                    use_js=use_js,
+                    client_id=client_id,
+                    max_depth=max_depth,
+                    concurrency=concurrency,
+                )
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])
@@ -147,19 +177,34 @@ async def run_full_crawl(
 
         valid_pages = [p for p in results if p.get("url") and p.get("content")]
         pages_processed = len(valid_pages)
+        # Publish the real page count and flip the UI to the embedding phase
+        # before the (potentially multi-minute) embed step runs.
+        set_crawl_progress(
+            client_id,
+            status="running",
+            urls=[p["url"] for p in valid_pages],
+            pages_crawled=pages_processed,
+            max_pages=progress_max,
+            phase=f"Embedding {pages_processed} pages",
+            cancellable=False,
+            started_at=started_at,
+        )
         logger.info("Batch ingesting %d pages", pages_processed)
         loop = asyncio.get_event_loop()
-        ingest_result = await loop.run_in_executor(
-            None,
-            lambda: batch_web_ingestion(
-                client_id,
-                valid_pages,
-                bot_id=bot_id,
-                cost_per_page=cost_per_page,
-                deduct_reason="url_scan",
-                deduct_reference_id=bot_id,
-            ),
-        )
+        # Heartbeat spans the embed loop — CPU/network-bound and the phase most
+        # likely to exceed the reaper's staleness window on a large crawl.
+        async with crawl_heartbeat(client_id):
+            ingest_result = await loop.run_in_executor(
+                None,
+                lambda: batch_web_ingestion(
+                    client_id,
+                    valid_pages,
+                    bot_id=bot_id,
+                    cost_per_page=cost_per_page,
+                    deduct_reason="url_scan",
+                    deduct_reference_id=bot_id,
+                ),
+            )
         total_chunks = ingest_result["chunks"]
         pages_charged = ingest_result["pages_charged"]
         credits_deducted = ingest_result["credits_deducted"]

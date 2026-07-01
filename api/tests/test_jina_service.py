@@ -43,6 +43,21 @@ async def test_fetch_urls_drops_empty_body(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_urls_reports_on_page(monkeypatch):
+    def handler(request):
+        return httpx.Response(500, text="err") if request.url.path.endswith("/bad") else httpx.Response(200, text="ok")
+
+    seen: list[tuple[str, bool]] = []
+    await jina_service.fetch_urls(
+        ["https://a.test/ok", "https://a.test/bad"],
+        client_id=1,
+        on_page=lambda url, ok: seen.append((url, ok)),
+        _client=_client(handler),
+    )
+    assert dict(seen) == {"https://a.test/ok": True, "https://a.test/bad": False}
+
+
+@pytest.mark.asyncio
 async def test_fetch_urls_empty_input():
     data = await jina_service.fetch_urls([], client_id=1)
     assert data == {

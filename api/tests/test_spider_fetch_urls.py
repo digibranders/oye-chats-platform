@@ -29,6 +29,43 @@ async def test_fetch_urls_returns_results_in_order(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_urls_reports_on_page(monkeypatch):
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+    monkeypatch.setattr(spider_service, "is_cancellation_requested", lambda cid: False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        content = None if body["url"].endswith("/bad") else "ok"
+        return httpx.Response(200, json=[{"url": body["url"], "content": content}])
+
+    seen: list[tuple[str, bool]] = []
+    urls = ["https://acme.test/a", "https://acme.test/bad"]
+    await spider_service.fetch_urls(
+        urls, client_id=1, on_page=lambda url, ok: seen.append((url, ok)), _client=_mock_client(handler)
+    )
+    # One callback per URL, with the ok flag reflecting whether content came back.
+    assert dict(seen) == {"https://acme.test/a": True, "https://acme.test/bad": False}
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_on_page_error_does_not_abort(monkeypatch):
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+    monkeypatch.setattr(spider_service, "is_cancellation_requested", lambda cid: False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        return httpx.Response(200, json=[{"url": body["url"], "content": "ok"}])
+
+    def boom(url, ok):
+        raise RuntimeError("callback blew up")
+
+    data = await spider_service.fetch_urls(
+        ["https://acme.test/a"], client_id=1, on_page=boom, _client=_mock_client(handler)
+    )
+    assert [p["url"] for p in data["results"]] == ["https://acme.test/a"]  # crawl still succeeded
+
+
+@pytest.mark.asyncio
 async def test_fetch_urls_skips_failed_pages(monkeypatch):
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
     monkeypatch.setattr(spider_service, "is_cancellation_requested", lambda cid: False)
