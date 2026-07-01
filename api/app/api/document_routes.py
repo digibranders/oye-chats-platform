@@ -535,10 +535,16 @@ async def crawl_discover_endpoint(
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
         # Credit inputs — read before the long (network) discovery call so we
-        # never hold a DB connection across it. Balance is bot-scoped so per-bot
-        # subscriptions get the ledger they will actually be charged against.
+        # never hold a DB connection across it. Resolve the SAME ledger bucket
+        # the crawl will actually deduct from: a per-bot subscription drains the
+        # bot ledger, but a client-level/Free bot drains the client pool. Using
+        # the raw bot_id here reported 0 for client-level subs (credits live in
+        # the pool). Mirror batch_web_ingestion's resolve_bot_ledger_bot_id.
         cost_per_page = credit_service.get_credit_cost(db, "url_scan")
-        balance = credit_service.get_balance(db, client_id, bot_id=bot_id)
+        ledger_bot_id = None
+        if bot_id is not None:
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
+        balance = credit_service.get_balance(db, client_id, bot_id=ledger_bot_id)
 
     _DISCOVERY_HARD_CAP = 1000
     discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
