@@ -20,6 +20,7 @@ import { openRazorpayCheckout } from '../lib/razorpay';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import InstallDrawer from './my-bots/InstallDrawer';
+import { useBotPricing } from './my-bots/useBotPricing';
 
 import BotSettings from './BotSettings';
 import { cn, normalizeUrl } from '../lib/utils';
@@ -99,13 +100,9 @@ export default function Chatbot() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isCreateOpen, isFirstBot]);
 
+    const { price } = useBotPricing();
     const selectedPlan = paidPlans.find((p) => p.slug === selectedPlanSlug) || null;
-    const planPriceCents = selectedPlan
-        ? (billingCycle === 'annual'
-            ? Math.round((selectedPlan.annual_price_cents ?? selectedPlan.monthly_price_cents ?? 0) / 12)
-            : (selectedPlan.monthly_price_cents ?? 0))
-        : 0;
-    const planCurrencySymbol = selectedPlan?.currency === 'INR' ? '₹' : '$';
+    const { cents: planPriceCents, symbol: planCurrencySymbol } = price(selectedPlan, billingCycle);
     const planPriceLabel = `${planCurrencySymbol}${(planPriceCents / 100).toFixed(0)}/mo`;
 
     // Dismiss path: close the modal, reset all wizard state, and snap the
@@ -519,10 +516,7 @@ export default function Chatbot() {
                                     ) : (
                                         <div className="space-y-2">
                                             {paidPlans.map((plan) => {
-                                                const monthlyCents = billingCycle === 'annual'
-                                                    ? Math.round((plan.annual_price_cents ?? plan.monthly_price_cents ?? 0) / 12)
-                                                    : (plan.monthly_price_cents ?? 0);
-                                                const symbol = plan.currency === 'INR' ? '₹' : '$';
+                                                const { cents: monthlyCents, symbol } = price(plan, billingCycle);
                                                 const isSelected = selectedPlanSlug === plan.slug;
                                                 return (
                                                     <button
