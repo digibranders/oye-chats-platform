@@ -78,3 +78,22 @@ async def test_missing_api_key_raises(monkeypatch):
         await spider_service.crawl_website(
             "https://acme.test", max_pages=10, use_js=False, client_id=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_precancelled_crawl_returns_empty(monkeypatch):
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+    monkeypatch.setattr(spider_service, "is_cancellation_requested", lambda cid: True)
+
+    called = {"http": False}
+
+    def handler(request):  # pragma: no cover - must NOT be called
+        called["http"] = True
+        return httpx.Response(200, json=[])
+
+    data = await spider_service.crawl_website(
+        "https://acme.test", max_pages=10, use_js=False, client_id=7,
+        _client=_mock_client(handler),
+    )
+    assert data["results"] == []
+    assert called["http"] is False   # we never hit Spider once cancel is set

@@ -23,7 +23,7 @@ from app.config import (
     SPIDER_REQUEST_MODE,
     SPIDER_TIMEOUT,
 )
-from app.services.crawler_service import CrawlerError
+from app.services.crawler_service import CrawlerError, is_cancellation_requested
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,10 @@ async def crawl_website(
     """
     if not SPIDER_API_KEY:
         raise CrawlerError("SPIDER_API_KEY is not configured")
+
+    if client_id is not None and is_cancellation_requested(client_id):
+        logger.info("Spider crawl aborted before start (cancel requested) client=%s", client_id)
+        return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
 
     payload: dict = {
         "url": url,
