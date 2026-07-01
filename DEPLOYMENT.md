@@ -278,6 +278,10 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 | `DB_URL` | `postgresql://oyechats:<PASSWORD>@localhost:5432/oyechats` |
 | `GOOGLE_API_KEY` | Google Gemini API key (LiteLLM fallback) |
 | `OPENAI_API_KEY` | OpenAI API key (primary LLM) |
+| `CRAWL_PROVIDER` | `spider` to route crawling to Spider.cloud (managed, off-box Chromium); unset/anything else = local Playwright crawler |
+| `SPIDER_API_KEY` | Spider.cloud prepaid API key (required when `CRAWL_PROVIDER=spider`) |
+| `SPIDER_REQUEST_MODE` | Spider engine: `smart` (default), `http`, or `chrome` |
+| `SPIDER_FALLBACK_TO_PLAYWRIGHT` | `true` (default) falls back to the local crawler if Spider errors |
 | `CORS_ORIGINS` | `https://oyechats.com,https://www.oyechats.com,https://app.oyechats.com,https://admin.oyechats.com` |
 | `R2_KEY_ID` | Backblaze B2 key ID |
 | `R2_APPLICATION_KEY` | Backblaze B2 application key |
