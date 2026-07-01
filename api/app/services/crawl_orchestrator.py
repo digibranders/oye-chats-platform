@@ -223,6 +223,7 @@ async def run_full_crawl(
                     deduct_reason="url_scan",
                     deduct_reference_id=bot_id,
                     embed_progress_cb=_report_embed,
+                    crawl_started_at=started_at,
                 ),
             )
         total_chunks = ingest_result["chunks"]

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import case, desc, func, insert, select, text
+from sqlalchemy import Float, case, cast, desc, func, insert, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -294,12 +294,15 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
 
     ``page_count`` is the number of distinct pages/files under the source (for a
     website, one per crawled URL; for an uploaded file, always 1). ``chunk_count``
-    is the total embedded chunks under the source. The UI shows "N pages" for
-    websites and "N chunks" for documents.
+    is the total embedded chunks under the source. ``duration_seconds`` is how long
+    the most recent crawl of this source took (None for uploads / pre-timing
+    crawls). The UI shows "N pages" for websites and "N chunks" for documents.
     """
     root_name_expr = func.coalesce(
         func.replace(func.substring(Document.document_name, r"^(https?://[^/]+)"), "www.", ""), Document.document_name
     )
+    # Epoch seconds the crawl started, stamped on each chunk at ingest time.
+    started_expr = func.max(cast(Document.metadata_info["crawl_started_at"].astext, Float))
 
     stmt = (
         select(
@@ -307,6 +310,7 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
             func.max(Document.created_at).label("last_ingested_at"),
             func.count(func.distinct(Document.document_name)).label("page_count"),
             func.count().label("chunk_count"),
+            started_expr.label("crawl_started_at"),
         )
         .where(_owner_filter(Document, bot_id, client_id))
         .group_by(root_name_expr)
@@ -314,12 +318,22 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
     )
 
     results = session.execute(stmt).all()
+
+    def _duration(last_ingested_at, started_epoch):
+        # Both maxes come from the latest crawl (its rows are newest AND have the
+        # highest crawl_started_at), so the difference is that crawl's wall-clock.
+        if not last_ingested_at or started_epoch is None:
+            return None
+        seconds = last_ingested_at.timestamp() - float(started_epoch)
+        return round(seconds) if seconds >= 0 else None
+
     return [
         {
             "name": r.root_name,
             "ingested_at": r.last_ingested_at.isoformat() if r.last_ingested_at else None,
             "page_count": int(r.page_count),
             "chunk_count": int(r.chunk_count),
+            "duration_seconds": _duration(r.last_ingested_at, r.crawl_started_at),
         }
         for r in results
     ]

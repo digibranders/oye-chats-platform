@@ -319,6 +319,34 @@ class TestBatchWebIngestion:
         assert result["credits_deducted"] == 0
         session.commit.assert_called()
 
+    def test_stamps_crawl_started_at_in_chunk_metadata(self):
+        # crawl_started_at flows page_meta -> chunk metadata -> insert_documents,
+        # so total-time-taken can be read back as max(created_at) - crawl_started_at.
+        session = MagicMock()
+        captured = {}
+
+        def echo_chunk_text(pages_data, document_name=None):
+            meta = dict(pages_data[0]["metadata"])
+            return [MagicMock(page_content="chunk", metadata=meta)]
+
+        def capture_insert(_s, _cid, _url, _hash, _chunks, _embs, metas, **kw):
+            captured["metas"] = metas
+
+        with (
+            patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
+            patch("app.ingestion.pipeline.clean_text", side_effect=lambda x: x),
+            patch("app.ingestion.pipeline.is_document_processed", return_value=False),
+            patch("app.ingestion.pipeline.chunk_text", side_effect=echo_chunk_text),
+            patch("app.ingestion.pipeline.CHUNK_ENRICHMENT_ENABLED", False),
+            patch("app.ingestion.pipeline.embed_chunks", side_effect=_fake_embed_with_progress),
+            patch("app.ingestion.pipeline.insert_documents", side_effect=capture_insert),
+            patch("app.ingestion.pipeline.delete_chunks_for_url"),
+            patch("app.ingestion.pipeline.cache_delete_prefix"),
+        ):
+            batch_web_ingestion(1, [{"url": "https://a.com", "content": "text"}], bot_id=5, crawl_started_at=1234.5)
+
+        assert captured["metas"][0]["crawl_started_at"] == 1234.5
+
     def test_reports_embed_progress(self):
         session = MagicMock()
         mock_chunk = MagicMock(page_content="chunk", metadata={"page": 1})

@@ -49,6 +49,16 @@ const orderCrawlUrls = (urls, order) => {
 
 const sliceForCrawl = (urls, order, count) => orderCrawlUrls(urls, order).slice(0, count);
 
+// Format a crawl duration (seconds) as "45s" / "2m 2s" / "1h 3m". "—" when unknown
+// (uploads, or crawls ingested before timing was tracked).
+const formatDuration = (seconds) => {
+  if (seconds == null || Number.isNaN(seconds)) return '—';
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+};
+
 export default function KnowledgeBase() {
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const { showToast } = useToast();
@@ -1336,7 +1346,7 @@ export default function KnowledgeBase() {
             </div>
 
             {isLoadingDocs ? (
-              <SkeletonTable rows={4} cols={5} />
+              <SkeletonTable rows={4} cols={6} />
             ) : documents.length === 0 ? (
               <div className="text-center py-12 border-2 border-dashed border-surface-200 dark:border-surface-800 rounded-xl">
                 <FileText className="mx-auto text-surface-600 dark:text-surface-300 mb-3" size={28} />
@@ -1356,17 +1366,19 @@ export default function KnowledgeBase() {
               <div className="overflow-hidden border border-surface-200 dark:border-surface-800 rounded-xl">
                 <table className="w-full text-left table-fixed">
                   <colgroup>
-                    <col className="w-[42%]" />
+                    <col className="w-[38%]" />
+                    <col className="w-[12%]" />
                     <col className="w-[13%]" />
-                    <col className="w-[15%]" />
-                    <col className="w-[15%]" />
-                    <col className="w-[15%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[12%]" />
                   </colgroup>
                   <thead className="bg-surface-50 dark:bg-surface-800/50 border-b border-surface-200 dark:border-surface-800">
                     <tr>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Source</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Type</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Pages</th>
+                      <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Time</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Date</th>
                       <th className="px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider text-right">Actions</th>
                     </tr>
@@ -1408,6 +1420,9 @@ export default function KnowledgeBase() {
                             {isUrl
                               ? `${(doc.page_count ?? 0).toLocaleString()} ${doc.page_count === 1 ? 'page' : 'pages'}`
                               : `${(doc.chunk_count ?? 0).toLocaleString()} ${doc.chunk_count === 1 ? 'chunk' : 'chunks'}`}
+                          </td>
+                          <td className="px-5 py-3.5 text-sm text-surface-400 tabular-nums">
+                            {formatDuration(doc.duration_seconds)}
                           </td>
                           <td className="px-5 py-3.5 text-sm text-surface-400">{dateStr}</td>
                           <td className="px-5 py-3.5 text-right">

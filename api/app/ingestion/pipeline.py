@@ -322,6 +322,7 @@ def batch_web_ingestion(
     deduct_reason: str = "url_scan",
     deduct_reference_id: int | None = None,
     embed_progress_cb: Callable[[int, int], None] | None = None,
+    crawl_started_at: float | None = None,
 ) -> dict:
     """
     Batch ingest multiple web pages: chunk all, embed all at once, insert all.
@@ -397,6 +398,10 @@ def batch_web_ingestion(
             page_meta = {"page": 1, "url": url}
             if title:
                 page_meta["title"] = title
+            if crawl_started_at is not None:
+                # Stamp the crawl start on every chunk so the source's total time
+                # taken = max(created_at) - crawl_started_at can be read back later.
+                page_meta["crawl_started_at"] = crawl_started_at
             pages_data = [{"text": cleaned, "metadata": page_meta}]
             chunks = chunk_text(pages_data, document_name=url)
 
