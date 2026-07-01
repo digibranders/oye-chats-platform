@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getAuthState } from '../utils/auth';
 import { getAuthItem } from '../utils/authStorage';
 import Cropper from 'react-easy-crop';
@@ -104,7 +105,15 @@ export default function BotSettings({ embedded = false }) {
     const [saveError, setSaveError] = useState(null);
 
     // ── Inner active-tab + preview state ──
-    const [activeTab, setActiveTab] = useState('general');
+    // A valid ``?section=`` deep-links to a sub-tab (e.g. Settings → Live Chat
+    // links here with ``section=live_chat``); the gate effect below still
+    // bounces locked sections back to General on Free plans.
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(() => {
+        const section = searchParams.get('section');
+        const known = ['general', 'personality', 'appearance', 'messages', 'behavior', 'leads', 'live_chat'];
+        return known.includes(section) ? section : 'general';
+    });
     const [previewState, setPreviewState] = useState('chat');
 
     // ── Live "Preview on my website" panel ──

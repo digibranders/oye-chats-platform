@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import BusinessHoursEditor from '../components/BusinessHoursEditor';
 import {
@@ -43,7 +43,14 @@ export default function TeamManagement() {
     const [departments, setDepartments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState(null);
-    const [activeTab, setActiveTab] = useState(isOperator && !isBotManager ? 'quick-replies' : 'operators');
+    // Deep-linkable tab: a valid ``?tab=`` (e.g. Settings → Live Chat links to
+    // ``/team?tab=departments``) wins; otherwise fall back to the role default.
+    const [searchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(() => {
+        const urlTab = searchParams.get('tab');
+        if (['operators', 'departments', 'quick-replies'].includes(urlTab)) return urlTab;
+        return isOperator && !isBotManager ? 'quick-replies' : 'operators';
+    });
 
     // Create operator
     const [showCreateOperator, setShowCreateOperator] = useState(false);
@@ -343,7 +350,7 @@ export default function TeamManagement() {
                                 <p className="col-span-2 mt-3 text-[12px] text-surface-500 dark:text-surface-400">
                                     Business hours and queue behaviour apply to all operators.{' '}
                                     <Link
-                                        to="/settings"
+                                        to="/settings?tab=live_chat"
                                         className="font-medium text-primary-600 dark:text-primary-400 hover:underline"
                                     >
                                         Configure in Settings → Live Chat
