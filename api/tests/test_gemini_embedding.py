@@ -55,6 +55,60 @@ def test_missing_key_raises(monkeypatch):
         ge.embed_texts(["a"])
 
 
+def test_429_honors_body_retry_delay(monkeypatch):
+    # A large crawl transiently exceeds the per-minute quota; we must honour the
+    # server-supplied "retry in Xs" (Gemini puts it in the body, not a header)
+    # and then succeed, instead of hard-failing the whole crawl.
+    monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
+    monkeypatch.setattr(ge, "EMBED_DIMENSIONS", 2)
+    slept: list[float] = []
+    monkeypatch.setattr(ge, "time", type("T", (), {"sleep": staticmethod(lambda d: slept.append(d))}))
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                429,
+                json={
+                    "error": {
+                        "message": "You exceeded your quota. Please retry in 0.2s",
+                        "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.2s"}],
+                    }
+                },
+            )
+        return httpx.Response(200, json={"embeddings": [{"values": [1.0, 0.0]}]})
+
+    out = ge.embed_texts(["a"], _client=_client(handler))
+    assert len(out) == 1 and calls["n"] == 2
+    assert slept and abs(slept[0] - 0.7) < 1e-6  # honoured 0.2s + 0.5s cushion
+
+
+def test_retry_delay_parses_retryinfo_and_message():
+    with_detail = httpx.Response(
+        429,
+        json={"error": {"message": "x", "details": [{"@type": ".../RetryInfo", "retryDelay": "11.5s"}]}},
+    )
+    assert ge._retry_delay_from_429(with_detail) == 11.5
+    message_only = httpx.Response(429, json={"error": {"message": "quota. Please retry in 7s."}})
+    assert ge._retry_delay_from_429(message_only) == 7.0
+    none = httpx.Response(429, json={"error": {"message": "no delay here"}})
+    assert ge._retry_delay_from_429(none) is None
+
+
+def test_non_retryable_4xx_raises_immediately(monkeypatch):
+    monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    with pytest.raises(RuntimeError):
+        ge.embed_texts(["a"], _client=_client(handler))
+    assert calls["n"] == 1  # 400 is not retried
+
+
 def test_retries_then_raises_on_5xx(monkeypatch):
     monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
     monkeypatch.setattr(ge, "_RETRY_ATTEMPTS", 2)

@@ -11,6 +11,7 @@ normalization — we do it here.
 
 import logging
 import math
+import re
 import time
 
 import httpx
@@ -19,16 +20,40 @@ from app.config import EMBED_DIMENSIONS, GEMINI_EMBED_MODEL, GEMINI_EMBED_URL, G
 
 logger = logging.getLogger(__name__)
 
-_MAX_BATCH = 100
-_RETRY_ATTEMPTS = 5
+_MAX_BATCH = 100  # batchEmbedContents hard limit: at most 100 requests per call
+_RETRY_ATTEMPTS = 6
 _RETRY_BASE = 1.0
-_RETRY_MAX = 30.0
+_RETRY_MAX = 30.0  # cap for exponential backoff (network / 5xx)
+# 429 = quota. Google returns the exact wait in the response BODY (no Retry-After
+# header), e.g. "Please retry in 11.5s" / a RetryInfo detail. We honour it, with a
+# ceiling a bit above a one-minute window so a per-minute quota can roll over.
+_RETRY_MAX_429 = 65.0
 _TIMEOUT = 60.0
 
 
 def _l2_normalize(vec: list[float]) -> list[float]:
     norm = math.sqrt(sum(x * x for x in vec))
     return [x / norm for x in vec] if norm > 0 else vec
+
+
+def _retry_delay_from_429(resp: httpx.Response) -> float | None:
+    """Extract the server-specified retry delay (seconds) from a 429 body.
+
+    Gemini does not send a ``Retry-After`` header; it puts the delay in the JSON
+    body — a structured ``RetryInfo`` detail (``retryDelay: "11.5s"``) and/or the
+    message text ("Please retry in 11.5s"). Returns None when neither is present.
+    """
+    try:
+        error = resp.json().get("error", {})
+    except ValueError:
+        return None
+    for detail in error.get("details", []):
+        if str(detail.get("@type", "")).endswith("RetryInfo"):
+            match = re.match(r"([\d.]+)s", str(detail.get("retryDelay", "")))
+            if match:
+                return float(match.group(1))
+    match = re.search(r"retry in ([\d.]+)s", error.get("message", ""))
+    return float(match.group(1)) if match else None
 
 
 def _embed_one_batch(client: httpx.Client, batch: list[str]) -> list[list[float]]:
@@ -43,35 +68,47 @@ def _embed_one_batch(client: httpx.Client, batch: list[str]) -> list[list[float]
             for text in batch
         ]
     }
-    last_exc: Exception | None = None
+    last_err: str = "unknown error"
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
         try:
             resp = client.post(url, params={"key": GOOGLE_API_KEY}, json=body, timeout=_TIMEOUT)
-            if resp.status_code == 429 or resp.status_code >= 500:
-                raise httpx.HTTPStatusError(
-                    f"retryable {resp.status_code}", request=resp.request, response=resp
-                )
-            resp.raise_for_status()
-            embeddings = resp.json()["embeddings"]
-            if len(embeddings) != len(batch):
-                raise RuntimeError(
-                    f"Gemini returned {len(embeddings)} embeddings for {len(batch)} inputs"
-                )
-            return [_l2_normalize(item["values"]) for item in embeddings]
-        except (httpx.HTTPError, KeyError, ValueError) as exc:
-            last_exc = exc
-            if attempt == _RETRY_ATTEMPTS:
-                break
+        except httpx.HTTPError as exc:
+            # Network-level failure — retry with exponential backoff.
+            last_err = f"{type(exc).__name__}: {exc}"
             delay = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
-            logger.warning(
-                "Gemini embed transient error (%s) — retry %d/%d in %.1fs",
-                type(exc).__name__,
-                attempt,
-                _RETRY_ATTEMPTS,
-                delay,
-            )
-            time.sleep(delay)
-    raise RuntimeError(f"Gemini embedding failed after {_RETRY_ATTEMPTS} attempts: {last_exc}")
+        else:
+            if resp.status_code == 200:
+                try:
+                    embeddings = resp.json()["embeddings"]
+                except (KeyError, ValueError) as exc:
+                    raise RuntimeError(f"Gemini returned an unparseable body: {exc}") from exc
+                if len(embeddings) != len(batch):
+                    raise RuntimeError(f"Gemini returned {len(embeddings)} embeddings for {len(batch)} inputs")
+                return [_l2_normalize(item["values"]) for item in embeddings]
+            if resp.status_code == 429:
+                # Quota — honour the server's own retry hint; fall back to backoff.
+                server_delay = _retry_delay_from_429(resp)
+                backoff = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
+                delay = min((server_delay if server_delay is not None else backoff) + 0.5, _RETRY_MAX_429)
+                last_err = f"429 quota: {resp.text[:200]}"
+            elif resp.status_code >= 500:
+                last_err = f"{resp.status_code}: {resp.text[:200]}"
+                delay = min(_RETRY_BASE * (2 ** (attempt - 1)), _RETRY_MAX)
+            else:
+                # 4xx other than 429 (bad request, auth) — not retryable.
+                raise RuntimeError(f"Gemini embedding rejected ({resp.status_code}): {resp.text[:300]}")
+
+        if attempt == _RETRY_ATTEMPTS:
+            break
+        logger.warning(
+            "Gemini embed retryable error (%s) — retry %d/%d in %.1fs",
+            last_err.split(":")[0],
+            attempt,
+            _RETRY_ATTEMPTS,
+            delay,
+        )
+        time.sleep(delay)
+    raise RuntimeError(f"Gemini embedding failed after {_RETRY_ATTEMPTS} attempts: {last_err}")
 
 
 def embed_texts(texts: list[str], *, _client: httpx.Client | None = None) -> list[list[float]]:
