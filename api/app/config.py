@@ -348,11 +348,9 @@ PRORATED_UPGRADES_ENABLED = _env_flag("PRORATED_UPGRADES_ENABLED", default=False
 # ─────────────────────────────────────────────────────────────────────────────
 DOCUMENTS_DIR = "documents"
 ARCHIVE_DIR = "archive"
-# Crawler defaults (read by crawler_script.py subprocess via os.getenv):
-# MAX_CRAWL_PAGES=50, CRAWL_CONCURRENCY=3, CRAWL_PAGE_TIMEOUT=20,
-# MAX_CRAWL_DEPTH=3, CRAWL_SUBPROCESS_TIMEOUT=600
-# CRAWLER_JS_ALL_PAGES=false   — set true to use Playwright for all depths (Next.js/SPAs)
-# CRAWLER_BROWSER_RECYCLE=10   — recycle Chromium every N pages (memory leak prevention)
+# Crawl page cap / depth are enforced per-plan and passed through the crawl
+# orchestrator; CRAWL_SUBPROCESS_TIMEOUT (default 1600s) bounds a single crawl
+# job and derives the Redis cancel/lock TTLs in crawler_service.
 # ─────────────────────────────────────────────────────────────────────────────
 # Retrieval & Reranking
 # ─────────────────────────────────────────────────────────────────────────────
