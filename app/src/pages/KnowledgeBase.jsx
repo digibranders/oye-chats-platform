@@ -162,11 +162,15 @@ export default function KnowledgeBase() {
   // visible regardless — this guard only affects the detail panel here.
   const isThisBotCrawl = crawl.botId === null || crawl.botId === selectedBot?.id;
   const isCrawling = isCrawlActive && isThisBotCrawl;
+  // Once we're in the embedding phase, every page has already been fetched — so
+  // no row should show the "scanning" spinner (that read as "stuck crawling").
+  const isEmbedding = crawl.phase?.startsWith('Embedding') ?? false;
   const scanningUrls = (crawl.urls || []).map((u, i, arr) => ({
     url: u,
     // The most-recently-discovered URL is the one actively being crawled;
-    // everything before it has been pulled successfully.
-    status: isCrawlActive && i === arr.length - 1 ? 'scanning' : 'done',
+    // everything before it has been pulled successfully. During embedding all
+    // pages are done.
+    status: isCrawlActive && !isEmbedding && i === arr.length - 1 ? 'scanning' : 'done',
   }));
   const crawlStatus = (() => {
     if (crawl.status === 'done') {
@@ -1231,10 +1235,12 @@ export default function KnowledgeBase() {
                   <div className="px-4 py-3 bg-surface-50 dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 flex items-center gap-2">
                     <Globe size={14} className={isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500'} />
                     <span className="text-xs font-semibold text-surface-700 dark:text-surface-300">
-                      {isCrawling ? 'Crawling website…' : 'Pages discovered'}
+                      {isEmbedding ? 'Embedding content…' : isCrawling ? 'Crawling website…' : 'Pages discovered'}
                     </span>
                     <span className={cn('text-[10px] ml-auto font-medium tabular-nums', isCrawling ? 'text-primary-500 animate-pulse' : 'text-emerald-500')}>
-                      {isCrawling
+                      {isEmbedding
+                        ? (crawl.phase ?? `${scanningUrls.length} pages`)
+                        : isCrawling
                         ? (() => {
                             const denominator = crawl.discoveredTotal || crawl.maxPages;
                             return denominator

@@ -165,7 +165,11 @@ const GlobalCrawlIndicator = () => {
     const icon = isCancelling
         ? <Loader2 size={18} className="text-amber-500 animate-spin" />
         : <Globe size={18} className="text-primary-500" />;
-    const headerLabel = isCancelling ? 'Stopping crawl…' : 'Crawling website';
+    const headerLabel = isCancelling
+        ? 'Stopping crawl…'
+        : isEmbedding
+          ? 'Embedding content…'
+          : 'Crawling website';
 
     return (
         <div
