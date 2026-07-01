@@ -28,10 +28,10 @@ import logging
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
+from app.services.crawl_provider import crawl_website
 from app.services.crawler_service import (
     CrawlCancelled,
     CrawlerError,
-    crawl_website,
     release_crawl_lock,
     set_crawl_progress,
 )
