@@ -28,7 +28,7 @@ import logging
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
-from app.services.crawl_provider import crawl_website
+from app.services.crawl_provider import crawl_website, fetch_urls
 from app.services.crawler_service import (
     CrawlCancelled,
     CrawlerError,
@@ -94,6 +94,7 @@ async def run_full_crawl(
     cost_per_page: int,
     max_depth: int | None = None,
     concurrency: int | None = None,
+    ordered_urls: list[str] | None = None,
 ) -> dict:
     """Execute the full crawl pipeline end-to-end. Returns the result payload.
 
@@ -111,15 +112,22 @@ async def run_full_crawl(
     """
     result_payload: dict | None = None
     try:
-        logger.info("Crawling URL recursively: %s for client %s, bot_id=%s", url, client_id, bot_id)
-        crawl_data = await crawl_website(
-            url,
-            max_pages=max_pages,
-            use_js=use_js,
-            client_id=client_id,
-            max_depth=max_depth,
-            concurrency=concurrency,
-        )
+        if ordered_urls:
+            logger.info(
+                "Fetching %d explicit ordered URLs for client %s, bot_id=%s",
+                len(ordered_urls), client_id, bot_id,
+            )
+            crawl_data = await fetch_urls(ordered_urls, use_js=use_js, client_id=client_id)
+        else:
+            logger.info("Crawling URL recursively: %s for client %s, bot_id=%s", url, client_id, bot_id)
+            crawl_data = await crawl_website(
+                url,
+                max_pages=max_pages,
+                use_js=use_js,
+                client_id=client_id,
+                max_depth=max_depth,
+                concurrency=concurrency,
+            )
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])
@@ -155,7 +163,10 @@ async def run_full_crawl(
         credits_deducted = ingest_result["credits_deducted"]
 
         # Orphan sweep: remove chunks for pages that disappeared from the site.
-        if replace_source and total_chunks > 0:
+        # Only valid for a FULL re-crawl. A partial (ordered_urls) crawl fetches
+        # an intentional subset, so sweeping would delete pages the user still
+        # wants — skip it in that case.
+        if replace_source and total_chunks > 0 and not ordered_urls:
             newly_crawled_urls = [p["url"] for p in valid_pages]
             with get_session() as del_session:
                 from sqlalchemy import func as sa_func

@@ -928,6 +928,23 @@ async def crawl_endpoint(
                 },
             )
 
+    # Explicit ordered-URL slice (credit-aware partial crawl). Validate the
+    # client-supplied list is same-origin as the seed (blocks SSRF / crawling
+    # someone else's domain on this client's credits) and cap it to what the
+    # credit pre-flight above reserved, so it can never overspend.
+    ordered_urls = crawl_request.ordered_urls
+    if ordered_urls:
+        from urllib.parse import urlparse
+
+        seed_host = urlparse(str(crawl_request.url)).netloc.lower().removeprefix("www.")
+        same_origin = [
+            u for u in ordered_urls
+            if urlparse(u).netloc.lower().removeprefix("www.") == seed_host
+        ]
+        if not same_origin:
+            raise HTTPException(status_code=400, detail={"error": "ordered_urls_off_domain"})
+        ordered_urls = same_origin[:effective_max_pages]
+
     # Per-client crawl lock — held in Redis so the ARQ worker and the API
     # process see the same state. SETNX with TTL means a crashed holder
     # eventually frees the lock automatically. The lock is released by
@@ -955,6 +972,7 @@ async def crawl_endpoint(
                 cost_per_page,
                 plan_max_depth,
                 plan_concurrency,
+                ordered_urls=ordered_urls,
             )
             job_id = job.job_id if job is not None else None
             logger.info(
@@ -983,6 +1001,7 @@ async def crawl_endpoint(
                 cost_per_page=cost_per_page,
                 max_depth=plan_max_depth,
                 concurrency=plan_concurrency,
+                ordered_urls=ordered_urls,
             )
             logger.info(
                 "Crawl scheduled inline (WORKER_ENABLED=false) for client %s (plan=%s, pages=%d, depth=%d)",
