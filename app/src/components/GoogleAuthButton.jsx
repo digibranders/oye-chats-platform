@@ -55,6 +55,13 @@ async function probeGoogleOAuth() {
  *      deep-link redirects survive (e.g. /billing).
  *  - mode?: "login" | "register" — telemetry only; behaviour is identical.
  *  - className?: string — appended to the button's base classes.
+ *  - onBlockedClick?: () => boolean — optional pre-flight gate called before
+ *      the OAuth redirect fires. Return `true` to cancel the redirect (the
+ *      caller is responsible for surfacing why, e.g. a "please accept the
+ *      Terms" error) or `false`/omit to proceed. Used by Register.jsx to
+ *      require the Terms/Privacy checkbox before Google sign-up too — Google
+ *      is a full-page redirect, so this has to run synchronously on click,
+ *      before `window.location.href` navigates away.
  */
 export default function GoogleAuthButton({
     label = 'Continue with Google',
@@ -62,6 +69,7 @@ export default function GoogleAuthButton({
     mode = 'login',
     className,
     tabIndex,
+    onBlockedClick,
 }) {
     const [enabled, setEnabled] = useState(cachedProbe);
     const [clicking, setClicking] = useState(false);
@@ -82,6 +90,7 @@ export default function GoogleAuthButton({
 
     const handleClick = () => {
         if (clicking || enabled === null) return;
+        if (onBlockedClick?.()) return;
         setClicking(true);
         // Full-page navigation — the OAuth dance has to happen at the
         // top level so Google's redirect lands back on a real URL the

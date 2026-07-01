@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -24,8 +24,10 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [termsHighlight, setTermsHighlight] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const termsCheckboxRef = useRef(null);
   const navigate = useNavigate();
   // Affiliate invite round-trip — see Login.jsx for the rationale. New
   // sign-ups arrived from the Partners invite landing get routed back
@@ -38,6 +40,18 @@ export default function Register() {
   const hasNumber = /[0-9]/.test(password);
   const passwordsMatch = password && confirmPassword && password === confirmPassword;
   const strengthScore = [hasMinLength, hasLetter, hasNumber].filter(Boolean).length;
+
+  // Shared "you must accept the Terms first" gate — used by both the
+  // email/password submit and the Google OAuth button (which redirects the
+  // full page, so it has to be blocked synchronously on click). Surfaces the
+  // error banner AND highlights + scrolls to the checkbox itself, since
+  // Google's button sits above the checkbox in the layout.
+  const blockOnTerms = () => {
+    setError('Terms required — please agree to the Terms and Privacy Policy to continue.');
+    setTermsHighlight(true);
+    termsCheckboxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    termsCheckboxRef.current?.focus();
+  };
 
   const handleRegister = async (e) => {
     e.preventDefault();
@@ -60,7 +74,7 @@ export default function Register() {
       return;
     }
     if (!agreedToTerms) {
-      setError('Please agree to the Terms and Privacy Policy to continue.');
+      blockOnTerms();
       return;
     }
 
@@ -238,13 +252,21 @@ export default function Register() {
           {/* Google OAuth signup — backend uses the same endpoint as login;
               it decides "new account" vs "returning" by looking up the
               provider subject + email. Hidden when the server reports
-              Google OAuth is not configured. */}
+              Google OAuth is not configured. Gated on the Terms/Privacy
+              checkbox below, same as the email/password form — Google is a
+              full-page redirect, so the gate has to run on click via
+              onBlockedClick rather than a disabled attribute. */}
           <div className="mb-4">
             <GoogleAuthButton
               label="Sign up with Google"
               mode="register"
               next={affiliateToken ? `/affiliate-invite?token=${encodeURIComponent(affiliateToken)}` : '/'}
               tabIndex={0}
+              onBlockedClick={() => {
+                if (agreedToTerms) return false;
+                blockOnTerms();
+                return true;
+              }}
             />
           </div>
 
@@ -359,17 +381,31 @@ export default function Register() {
             <label className="flex items-start gap-2.5 pt-1 cursor-pointer group">
               <div className="relative flex items-center justify-center mt-0.5 flex-shrink-0">
                 <input
+                  ref={termsCheckboxRef}
                   type="checkbox"
                   checked={agreedToTerms}
-                  onChange={(e) => setAgreedToTerms(e.target.checked)}
-                  className="peer appearance-none w-4 h-4 border border-white/20 rounded bg-white/[.04] checked:bg-blue-600 checked:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/25 transition-all cursor-pointer"
+                  onChange={(e) => {
+                    setAgreedToTerms(e.target.checked);
+                    if (e.target.checked) {
+                      setTermsHighlight(false);
+                      setError('');
+                    }
+                  }}
+                  className={cn(
+                    'peer appearance-none w-4 h-4 border rounded bg-white/[.04]',
+                    'checked:bg-blue-600 checked:border-blue-600 focus:outline-none focus:ring-2 transition-all cursor-pointer',
+                    termsHighlight
+                      ? 'border-rose-500 ring-2 ring-rose-500/40'
+                      : 'border-white/20 focus:ring-blue-500/25'
+                  )}
                   tabIndex={7}
                 />
                 <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <span className="text-xs text-white/45 leading-relaxed">
+              <span className={cn('text-xs leading-relaxed', termsHighlight ? 'text-rose-400' : 'text-white/45')}>
+                {termsHighlight && <span className="font-semibold">Terms required — </span>}
                 I agree to the{' '}
                 <a
                   href="https://oyechats.com/legal/terms"
