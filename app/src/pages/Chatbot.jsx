@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { getAuthState } from '../utils/auth';
 import {
-    Bot, Plus, Copy, Check, Trash2, Code2, Key, Loader2, ArrowLeft,
-    X, AlertCircle, ChevronDown, ChevronRight, Eye, EyeOff, ExternalLink, Link2
+    Bot, Plus, Check, Trash2, Code2, Loader2, ArrowLeft,
+    X, AlertCircle
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useBotContext } from '../context/BotContext';
@@ -11,21 +11,15 @@ import {
     createBot,
     deleteBot,
     crawlWebsite,
-    getBotDemoUrl,
-    getBotPreviewUrl,
-    trackDemoShareClick,
     updateBot,
     getSubscriptionPlans,
     createBotCheckout,
     verifyBotCheckout,
 } from '../services/api';
 import { openRazorpayCheckout } from '../lib/razorpay';
-import { platforms } from '../data/platformIntegrations';
-import PlatformSelector from '../components/PlatformSelector';
-import IntegrationGuide from '../components/IntegrationGuide';
-import DomainRestrictions from '../components/DomainRestrictions';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
+import InstallDrawer from './my-bots/InstallDrawer';
 
 import BotSettings from './BotSettings';
 import { cn, normalizeUrl } from '../lib/utils';
@@ -50,13 +44,9 @@ export default function Chatbot() {
     const [selectedPlanSlug, setSelectedPlanSlug] = useState('starter');
     const [paidPlans, setPaidPlans] = useState([]);
     const isFirstBot = bots.length === 0;
-    const [copiedField, setCopiedField] = useState(null);
-    const [expandedBot, setExpandedBot] = useState(null);
+    const [installBot, setInstallBot] = useState(null);
     const [deletingBot, setDeletingBot] = useState(null);
     const [confirmDelete, setConfirmDelete] = useState(null);
-    const [showKeys, setShowKeys] = useState({});
-    const [embedTab, setEmbedTab] = useState({});
-    const [selectedPlatform, setSelectedPlatform] = useState({});
 
     // Inline bot rename state
     const [renamingBot, setRenamingBot] = useState(null);   // botId | null
@@ -89,28 +79,6 @@ export default function Chatbot() {
         // adapts itself based on the current bots list (no dependency on
         // entitlements needed here).
     }, [searchParams, setSearchParams]);
-
-    const handleCopy = async (text, field, onCopied) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopiedField(field);
-            setTimeout(() => setCopiedField(null), 2000);
-            await onCopied?.();
-        } catch (err) {
-            console.error('Failed to copy text:', err);
-            showToast('error', 'Failed to copy to clipboard');
-        }
-    };
-
-    const handleDemoCopy = async (bot) => {
-        await handleCopy(getBotDemoUrl(bot.bot_key), `demo-${bot.id}`, async () => {
-            try {
-                await trackDemoShareClick(bot.id);
-            } catch (err) {
-                console.error('Failed to track demo share click:', err);
-            }
-        });
-    };
 
     // Pre-load the active plans the first time the create modal opens so
     // the pricing step renders without a flash. Falls back silently to
@@ -179,7 +147,6 @@ export default function Chatbot() {
             await refreshBots();
             setNewBotName(''); setNewBotWebsite(''); setIsCreateOpen(false);
             showToast('success', `Bot "${result.name}" created!`);
-            setExpandedBot(result.bot_id);
         } catch (err) {
             // Edge case — Free bot path should never 402 (bot count was 0
             // when the modal opened) but handle defensively if a sibling
@@ -227,7 +194,6 @@ export default function Chatbot() {
             setCreateStep('details');
             setNewBotName(''); setNewBotWebsite('');
             showToast('success', `Bot "${newBotName.trim()}" created and subscribed!`);
-            if (newBotId) setExpandedBot(newBotId);
         } catch (err) {
             // Razorpay modal dismissed — treat as abandon and snap back to bot 1.
             if (err?.code === 'dismissed') {
@@ -245,7 +211,7 @@ export default function Chatbot() {
             await refreshBots();
             showToast('success', `Bot "${botName}" deleted.`);
             setConfirmDelete(null);
-            if (expandedBot === botId) setExpandedBot(null);
+            setInstallBot((prev) => (prev?.id === botId ? null : prev));
         } catch (err) {
             showToast('error', err.message || 'Failed to delete bot');
         } finally { setDeletingBot(null); setConfirmDelete(null); }
@@ -279,7 +245,6 @@ export default function Chatbot() {
         }
     };
 
-    const toggleKey = (botId) => setShowKeys(prev => ({ ...prev, [botId]: !prev[botId] }));
     const maskKey = (key) => key ? key.substring(0, 6) + '••••••••' + key.substring(key.length - 4) : '';
 
     if (botTab === 'appearance') {
@@ -354,9 +319,7 @@ export default function Chatbot() {
             ) : (
                 <div className="space-y-3">
                     {bots.map((bot) => {
-                        const isExpanded = expandedBot === bot.id;
                         const isSelected = selectedBot?.id === bot.id;
-                        const currentEmbedTab = embedTab[bot.id] || 'production';
                         return (
                             <div
                                 key={bot.id}
@@ -415,8 +378,8 @@ export default function Chatbot() {
                                         {!isSelected && (
                                             <button onClick={() => selectBot(bot)} className="px-3 py-1.5 text-[11px] font-bold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-500/10 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors">Set Active</button>
                                         )}
-                                        <button onClick={() => setExpandedBot(isExpanded ? null : bot.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors">
-                                            <Code2 size={13} /> Embed {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                        <button onClick={() => setInstallBot(bot)} className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-surface-600 dark:text-surface-300 bg-surface-100 dark:bg-surface-800 rounded-lg hover:bg-surface-200 dark:hover:bg-surface-700 transition-colors">
+                                            <Code2 size={13} /> Embed
                                         </button>
                                         {isBotManager && (
                                             confirmDelete === bot.id ? (
@@ -431,96 +394,18 @@ export default function Chatbot() {
                                         )}
                                     </div>
                                 </div>
-
-                                {isExpanded && (
-                                    <div className="border-t border-surface-100 dark:border-surface-700 bg-surface-50/50 dark:bg-surface-800/50 p-5 space-y-4 animate-fade-in">
-                                        {/* Bot Key */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500 flex items-center gap-1.5"><Key size={11} /> Bot Key</label>
-                                                <div className="flex items-center gap-2">
-                                                    <button onClick={() => toggleKey(bot.id)} className="text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 transition-colors">{showKeys[bot.id] ? <EyeOff size={12} /> : <Eye size={12} />}</button>
-                                                    <button onClick={() => handleCopy(bot.bot_key, `key-${bot.id}`)} className="flex items-center gap-1 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors">
-                                                        {copiedField === `key-${bot.id}` ? <Check size={11} /> : <Copy size={11} />}
-                                                        <span className="text-[9px] font-bold uppercase">{copiedField === `key-${bot.id}` ? 'Copied' : 'Copy'}</span>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-lg px-3 py-2">
-                                                <Key className="w-3.5 h-3.5 text-amber-500 mr-2 flex-shrink-0" />
-                                                <code className="text-xs text-surface-700 dark:text-surface-300 font-mono break-all">{showKeys[bot.id] ? bot.bot_key : maskKey(bot.bot_key)}</code>
-                                            </div>
-                                        </div>
-
-                                        {isBotManager && (
-                                            <div>
-                                                <label className="text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Preview &amp; Share</label>
-                                                <p className="text-xs text-surface-500 dark:text-surface-400 mt-1 mb-3">
-                                                    {bot.website
-                                                        ? 'Preview the widget on your website, or share a demo link with teammates.'
-                                                        : 'Share a live preview page to test the widget before embedding.'}
-                                                </p>
-                                                <div className="flex items-center gap-2">
-                                                    <a
-                                                        href={getBotPreviewUrl(bot.bot_key, bot.website)}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 dark:hover:bg-primary-500 text-white text-xs font-semibold rounded-lg transition-colors"
-                                                    >
-                                                        <ExternalLink size={13} />
-                                                        View Demo
-                                                    </a>
-                                                    <button
-                                                        onClick={() => handleDemoCopy(bot)}
-                                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 border border-surface-200 dark:border-surface-600 hover:border-surface-300 dark:hover:border-surface-500 text-surface-600 dark:text-surface-300 hover:text-surface-700 dark:hover:text-surface-200 text-xs font-semibold rounded-lg transition-colors bg-white dark:bg-surface-900"
-                                                    >
-                                                        {copiedField === `demo-${bot.id}` ? <Check size={13} /> : <Link2 size={13} />}
-                                                        {copiedField === `demo-${bot.id}` ? 'Copied!' : 'Copy Link'}
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Domain restrictions (widget embed whitelist) */}
-                                        {isBotManager && (
-                                            <DomainRestrictions
-                                                botId={bot.id}
-                                                initialAllowedDomains={bot.allowed_domains || []}
-                                                initialDomainCheckEnabled={Boolean(bot.domain_check_enabled)}
-                                                botWebsite={bot.website}
-                                            />
-                                        )}
-
-                                        {/* Platform Integration Guide */}
-                                        <div>
-                                            <label className="text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500 flex items-center gap-1.5 mb-3">
-                                                <Code2 size={11} /> Integration Guide
-                                            </label>
-                                            {selectedPlatform[bot.id] ? (
-                                                <IntegrationGuide
-                                                    platform={platforms.find((p) => p.id === selectedPlatform[bot.id])}
-                                                    botKey={bot.bot_key}
-                                                    env={currentEmbedTab}
-                                                    onEnvChange={(env) => setEmbedTab({ ...embedTab, [bot.id]: env })}
-                                                    onBack={() => setSelectedPlatform({ ...selectedPlatform, [bot.id]: null })}
-                                                    onCopy={handleCopy}
-                                                    copiedField={copiedField}
-                                                />
-                                            ) : (
-                                                <PlatformSelector
-                                                    platforms={platforms}
-                                                    selectedId={null}
-                                                    onSelect={(id) => setSelectedPlatform({ ...selectedPlatform, [bot.id]: id })}
-                                                />
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                         );
                     })}
                 </div>
             )}
+
+            <InstallDrawer
+                key={installBot?.id}
+                bot={installBot}
+                open={!!installBot}
+                onClose={() => setInstallBot(null)}
+            />
 
             {/* Create Bot Modal — simple two-step wizard.
                 Step 1: name + website. Step 2 (2nd+ bot only): plan picker
