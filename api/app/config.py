@@ -65,9 +65,7 @@ else:
 # degradation (query — see rag_service).
 EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "google").strip().lower()
 GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
-GEMINI_EMBED_URL = os.getenv(
-    "GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta"
-).rstrip("/")
+GEMINI_EMBED_URL = os.getenv("GEMINI_EMBED_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
 EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "768"))  # matches Vector(768) column
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))

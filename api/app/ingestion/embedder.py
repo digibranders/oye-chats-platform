@@ -21,9 +21,7 @@ def embed_chunks(chunk_content_list: list[str]) -> list[list[float]]:
     if not chunk_content_list:
         return []
     if EMBED_PROVIDER != "google":
-        raise RuntimeError(
-            f"Unsupported EMBED_PROVIDER={EMBED_PROVIDER!r} (only 'google' is supported)"
-        )
+        raise RuntimeError(f"Unsupported EMBED_PROVIDER={EMBED_PROVIDER!r} (only 'google' is supported)")
     return _google_embed(chunk_content_list)
 
 
