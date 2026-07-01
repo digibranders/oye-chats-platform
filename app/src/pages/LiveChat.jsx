@@ -13,6 +13,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { Lock, Sparkles } from 'lucide-react';
 import { getAuthItem } from '../utils/authStorage';
+import { formatVisitorLocation } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import NoBotState from '../components/NoBotState';
 import { useBotContext } from '../context/BotContext';
@@ -2187,10 +2188,10 @@ export default function LiveChat({ embedded = false }) {
 
                                                 <div className="space-y-2.5 pt-2 border-t border-surface-100 dark:border-surface-700">
                                                     <h5 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Session</h5>
-                                                    {sessionInfo.location && (
+                                                    {formatVisitorLocation(sessionInfo.location) && (
                                                         <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
                                                             <MapPin className="w-3.5 h-3.5 text-surface-400 dark:text-surface-500 flex-shrink-0" />
-                                                            <span className="truncate">{sessionInfo.location}</span>
+                                                            <span className="truncate">{formatVisitorLocation(sessionInfo.location)}</span>
                                                         </div>
                                                     )}
                                                     {sessionInfo.device && (

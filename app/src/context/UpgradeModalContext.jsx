@@ -206,6 +206,32 @@ export const UPGRADE_INTENTS = {
         ],
         recommendedPlan: 'Starter',
     }),
+    widget_behavior: () => ({
+        intentKey: 'widget_behavior',
+        eyebrow: 'Widget behavior toggles are a paid feature',
+        title: 'Control how your widget behaves',
+        description:
+            'Free bots run on our default behavior. Upgrade to turn file sharing, post-chat ratings, the live-chat queue indicator, typing preview, and email transcripts on or off per bot.',
+        highlights: [
+            'File sharing & email transcripts',
+            'Post-chat rating survey',
+            'Live-chat queue indicator & typing preview',
+        ],
+        recommendedPlan: 'Starter',
+    }),
+    branding_removable: () => ({
+        intentKey: 'branding_removable',
+        eyebrow: 'Removing branding is a Standard feature',
+        title: 'Remove the "Powered by" footer',
+        description:
+            'Free and Starter bots always show the OyeChats branding footer in the widget. Upgrade to Standard to hide it and give the widget your own look.',
+        highlights: [
+            'Fully white-labeled chat widget',
+            'No "Powered by OyeChats" link on your site',
+            'Everything in Starter, plus BANT scoring & API access',
+        ],
+        recommendedPlan: 'Standard',
+    }),
     live_chat_appearance: () => ({
         intentKey: 'live_chat_appearance',
         eyebrow: 'Live chat is a paid feature',

@@ -2,15 +2,12 @@ import { useRef } from 'react';
 import { HexColorPicker } from 'react-colorful';
 import { Upload, Trash2, Image as ImageIcon, Palette, Sparkles, Check, RefreshCw, Bot } from 'lucide-react';
 import { ColorPickerControl } from './shared';
-import BrandingTab from './BrandingTab';
 
 /**
  * AppearanceTab — visual identity.
  *
- * Merges three legacy sources: the General-tab colors (brand + user-bubble +
- * website-extracted recommendations), the Avatar tab (upload / orb / mascot),
- * and the Custom Brand tab (`BrandingTab` — branding text + URL) composed as a
- * sub-section.
+ * Merges the General-tab colors (brand + user-bubble + website-extracted
+ * recommendations) and the Avatar tab (upload / orb / mascot).
  *
  * @param {object} props
  * @param {object} props.draft - Editable bot fields.
@@ -22,12 +19,6 @@ import BrandingTab from './BrandingTab';
 export default function AppearanceTab({ draft, set, isUploading, onFile, onRemoveLogo }) {
     const inputRef = useRef(null);
     const recommendedColors = Array.isArray(draft.recommended_colors) ? draft.recommended_colors : [];
-
-    // Adapt BrandingTab's legacy `{ settings, onSettingsChange }` contract to
-    // the draft/set surface so the sub-section keeps its existing markup.
-    const brandingOnChange = (updates) => {
-        Object.entries(updates).forEach(([key, value]) => set(key, value));
-    };
 
     return (
         <div className="flex flex-col gap-10">
@@ -340,11 +331,6 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                         </div>
                     </div>
                 )}
-            </div>
-
-            {/* ── Custom Brand (branding text + URL) ── */}
-            <div className="border-t border-surface-200 dark:border-surface-700 pt-8">
-                <BrandingTab settings={draft} onSettingsChange={brandingOnChange} />
             </div>
         </div>
     );
