@@ -384,3 +384,16 @@ SPIDER_FALLBACK_TO_PLAYWRIGHT = os.getenv("SPIDER_FALLBACK_TO_PLAYWRIGHT", "fals
     "true",
     "yes",
 )
+
+# ── Crawl fallback: Jina Reader (PAYG markdown) ──────────────────────────────
+# When Spider fails, fetch pages via https://r.jina.ai/<url>. PAYG, off-box,
+# markdown-native. Works keyless (~20 RPM); a key raises limits (~500 RPM) and
+# unlocks free tokens. Multi-page coverage comes from url_discovery upstream.
+JINA_API_KEY = os.getenv("JINA_API_KEY")
+JINA_READER_URL = os.getenv("JINA_READER_URL", "https://r.jina.ai").rstrip("/")
+JINA_FALLBACK_ENABLED = os.getenv("JINA_FALLBACK_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+JINA_FETCH_CONCURRENCY = int(os.getenv("JINA_FETCH_CONCURRENCY", "5"))
