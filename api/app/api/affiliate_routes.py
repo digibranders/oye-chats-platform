@@ -31,7 +31,7 @@ from app.api.auth import get_current_client_strict as get_current_client
 from app.config import FRONTEND_URL
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
-from app.db.models import Affiliate, Client
+from app.db.models import Affiliate, Client, ReferralCode
 from app.db.session import get_session
 from app.services import affiliate_service
 from app.services.affiliate_service import (
@@ -379,6 +379,34 @@ class ApplyReferralResponse(BaseModel):
     discount_pct: float = 0.0
 
 
+class ReferralStatusResponse(BaseModel):
+    attributed: bool
+    code: str | None = None
+    discount_pct: float | None = None
+
+
+@router.get("/affiliate/referral-status", response_model=ReferralStatusResponse)
+def referral_status(client: Client = Depends(get_current_client)):
+    """Return the account's standing referral attribution, if any.
+
+    The checkout modal calls this on open so an already-attributed account
+    shows its permanent discount badge instead of an editable code field —
+    attribution is first-touch and cannot be removed, and the server applies
+    the discount at checkout regardless of what the UI shows.
+    """
+    with get_session() as session:
+        row = session.query(Client.referral_code_id).filter(Client.id == client.id).first()
+        code_id = row[0] if row else None
+        code_row = session.get(ReferralCode, code_id) if code_id else None
+        if code_row is None:
+            return ReferralStatusResponse(attributed=False)
+        return ReferralStatusResponse(
+            attributed=True,
+            code=code_row.code,
+            discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
+        )
+
+
 @router.post("/affiliate/apply-referral", response_model=ApplyReferralResponse)
 def apply_referral(
     body: ApplyReferralRequest,
@@ -422,16 +450,33 @@ def apply_referral(
         )
 
     # Valid code but not attributed this call — either previously attributed
-    # to the same code (idempotent — surface the discount), or attributed to
-    # a different code (collision — withhold the discount).
+    # to the same code (idempotent — surface the discount), the caller's OWN
+    # code (self-referral — say so plainly; the old catch-all falsely claimed
+    # "a different code is applied"), a genuine collision with another code,
+    # or a lost race on the last redemption slot.
     with get_session() as session:
         existing = session.query(Client.referral_code_id).filter(Client.id == client.id).first()
-    if existing and existing[0] == code_row.id:
+        own_code = affiliate_service.is_own_code(session, client.id, code_row)
+    existing_code_id = existing[0] if existing else None
+    if existing_code_id == code_row.id:
         return ApplyReferralResponse(
             attributed=False,
             message=f"Referral code {code_row.code} already applied — discount stays on.",
             code=code_row.code,
             discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
+        )
+    if own_code:
+        return ApplyReferralResponse(
+            attributed=False,
+            message="You can't use your own referral code — share it with someone else instead.",
+        )
+    if existing_code_id is None:
+        # Not attributed, not their own code, no prior code — the atomic claim
+        # failed: the code ran out of redemptions (or expired) between
+        # validation and the claim.
+        return ApplyReferralResponse(
+            attributed=False,
+            message=f"Referral code {code_row.code} is no longer available (redemption limit reached).",
         )
     return ApplyReferralResponse(
         attributed=False,
