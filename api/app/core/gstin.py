@@ -1,7 +1,8 @@
 """GSTIN validation — structure + mod-36 checksum.
 
-Pure functions, no I/O. Used to validate the seller profile's GSTIN and
-customer GSTINs captured for B2B tax invoices.
+Pure functions, no I/O. Validates the seller profile's GSTIN today, and will
+validate customer GSTINs captured for B2B tax invoices in later invoicing
+phases (see docs/billing/2026-07-02-invoicing-implementation-plan-v2.md).
 """
 
 from __future__ import annotations

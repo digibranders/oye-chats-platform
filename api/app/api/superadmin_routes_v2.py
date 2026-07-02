@@ -575,7 +575,11 @@ def list_pricing_config(_admin: Client = Depends(get_superadmin)):
                 "value": r.value,
                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             }
+            # ``billing.*`` documents (e.g. the seller profile) have their own
+            # validated endpoints; keep them out of the raw key/value editor so
+            # they can't be corrupted with an unvalidated write.
             for r in rows
+            if not r.key.startswith("billing.")
         ]
 
 
@@ -591,6 +595,11 @@ def update_pricing_config(
     admin: Client = Depends(get_superadmin),
 ):
     _require_write(admin)
+    if key.startswith("billing."):
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{key}' has a dedicated validated endpoint; use PUT /superadmin/billing/... instead.",
+        )
     with get_session() as session:
         existing = session.get(PricingConfig, key)
         before = existing.value if existing else None
@@ -1295,10 +1304,14 @@ def _coupon_dict(c: Coupon) -> dict[str, Any]:
 
 
 class SellerProfileBody(BaseModel):
-    legal_name: str
+    # All optional for PATCH semantics — omitted fields keep their stored value
+    # (legal_name's required-on-first-save rule is enforced by the service).
+    # ``exclude_unset`` in the handler preserves the omitted-vs-explicit-null
+    # distinction so a field can be intentionally cleared with ``null``.
+    legal_name: str | None = None
     trade_name: str | None = None
     gstin: str | None = None
-    address_lines: list[str] = Field(default_factory=list)
+    address_lines: list[str] | None = None
     state_code: str | None = None
     country: str | None = None
     sac_code: str | None = None
@@ -1349,7 +1362,7 @@ def update_seller_profile(
         try:
             profile = save_seller_profile(
                 session,
-                body.model_dump(exclude_none=True),
+                body.model_dump(exclude_unset=True),
                 actor_id=admin.id,
             )
         except SellerProfileError as exc:

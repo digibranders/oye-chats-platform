@@ -64,3 +64,30 @@ def test_prorated_upgrades_defaults_false(monkeypatch):
 def test_prorated_upgrades_can_be_enabled(monkeypatch):
     config = _reloaded_config(monkeypatch, PRORATED_UPGRADES_ENABLED="true")
     assert config.PRORATED_UPGRADES_ENABLED is True
+
+
+# ── INVOICING_V2_ENABLED / INVOICE_EMAILS_ENABLED ─────────────────────────────
+#
+# Gate the own-issued GST invoicing track. Both default OFF so invoices can be
+# built and run in shadow mode (stored, admin-visible, not emailed) before any
+# customer-facing rollout.
+
+
+def test_invoicing_v2_defaults_false(monkeypatch):
+    config = _reloaded_config(monkeypatch, INVOICING_V2_ENABLED=None)
+    assert config.INVOICING_V2_ENABLED is False
+
+
+def test_invoicing_v2_can_be_enabled(monkeypatch):
+    config = _reloaded_config(monkeypatch, INVOICING_V2_ENABLED="true")
+    assert config.INVOICING_V2_ENABLED is True
+
+
+def test_invoice_emails_defaults_false(monkeypatch):
+    config = _reloaded_config(monkeypatch, INVOICE_EMAILS_ENABLED=None)
+    assert config.INVOICE_EMAILS_ENABLED is False
+
+
+def test_invoice_emails_can_be_enabled(monkeypatch):
+    config = _reloaded_config(monkeypatch, INVOICE_EMAILS_ENABLED="true")
+    assert config.INVOICE_EMAILS_ENABLED is True

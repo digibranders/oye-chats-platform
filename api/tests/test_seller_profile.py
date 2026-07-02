@@ -73,3 +73,62 @@ def test_no_gstin_means_receipt_mode(db, admin_id):
     profile = get_seller_profile(db)
     assert profile.configured is True
     assert profile.gst_enabled is False
+
+
+def test_partial_update_preserves_unspecified_fields(db, admin_id):
+    save_seller_profile(
+        db,
+        {"legal_name": "Digibranders Pvt Ltd", "gstin": "27AAPFU0939F1ZV", "tax_rate_bps": 1200},
+        actor_id=admin_id,
+    )
+    # A partial edit that omits gstin/tax_rate_bps must NOT reset them.
+    save_seller_profile(db, {"legal_name": "Digibranders Private Limited"}, actor_id=admin_id)
+    profile = get_seller_profile(db)
+    assert profile.legal_name == "Digibranders Private Limited"
+    assert profile.gstin == "27AAPFU0939F1ZV"
+    assert profile.tax_rate_bps == 1200
+
+
+def test_explicit_null_gstin_clears_it(db, admin_id):
+    save_seller_profile(db, {"legal_name": "X Ltd", "gstin": "27AAPFU0939F1ZV"}, actor_id=admin_id)
+    save_seller_profile(db, {"gstin": None}, actor_id=admin_id)
+    profile = get_seller_profile(db)
+    assert profile.gstin is None
+    assert profile.gst_enabled is False
+
+
+def test_save_twice_reflects_latest(db, admin_id):
+    save_seller_profile(db, {"legal_name": "First Co", "gstin": "27AAPFU0939F1ZV"}, actor_id=admin_id)
+    save_seller_profile(db, {"legal_name": "Second Co", "gstin": "29AAGCB7383J1Z4"}, actor_id=admin_id)
+    profile = get_seller_profile(db)
+    assert profile.legal_name == "Second Co"
+    assert profile.state_code == "29"
+
+
+def test_state_code_without_gstin_is_validated(db, admin_id):
+    save_seller_profile(db, {"legal_name": "X Ltd", "state_code": "29"}, actor_id=admin_id)
+    assert get_seller_profile(db).state_code == "29"
+    with pytest.raises(SellerProfileError, match="state code"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "state_code": "99"}, actor_id=admin_id)
+
+
+def test_lut_active_requires_number(db, admin_id):
+    with pytest.raises(SellerProfileError, match="lut_number"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "lut_active": True}, actor_id=admin_id)
+
+
+def test_bad_tax_rate_raises_domain_error_not_valueerror(db, admin_id):
+    with pytest.raises(SellerProfileError, match="tax_rate_bps"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "tax_rate_bps": "eighteen"}, actor_id=admin_id)
+
+
+def test_reader_survives_corrupt_stored_row(db, admin_id):
+    from app.db.models import PricingConfig
+    from app.services.seller_profile_service import SELLER_PROFILE_KEY
+
+    db.add(
+        PricingConfig(key=SELLER_PROFILE_KEY, value={"legal_name": "X", "tax_rate_bps": "garbage"}, updated_by=admin_id)
+    )
+    db.flush()
+    profile = get_seller_profile(db)  # must not raise
+    assert profile.tax_rate_bps == 1800  # falls back to default

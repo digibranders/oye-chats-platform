@@ -24,7 +24,7 @@ def _client(db, monkeypatch, role="owner", admin_id=1) -> TestClient:
     app = FastAPI()
     app.include_router(superadmin_routes_v2.router)
     app.dependency_overrides[get_superadmin] = lambda: SimpleNamespace(
-        id=admin_id, is_superadmin=True, superadmin_role=role
+        id=admin_id, name="Admin", is_superadmin=True, superadmin_role=role
     )
     return TestClient(app)
 
@@ -67,3 +67,42 @@ def test_readonly_admin_cannot_write(db, monkeypatch):
     c = _client(db, monkeypatch, role="readonly", admin_id=2)
     res = c.put("/superadmin/billing/seller-profile", json={"legal_name": "X Ltd"})
     assert res.status_code == 403
+
+
+def test_put_writes_audit_row(db, monkeypatch):
+    from sqlalchemy import select
+
+    from app.db.models import AuditLog
+
+    c = _client(db, monkeypatch, admin_id=None)
+    res = c.put(
+        "/superadmin/billing/seller-profile", json={"legal_name": "Digibranders Pvt Ltd", "gstin": "27AAPFU0939F1ZV"}
+    )
+    assert res.status_code == 200, res.text
+    rows = db.execute(select(AuditLog).where(AuditLog.action == "billing.seller_profile.update")).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].target_id == "billing.seller_profile"
+
+
+def test_partial_put_preserves_gstin(db, monkeypatch):
+    c = _client(db, monkeypatch, admin_id=None)
+    c.put("/superadmin/billing/seller-profile", json={"legal_name": "Digibranders Pvt Ltd", "gstin": "27AAPFU0939F1ZV"})
+    res = c.put("/superadmin/billing/seller-profile", json={"legal_name": "Digibranders Private Limited"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["gstin"] == "27AAPFU0939F1ZV"
+    assert body["gst_enabled"] is True
+
+
+def test_pricing_config_route_rejects_seller_key(db, monkeypatch):
+    monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(superadmin_routes_v2.router)
+    app.dependency_overrides[get_superadmin] = lambda: SimpleNamespace(
+        id=None, name="Admin", is_superadmin=True, superadmin_role="owner"
+    )
+    c = TestClient(app)
+    res = c.put(
+        "/superadmin/pricing-config/billing.seller_profile", json={"value": {"legal_name": "evil", "gstin": "BAD"}}
+    )
+    assert res.status_code == 422
