@@ -13,7 +13,8 @@ api/archive/*
 __pycache__/
 *.py[cod]
 *$py.class
-.venv/
+.venv
+.venv.nosync/
 env/
 venv/
 ENV/

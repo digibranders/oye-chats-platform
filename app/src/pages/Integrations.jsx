@@ -402,6 +402,12 @@ function EmailSettings() {
 
 // ─── Meetings Settings Tab ─────────────────────────────────────────────────
 
+const MEETING_PROVIDERS = [
+    { id: 'calendly', name: 'Calendly', domain: 'calendly.com', urlField: 'calendly_url', badgeBg: '#006BFF', letter: 'C', placeholder: 'https://calendly.com/your-name/30min' },
+    { id: 'zcal', name: 'Zcal', domain: 'zcal.co', urlField: 'zcal_url', badgeBg: '#000000', letter: 'Z', placeholder: 'https://zcal.co/your-name/30min' },
+    { id: 'calcom', name: 'Cal.com', domain: 'cal.com', urlField: 'calcom_url', badgeBg: '#292929', letter: 'Cal', placeholder: 'https://cal.com/your-name/30min' },
+];
+
 function MeetingsSettings() {
     const { showToast } = useToast();
     // BUG FIX: same as EmailSettings — used to hardcode ``bots[0]``,
@@ -411,19 +417,20 @@ function MeetingsSettings() {
     const [saving, setSaving] = useState(false);
     const [meetingBookingEnabled, setMeetingBookingEnabled] = useState(false);
     const [meetingProvider, setMeetingProvider] = useState('calendly');
-    const [calendlyUrl, setCalendlyUrl] = useState('');
-    const [zcalUrl, setZcalUrl] = useState('');
+    const [urls, setUrls] = useState({ calendly: '', zcal: '', calcom: '' });
     const [justSaved, setJustSaved] = useState(false);
 
     useEffect(() => {
         if (!selectedBot) return;
         setMeetingBookingEnabled(!!selectedBot.meeting_booking_enabled);
         setMeetingProvider(selectedBot.meeting_provider || 'calendly');
-        setCalendlyUrl(selectedBot.calendly_url || '');
-        setZcalUrl(selectedBot.zcal_url || '');
+        setUrls(Object.fromEntries(
+            MEETING_PROVIDERS.map((p) => [p.id, selectedBot[p.urlField] || ''])
+        ));
     }, [selectedBot]);
 
-    const activeUrl = meetingProvider === 'zcal' ? zcalUrl : calendlyUrl;
+    const activeProvider = MEETING_PROVIDERS.find((p) => p.id === meetingProvider) || MEETING_PROVIDERS[0];
+    const activeUrl = urls[activeProvider.id] || '';
 
     const handleSave = async () => {
         if (!selectedBot) return;
@@ -432,8 +439,9 @@ function MeetingsSettings() {
             await updateBot(selectedBot.id, {
                 meeting_booking_enabled: meetingBookingEnabled,
                 meeting_provider: meetingBookingEnabled ? meetingProvider : null,
-                calendly_url: calendlyUrl || null,
-                zcal_url: zcalUrl || null,
+                ...Object.fromEntries(
+                    MEETING_PROVIDERS.map((p) => [p.urlField, urls[p.id] || null])
+                ),
             });
             showToast('success', `Meeting settings saved for ${selectedBot.name}`);
             setJustSaved(true);
@@ -492,58 +500,43 @@ function MeetingsSettings() {
                             <div>
                                 <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">Meeting Provider</label>
                                 <div className="flex gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() => setMeetingProvider('calendly')}
-                                        className={cn(
-                                            'flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all',
-                                            meetingProvider === 'calendly'
-                                                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400'
-                                                : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
-                                        )}
-                                    >
-                                        <div className="w-8 h-8 rounded-lg bg-[#006BFF] flex items-center justify-center flex-shrink-0">
-                                            <span className="text-white text-xs font-bold">C</span>
-                                        </div>
-                                        <div className="text-left">
-                                            <p className="text-sm font-medium text-surface-900 dark:text-surface-100">Calendly</p>
-                                            <p className="text-xs text-surface-500 dark:text-surface-400">calendly.com</p>
-                                        </div>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setMeetingProvider('zcal')}
-                                        className={cn(
-                                            'flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all',
-                                            meetingProvider === 'zcal'
-                                                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400'
-                                                : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
-                                        )}
-                                    >
-                                        <div className="w-8 h-8 rounded-lg bg-[#000000] flex items-center justify-center flex-shrink-0">
-                                            <span className="text-white text-xs font-bold">Z</span>
-                                        </div>
-                                        <div className="text-left">
-                                            <p className="text-sm font-medium text-surface-900 dark:text-surface-100">Zcal</p>
-                                            <p className="text-xs text-surface-500 dark:text-surface-400">zcal.co</p>
-                                        </div>
-                                    </button>
+                                    {MEETING_PROVIDERS.map((p) => (
+                                        <button
+                                            key={p.id}
+                                            type="button"
+                                            onClick={() => setMeetingProvider(p.id)}
+                                            className={cn(
+                                                'flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all',
+                                                meetingProvider === p.id
+                                                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400'
+                                                    : 'border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                                            )}
+                                        >
+                                            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: p.badgeBg }}>
+                                                <span className={cn('text-white font-bold', p.letter.length > 1 ? 'text-[9px]' : 'text-xs')}>{p.letter}</span>
+                                            </div>
+                                            <div className="text-left">
+                                                <p className="text-sm font-medium text-surface-900 dark:text-surface-100">{p.name}</p>
+                                                <p className="text-xs text-surface-500 dark:text-surface-400">{p.domain}</p>
+                                            </div>
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
 
                             <div>
                                 <label className="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">
-                                    {meetingProvider === 'zcal' ? 'Zcal URL' : 'Calendly URL'}
+                                    {activeProvider.name} URL
                                 </label>
                                 <input
                                     type="url"
-                                    value={meetingProvider === 'zcal' ? zcalUrl : calendlyUrl}
-                                    onChange={(e) => meetingProvider === 'zcal' ? setZcalUrl(e.target.value) : setCalendlyUrl(e.target.value)}
-                                    placeholder={meetingProvider === 'zcal' ? 'https://zcal.co/your-name/30min' : 'https://calendly.com/your-name/30min'}
+                                    value={activeUrl}
+                                    onChange={(e) => setUrls((prev) => ({ ...prev, [activeProvider.id]: e.target.value }))}
+                                    placeholder={activeProvider.placeholder}
                                     className={inputClass}
                                 />
                                 <p className="text-xs text-surface-400 dark:text-surface-500 mt-1">
-                                    Paste your {meetingProvider === 'zcal' ? 'Zcal' : 'Calendly'} scheduling link
+                                    Paste your {activeProvider.name} scheduling link
                                 </p>
                             </div>
                         </>

@@ -18,6 +18,10 @@ class TestMeetingUrlValidation:
         req = UpdateBotRequest(zcal_url="https://zcal.co/user/30min")
         assert req.zcal_url == "https://zcal.co/user/30min"
 
+    def test_valid_calcom_url(self):
+        req = UpdateBotRequest(calcom_url="https://cal.com/user/30min")
+        assert req.calcom_url == "https://cal.com/user/30min"
+
     def test_rejects_http_calendly(self):
         with pytest.raises(ValidationError):
             UpdateBotRequest(calendly_url="http://calendly.com/user/30min")
@@ -34,6 +38,14 @@ class TestMeetingUrlValidation:
         with pytest.raises(ValidationError):
             UpdateBotRequest(zcal_url="https://evil.com/zcal.co/user")
 
+    def test_rejects_http_calcom(self):
+        with pytest.raises(ValidationError):
+            UpdateBotRequest(calcom_url="http://cal.com/user/30min")
+
+    def test_rejects_wrong_domain_calcom(self):
+        with pytest.raises(ValidationError):
+            UpdateBotRequest(calcom_url="https://evil.com/cal.com/user")
+
     def test_accepts_subdomain_calendly(self):
         req = UpdateBotRequest(calendly_url="https://d.calendly.com/user")
         assert req.calendly_url is not None
@@ -41,6 +53,11 @@ class TestMeetingUrlValidation:
     def test_accepts_subdomain_zcal(self):
         req = UpdateBotRequest(zcal_url="https://app.zcal.co/user")
         assert req.zcal_url is not None
+
+    def test_accepts_subdomain_calcom(self):
+        # Cal.com org accounts serve booking pages from subdomains (i.cal.com etc.)
+        req = UpdateBotRequest(calcom_url="https://i.cal.com/user/30min")
+        assert req.calcom_url is not None
 
     def test_null_urls_accepted(self):
         req = UpdateBotRequest(calendly_url=None, zcal_url=None)
@@ -52,6 +69,8 @@ class TestMeetingUrlValidation:
         assert req.meeting_provider == "calendly"
         req2 = UpdateBotRequest(meeting_provider="zcal")
         assert req2.meeting_provider == "zcal"
+        req3 = UpdateBotRequest(meeting_provider="calcom")
+        assert req3.meeting_provider == "calcom"
 
     def test_invalid_provider_rejected(self):
         with pytest.raises(ValidationError):
@@ -65,12 +84,14 @@ class TestResolveMeetingBooking:
         provider="calendly",
         calendly_url="https://calendly.com/u",
         zcal_url=None,
+        calcom_url=None,
     ):
         bot = MagicMock()
         bot.meeting_booking_enabled = enabled
         bot.meeting_provider = provider
         bot.calendly_url = calendly_url
         bot.zcal_url = zcal_url
+        bot.calcom_url = calcom_url
         return bot
 
     def test_disabled_returns_empty(self):
@@ -96,6 +117,25 @@ class TestResolveMeetingBooking:
         result = _resolve_meeting_booking(bot, session, "s1", 1)
         assert result["calendly_url"] == "https://zcal.co/u"
         assert result["meeting_provider"] == "zcal"
+
+    def test_calcom_provider_returns_calcom_url(self):
+        bot = self._make_bot(provider="calcom", calcom_url="https://cal.com/u")
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = None
+        result = _resolve_meeting_booking(bot, session, "s1", 1)
+        assert result["calendly_url"] == "https://cal.com/u"
+        assert result["meeting_provider"] == "calcom"
+
+    def test_calcom_provider_without_url_returns_empty(self):
+        bot = self._make_bot(provider="calcom", calcom_url=None)
+        assert _resolve_meeting_booking(bot, MagicMock(), "s1", 1) == {}
+
+    def test_unknown_provider_falls_back_to_calendly_url(self):
+        bot = self._make_bot(provider="somefuture", calendly_url="https://calendly.com/u")
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = None
+        result = _resolve_meeting_booking(bot, session, "s1", 1)
+        assert result["calendly_url"] == "https://calendly.com/u"
 
     def test_existing_booking_returns_empty(self):
         bot = self._make_bot()

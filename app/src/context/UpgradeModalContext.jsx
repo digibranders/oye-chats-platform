@@ -162,7 +162,7 @@ export const UPGRADE_INTENTS = {
             'Push leads to your CRM, book meetings inside the chat, and fire webhooks on every event. Free plans handle email delivery from Settings → Visitor Messages.',
         highlights: [
             'Webhooks to any HTTPS endpoint (HMAC-signed, auto-retry)',
-            'Calendly & Zcal meeting booking in the widget',
+            'Calendly, Cal.com & Zcal meeting booking in the widget',
             'Per-event recipient routing & visitor confirmation emails',
         ],
         recommendedPlan: 'Starter',

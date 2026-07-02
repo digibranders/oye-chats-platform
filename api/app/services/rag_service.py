@@ -68,7 +68,8 @@ def _resolve_meeting_booking(bot, session, session_id: str, bot_id: int) -> dict
     if not bot or not getattr(bot, "meeting_booking_enabled", False):
         return {}
     provider = getattr(bot, "meeting_provider", None) or "calendly"
-    active_url = getattr(bot, "zcal_url", None) if provider == "zcal" else getattr(bot, "calendly_url", None)
+    _provider_url_attrs = {"calendly": "calendly_url", "zcal": "zcal_url", "calcom": "calcom_url"}
+    active_url = getattr(bot, _provider_url_attrs.get(provider, "calendly_url"), None)
     if not active_url:
         return {}
     has_booking = (

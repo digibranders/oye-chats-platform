@@ -2167,48 +2167,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {/* Bot typing indicator */}
                 {isTyping && <TypingIndicator settings={settings} />}
 
-                {/* Meeting booking widget for qualified leads */}
-                {showBooking && calendlyUrl && (
-                    <Suspense fallback={null}>
-                    <MeetingBooking
-                        calendlyUrl={calendlyUrl}
-                        sessionId={sessionId}
-                        provider={meetingProvider || 'calendly'}
-                        onDismiss={() => setShowBooking(false)}
-                        onBooked={async (bookingData) => {
-                            const sid = sessionId || bookingData.session_id;
-                            if (!sid) return;
-                            try {
-                                await submitMeetingBooked(sid, bookingData);
-                                setMeetingBooked(true);
-                                setShowBooking(false);
-                                setMessages(prev => [
-                                    ...prev,
-                                    {
-                                        id: `meeting-booked-${Date.now()}`,
-                                        text: 'Great, your meeting is confirmed. Our team will connect with you soon.',
-                                        sender: 'bot',
-                                        timestamp: new Date().toISOString(),
-                                        feedback: null,
-                                    }
-                                ]);
-                            } catch {
-                                setMessages(prev => [
-                                    ...prev,
-                                    {
-                                        id: `meeting-booked-error-${Date.now()}`,
-                                        text: 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
-                                        sender: 'bot',
-                                        timestamp: new Date().toISOString(),
-                                        feedback: null,
-                                    }
-                                ]);
-                            }
-                        }}
-                    />
-                    </Suspense>
-                )}
-
                 {/* Leave-a-message CTA — inline prompt to open the offline form.
                     Triggered by the [LEAVE_MESSAGE_CARD] sentinel from the RAG
                     pipeline when the visitor asks to email/write to the team.
@@ -2417,19 +2375,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 </button>
                             </div>
                         ) : (() => {
-                            // Always render the full form — name, email,
-                            // phone, message — pre-filled from anywhere
-                            // we already know the visitor (handoff capture
-                            // or an existing lead row). The previous
-                            // "compact" branch (message-only when name +
-                            // email were already known) caused the email
-                            // field to vanish mid-typing whenever the
-                            // visitor's name was on file: typing one
-                            // character into email made the compact gate
-                            // flip and unmounted the input. Showing the
-                            // full form unconditionally is simpler and
-                            // lets the visitor correct any field before
-                            // submitting.
+                            // If we already captured name + email upstream
+                            // (handoff form or an existing lead row), skip
+                            // the redundant contact fields and show only
+                            // the message textarea. The compact gate is
+                            // derived from EXTERNAL sources only — never
+                            // from offlineForm state — so typing into the
+                            // message field can't flip the gate and
+                            // unmount inputs mid-keystroke.
                             const externalName = (
                                 liveChatState?.capturedName?.trim() ||
                                 existingLeadInfo?.name?.trim() ||
@@ -2440,12 +2393,83 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                 existingLeadInfo?.email?.trim() ||
                                 ''
                             );
-                            // Backfill offlineForm from EXTERNAL sources
-                            // so handleOfflineSubmit posts the right data
-                            // even if the visitor doesn't touch the
-                            // pre-filled fields. Never echo the visitor's
-                            // own keystrokes back into state during
-                            // render.
+                            const externalPhone = (
+                                existingLeadInfo?.phone?.trim() ||
+                                ''
+                            );
+                            const isCompact = Boolean(externalName && externalEmail);
+
+                            const primary = sanitizeColor(settings.primary_color, '#3A0CA3');
+
+                            if (isCompact) {
+                                // Backfill offlineForm so the post-submit
+                                // success view can show the reply-to
+                                // email. Gate stays derived from external
+                                // sources, so this write doesn't cause a
+                                // re-mount of the message textarea.
+                                if (!offlineForm.name) {
+                                    queueMicrotask(() =>
+                                        setOfflineForm(p => p.name ? p : { ...p, name: externalName })
+                                    );
+                                }
+                                if (!offlineForm.email) {
+                                    queueMicrotask(() =>
+                                        setOfflineForm(p => p.email ? p : { ...p, email: externalEmail })
+                                    );
+                                }
+                                if (externalPhone && !offlineForm.phone) {
+                                    queueMicrotask(() =>
+                                        setOfflineForm(p => p.phone ? p : { ...p, phone: externalPhone })
+                                    );
+                                }
+                                return (
+                                    <>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
+                                            <p className="text-[13px] font-semibold text-[#16202C]">Leave us a message</p>
+                                        </div>
+                                        <p className="text-[12px] text-gray-500 mb-3">
+                                            We&apos;ll reply to <strong className="text-gray-700">{externalEmail}</strong> as soon as we can.
+                                        </p>
+                                        <form onSubmit={handleOfflineSubmit} className="space-y-2">
+                                            <div className="flex items-start gap-2 rounded-xl border border-gray-200 bg-gray-50/50 px-3 py-2">
+                                                <MessageSquare className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+                                                <textarea
+                                                    placeholder="How can we help you?"
+                                                    required
+                                                    rows={3}
+                                                    value={offlineForm.message}
+                                                    onChange={(e) => setOfflineForm(p => ({ ...p, message: e.target.value }))}
+                                                    className="flex-1 bg-transparent outline-none text-[13px] text-gray-900 placeholder:text-gray-400 resize-none"
+                                                />
+                                            </div>
+                                            <button
+                                                type="submit"
+                                                disabled={offlineSubmitting}
+                                                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
+                                                style={{ backgroundColor: primary }}
+                                            >
+                                                {offlineSubmitting
+                                                    ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                    : 'Send Message'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleReturnToBot}
+                                                disabled={offlineSubmitting}
+                                                className="w-full text-center text-[12px] text-gray-500 hover:text-gray-700 transition-colors pt-1 disabled:opacity-60"
+                                            >
+                                                Continue with AI instead
+                                            </button>
+                                        </form>
+                                    </>
+                                );
+                            }
+
+                            // Full form — name, email, phone, message.
+                            // Prefill any partially-known fields from
+                            // external sources without echoing the
+                            // visitor's own keystrokes back into state.
                             if (externalName && !offlineForm.name) {
                                 queueMicrotask(() =>
                                     setOfflineForm(p => p.name ? p : { ...p, name: externalName })
@@ -2456,11 +2480,16 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     setOfflineForm(p => p.email ? p : { ...p, email: externalEmail })
                                 );
                             }
+                            if (externalPhone && !offlineForm.phone) {
+                                queueMicrotask(() =>
+                                    setOfflineForm(p => p.phone ? p : { ...p, phone: externalPhone })
+                                );
+                            }
 
                             return (
                             <>
                                 <div className="flex items-center gap-2 mb-1">
-                                    <Mail className="w-4 h-4 flex-shrink-0" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
+                                    <Mail className="w-4 h-4 flex-shrink-0" style={{ color: primary }} />
                                     <p className="text-[13px] font-semibold text-[#16202C]">Send us a message</p>
                                 </div>
                                 <p className="text-[12px] text-gray-500 mb-3">We&apos;ll get back to you as soon as we can.</p>
@@ -2491,7 +2520,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     </div>
                                     <button type="submit" disabled={offlineSubmitting}
                                         className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-white text-[13px] font-medium disabled:opacity-60"
-                                        style={{ backgroundColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}>
+                                        style={{ backgroundColor: primary }}>
                                         {offlineSubmitting
                                             ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                                             : 'Send Message'}
@@ -2639,6 +2668,54 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </button>
             </div>
 
+            {/* Meeting booking overlay for qualified leads. Rendered as a
+                SIBLING of the messages area, not inside it: the messages area
+                is a scroll container, and an absolute inset-0 overlay inside
+                one scrolls away with the content — in a long conversation
+                scrolled to the bottom it lands entirely off-screen. Anchored
+                here it pins to the widget shell (the fixed theme container)
+                and stays visible regardless of scroll position. */}
+            {showBooking && calendlyUrl && (
+                <Suspense fallback={null}>
+                <MeetingBooking
+                    calendlyUrl={calendlyUrl}
+                    sessionId={sessionId}
+                    provider={meetingProvider || 'calendly'}
+                    onDismiss={() => setShowBooking(false)}
+                    onBooked={async (bookingData) => {
+                        const sid = sessionId || bookingData.session_id;
+                        if (!sid) return;
+                        try {
+                            await submitMeetingBooked(sid, bookingData);
+                            setMeetingBooked(true);
+                            setShowBooking(false);
+                            setMessages(prev => [
+                                ...prev,
+                                {
+                                    id: `meeting-booked-${Date.now()}`,
+                                    text: 'Great, your meeting is confirmed. Our team will connect with you soon.',
+                                    sender: 'bot',
+                                    timestamp: new Date().toISOString(),
+                                    feedback: null,
+                                }
+                            ]);
+                        } catch {
+                            setMessages(prev => [
+                                ...prev,
+                                {
+                                    id: `meeting-booked-error-${Date.now()}`,
+                                    text: 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
+                                    sender: 'bot',
+                                    timestamp: new Date().toISOString(),
+                                    feedback: null,
+                                }
+                            ]);
+                        }
+                    }}
+                />
+                </Suspense>
+            )}
+
             {/* ── Unified ChatInput — hidden when any form is active ── */}
             {!showLeadForm &&
              !showRating &&
@@ -2671,7 +2748,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onBookMeeting={() => {
                         if (settings.meeting_booking_enabled && !meetingBooked) {
                             const p = settings.meeting_provider || 'calendly';
-                            const url = p === 'zcal' ? settings.zcal_url : settings.calendly_url;
+                            const url = { calendly: settings.calendly_url, zcal: settings.zcal_url, calcom: settings.calcom_url }[p] || settings.calendly_url;
                             if (url) {
                                 setCalendlyUrl(url);
                                 setMeetingProvider(p);

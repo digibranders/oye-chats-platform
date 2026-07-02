@@ -209,8 +209,9 @@ class UpdateBotRequest(BaseModel):
     handoff_delay_seconds: int | None = None
     calendly_url: str | None = None
     meeting_booking_enabled: bool | None = None
-    meeting_provider: str | None = Field(None, pattern="^(calendly|zcal)$")
+    meeting_provider: str | None = Field(None, pattern="^(calendly|zcal|calcom)$")
     zcal_url: str | None = None
+    calcom_url: str | None = None
     # Each service is ``{name: str, url: str | None}``. Strings are accepted
     # for backward compat with the v1 list[str] shape and normalized to
     # ``{"name": str, "url": None}`` in the route handler.
@@ -233,6 +234,7 @@ class UpdateBotRequest(BaseModel):
         allowed = {
             "calendly_url": {"calendly.com"},
             "zcal_url": {"zcal.co"},
+            "calcom_url": {"cal.com"},
         }
         for field_name, valid_domains in allowed.items():
             value = getattr(self, field_name, None)
@@ -298,6 +300,7 @@ class BotResponse(BaseModel):
     meeting_booking_enabled: bool = False
     meeting_provider: str | None = None
     zcal_url: str | None = None
+    calcom_url: str | None = None
     # Always returned as ``[{name, url}]`` objects regardless of stored shape.
     services: list[dict] | None = None
     services_url: str | None = None  # Legacy field kept for compat.
@@ -423,6 +426,7 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
         "meeting_provider": bot.meeting_provider,
         "calendly_url": bot.calendly_url,
         "zcal_url": bot.zcal_url,
+        "calcom_url": bot.calcom_url,
         "bant_cta_options": _build_public_cta_options(bot),
         # ── Service status ──
         # ``is_offline=True`` flips the widget into "leave a message" mode
@@ -1032,6 +1036,7 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     meeting_booking_enabled=b.meeting_booking_enabled,
                     meeting_provider=b.meeting_provider,
                     zcal_url=b.zcal_url,
+                    calcom_url=b.calcom_url,
                     allowed_domains=list(b.allowed_domains or []),
                     domain_check_enabled=bool(b.domain_check_enabled),
                     is_active=b.is_active,
@@ -1395,6 +1400,7 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             meeting_booking_enabled=bot.meeting_booking_enabled,
             meeting_provider=bot.meeting_provider,
             zcal_url=bot.zcal_url,
+            calcom_url=bot.calcom_url,
             services=_normalize_services(bot.services),
             services_url=bot.services_url,
             allowed_domains=list(bot.allowed_domains or []),

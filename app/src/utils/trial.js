@@ -21,3 +21,35 @@ export function trialDaysLeft(iso, nowMs = Date.now()) {
   if (Number.isNaN(endMs)) return null;
   return Math.ceil((endMs - nowMs) / 86_400_000);
 }
+
+/**
+ * Whole days between now and an ISO-8601 timestamp, rounded UP. Same
+ * ceiling rule as {@link trialDaysLeft} so every countdown across the app
+ * agrees. Used for the post-trial data-retention grace window ("your
+ * workspace will be deleted in X days").
+ *
+ * @param {string} iso - ISO-8601 target timestamp.
+ * @param {number} [nowMs] - Reference instant in epoch ms; defaults to now.
+ * @returns {number|null} Ceil day count (0 or negative once lapsed), or
+ *   `null` when `iso` is missing/unparseable.
+ */
+export function daysUntil(iso, nowMs = Date.now()) {
+  const endMs = Date.parse(iso);
+  if (Number.isNaN(endMs)) return null;
+  return Math.ceil((endMs - nowMs) / 86_400_000);
+}
+
+/**
+ * Render a human-friendly absolute date from an ISO string, e.g.
+ * "Jul 16, 2026". Returns the input unchanged when unparseable so we
+ * never render "Invalid Date" in production.
+ */
+export function formatTrialDate(iso) {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso ?? '';
+  return new Date(ms).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
