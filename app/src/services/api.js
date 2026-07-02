@@ -188,6 +188,22 @@ export const resendVerification = async (email) => {
  * for invalid codes; only throws on network error).
  * @param {string} code
  */
+/**
+ * Standing referral attribution for the authenticated account. Drives the
+ * permanent-discount badge in the checkout modal — attribution is first-touch
+ * and cannot be removed, so the UI must never render it as an editable field.
+ */
+export const getReferralStatus = async () => {
+    try {
+        const response = await api.get('/affiliate/referral-status');
+        return response.data;
+    } catch {
+        // Non-fatal — the modal just falls back to the empty input; the
+        // server still applies any standing discount at checkout.
+        return { attributed: false, code: null, discount_pct: null };
+    }
+};
+
 export const applyReferralCode = async (code) => {
     try {
         const response = await api.post('/affiliate/apply-referral', { code });

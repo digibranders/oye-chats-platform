@@ -3,11 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     X, Check, Sparkles, Loader2, Crown, Zap,
     ShieldCheck, ExternalLink, Star, AlertCircle, Mail,
-    Gift, CheckCircle2, XCircle, X as XSmall,
+    Gift, CheckCircle2, XCircle,
 } from 'lucide-react';
 import {
     getSubscriptionPlans, createCheckoutSession, changePlan,
-    applyReferralCode, getBillingGeo, verifyRazorpaySubscription,
+    applyReferralCode, getBillingGeo, getReferralStatus, verifyRazorpaySubscription,
     startTrial,
 } from '../../services/api';
 import { openRazorpayCheckout } from '../../lib/razorpay';
@@ -99,6 +99,8 @@ export default function PlanModal({
     const [appliedCode, setAppliedCode] = useState(null);
     const [discountPct, setDiscountPct] = useState(0);
     const referralInputRef = useRef(null);
+    // Informational (non-error) checkout notice — e.g. "payment cancelled".
+    const [submitNotice, setSubmitNotice] = useState('');
 
     // ESC closes.
     useEffect(() => {
@@ -120,6 +122,7 @@ export default function PlanModal({
         setLoading(true);
         setLoadError('');
         setSubmitError('');
+        setSubmitNotice('');
         setBillingCycle(currentBillingCycle || 'monthly');
         setSelectedSlug(currentPlanSlug || MOST_POPULAR_SLUG);
         // Reset referral state on every open so we don't flash a previous
@@ -131,6 +134,17 @@ export default function PlanModal({
         setReferralMessage('');
         setAppliedCode(null);
         setDiscountPct(0);
+        setSubmitNotice('');
+        // Standing attribution: an account with a referral code attached gets
+        // its discount applied server-side at checkout no matter what this
+        // modal shows — so show the permanent badge, not an empty input that
+        // implies "no discount" (prod confusion, 2026-07-02).
+        getReferralStatus().then((rs) => {
+            if (cancelled || !rs?.attributed) return;
+            setReferralStatus('applied');
+            setAppliedCode(rs.code);
+            setDiscountPct(Number(rs.discount_pct) || 0);
+        });
         Promise.all([getSubscriptionPlans(), getBillingGeo().catch(() => null)])
             .then(([rows, geoProfile]) => {
                 if (cancelled) return;
@@ -189,14 +203,10 @@ export default function PlanModal({
         }
     }
 
-    function handleClearReferral() {
-        setReferralInput('');
-        setReferralStatus('idle');
-        setReferralMessage('');
-        setAppliedCode(null);
-        setDiscountPct(0);
-        setTimeout(() => referralInputRef.current?.focus(), 40);
-    }
+    // NOTE: there is deliberately no "clear referral" handler. Attribution
+    // is first-touch and permanent server-side (clients.referral_code_id) —
+    // the old X button only reset local state while checkout still charged
+    // the discounted price, which read as a billing bug (prod, 2026-07-02).
 
     async function handleCta(actionKind = 'auto') {
         if (!selected) return;
@@ -214,6 +224,7 @@ export default function PlanModal({
             // nothing to do.
             if (hasActiveSubscription) {
                 setSubmitError('');
+                setSubmitNotice('');
                 setSubmitting(true);
                 try {
                     await changePlan(selected.id, billingCycle);
@@ -243,6 +254,7 @@ export default function PlanModal({
         const takeTrialPath = actionKind === 'trial' || (actionKind === 'auto' && trialEligible);
         if (takeTrialPath) {
             setSubmitError('');
+            setSubmitNotice('');
             setSubmitting(true);
             try {
                 const trial = await startTrial(selected.slug);
@@ -321,6 +333,7 @@ export default function PlanModal({
                     // come back to it. Anything else, we show as-is so the
                     // user sees the failure reason from Razorpay.
                     if (cbErr?.code === 'dismissed') {
+                        setSubmitNotice('Payment cancelled — you have not been charged.');
                         return;
                     }
                     throw cbErr;
@@ -495,6 +508,7 @@ export default function PlanModal({
                                                 currentPlan={plans.find((p) => p.slug === currentPlanSlug) || null}
                                                 submitting={submitting}
                                                 submitError={submitError}
+                                                submitNotice={submitNotice}
                                                 onCta={handleCta}
                                                 referral={{
                                                     input: referralInput,
@@ -507,7 +521,6 @@ export default function PlanModal({
                                                     discountPct,
                                                     inputRef: referralInputRef,
                                                     onApply: handleApplyReferral,
-                                                    onClear: handleClearReferral,
                                                 }}
                                             />
                                         </motion.div>
@@ -640,7 +653,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
 function FocusedPlan({
     plan, billingCycle, geo, isCurrent, currentPlanSlug, currentSubscriptionStatus,
     hasActiveSubscription, currentPlan,
-    submitting, submitError, onCta, referral,
+    submitting, submitError, submitNotice, onCta, referral,
 }) {
     const meta = TIER_META[plan.slug] || { icon: Sparkles, accent: 'slate', description: '' };
     const accent = ACCENTS[meta.accent] || ACCENTS.slate;
@@ -710,6 +723,15 @@ function FocusedPlan({
                     <span>{submitError}</span>
                 </div>
             )}
+            {!submitError && submitNotice && (
+                <div
+                    role="status"
+                    className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 text-sky-700 dark:text-sky-300 text-[13px]"
+                >
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                    <span>{submitNotice}</span>
+                </div>
+            )}
 
             {/* CTAs — usually one button; Starter / Standard with an
                 eligible trial render two (trial + paid). The first CTA
@@ -767,7 +789,7 @@ function ReferralBlock({ referral }) {
     if (!referral) return null;
     const {
         input, setInput, status, setStatus, setMessage, message,
-        appliedCode, discountPct, inputRef, onApply, onClear,
+        appliedCode, discountPct, inputRef, onApply,
     } = referral;
     const isApplied = status === 'applied' && appliedCode;
 
@@ -796,29 +818,25 @@ function ReferralBlock({ referral }) {
                         transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                         className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 px-3 py-2"
                     >
-                        <div className="flex items-center gap-2 min-w-0">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                            <p className="text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300 truncate">
-                                <code className="font-mono tracking-wider">{appliedCode}</code> applied
-                                {discountPct > 0 && (
-                                    <span className="ml-1 font-bold">— {discountPct.toFixed(0)}% off every renewal</span>
-                                )}
-                                {discountPct === 0 && (
-                                    <span className="ml-1 text-emerald-600/80 dark:text-emerald-400/80 font-normal">
-                                        — thanks, your referrer is credited
-                                    </span>
-                                )}
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                <p className="text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300 truncate">
+                                    <code className="font-mono tracking-wider">{appliedCode}</code>
+                                    {discountPct > 0 && (
+                                        <span className="ml-1 font-bold">— {discountPct.toFixed(0)}% off every renewal</span>
+                                    )}
+                                    {discountPct === 0 && (
+                                        <span className="ml-1 text-emerald-600/80 dark:text-emerald-400/80 font-normal">
+                                            — thanks, your referrer is credited
+                                        </span>
+                                    )}
+                                </p>
+                            </div>
+                            <p className="mt-1 text-[11px] text-emerald-700/80 dark:text-emerald-400/70">
+                                Applied automatically at checkout — linked to your account and can&apos;t be removed.
                             </p>
                         </div>
-                        <button
-                            type="button"
-                            onClick={onClear}
-                            className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-colors"
-                            aria-label="Remove referral code"
-                            title="Remove referral code"
-                        >
-                            <XSmall className="w-3.5 h-3.5" />
-                        </button>
                     </motion.div>
                 ) : (
                     <motion.div

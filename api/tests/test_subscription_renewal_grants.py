@@ -107,3 +107,12 @@ def test_charged_grants_once_per_period(db, monkeypatch):
     rzp._handle_subscription_charged(db, _charged("sub_h4", E2, payment_id="pay_e2_dup"))
     db.commit()
     assert len(calls) == 1
+
+
+def test_charged_for_unknown_subscription_raises_for_retry(db):
+    """First-charge race: ``subscription.charged`` can beat ``subscription.
+    activated``. The handler must RAISE (→ dead-letter + 5xx → Razorpay
+    redelivers after activation lands), never ack-drop — a 2xx is final and
+    permanently loses the period's invoice (prod, 2026-07-02)."""
+    with pytest.raises(rzp.WebhookOutOfOrder):
+        rzp._handle_subscription_charged(db, _charged("sub_never_linked", E1))
