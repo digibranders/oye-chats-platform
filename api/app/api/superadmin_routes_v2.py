@@ -1173,6 +1173,9 @@ def langfuse_summary(
 def system_health_full(_admin: Client = Depends(get_superadmin)):
     """Detailed health snapshot with per-service connectivity."""
     from app.config import settings
+    from app.core.cache import get_redis
+    from app.worker.enqueue import WORKER_ENABLED
+    from app.worker.tasks import WORKER_HEARTBEAT_KEY
 
     health: dict[str, Any] = {"status": "healthy", "version": getattr(settings, "VERSION", "unknown")}
 
@@ -1183,6 +1186,35 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
     except Exception:
         health["database"] = "unreachable"
         health["status"] = "degraded"
+
+    # -- Redis --
+    redis_ok = False
+    redis_client = None
+    try:
+        redis_client = get_redis()
+        if redis_client is not None:
+            redis_client.ping()
+            redis_ok = True
+    except Exception:
+        redis_ok = False
+    health["redis"] = "connected" if redis_ok else "unreachable"
+    if not redis_ok:
+        health["status"] = "degraded"
+
+    # -- Worker heartbeat: the ARQ worker refreshes WORKER_HEARTBEAT_KEY on a
+    # short interval, so a present key means it checked in within the TTL. --
+    if not WORKER_ENABLED:
+        health["worker"] = "disabled"
+    else:
+        worker_alive = False
+        if redis_ok and redis_client is not None:
+            try:
+                worker_alive = redis_client.get(WORKER_HEARTBEAT_KEY) is not None
+            except Exception:
+                worker_alive = False
+        health["worker"] = "connected" if worker_alive else "unreachable"
+        if not worker_alive:
+            health["status"] = "degraded"
 
     health["razorpay"] = "connected" if getattr(settings, "RAZORPAY_ENABLED", False) else "disabled"
     health["storage"] = "connected" if getattr(settings, "R2_BUCKET_NAME", None) else "unknown"
