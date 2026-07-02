@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import httpx
 
-from app.config import JINA_API_KEY, JINA_FETCH_CONCURRENCY, JINA_READER_URL
+from app.config import JINA_API_KEY, JINA_READER_URL
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,11 @@ async def fetch_urls(
 
     owns_client = _client is None
     client = _client or httpx.AsyncClient(timeout=_TIMEOUT)
-    sem = asyncio.Semaphore(JINA_FETCH_CONCURRENCY)
+    # Resolved per crawl (not at import) so the super-admin Crawler card can
+    # tune parallelism at runtime; falls back to the env default.
+    from app.services import runtime_config
+
+    sem = asyncio.Semaphore(runtime_config.get_jina_fetch_concurrency())
 
     async def _fetch_and_report(url: str) -> dict | None:
         page = await _fetch_one(client, url, sem)

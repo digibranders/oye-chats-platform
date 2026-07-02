@@ -1024,6 +1024,19 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
                 detail=f"Cannot reduce below the {floor} included seat(s) on your plan.",
             )
 
+        # Mirror the floor check with a ceiling check: a client should never
+        # be able to pay for more seats than the plan allows them to
+        # actually use. `operator_routes.create_operator` caps operator
+        # *creation* at this same value — without this check here, billing
+        # would happily sell seats past that cap, charging for capacity
+        # the client could never activate.
+        ceiling = (plan.limits or {}).get("operators")
+        if isinstance(ceiling, int) and ceiling > 0 and new_total > ceiling:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot exceed the {ceiling} seat(s) allowed on your plan. Upgrade for more.",
+            )
+
         try:
             from app.services import razorpay_service
 

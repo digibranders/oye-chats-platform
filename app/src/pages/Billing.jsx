@@ -779,7 +779,7 @@ function OverviewTab({
           </h3>
           <span className="text-[11px] text-surface-500 dark:text-surface-400">
             {isBotView
-              ? 'Isolated from your other bots — switch bot in the sidebar to view its credits.'
+              ? 'Isolated from your other bots. Switch bot in the sidebar to view its credits.'
               : 'This bot uses your account’s shared credit pool (Free or legacy).'}
           </span>
         </div>
@@ -900,7 +900,7 @@ function OverviewTab({
                 ? 'Free plan — top-ups not available. Upgrade to Starter to keep going past your monthly limit.'
                 : dTopupRemaining > 0
                   ? `Oldest expires ${fmtDate(dSoonestExpiry)}`
-                  : 'No top-up credits yet — they roll over for 12 months.'}
+                  : 'No top-up credits yet. They roll over for 12 months.'}
             </div>
             <div className="mt-4">
               <Button variant="outline" size="sm" onClick={handleTopupClick}>
@@ -1237,7 +1237,7 @@ function SeatsTab({
               </div>
               <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
                 {includedSeats > 0
-                  ? `Extra seats: ${seatPriceLabel} each / month. Live chat is free of credit charges — covered by the seat fee.`
+                  ? `Extra seats: ${seatPriceLabel} each / month. Live chat is free of credit charges, covered by the seat fee.`
                   : 'Upgrade to Starter to unlock live chat and invite operators to handle conversations.'}
               </div>
             </div>
