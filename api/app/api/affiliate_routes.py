@@ -31,7 +31,7 @@ from app.api.auth import get_current_client_strict as get_current_client
 from app.config import FRONTEND_URL
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
-from app.db.models import Affiliate, Client
+from app.db.models import Affiliate, Client, ReferralCode
 from app.db.session import get_session
 from app.services import affiliate_service
 from app.services.affiliate_service import (
@@ -377,6 +377,34 @@ class ApplyReferralResponse(BaseModel):
     # render the strikethrough/new-price UX regardless of when attribution
     # happened.
     discount_pct: float = 0.0
+
+
+class ReferralStatusResponse(BaseModel):
+    attributed: bool
+    code: str | None = None
+    discount_pct: float | None = None
+
+
+@router.get("/affiliate/referral-status", response_model=ReferralStatusResponse)
+def referral_status(client: Client = Depends(get_current_client)):
+    """Return the account's standing referral attribution, if any.
+
+    The checkout modal calls this on open so an already-attributed account
+    shows its permanent discount badge instead of an editable code field —
+    attribution is first-touch and cannot be removed, and the server applies
+    the discount at checkout regardless of what the UI shows.
+    """
+    with get_session() as session:
+        row = session.query(Client.referral_code_id).filter(Client.id == client.id).first()
+        code_id = row[0] if row else None
+        code_row = session.get(ReferralCode, code_id) if code_id else None
+        if code_row is None:
+            return ReferralStatusResponse(attributed=False)
+        return ReferralStatusResponse(
+            attributed=True,
+            code=code_row.code,
+            discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
+        )
 
 
 @router.post("/affiliate/apply-referral", response_model=ApplyReferralResponse)
