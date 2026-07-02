@@ -476,6 +476,19 @@ def list_invoices(client: Client = Depends(get_current_client)):
                 "period_end": inv.period_end.isoformat() if inv.period_end else None,
                 "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
                 "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                # Invoicing v2 tax-document fields (null on legacy rows).
+                "invoice_number": inv.invoice_number,
+                "invoice_type": inv.invoice_type,
+                "issued_at": inv.issued_at.isoformat() if inv.issued_at else None,
+                "taxable_value_minor": inv.taxable_value_minor,
+                "total_tax_minor": inv.total_tax_minor,
+                "cgst_minor": inv.cgst_minor,
+                "sgst_minor": inv.sgst_minor,
+                "igst_minor": inv.igst_minor,
+                "tax_rate_bps": inv.tax_rate_bps,
+                "hsn_sac": inv.hsn_sac,
+                "supply_kind": inv.supply_kind,
+                "is_export": inv.is_export,
             }
             for inv in invoices
         ]

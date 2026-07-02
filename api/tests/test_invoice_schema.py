@@ -91,3 +91,44 @@ def test_invoice_counter_composite_key(db):
         text("SELECT last_serial FROM invoice_counters WHERE financial_year='25-26' AND prefix='DB'")
     ).scalar()
     assert row == 41
+
+
+def test_list_invoices_exposes_tax_fields(db, monkeypatch):
+    from contextlib import contextmanager
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient as HttpClient
+
+    from app.api import subscription_routes
+    from app.api.auth import get_current_client_strict
+
+    @contextmanager
+    def _ctx(session):
+        yield session
+
+    client = _mk_client(db, "inv-list-tax@test.example")
+    db.add(
+        Invoice(
+            client_id=client.id,
+            amount_cents=179900,
+            currency="inr",
+            status="paid",
+            invoice_type="tax_invoice",
+            invoice_number="DB/25-26/000009",
+            total_tax_minor=27442,
+            taxable_value_minor=152458,
+            hsn_sac="997331",
+            supply_kind="intra",
+        )
+    )
+    db.flush()
+    monkeypatch.setattr(subscription_routes, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(subscription_routes.router)
+    app.dependency_overrides[get_current_client_strict] = lambda: client
+    res = HttpClient(app).get("/subscriptions/invoices")
+    assert res.status_code == 200, res.text
+    row = next(r for r in res.json() if r.get("invoice_number") == "DB/25-26/000009")
+    assert row["invoice_type"] == "tax_invoice"
+    assert row["total_tax_minor"] == 27442
+    assert row["taxable_value_minor"] == 152458
