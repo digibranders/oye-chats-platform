@@ -39,6 +39,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.services.audit_service import record_audit
+from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
 
 logger = logging.getLogger(__name__)
@@ -291,6 +292,16 @@ def reset_password(
         target = session.get(Client, client_id)
         if not target:
             raise HTTPException(status_code=404, detail="Client not found")
+
+        # Issue a real password-reset: generate a 6-digit OTP (15-min TTL) and
+        # email it to the customer, reusing the same mechanism as the customer
+        # self-service /auth/request-password-reset + /auth/reset-password flow.
+        # The customer sets their own new password — the super-admin never sees
+        # or sets it. (Previously this endpoint only audit-logged and no-op'd.)
+        otp = str(secrets.randbelow(900000) + 100000)
+        target.reset_otp = otp
+        target.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+
         record_audit(
             session,
             actor=admin,
@@ -300,7 +311,18 @@ def reset_password(
             request=request,
         )
         session.commit()
-    return {"ok": True}
+        target_email = target.email
+
+    try:
+        send_password_reset_email(target_email, otp)
+    except Exception as exc:  # noqa: BLE001 — surface a clean 502 to the caller
+        logger.error("Failed to send password-reset email for client %s: %s", client_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not send the password-reset email. Please try again.",
+        ) from exc
+
+    return {"ok": True, "message": "Password-reset email sent to the customer."}
 
 
 # ── Bots ────────────────────────────────────────────────────────────────────
