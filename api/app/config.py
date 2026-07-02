@@ -410,3 +410,18 @@ JINA_FALLBACK_ENABLED = _env("JINA_FALLBACK_ENABLED", "true").strip().lower() in
     "yes",
 )
 JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))
+
+# ── Streaming crawl ingestion ────────────────────────────────────────────────
+# Overlap the embed+ingest phase with the scrape phase: as pages come back from
+# the crawl provider they are ingested in waves instead of waiting for the whole
+# site. Cuts large-crawl wall-clock from scrape+embed to ~max(scrape, embed) and
+# keeps the per-minute embedding quota busy during the scrape. The flag is a
+# kill switch back to the sequential scrape-then-embed behaviour.
+CRAWL_STREAM_INGEST_ENABLED = _env("CRAWL_STREAM_INGEST_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# Pages per ingestion wave. Small enough to start embedding early and bound
+# memory; large enough that per-wave session/commit overhead stays negligible.
+CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))

@@ -37,6 +37,7 @@ async def crawl_website(
     use_js: bool = False,
     client_id: int | None = None,
     on_page: Callable[[str, bool], None] | None = None,
+    on_result: Callable[[dict], None] | None = None,
     max_depth: int | None = None,
     concurrency: int | None = None,
 ) -> dict:
@@ -46,10 +47,12 @@ async def crawl_website(
        ``max_pages`` — this is the authoritative set and includes deep/orphan
        pages a link crawl never reaches.
     2. Scrape each URL via :func:`fetch_urls` (Spider→Jina failover, ordered,
-       per-page ``on_page`` progress).
+       per-page ``on_page`` progress, per-page ``on_result`` streaming).
     3. If the site has no usable sitemap (discovery yields only the seed), fall
        back to Spider's recursive link crawl (``max_depth``/``concurrency``),
-       with a Jina fallback on Spider failure.
+       with a Jina fallback on Spider failure. The recursive crawl is a single
+       blocking call, so it cannot stream ``on_result`` — callers must handle
+       "no pages streamed" (the orchestrator's final ingest sweep does).
     """
     cap = max_pages or _FALLBACK_DISCOVERY_CAP
     try:
@@ -60,7 +63,7 @@ async def crawl_website(
 
     if len(discovered) > 1:
         logger.info("Sitemap-seeded crawl: scraping %d URLs for %s (cap=%s)", len(discovered), url, cap)
-        return await fetch_urls(discovered, use_js=use_js, client_id=client_id, on_page=on_page)
+        return await fetch_urls(discovered, use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result)
 
     # No usable sitemap — Spider recursive link crawl, Jina fallback on failure.
     logger.info("No usable sitemap for %s — Spider recursive link crawl (depth=%s)", url, max_depth)
@@ -77,7 +80,9 @@ async def crawl_website(
         if not JINA_FALLBACK_ENABLED:
             raise
         logger.warning("Spider crawl failed for %s — Jina fallback", url, exc_info=True)
-        return await _jina_fetch_urls(discovered or [url], use_js=use_js, client_id=client_id, on_page=on_page)
+        return await _jina_fetch_urls(
+            discovered or [url], use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result
+        )
 
 
 async def fetch_urls(urls: list[str], **kwargs) -> dict:

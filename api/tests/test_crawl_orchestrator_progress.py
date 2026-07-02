@@ -27,7 +27,7 @@ async def test_ordered_crawl_emits_live_progress(monkeypatch):
         lambda *a, **k: {"chunks": 2, "pages_charged": 2, "credits_deducted": 10},
     )
 
-    async def fake_fetch_urls(urls, *, use_js, client_id, on_page=None):
+    async def fake_fetch_urls(urls, *, use_js, client_id, on_page=None, on_result=None):
         # Simulate pages completing one by one, driving the progress callback.
         for u in urls:
             if on_page is not None:
@@ -71,7 +71,7 @@ async def test_crawl_failure_still_writes_terminal_failed(monkeypatch):
     monkeypatch.setattr(orch, "release_crawl_lock", lambda cid: None)
     monkeypatch.setattr(orch, "set_crawl_progress", lambda cid, **kw: progress_calls.append(kw))
 
-    async def boom_fetch(urls, *, use_js, client_id, on_page=None):
+    async def boom_fetch(urls, *, use_js, client_id, on_page=None, on_result=None):
         raise orch.CrawlerError("spider + jina both down")
 
     monkeypatch.setattr(orch, "fetch_urls", boom_fetch)

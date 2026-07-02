@@ -280,7 +280,7 @@ class TestRunWebIngestion:
 class TestBatchWebIngestion:
     def test_empty_pages_returns_zero(self):
         result = batch_web_ingestion(1, [])
-        assert result == {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
+        assert result == {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
 
     def test_skips_already_processed(self):
         session = MagicMock()
@@ -401,7 +401,7 @@ class TestBatchWebIngestion:
                 deduct_reference_id=5,
             )
 
-        assert result == {"chunks": 2, "pages_charged": 2, "credits_deducted": 6}
+        assert result == {"chunks": 2, "pages_charged": 2, "credits_deducted": 6, "aborted": False}
         # One deduction per page, in the same session as the chunk insert.
         assert mock_deduct.call_count == 2
         for call in mock_deduct.call_args_list:

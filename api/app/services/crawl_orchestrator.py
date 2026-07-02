@@ -6,8 +6,11 @@ The orchestrator:
 
 1. Runs the crawl via the crawl provider (Spider primary, Jina fallback),
    emitting live per-page progress + a heartbeat so long crawls aren't reaped.
-2. Batch-ingests the discovered pages, deducting credits per page in the
-   same DB transaction as the chunk insert (atomic billing).
+2. Ingests the discovered pages, deducting credits per page in the same DB
+   transaction as the chunk insert (atomic billing). With streaming enabled
+   (CRAWL_STREAM_INGEST_ENABLED) ingestion runs in waves *concurrently with*
+   the scrape, followed by a dedup-protected final sweep; otherwise it is a
+   single batch after the crawl completes.
 3. Optionally sweeps orphan chunks for pages that were removed from the
    site since the last crawl.
 4. Extracts brand tone, company context, and recommended colors from the
@@ -24,9 +27,11 @@ that point and releases it at the end.
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 
+from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
@@ -138,9 +143,112 @@ async def run_full_crawl(
             started_at=started_at,
         )
 
+    # ── Streaming ingestion (scrape ∥ embed) ─────────────────────────────────
+    # Pages land on ``stream_queue`` as the provider finishes them; a single
+    # consumer task ingests them in waves of CRAWL_INGEST_WAVE_PAGES while the
+    # rest of the site is still being scraped. This overlaps the embed phase
+    # with the scrape phase (wall-clock ≈ max of the two instead of their sum)
+    # and keeps the per-minute embedding quota busy during the scrape.
+    #
+    # Safety comes from ``batch_web_ingestion`` being per-page idempotent
+    # (content-hash dedup + per-URL replace + per-page commit+billing TX): the
+    # final full-page sweep after the crawl re-offers every page, and anything
+    # a wave already ingested is skipped by the hash check for free. So the
+    # recursive-crawl path (which can't stream) and any page that slips past
+    # the queue are still ingested exactly once.
+    stream_queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    ingest_totals = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
+    billing_aborted = False  # insufficient credits / kill switch → stop embedding
+    streaming = CRAWL_STREAM_INGEST_ENABLED
+
+    def _on_result(page: dict) -> None:
+        """Provider callback (event-loop thread): queue a finished page."""
+        stream_queue.put_nowait(page)
+
+    def _report_embed_stream(done_cum: int) -> None:
+        """Live cumulative embed progress while the scrape may still be running."""
+        set_crawl_progress(
+            client_id,
+            status="running",
+            urls=list(crawled_urls),
+            pages_crawled=len(crawled_urls),
+            max_pages=progress_max,
+            phase=f"Embedding — {done_cum:,} chunks so far",
+            cancellable=True,
+            started_at=started_at,
+        )
+
+    def _ingest_wave(wave: list[dict], chunk_offset: int) -> dict:
+        return batch_web_ingestion(
+            client_id,
+            wave,
+            bot_id=bot_id,
+            cost_per_page=cost_per_page,
+            deduct_reason="url_scan",
+            deduct_reference_id=bot_id,
+            embed_progress_cb=lambda done, _total: _report_embed_stream(chunk_offset + done),
+            crawl_started_at=started_at,
+        )
+
+    async def _ingest_consumer() -> None:
+        """Drain ``stream_queue`` into wave-sized ``batch_web_ingestion`` calls.
+
+        Waves run sequentially (one executor call at a time) so DB sessions and
+        chunk buffers stay bounded; parallelism lives inside the embed call.
+        A ``None`` sentinel marks end-of-stream: the tail wave is flushed and
+        the task returns. On a billing abort, later pages are drained and
+        dropped — embedding pages the user can't pay for wastes the quota.
+        """
+        nonlocal billing_aborted
+        loop = asyncio.get_event_loop()
+        buffer: list[dict] = []
+        while True:
+            page = await stream_queue.get()
+            done = page is None
+            if not done:
+                buffer.append(page)
+            if billing_aborted:
+                # Set either by a wave that couldn't bill or by the cancel
+                # path — drop everything buffered, including pages that were
+                # queued before the flag flipped.
+                buffer.clear()
+            if buffer and (done or len(buffer) >= CRAWL_INGEST_WAVE_PAGES):
+                wave, buffer = buffer, []
+                offset = ingest_totals["chunks"]
+                result = await loop.run_in_executor(None, lambda w=wave, o=offset: _ingest_wave(w, o))
+                ingest_totals["chunks"] += result["chunks"]
+                ingest_totals["pages_charged"] += result["pages_charged"]
+                ingest_totals["credits_deducted"] += result["credits_deducted"]
+                if result.get("aborted"):
+                    billing_aborted = True
+            if done:
+                return
+
+    async def _finish_consumer(consumer: asyncio.Task | None, *, discard_pending: bool = False) -> None:
+        """Signal end-of-stream and wait for in-flight waves to finish.
+
+        ``discard_pending=True`` (cancel path) drops queued-but-uningested
+        pages instead of embedding them. An executor-bound wave that already
+        started cannot be interrupted; we wait it out (bounded: one wave).
+        """
+        nonlocal billing_aborted
+        if consumer is None:
+            return
+        if discard_pending:
+            billing_aborted = True
+        stream_queue.put_nowait(None)
+        await consumer
+
+    consumer_task: asyncio.Task | None = None
+
     try:
+        if streaming:
+            consumer_task = asyncio.create_task(_ingest_consumer())
+        stream_cb = _on_result if streaming else None
+
         # Heartbeat covers the single blocking recursive Spider /crawl call; the
-        # ordered path additionally reports real per-page progress via on_page.
+        # ordered path additionally reports real per-page progress via on_page
+        # and streams finished pages into ingestion via on_result.
         async with crawl_heartbeat(client_id):
             if ordered_urls:
                 logger.info(
@@ -149,7 +257,13 @@ async def run_full_crawl(
                     client_id,
                     bot_id,
                 )
-                crawl_data = await fetch_urls(ordered_urls, use_js=use_js, client_id=client_id, on_page=_report_page)
+                crawl_data = await fetch_urls(
+                    ordered_urls,
+                    use_js=use_js,
+                    client_id=client_id,
+                    on_page=_report_page,
+                    on_result=stream_cb,
+                )
             else:
                 logger.info("Crawling URL (sitemap-first): %s for client %s, bot_id=%s", url, client_id, bot_id)
                 crawl_data = await crawl_website(
@@ -158,6 +272,7 @@ async def run_full_crawl(
                     use_js=use_js,
                     client_id=client_id,
                     on_page=_report_page,
+                    on_result=stream_cb,
                     max_depth=max_depth,
                     concurrency=concurrency,
                 )
@@ -193,42 +308,61 @@ async def run_full_crawl(
             started_at=started_at,
         )
 
+        # Flush the streaming consumer: waves already in flight finish, the
+        # buffered tail is ingested, and the totals below reflect all of it.
+        # Heartbeat spans the wait — the tail wave can be a multi-minute embed.
+        if consumer_task is not None:
+            async with crawl_heartbeat(client_id):
+                await _finish_consumer(consumer_task)
+            consumer_task = None
+
+        sweep_offset = ingest_totals["chunks"]
+
         def _report_embed(done_chunks: int, total_chunks: int) -> None:
             """Live embed progress — keeps the UI moving through the multi-minute
             embedding phase (and refreshes the heartbeat) instead of sitting at
-            'N pages scanned'."""
+            'N pages scanned'. Counts are cumulative across the streamed waves."""
             set_crawl_progress(
                 client_id,
                 status="running",
                 urls=valid_urls,
                 pages_crawled=pages_processed,
                 max_pages=progress_max,
-                phase=f"Embedding {done_chunks:,}/{total_chunks:,} chunks",
+                phase=f"Embedding {sweep_offset + done_chunks:,}/{sweep_offset + total_chunks:,} chunks",
                 cancellable=False,
                 started_at=started_at,
             )
 
-        logger.info("Batch ingesting %d pages", pages_processed)
+        # Final sweep over the full page list. With streaming on, everything a
+        # wave already ingested is skipped by the content-hash dedup, so this
+        # only picks up stragglers (and is the sole ingest path for the
+        # non-streaming / recursive-crawl cases). Skipped entirely after a
+        # billing abort — those pages can't be paid for.
         loop = asyncio.get_event_loop()
-        # Heartbeat spans the embed loop — CPU/network-bound and the phase most
-        # likely to exceed the reaper's staleness window on a large crawl.
-        async with crawl_heartbeat(client_id):
-            ingest_result = await loop.run_in_executor(
-                None,
-                lambda: batch_web_ingestion(
-                    client_id,
-                    valid_pages,
-                    bot_id=bot_id,
-                    cost_per_page=cost_per_page,
-                    deduct_reason="url_scan",
-                    deduct_reference_id=bot_id,
-                    embed_progress_cb=_report_embed,
-                    crawl_started_at=started_at,
-                ),
-            )
-        total_chunks = ingest_result["chunks"]
-        pages_charged = ingest_result["pages_charged"]
-        credits_deducted = ingest_result["credits_deducted"]
+        if not billing_aborted:
+            logger.info("Batch ingesting %d pages (%d chunks already streamed)", pages_processed, sweep_offset)
+            # Heartbeat spans the embed loop — CPU/network-bound and the phase
+            # most likely to exceed the reaper's staleness window on a large crawl.
+            async with crawl_heartbeat(client_id):
+                ingest_result = await loop.run_in_executor(
+                    None,
+                    lambda: batch_web_ingestion(
+                        client_id,
+                        valid_pages,
+                        bot_id=bot_id,
+                        cost_per_page=cost_per_page,
+                        deduct_reason="url_scan",
+                        deduct_reference_id=bot_id,
+                        embed_progress_cb=_report_embed,
+                        crawl_started_at=started_at,
+                    ),
+                )
+            ingest_totals["chunks"] += ingest_result["chunks"]
+            ingest_totals["pages_charged"] += ingest_result["pages_charged"]
+            ingest_totals["credits_deducted"] += ingest_result["credits_deducted"]
+        total_chunks = ingest_totals["chunks"]
+        pages_charged = ingest_totals["pages_charged"]
+        credits_deducted = ingest_totals["credits_deducted"]
 
         # Orphan sweep: remove chunks for pages that disappeared from the site.
         # Only valid for a FULL re-crawl. A partial (ordered_urls) crawl fetches
@@ -368,27 +502,30 @@ async def run_full_crawl(
 
         return result_payload
     except CrawlCancelled as exc:
-        # User pressed Cancel — honour it FAST. Cancel must feel instant; we
-        # do not run any further work (especially not OpenAI embeddings,
-        # which take seconds per chunk and stall the UI for minutes when the
-        # subprocess collected dozens of pages before stopping). We simply
-        # write the terminal status and return.
+        # User pressed Cancel — honour it FAST. We stop scraping, discard every
+        # page not yet ingested (``discard_pending=True`` drops the queued
+        # buffer instead of embedding it), and only wait out a wave that is
+        # already mid-embed — that work is committed+billed atomically per page
+        # and cannot be interrupted safely.
         #
-        # Trade-off: pages that were crawled but not yet ingested are
-        # discarded. That matches user intent — they clicked Cancel because
-        # they wanted the work to stop. Credits are deducted per page inside
-        # ``batch_web_ingestion``, so by skipping the ingest we also skip the
-        # charge for those pages. Nothing the user paid for is lost; we just
-        # didn't bill them for work they asked us to abandon.
+        # Trade-off: with streaming, waves ingested *before* the cancel are
+        # kept and billed — that content is already live in the bot's knowledge
+        # base and the charge matches delivered work. Pages crawled but not yet
+        # ingested are discarded unbilled, same as before. The payload reports
+        # the real partial totals so the UI never claims 0 for work that was
+        # actually delivered.
+        with contextlib.suppress(Exception):
+            await _finish_consumer(consumer_task, discard_pending=True)
+        consumer_task = None
         partial = exc.partial_result or {}
         partial_results = partial.get("results") or []
         partial_urls = [p["url"] for p in partial_results if p.get("url")]
         result_payload = {
             "message": "Crawl cancelled by user",
             "root_url": url,
-            "pages_processed": 0,
-            "chunks_processed": 0,
-            "credits_deducted": 0,
+            "pages_processed": ingest_totals["pages_charged"],
+            "chunks_processed": ingest_totals["chunks"],
+            "credits_deducted": ingest_totals["credits_deducted"],
             "pages_crawled": partial_urls,
         }
         set_crawl_progress(
@@ -397,7 +534,12 @@ async def run_full_crawl(
             urls=partial_urls,
             result=result_payload,
         )
-        logger.info("Cancelled crawl for client %s: %d pages discovered, none ingested", client_id, len(partial_urls))
+        logger.info(
+            "Cancelled crawl for client %s: %d pages discovered, %d chunks already ingested",
+            client_id,
+            len(partial_urls),
+            ingest_totals["chunks"],
+        )
         return result_payload
     except CrawlerError as exc:
         logger.error("Crawling failed for client %s: %s", client_id, exc)
@@ -416,4 +558,13 @@ async def run_full_crawl(
         )
         raise
     finally:
+        # Never leak the consumer task: on any failure path, drop pending pages
+        # and wait out at most one in-flight wave (already-committed work stays
+        # — it's billed atomically per page). suppress() keeps a consumer crash
+        # from masking the original exception; its traceback is logged here.
+        if consumer_task is not None:
+            try:
+                await _finish_consumer(consumer_task, discard_pending=True)
+            except Exception:
+                logger.exception("Streaming ingest consumer failed during crawl teardown for client %s", client_id)
         release_crawl_lock(client_id)
