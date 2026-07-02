@@ -15,6 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
@@ -1112,7 +1113,33 @@ class CreditLedger(Base):
     # against legacy-pooled bots after rollout).
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="SET NULL"), nullable=True, index=True)
     delta = Column(Integer, nullable=False)
-    reason = Column(String, nullable=False)  # credit_reason ENUM in PG
+    # The DB column is the native PG ENUM ``credit_reason``. The model MUST
+    # declare it as such: with a plain String, a multi-row flush (a deduction
+    # spanning two grants at a FIFO boundary — see credit_service.
+    # check_and_deduct) goes through SQLAlchemy's insertmanyvalues path, which
+    # binds the params as typed VARCHAR and Postgres rejects the enum insert
+    # with DatatypeMismatch; the page TX then rolls back and every retry hits
+    # the same boundary. Single-row inserts only ever worked via implicit cast.
+    # Values mirror the live enum (c1d2e3f4a5b6 + d9e3c1b7a4f2 migrations).
+    # Prod schema is alembic-managed (the type already exists there); the
+    # default create_type=True only matters for metadata.create_all in the
+    # throwaway-Postgres test fixtures, which need the type created with the
+    # table.
+    reason = Column(
+        PG_ENUM(
+            "plan_grant",
+            "topup",
+            "ai_chat",
+            "url_scan",
+            "email_send",
+            "manual_adjust",
+            "refund",
+            "expiry",
+            "document_upload",
+            name="credit_reason",
+        ).with_variant(String(), "sqlite"),
+        nullable=False,
+    )
     reference_id = Column(Integer, nullable=True)  # chat_message_id, document_id, invoice_id, etc.
     grant_id = Column(Integer, ForeignKey("credit_ledger.id", ondelete="SET NULL"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)  # only set on topup grants
