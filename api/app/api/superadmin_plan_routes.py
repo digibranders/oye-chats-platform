@@ -256,8 +256,19 @@ def update_plan(plan_id: int, request: UpdatePlanRequest, superadmin: Client = D
             for p in session.execute(select(Plan).where(Plan.is_default.is_(True), Plan.id != plan_id)).scalars().all():
                 p.is_default = False
 
+        # JSONB dict fields MERGE instead of replace. The admin editor sends
+        # only the keys its typed UI knows about; assigning that payload
+        # wholesale silently deletes every backend-only key — which is exactly
+        # what wiped Starter's max_crawl_* limits and topup_allowed feature in
+        # prod (entitlements fail closed, so missing keys read as 0/False and
+        # paid customers degrade to Free-tier gates). Merging means the editor
+        # can update or add keys but can never destroy ones it doesn't know.
+        _MERGE_JSON_FIELDS = ("limits", "features", "marketing")
         for field, value in update_data.items():
-            setattr(plan, field, value)
+            if field in _MERGE_JSON_FIELDS and isinstance(value, dict):
+                setattr(plan, field, {**(getattr(plan, field) or {}), **value})
+            else:
+                setattr(plan, field, value)
 
         session.commit()
 

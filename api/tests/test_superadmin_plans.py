@@ -119,3 +119,47 @@ def test_pricing_content_round_trip(db, monkeypatch):
     got = c.get("/superadmin/pricing-content").json()
     assert got["faq"][0]["q"] == "Refunds?"
     assert got["feature_matrix"][0]["label"] == "SSO"
+
+
+def test_update_plan_merges_limits_and_features_instead_of_replacing(db, monkeypatch):
+    """The admin editor sends only the JSON keys its typed UI knows about.
+    A PUT must merge those into the stored JSONB — replacing wholesale deleted
+    backend-only keys (max_crawl_*, topup_allowed) in prod, and entitlements
+    fail closed, so paid customers silently degraded to Free-tier gates."""
+    c = _client(db, monkeypatch)
+    create = c.post(
+        "/superadmin/plans",
+        json={
+            "name": "Merge",
+            "slug": "merge",
+            "limits": {
+                "ai_messages": 5000,
+                "max_crawl_pages": -1,
+                "max_crawl_depth": 3,
+            },
+            "features": {"live_chat": True, "topup_allowed": True},
+        },
+    )
+    assert create.status_code == 200, create.text
+    plan_id = create.json()["plan_id"]
+
+    # Editor-style partial payload: overlapping key updated, backend-only keys absent.
+    res = c.put(
+        f"/superadmin/plans/{plan_id}",
+        json={
+            "limits": {"ai_messages": 8000, "storage_mb": 100},
+            "features": {"live_chat": False},
+        },
+    )
+    assert res.status_code == 200, res.text
+
+    listing = c.get("/superadmin/plans").json()
+    updated = next(p for p in listing if p["id"] == plan_id)
+    # Sent keys applied…
+    assert updated["limits"]["ai_messages"] == 8000
+    assert updated["limits"]["storage_mb"] == 100
+    assert updated["features"]["live_chat"] is False
+    # …and backend-only keys survive the save.
+    assert updated["limits"]["max_crawl_pages"] == -1
+    assert updated["limits"]["max_crawl_depth"] == 3
+    assert updated["features"]["topup_allowed"] is True

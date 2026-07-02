@@ -361,13 +361,24 @@ export default function LiveChatTab() {
                             Each department can run its own schedule. Edit these in Team → Departments.
                         </p>
                     </div>
-                    <Link
-                        to="/team?tab=departments"
-                        className="inline-flex items-center gap-1 text-[13px] font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors shrink-0"
-                    >
-                        Manage
-                        <ChevronRight size={14} />
-                    </Link>
+                    {liveChatAllowed ? (
+                        <Link
+                            to="/team?tab=departments"
+                            className="inline-flex items-center gap-1 text-[13px] font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors shrink-0"
+                        >
+                            Manage
+                            <ChevronRight size={14} />
+                        </Link>
+                    ) : (
+                        <span
+                            aria-disabled="true"
+                            title="Upgrade your plan to manage departments"
+                            className="inline-flex items-center gap-1 text-[13px] font-medium text-surface-400 dark:text-surface-500 cursor-not-allowed select-none shrink-0"
+                        >
+                            Manage
+                            <ChevronRight size={14} />
+                        </span>
+                    )}
                 </div>
 
                 {departments.length === 0 ? (
