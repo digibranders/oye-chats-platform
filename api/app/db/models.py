@@ -29,6 +29,17 @@ class Client(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     company_name = Column(String, nullable=True)
+    # ── Buyer tax identity (invoicing v2) — all nullable; captured in account
+    # settings / at checkout. billing_state_code is the GST place-of-supply
+    # input (Circular 242/36/2024 makes state mandatory for online B2C —
+    # enforced at checkout, not at the column level, to keep signup friction
+    # unchanged).
+    legal_name = Column(String, nullable=True)
+    gstin = Column(String(15), nullable=True)
+    billing_address = Column(JSONB, nullable=True)  # {line1, line2, city, postal_code}
+    billing_country = Column(String(2), nullable=True)  # ISO-2, e.g. "IN"
+    billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
+    billing_email = Column(String, nullable=True)  # falls back to login email
     # Nullable because OAuth-only signups never set a password. The
     # /auth/google/callback path always creates the Client row first and
     # never assigns a hashed_password; password login for that account
