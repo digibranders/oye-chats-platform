@@ -201,11 +201,11 @@ function KpiInfoButton({ text, label }) {
         <div className="relative group">
             <button
                 type="button"
-                className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-surface-300 dark:border-surface-700 text-surface-500 dark:text-surface-400 hover:text-surface-700 dark:hover:text-surface-200 hover:border-surface-400 dark:hover:border-surface-500 focus:outline-none focus:ring-2 focus:ring-primary-400/60"
+                className="inline-flex items-center justify-center w-4 h-4 rounded-full text-surface-400 dark:text-surface-500 hover:text-surface-600 dark:hover:text-surface-300 focus:outline-none focus:ring-2 focus:ring-primary-400/60 transition-colors"
                 title={text}
                 aria-label={label}
             >
-                <Info className="w-2.5 h-2.5" />
+                <Info className="w-3.5 h-3.5" />
             </button>
             <div className="pointer-events-none absolute z-20 right-0 top-full mt-2 w-64 rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 px-3 py-2 text-[11px] font-medium text-surface-600 dark:text-surface-300 shadow-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
                 {text}
@@ -477,9 +477,10 @@ function ScorecardTab() {
                                 <AnimatedCounter value={total} />
                             </span>
                             <span className="text-sm font-semibold text-surface-500 dark:text-surface-400">total leads</span>
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${qualifiedRate > 0 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400'}`}>
+                            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold ${qualifiedRate > 0 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400'}`}>
                                 {qualifiedRate > 0 ? <TrendingUp size={11} /> : <Minus size={11} />}
-                                {qualifiedRate.toFixed(1)}% qualified
+                                <span>{qualifiedRate.toFixed(1)}% qualified</span>
+                                <KpiInfoButton text={KPI_INFO.qualifiedRate} label="Qualified rate info" />
                             </span>
                         </div>
                         <DistributionBar counts={counts} total={total} />
@@ -1168,8 +1169,8 @@ function FunnelTab() {
                     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                         <HeroStat label="Visitors" value={visitors.toLocaleString()} sub="Top of funnel" icon={Users} accent="text-slate-400" />
                         <HeroStat label="Engagement" value={`${engagementRate.toFixed(1)}%`} sub={`${engaged.toLocaleString()} engaged`} icon={Activity} accent="text-sky-400" />
-                        <HeroStat label="MQL rate" value={`${mqlRate.toFixed(1)}%`} sub={`${mql.toLocaleString()} qualified`} icon={Flame} accent="text-indigo-400" />
-                        <HeroStat label="SQL rate" value={`${sqlRate.toFixed(1)}%`} sub={`${sql.toLocaleString()} sales-ready`} icon={Trophy} accent="text-emerald-400" />
+                        <HeroStat label="MQL rate" value={`${mqlRate.toFixed(1)}%`} sub={`${mql.toLocaleString()} qualified`} icon={Flame} accent="text-indigo-400" tooltip={KPI_INFO.mql} />
+                        <HeroStat label="SQL rate" value={`${sqlRate.toFixed(1)}%`} sub={`${sql.toLocaleString()} sales-ready`} icon={Trophy} accent="text-emerald-400" tooltip={KPI_INFO.sql} />
                         <HeroStat label="Meeting rate" value={`${meetingRate.toFixed(1)}%`} sub={`${meetings.toLocaleString()} booked`} icon={Calendar} accent="text-cyan-400" />
                     </div>
 

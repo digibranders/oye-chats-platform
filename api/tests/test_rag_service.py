@@ -803,3 +803,69 @@ class TestInlineCardDedupe:
 
         # Defensive: should not raise when chat_session is missing.
         _mark_card_shown(None, "leave_message")  # must not raise
+
+
+# ── _build_date_hints ────────────────────────────────────────────────────────
+# Regression coverage for the "upcoming events" bug: asking the LLM to compare
+# dates against TODAY'S DATE via prompt instructions alone is unreliable once
+# the reference material has several dated items or omits the year — it drifts
+# and reports months-old events as "upcoming". _build_date_hints computes the
+# PAST/UPCOMING verdict in code so the LLM only has to look it up.
+
+
+class TestBuildDateHints:
+    def test_no_dates_returns_empty_string(self):
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        assert _build_date_hints("Just some plain text with no dates.", date(2026, 7, 2)) == ""
+
+    def test_classifies_explicit_year_dates_as_past_or_upcoming(self):
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        text = "Upcoming Events\n- Spring Product Launch — 15 March 2025\n- Summer Conference 2026 — 18 August 2026\n"
+        hints = _build_date_hints(text, date(2026, 7, 2))
+
+        assert "2025-03-15" in hints and "PAST" in hints
+        assert "2026-08-18" in hints and "UPCOMING" in hints
+        # The past item's line must not also carry the UPCOMING verdict.
+        past_line = next(line for line in hints.splitlines() if "2025-03-15" in line)
+        assert "UPCOMING" not in past_line
+
+    def test_yearless_date_already_passed_this_year_rolls_to_next_year(self):
+        """A yearless date like "March 15" evaluated on 2026-07-02 refers to
+        March 2026 by default, which has already passed — that almost always
+        means the *next* occurrence, so the year rolls forward and is flagged
+        as inferred rather than silently misreported as PAST."""
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        hints = _build_date_hints("Event — March 15", date(2026, 7, 2))
+
+        assert "2027-03-15" in hints
+        assert "UPCOMING" in hints
+        assert "assumed next occurrence" in hints
+
+    def test_yearless_date_still_ahead_this_year_stays_in_current_year(self):
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        hints = _build_date_hints("Event — December 3", date(2026, 7, 2))
+
+        assert "2026-12-03" in hints
+        assert "UPCOMING" in hints
+
+    def test_duplicate_dates_are_not_repeated(self):
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        text = "Event A — 15 March 2025\nSame date again — 15 March 2025"
+        hints = _build_date_hints(text, date(2026, 7, 2))
+
+        assert hints.count("2025-03-15") == 1

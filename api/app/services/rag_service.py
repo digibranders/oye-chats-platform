@@ -6,7 +6,7 @@ import logging
 import os
 import random
 import re
-from datetime import date
+from datetime import date, datetime
 
 import litellm
 from pydantic import BaseModel, ConfigDict, Field
@@ -780,6 +780,69 @@ def _expand_company_query(question: str, company_name: str | None) -> str:
     if any(term in q_lower for term in _COMPANY_SYNONYMS):
         return f"{question} {company_name}"
     return question
+
+
+# Matches calendar dates in the formats crawled content commonly uses:
+# "15 March 2026", "March 15, 2026", "2026-03-15", "03/15/2026" — with or
+# without an explicit year. The LLM-only version of date filtering (asking
+# the model to compare each item's date against "today" in the system
+# prompt) is unreliable once the reference material has more than a
+# couple of dated items or omits the year — see rag_service date-filter
+# regression test. Computing the past/future verdict in code and handing
+# it to the model as a lookup removes the arithmetic step entirely.
+_DATE_PATTERN = re.compile(
+    r"\b("
+    r"\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?,?\s*\d{0,4}"
+    r"|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{0,4}"
+    r"|\d{4}-\d{2}-\d{2}"
+    r"|\d{1,2}/\d{1,2}/\d{2,4}"
+    r")\b",
+    re.IGNORECASE,
+)
+_MAX_DATE_HINTS = 40  # guard against pathological/adversarial content
+
+
+def _build_date_hints(context_text: str, today: date) -> str:
+    """Pre-compute a PAST/UPCOMING verdict for every date found in the retrieved
+    context, so the LLM only has to look up an answer instead of doing date
+    arithmetic itself. Returns "" when no dates are found.
+
+    Dates with no year are assumed to fall in the current year; if that
+    lands in the past, the year is rolled forward once (an event page
+    listing "March 15" as upcoming almost always means the next occurrence).
+    """
+    from dateutil import parser as _dateutil_parser
+
+    seen: dict[str, tuple[date, bool]] = {}
+    for match in _DATE_PATTERN.finditer(context_text):
+        if len(seen) >= _MAX_DATE_HINTS:
+            break
+        raw = match.group(0).strip()
+        if raw in seen:
+            continue
+        had_year = bool(re.search(r"\d{4}", raw))
+        try:
+            parsed = _dateutil_parser.parse(raw, default=datetime(today.year, 1, 1), fuzzy=True).date()
+        except (ValueError, OverflowError, TypeError):
+            continue
+        inferred_year = False
+        if not had_year and parsed < today:
+            parsed = parsed.replace(year=parsed.year + 1)
+            inferred_year = True
+        seen[raw] = (parsed, inferred_year)
+
+    if not seen:
+        return ""
+
+    lines = [
+        f'- "{raw}" → {parsed.isoformat()} → {"PAST" if parsed < today else "UPCOMING"}'
+        f"{' (year not stated in source; assumed next occurrence)' if inferred_year else ''}"
+        for raw, (parsed, inferred_year) in seen.items()
+    ]
+    return (
+        "\n\nDATE ANALYSIS (computed programmatically against TODAY'S DATE "
+        f"{today.isoformat()} — treat as ground truth, do not recompute):\n" + "\n".join(lines)
+    )
 
 
 def _framework_dimensions(config: dict | None) -> list[str]:
@@ -1792,7 +1855,7 @@ RULES:
   If either answer is "no", the sentence is a verifiable claim and must follow path (a) — gap acknowledgment + verified-fact pivot + handoff. Never path (b).
 6. For LIST and COUNT questions ("who are your clients", "what services do you offer", "how many people on your team"): give the COMPLETE list that appears in the reference material — never a partial subset. Use the company's exact branded names where the reference material gives them (e.g. "Performance Marketing & Tracking", not generic "ads"; "Brand Identity & Storytelling", not generic "branding"). Never hedge with "at least N", "30+", or "we have several" when the reference material lists the items by name — count or enumerate them precisely. If the list is genuinely long, summarise with an exact count plus the most prominent names: "we work with 19 brands including X, Y, Z".
 6a. LIST NORMALIZATION: When the reference material contains a list whose items are joined inline with " - " or " — " separators (a sign the source HTML was flattened during crawl — e.g. "Event A — 15 March 2026 - Event B — 21 February 2026 - Event C — 03 December 2025"), DO NOT echo it verbatim. Split on the inline separators and render each item as its own markdown bullet on its own line. Never produce a single bullet that contains multiple distinct items.
-6b. DATE-FILTERED LISTS: For "upcoming", "next", "future", "this year", or "current" questions about dated items (events, webinars, releases, deadlines, offers), compare each item's date against TODAY'S DATE above. Include only items with dates ≥ today; silently drop past-dated items. If every dated item in the reference material is in the past, say so plainly — e.g. "I don't have any upcoming events on file right now — the event list I'm seeing has already passed. Check [our events page](URL) for the latest schedule." Never label a past date as "upcoming".
+6b. DATE-FILTERED LISTS: For "upcoming", "next", "future", "this year", or "current" questions about dated items (events, webinars, releases, deadlines, offers), use the DATE ANALYSIS block below (when present) as ground truth for which dates are PAST vs UPCOMING — it is computed against TODAY'S DATE, so trust its verdicts instead of comparing dates yourself. Include only UPCOMING items; silently drop PAST items. If a date in the reference material has no DATE ANALYSIS entry, fall back to comparing it against TODAY'S DATE above. If every dated item in the reference material is PAST, say so plainly — e.g. "I don't have any upcoming events on file right now — the event list I'm seeing has already passed. Check [our events page](URL) for the latest schedule." Never label a PAST date as "upcoming".
 7. Only ask a follow-up question if the user's query is genuinely ambiguous.
 8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
 9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".
@@ -2626,6 +2689,7 @@ def rag_pipeline(
                     f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
                 )
             context_text = "\n---\n".join(context_parts)
+            context_text += _build_date_hints(context_text, date.today())
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
@@ -3239,6 +3303,7 @@ async def rag_pipeline_stream(
                     f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
                 )
             context_text = "\n---\n".join(context_parts)
+            context_text += _build_date_hints(context_text, date.today())
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
 
             is_bant_enabled = getattr(client, "bant_enabled", True)

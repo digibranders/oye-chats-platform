@@ -28,7 +28,7 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
   const adminName = getAuthItem('admin_name') || 'Admin';
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [profile, setProfile] = useState(null);
-  const [profileLoading, setProfileLoading] = useState(false);
+  const [_profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState(false);
   const { entitlements } = useEntitlements();
   const [isOnline, setIsOnline] = useState(() => localStorage.getItem('operator_is_online') === 'true');
@@ -147,29 +147,29 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
 
         {/* User menu */}
         <div className="relative">
-          <button
-            onClick={() => setShowUserMenu(!showUserMenu)}
-            onBlur={() => setTimeout(() => setShowUserMenu(false), 150)}
-            className="flex items-center p-1 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
-          >
-            <Avatar name={profile?.name || adminName} size="sm" status={isOnline ? 'online' : 'offline'} />
-          </button>
+            <button
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              onBlur={() => setTimeout(() => setShowUserMenu(false), 150)}
+              className="flex items-center p-1 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+            >
+              <Avatar name={profile?.name || adminName} size="sm" status={isOnline ? 'online' : 'offline'} />
+            </button>
 
-          <AnimatePresence>
-            {showUserMenu && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 4 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 4 }}
-                transition={{ duration: 0.12 }}
-                className="absolute right-0 mt-1 w-72 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl shadow-xl z-50 overflow-hidden"
-              >
+            <AnimatePresence>
+              {showUserMenu && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 4 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute right-0 mt-1 w-72 bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl shadow-xl z-50 overflow-hidden"
+                >
                 {/* Identity header */}
                 <div className="px-4 py-4 border-b border-surface-100 dark:border-surface-800 flex items-center gap-3">
                   <Avatar name={profile?.name || adminName} size="md" status={isOnline ? 'online' : 'offline'} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <p className="text-[14px] font-semibold text-surface-900 dark:text-surface-50 truncate">
+                      <p className="text-[14px] font-semibold text-surface-900 dark:text-surface-50 min-w-0 truncate">
                         {profile?.name || adminName}
                       </p>
                       {/* Show the operator role as a small chip when applicable
@@ -179,11 +179,9 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
                           {profile.role}
                         </span>
                       )}
-                      {!profileLoading && profile && (
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-500/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 shrink-0">
-                          {entitlements?.planName || 'Free'} Plan
-                        </span>
-                      )}
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#2E2A72] text-white border border-indigo-500/20 shadow-sm shrink-0">
+                        {entitlements?.planName || 'Free'} Plan
+                      </span>
                     </div>
                     {/* Dynamic Online Status Indicator */}
                     {isOnline && (
@@ -241,6 +239,6 @@ export default function TopBar({ isSidebarOpen, isMobile, toggleSidebar, onOpenS
           </AnimatePresence>
         </div>
       </div>
-    </header>
+  </header>
   );
 }
