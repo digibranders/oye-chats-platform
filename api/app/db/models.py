@@ -1047,7 +1047,7 @@ class Invoice(Base):
 
     # Amount
     amount_cents = Column(Integer, nullable=False)
-    currency = Column(String, default="usd", server_default="usd", nullable=False)
+    currency = Column(String, default="inr", server_default="inr", nullable=False)
     status = Column(String, default="pending", server_default="pending", nullable=False)  # paid|pending|failed|refunded
 
     # Provider references
@@ -1068,8 +1068,55 @@ class Invoice(Base):
     paid_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ── Invoicing v2: legal tax-document fields (nullable — rows created
+    # before v2, or while INVOICING_V2_ENABLED is off, stay 'legacy' and are
+    # excluded from GST exports; never retro-taxed). Finalized documents are
+    # IMMUTABLE — corrections are credit notes, never edits.
+    invoice_number = Column(String(16), unique=True, index=True, nullable=True)
+    invoice_type = Column(
+        String, nullable=False, default="legacy", server_default="legacy"
+    )  # tax_invoice|credit_note|receipt|legacy
+    issued_at = Column(DateTime(timezone=True), nullable=True)
+    seller_snapshot = Column(JSONB, nullable=True)  # legal identity at issue time
+    buyer_snapshot = Column(JSONB, nullable=True)
+    place_of_supply = Column(String(2), nullable=True)  # GST state code
+    supply_kind = Column(String, nullable=True)  # intra|inter|export
+    taxable_value_minor = Column(Integer, nullable=True)
+    tax_rate_bps = Column(Integer, nullable=True)
+    cgst_minor = Column(Integer, nullable=True)
+    sgst_minor = Column(Integer, nullable=True)
+    igst_minor = Column(Integer, nullable=True)
+    total_tax_minor = Column(Integer, nullable=True)
+    hsn_sac = Column(String(8), nullable=True)
+    is_export = Column(Boolean, nullable=False, default=False, server_default="false")
+    line_items = Column(JSONB, nullable=True)
+    credit_note_of_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
+    # Razorpay's own invoice entity for this charge (payment.invoice_id from
+    # the subscription.charged payload) — payment evidence, not the tax doc.
+    razorpay_invoice_id = Column(String, index=True, nullable=True)
+    # E-invoicing (IRP) — unused until the ₹5cr B2B threshold applies.
+    irn = Column(String, nullable=True)
+    signed_qr = Column(Text, nullable=True)
+
     client = relationship("Client")
     subscription = relationship("Subscription", back_populates="invoices")
+
+
+class InvoiceCounter(Base):
+    """Gapless per-FY invoice serial allocator.
+
+    One row per (financial_year, prefix); the finalize service increments
+    ``last_serial`` under ``SELECT … FOR UPDATE`` so concurrent webhooks get
+    consecutive numbers and abandoned payments burn none (serials are only
+    allocated at finalize time — a Rule 46 audit requirement).
+    """
+
+    __tablename__ = "invoice_counters"
+
+    financial_year = Column(String(5), primary_key=True)  # e.g. "25-26"
+    prefix = Column(String(3), primary_key=True)
+    last_serial = Column(Integer, nullable=False, default=0, server_default="0")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class PaymentMethod(Base):
