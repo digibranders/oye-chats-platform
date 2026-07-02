@@ -136,7 +136,6 @@ async def crawl_website(
 
 # ── Explicit ordered-URL fetch (for credit-aware partial crawls) ─────────────
 
-_FETCH_CONCURRENCY = 10  # parallel scrape calls; Spider handles the render load
 # Transient scrape failures (a burst 502/503/504 from the origin under crawl
 # load, a timeout, or a 200-with-empty-content that masks an upstream 5xx) are
 # retried — verified: pages that 502 mid-crawl return 200 when re-fetched. Only
@@ -241,7 +240,11 @@ async def fetch_urls(
 
     owns_client = _client is None
     client = _client or httpx.AsyncClient(timeout=SPIDER_TIMEOUT)
-    sem = asyncio.Semaphore(_FETCH_CONCURRENCY)
+    # Resolved per crawl (not at import) so the super-admin Crawler card can
+    # tune parallelism at runtime; falls back to the env default.
+    from app.services import runtime_config
+
+    sem = asyncio.Semaphore(runtime_config.get_spider_fetch_concurrency())
 
     async def _scrape_and_report(url: str) -> dict | None:
         page = await _scrape_one(client, url, use_js, sem)
