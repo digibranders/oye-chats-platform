@@ -1022,36 +1022,77 @@ def list_usage_records(
                 session.execute(select(Client).where(Client.id.in_(client_ids))).scalars().all() if client_ids else []
             )
         }
+        # Snapshot plan names (fallback for clients with no active subscription).
         plan_ids = {r.plan_id for r in records if r.plan_id}
-        plans = {
+        snapshot_plan = {
             p.id: p.name
             for p in (session.execute(select(Plan).where(Plan.id.in_(plan_ids))).scalars().all() if plan_ids else [])
         }
 
-        return [
-            {
-                "id": r.id,
-                "client_id": r.client_id,
-                "client_name": clients.get(r.client_id),
-                "plan_id": r.plan_id,
-                "plan_name": plans.get(r.plan_id) if r.plan_id else None,
-                "period_start": r.period_start.isoformat() if r.period_start else None,
-                "period_end": r.period_end.isoformat() if r.period_end else None,
-                "ai_messages_used": r.ai_messages_used,
+        # The UsageRecord freezes plan_id + limits at period-creation time and is
+        # never resynced when the subscription changes — so it goes stale after an
+        # upgrade/downgrade. For the super-admin view, report each client's LIVE
+        # account plan (highest-tier active/trialing/past_due subscription, the
+        # same rule entitlements use) and that plan's limits, keeping the *used*
+        # counts from the period record. Fall back to the frozen snapshot only
+        # when the client has no active subscription (genuinely on Free).
+        active_statuses = ("active", "trialing", "past_due")
+        current_plan: dict[int, Plan] = {}
+        if client_ids:
+            rows = session.execute(
+                select(Subscription.client_id, Plan)
+                .join(Plan, Plan.id == Subscription.plan_id)
+                .where(Subscription.client_id.in_(client_ids), Subscription.status.in_(active_statuses))
+                .order_by(Plan.monthly_price_cents.desc())
+            ).all()
+            for cid, plan in rows:
+                current_plan.setdefault(cid, plan)  # first per client = highest price
+
+        def _limits(r: UsageRecord) -> dict[str, int]:
+            plan = current_plan.get(r.client_id)
+            if plan is not None:
+                lim = plan.limits or {}
+                return {
+                    "ai_messages_limit": lim.get("ai_messages", 0),
+                    "live_chat_messages_limit": lim.get("live_chat_messages", 0),
+                    "url_scans_limit": lim.get("url_scans", 0),
+                    "storage_limit_mb": lim.get("storage_mb", 0),
+                }
+            return {
                 "ai_messages_limit": r.ai_messages_limit,
-                "live_chat_messages_used": r.live_chat_messages_used,
                 "live_chat_messages_limit": r.live_chat_messages_limit,
-                "url_scans_used": r.url_scans_used,
                 "url_scans_limit": r.url_scans_limit,
-                "storage_used_mb": r.storage_used_mb,
                 "storage_limit_mb": r.storage_limit_mb,
-                "bots_count": r.bots_count,
-                "operators_count": r.operators_count,
-                "overage_messages": r.overage_messages,
-                "overage_amount_cents": _to_usd_cents(r.overage_amount_cents, None),
             }
-            for r in records
-        ]
+
+        result = []
+        for r in records:
+            plan = current_plan.get(r.client_id)
+            lim = _limits(r)
+            result.append(
+                {
+                    "id": r.id,
+                    "client_id": r.client_id,
+                    "client_name": clients.get(r.client_id),
+                    "plan_id": plan.id if plan else r.plan_id,
+                    "plan_name": plan.name if plan else (snapshot_plan.get(r.plan_id) if r.plan_id else None),
+                    "period_start": r.period_start.isoformat() if r.period_start else None,
+                    "period_end": r.period_end.isoformat() if r.period_end else None,
+                    "ai_messages_used": r.ai_messages_used,
+                    "ai_messages_limit": lim["ai_messages_limit"],
+                    "live_chat_messages_used": r.live_chat_messages_used,
+                    "live_chat_messages_limit": lim["live_chat_messages_limit"],
+                    "url_scans_used": r.url_scans_used,
+                    "url_scans_limit": lim["url_scans_limit"],
+                    "storage_used_mb": r.storage_used_mb,
+                    "storage_limit_mb": lim["storage_limit_mb"],
+                    "bots_count": r.bots_count,
+                    "operators_count": r.operators_count,
+                    "overage_messages": r.overage_messages,
+                    "overage_amount_cents": _to_usd_cents(r.overage_amount_cents, None),
+                }
+            )
+        return result
 
 
 # ── BANT / qualification signals (audit) ──────────────────────────────────────
