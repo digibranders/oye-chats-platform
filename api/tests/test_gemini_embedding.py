@@ -10,6 +10,33 @@ def _client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+@pytest.fixture(autouse=True)
+def _stub_rate_limiter(monkeypatch):
+    """Replace the throughput limiter with a non-blocking spy.
+
+    Keeps embedding tests hermetic (no Redis, no real sleeping) while recording
+    the per-batch request cost so wiring can be asserted.
+    """
+    costs: list[int] = []
+    monkeypatch.setattr(ge.embed_rate_limiter, "acquire", costs.append)
+    return costs
+
+
+def test_rate_limiter_reserves_each_batchs_request_count(monkeypatch, _stub_rate_limiter):
+    monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
+    monkeypatch.setattr(ge, "EMBED_DIMENSIONS", 2)
+    monkeypatch.setattr(ge, "_MAX_BATCH", 2)
+
+    def handler(request):
+        body = json.loads(request.content)
+        return httpx.Response(200, json={"embeddings": [{"values": [1.0, 0.0]} for _ in body["requests"]]})
+
+    ge.embed_texts(["a", "b", "c", "d", "e"], _client=_client(handler))
+    # 5 inputs at _MAX_BATCH=2 → batches [2, 2, 1]; one acquire per batch, each
+    # reserving that batch's item count. Concurrent, so order is nondeterministic.
+    assert sorted(_stub_rate_limiter) == [1, 2, 2]
+
+
 def test_embeds_batch_normalized(monkeypatch):
     monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
     monkeypatch.setattr(ge, "EMBED_DIMENSIONS", 4)
