@@ -369,6 +369,17 @@ WEBHOOK_RETRY_ON_ERROR = _env_flag("WEBHOOK_RETRY_ON_ERROR", default=True)
 # stays in effect.
 PRORATED_UPGRADES_ENABLED = _env_flag("PRORATED_UPGRADES_ENABLED", default=False)
 
+# ── Invoicing v2 feature flags (docs/billing/2026-07-02-invoicing-implementation-plan-v2.md) ──
+#
+# INVOICING_V2_ENABLED (default OFF): gates the own-issued GST invoicing track.
+# While off, webhook handlers keep writing legacy payment-history rows only.
+INVOICING_V2_ENABLED = _env_flag("INVOICING_V2_ENABLED", default=False)
+
+# INVOICE_EMAILS_ENABLED (default OFF): customer-facing invoice emails. Kept
+# separate from INVOICING_V2_ENABLED so invoices can run in shadow mode
+# (generated + stored, admin-visible, not emailed) during verification.
+INVOICE_EMAILS_ENABLED = _env_flag("INVOICE_EMAILS_ENABLED", default=False)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler
 # ─────────────────────────────────────────────────────────────────────────────
