@@ -934,6 +934,7 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
             "primary_provider": crawl_primary,
             "fallback_provider": "jina" if crawl_primary == "spider" else "spider",
             "jina_fetch_concurrency": runtime_config.get_jina_fetch_concurrency(),
+            "spider_fetch_concurrency": runtime_config.get_spider_fetch_concurrency(),
         },
         "known_models": _KNOWN_MODELS,
         "known_crawl_providers": _KNOWN_CRAWL_PROVIDERS,
@@ -950,6 +951,7 @@ class ModelConfigPatch(BaseModel):
     relevance_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     crawl_provider_primary: Literal["spider", "jina"] | None = None
     jina_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
+    spider_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
 
 
 @router.put("/model-config")
@@ -978,6 +980,7 @@ def patch_model_config(
         "relevance_threshold": "rag.relevance_threshold",
         "crawl_provider_primary": "crawl.provider_primary",
         "jina_fetch_concurrency": "crawl.jina_fetch_concurrency",
+        "spider_fetch_concurrency": "crawl.spider_fetch_concurrency",
     }
 
     changed: dict[str, Any] = {}

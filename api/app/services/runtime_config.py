@@ -121,10 +121,19 @@ def get_relevance_threshold(default: float = 0.5) -> float:
 
 
 _CRAWL_PROVIDERS = ("spider", "jina")
-# Hard bounds for the Jina fetch parallelism knob: 1 keeps it functional,
-# 50 stays a safe margin under the keyed tier's 500 RPM even for fast pages.
-_JINA_CONCURRENCY_MIN = 1
-_JINA_CONCURRENCY_MAX = 50
+# Hard bounds for the per-provider fetch parallelism knobs: 1 keeps crawls
+# functional, 50 stays a safe margin under provider rate limits (Jina keyed
+# tier = 500 RPM; Spider handles render load server-side).
+_FETCH_CONCURRENCY_MIN = 1
+_FETCH_CONCURRENCY_MAX = 50
+
+
+def _fetch_concurrency(key: str, default: int) -> int:
+    try:
+        value = int(get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(_FETCH_CONCURRENCY_MIN, min(_FETCH_CONCURRENCY_MAX, value))
 
 
 def get_jina_fetch_concurrency() -> int:
@@ -136,11 +145,19 @@ def get_jina_fetch_concurrency() -> int:
     """
     from app.config import JINA_FETCH_CONCURRENCY
 
-    try:
-        value = int(get("crawl.jina_fetch_concurrency", JINA_FETCH_CONCURRENCY))
-    except (TypeError, ValueError):
-        value = JINA_FETCH_CONCURRENCY
-    return max(_JINA_CONCURRENCY_MIN, min(_JINA_CONCURRENCY_MAX, value))
+    return _fetch_concurrency("crawl.jina_fetch_concurrency", JINA_FETCH_CONCURRENCY)
+
+
+def get_spider_fetch_concurrency() -> int:
+    """How many Spider /scrape calls run in parallel per crawl (sitemap-seeded
+    and ordered fetches; the recursive crawl's concurrency is plan-driven).
+
+    Runtime-tunable from the super-admin Crawler card; falls back to the
+    SPIDER_FETCH_CONCURRENCY env default.
+    """
+    from app.config import SPIDER_FETCH_CONCURRENCY
+
+    return _fetch_concurrency("crawl.spider_fetch_concurrency", SPIDER_FETCH_CONCURRENCY)
 
 
 def get_crawl_provider_primary() -> str:

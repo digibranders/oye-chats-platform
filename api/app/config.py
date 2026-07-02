@@ -397,6 +397,10 @@ SPIDER_API_URL = _env("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
 SPIDER_REQUEST_MODE = _env("SPIDER_REQUEST_MODE", "smart").strip().lower()
 # Per-crawl wall-clock budget (seconds).
 SPIDER_TIMEOUT = int(_env("SPIDER_TIMEOUT", "1600"))
+# Parallel Spider /scrape calls for sitemap-seeded and ordered fetches (Spider
+# handles the render load server-side). Env default only — the super-admin
+# Crawler card overrides it at runtime (crawl.spider_fetch_concurrency).
+SPIDER_FETCH_CONCURRENCY = int(_env("SPIDER_FETCH_CONCURRENCY", "10"))
 
 # ── Crawl fallback: Jina Reader (PAYG markdown) ──────────────────────────────
 # When Spider fails, fetch pages via https://r.jina.ai/<url>. PAYG, off-box,

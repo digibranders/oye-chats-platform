@@ -184,3 +184,14 @@ def test_jina_fetch_concurrency_clamps_and_falls_back(monkeypatch):
     from app.config import JINA_FETCH_CONCURRENCY
 
     assert runtime_config.get_jina_fetch_concurrency() == max(1, min(50, JINA_FETCH_CONCURRENCY))
+
+
+def test_spider_fetch_concurrency_clamps_and_falls_back(monkeypatch):
+    from app.services import runtime_config
+
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 25)
+    assert runtime_config.get_spider_fetch_concurrency() == 25
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: -3)
+    assert runtime_config.get_spider_fetch_concurrency() == 1
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 500)
+    assert runtime_config.get_spider_fetch_concurrency() == 50
