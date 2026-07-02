@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
-import { User, Shield, Bell, Palette, Briefcase, MessageSquare, Headphones } from 'lucide-react';
+import { User, Shield, Bell, Palette, Briefcase, Headphones, CodeXml } from 'lucide-react';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import ProfileTab from './settings/ProfileTab';
@@ -8,7 +8,7 @@ import NotificationsTab from './settings/NotificationsTab';
 import AppearanceTab from './settings/AppearanceTab';
 import LiveChatTab from './settings/LiveChatTab';
 import WorkspaceTab from './settings/WorkspaceTab';
-import FeedbackTab from './settings/FeedbackTab';
+import ContactTab from './settings/ContactTab';
 
 const TABS = [
     { id: 'profile', label: 'Profile', icon: User, Component: ProfileTab },
@@ -17,7 +17,7 @@ const TABS = [
     { id: 'appearance', label: 'Appearance', icon: Palette, Component: AppearanceTab },
     { id: 'live_chat', label: 'Live Chat', icon: Headphones, Component: LiveChatTab },
     { id: 'workspace', label: 'Workspace', icon: Briefcase, Component: WorkspaceTab },
-    { id: 'feedback', label: 'Feedback & Support', icon: MessageSquare, Component: FeedbackTab },
+    { id: 'contact', label: 'Need something custom?', icon: CodeXml, Component: ContactTab, divider: true },
 ];
 
 /**
@@ -57,6 +57,7 @@ export default function Settings() {
                                 className={cn(
                                     'flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-left whitespace-nowrap transition-colors',
                                     'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                                    t.divider && 'mt-2 pt-3 border-t border-surface-200 dark:border-surface-800',
                                     on
                                         ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
                                         : 'text-surface-600 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800/60'

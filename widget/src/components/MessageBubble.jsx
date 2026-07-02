@@ -36,6 +36,8 @@ const _FOLLOW_UP_OPENERS = [
     "Are you",
     "What would",
     "What best",
+    "What are",
+    "What's",
     "Which",
     "Let me know if",
     "Just let me know",
