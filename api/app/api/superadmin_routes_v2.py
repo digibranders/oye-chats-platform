@@ -14,7 +14,7 @@ import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -878,11 +878,26 @@ _KNOWN_MODELS = [
 ]
 
 
+_KNOWN_CRAWL_PROVIDERS = [
+    {
+        "id": "spider",
+        "label": "Spider.cloud",
+        "notes": "Bulk scraper with JS rendering and a recursive link-crawl mode (used when a site has no sitemap).",
+    },
+    {
+        "id": "jina",
+        "label": "Jina Reader",
+        "notes": "PAYG markdown-native reader (r.jina.ai). Renders JS server-side; no recursive mode.",
+    },
+]
+
+
 @router.get("/model-config")
 def get_model_config(_admin: Client = Depends(get_superadmin)):
     """Return the active model + RAG knobs and the catalog of selectable models."""
     from app.services import runtime_config
 
+    crawl_primary = runtime_config.get_crawl_provider_primary()
     return {
         "primary_model": runtime_config.get_primary_model(),
         "fallback_model": runtime_config.get_fallback_model(),
@@ -893,7 +908,12 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
             "rerank_top_n": runtime_config.get_rerank_top_n(),
             "relevance_threshold": runtime_config.get_relevance_threshold(),
         },
+        "crawler": {
+            "primary_provider": crawl_primary,
+            "fallback_provider": "jina" if crawl_primary == "spider" else "spider",
+        },
         "known_models": _KNOWN_MODELS,
+        "known_crawl_providers": _KNOWN_CRAWL_PROVIDERS,
     }
 
 
@@ -905,6 +925,7 @@ class ModelConfigPatch(BaseModel):
     chunk_overlap: int | None = Field(default=None, ge=0, le=2000)
     rerank_top_n: int | None = Field(default=None, ge=1, le=20)
     relevance_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    crawl_provider_primary: Literal["spider", "jina"] | None = None
 
 
 @router.put("/model-config")
@@ -931,6 +952,7 @@ def patch_model_config(
         "chunk_overlap": "rag.chunk_overlap",
         "rerank_top_n": "rag.rerank_top_n",
         "relevance_threshold": "rag.relevance_threshold",
+        "crawl_provider_primary": "crawl.provider_primary",
     }
 
     changed: dict[str, Any] = {}
@@ -969,6 +991,7 @@ def patch_model_config(
         "primary_model": runtime_config.get_primary_model(),
         "fallback_model": runtime_config.get_fallback_model(),
         "gate_model": runtime_config.get_gate_model(),
+        "crawl_provider_primary": runtime_config.get_crawl_provider_primary(),
     }
 
 

@@ -410,6 +410,10 @@ JINA_FALLBACK_ENABLED = _env("JINA_FALLBACK_ENABLED", "true").strip().lower() in
     "yes",
 )
 JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))
+# Which scrape backend page-list fetches try first: "spider" or "jina". The
+# other one becomes the fallback. Env default only — the super-admin Models &
+# RAG page overrides it at runtime via pricing_config (crawl.provider_primary).
+CRAWL_PROVIDER_PRIMARY = _env("CRAWL_PROVIDER_PRIMARY", "spider").strip().lower()
 
 # ── Streaming crawl ingestion ────────────────────────────────────────────────
 # Overlap the embed+ingest phase with the scrape phase: as pages come back from
