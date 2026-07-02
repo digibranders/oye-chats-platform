@@ -81,3 +81,29 @@ def test_put_clears_gstin_with_null(db, monkeypatch):
     res = c.put("/subscriptions/billing-details", json={"gstin": None})
     assert res.status_code == 200, res.text
     assert res.json()["gstin"] is None
+
+
+def test_put_rejects_overlong_country(db, monkeypatch):
+    c, _ = _mk(db, monkeypatch)
+    res = c.put("/subscriptions/billing-details", json={"billing_country": "India"})
+    assert res.status_code == 422
+
+
+def test_partial_put_preserves_other_fields(db, monkeypatch):
+    c, _ = _mk(db, monkeypatch)
+    c.put(
+        "/subscriptions/billing-details",
+        json={
+            "legal_name": "Acme Industries Pvt Ltd",
+            "billing_address": {"line1": "1 Test Lane", "city": "Mumbai"},
+            "billing_email": "accounts@acme.example",
+        },
+    )
+    # A partial edit that only sets gstin must not wipe the earlier fields.
+    res = c.put("/subscriptions/billing-details", json={"gstin": "29AAGCB7383J1Z4"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["gstin"] == "29AAGCB7383J1Z4"
+    assert body["legal_name"] == "Acme Industries Pvt Ltd"
+    assert body["billing_address"] == {"line1": "1 Test Lane", "city": "Mumbai"}
+    assert body["billing_email"] == "accounts@acme.example"

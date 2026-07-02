@@ -26,7 +26,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.add_column("invoices", sa.Column("invoice_number", sa.String(16), nullable=True))
+    op.add_column("invoices", sa.Column("invoice_number", sa.String(20), nullable=True))
     op.create_index("ix_invoices_invoice_number", "invoices", ["invoice_number"], unique=True)
     op.add_column("invoices", sa.Column("invoice_type", sa.String(), nullable=False, server_default="legacy"))
     op.add_column("invoices", sa.Column("issued_at", sa.DateTime(timezone=True), nullable=True))

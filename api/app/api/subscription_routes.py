@@ -503,7 +503,9 @@ class BillingDetailsBody(BaseModel):
     legal_name: str | None = None
     gstin: str | None = None
     billing_address: dict[str, str] | None = None
-    billing_country: str | None = None
+    # ISO-2 country code; length-capped so a free-text value ("India") is a
+    # clean 422 rather than a varchar(2) overflow → 500 at commit.
+    billing_country: str | None = Field(default=None, max_length=2)
     billing_state_code: str | None = None
     billing_email: str | None = None
 

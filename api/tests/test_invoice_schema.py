@@ -132,3 +132,11 @@ def test_list_invoices_exposes_tax_fields(db, monkeypatch):
     assert row["invoice_type"] == "tax_invoice"
     assert row["total_tax_minor"] == 27442
     assert row["taxable_value_minor"] == 152458
+
+
+def test_invoice_currency_defaults_to_inr(db):
+    c = _mk_client(db, "inv-currency-default@test.example")
+    inv = Invoice(client_id=c.id, amount_cents=179900, status="paid")  # no currency= passed
+    db.add(inv)
+    db.flush()
+    assert inv.currency == "inr"

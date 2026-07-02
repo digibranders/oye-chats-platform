@@ -1072,7 +1072,9 @@ class Invoice(Base):
     # before v2, or while INVOICING_V2_ENABLED is off, stay 'legacy' and are
     # excluded from GST exports; never retro-taxed). Finalized documents are
     # IMMUTABLE — corrections are credit notes, never edits.
-    invoice_number = Column(String(16), unique=True, index=True, nullable=True)
+    # 20 chars (> the 16-char Rule 46 minimum) leaves headroom for a longer
+    # prefix or a 7-digit serial without a hard ceiling once numbers are issued.
+    invoice_number = Column(String(20), unique=True, index=True, nullable=True)
     invoice_type = Column(
         String, nullable=False, default="legacy", server_default="legacy"
     )  # tax_invoice|credit_note|receipt|legacy
@@ -1109,6 +1111,10 @@ class InvoiceCounter(Base):
     ``last_serial`` under ``SELECT … FOR UPDATE`` so concurrent webhooks get
     consecutive numbers and abandoned payments burn none (serials are only
     allocated at finalize time — a Rule 46 audit requirement).
+
+    ``updated_at`` uses SQLAlchemy ``onupdate`` (app-side), so the Phase 2
+    allocator must mutate ``last_serial`` through the ORM for the timestamp to
+    stay honest — a raw ``UPDATE`` would not bump it.
     """
 
     __tablename__ = "invoice_counters"
