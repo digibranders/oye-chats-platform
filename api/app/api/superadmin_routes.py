@@ -15,7 +15,7 @@ from app.core.feedback import (
     FEEDBACK_TYPES,
 )
 from app.core.security import get_password_hash
-from app.db.models import ChatMessage, ChatSession, Client, PlatformFeedback
+from app.db.models import ChatMessage, ChatSession, Client, Plan, PlatformFeedback, Subscription
 from app.db.session import get_session
 from app.services.audit_service import record_audit
 
@@ -107,23 +107,72 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
     """
     Superadmin only: Get all clients on the platform.
     """
+    active_statuses = ("active", "trialing", "past_due")
     with get_session() as session:
         stmt = select(Client).order_by(Client.created_at.desc())
         clients = session.execute(stmt).scalars().all()
+        client_ids = [c.id for c in clients]
 
-        return [
-            {
-                "id": c.id,
-                "name": c.name,
-                "email": c.email,
-                "is_superadmin": c.is_superadmin,
-                "superadmin_role": c.superadmin_role,
-                "website": c.website,
-                "suspended_at": c.suspended_at.isoformat() if c.suspended_at else None,
-                "created_at": c.created_at.isoformat() if c.created_at else None,
-            }
-            for c in clients
-        ]
+        # Batch-load subscriptions + plans (no N+1) to derive each client's
+        # current plan. With per-bot billing a client may hold several
+        # subscriptions, so pick the "primary" one: prefer an active/trialing/
+        # past_due subscription, then the most recently created.
+        subs = (
+            session.execute(select(Subscription).where(Subscription.client_id.in_(client_ids))).scalars().all()
+            if client_ids
+            else []
+        )
+        plan_by_id = {
+            p.id: p
+            for p in (
+                session.execute(select(Plan).where(Plan.id.in_({s.plan_id for s in subs}))).scalars().all()
+                if subs
+                else []
+            )
+        }
+
+        def _better(candidate: Subscription, current: Subscription | None) -> bool:
+            if current is None:
+                return True
+            cand_active = candidate.status in active_statuses
+            cur_active = current.status in active_statuses
+            if cand_active != cur_active:
+                return cand_active
+            if candidate.created_at is None:
+                return False
+            if current.created_at is None:
+                return True
+            return candidate.created_at > current.created_at
+
+        primary_sub: dict[int, Subscription] = {}
+        active_counts: dict[int, int] = {}
+        for s in subs:
+            if s.status in active_statuses:
+                active_counts[s.client_id] = active_counts.get(s.client_id, 0) + 1
+            if _better(s, primary_sub.get(s.client_id)):
+                primary_sub[s.client_id] = s
+
+        result = []
+        for c in clients:
+            sub = primary_sub.get(c.id)
+            plan = plan_by_id.get(sub.plan_id) if sub else None
+            result.append(
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "email": c.email,
+                    "is_superadmin": c.is_superadmin,
+                    "superadmin_role": c.superadmin_role,
+                    "website": c.website,
+                    "suspended_at": c.suspended_at.isoformat() if c.suspended_at else None,
+                    "plan_name": plan.name if plan else None,
+                    "plan_slug": plan.slug if plan else None,
+                    "subscription_status": sub.status if sub else None,
+                    "active_subscriptions": active_counts.get(c.id, 0),
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+            )
+        return result
 
 
 @router.get("/stats")
