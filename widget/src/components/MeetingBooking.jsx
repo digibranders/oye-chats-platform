@@ -40,6 +40,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
     const [error, setError] = useState(false);
     const [confirming, setConfirming] = useState(false);
     const [openedExternally, setOpenedExternally] = useState(false);
+    const [cspBlocked, setCspBlocked] = useState(false);
 
     useEffect(() => {
         if (!safeUrl) return;
@@ -50,6 +51,30 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
             });
         }, IFRAME_LOAD_TIMEOUT_MS);
         return () => clearTimeout(timer);
+    }, [safeUrl]);
+
+    useEffect(() => {
+        if (!safeUrl) return undefined;
+        // When the HOST page's CSP has a frame-src that doesn't allow the
+        // booking provider, the browser blocks the iframe and renders its own
+        // "content blocked" page — the iframe's load/error events tell us
+        // nothing. The document does receive a securitypolicyviolation event,
+        // so switch to our error state with the open-in-new-tab escape hatch
+        // (new tabs aren't governed by the host page's frame-src).
+        const handleViolation = (event) => {
+            if (!event.violatedDirective || !event.violatedDirective.startsWith('frame-src')) return;
+            try {
+                // blockedURI may be the full URL or just the origin.
+                if (new URL(event.blockedURI).origin !== new URL(safeUrl).origin) return;
+            } catch {
+                return;
+            }
+            setLoading(false);
+            setError(true);
+            setCspBlocked(true);
+        };
+        document.addEventListener('securitypolicyviolation', handleViolation);
+        return () => document.removeEventListener('securitypolicyviolation', handleViolation);
     }, [safeUrl]);
 
     const handleRetry = () => {
@@ -184,21 +209,30 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                     {error && (
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white gap-3 px-6 text-center">
                             <p className="text-sm text-gray-600">
-                                Could not load the booking page. An ad or privacy blocker may be preventing it.
+                                {cspBlocked
+                                    ? "This website's security settings don't allow embedded booking. Please open it in a new tab."
+                                    : 'Could not load the booking page. An ad or privacy blocker may be preventing it.'}
                             </p>
                             <div className="flex items-center gap-2">
-                                <button
-                                    onClick={handleRetry}
-                                    className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600"
-                                >
-                                    Try again
-                                </button>
+                                {/* Retry is pointless for a CSP block — the policy won't change. */}
+                                {!cspBlocked && (
+                                    <button
+                                        onClick={handleRetry}
+                                        className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600"
+                                    >
+                                        Try again
+                                    </button>
+                                )}
                                 <a
                                     href={safeUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={() => setOpenedExternally(true)}
-                                    className="px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50"
+                                    className={
+                                        cspBlocked
+                                            ? 'px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600'
+                                            : 'px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50'
+                                    }
                                 >
                                     Open in new tab
                                 </a>
