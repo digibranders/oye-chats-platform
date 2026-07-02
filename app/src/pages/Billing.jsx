@@ -39,6 +39,7 @@ import useEntitlements, { entitlementsRefresh } from '../hooks/useEntitlements';
 import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
+import TrialUpgradeBanner from '../components/billing/TrialUpgradeBanner';
 import { cn } from '../lib/utils';
 import { trialDaysLeft } from '../utils/trial';
 
@@ -480,6 +481,18 @@ export default function Billing() {
         )}
       </PageHeader>
 
+      {/* Trial-upgrade banner — the "you decided to pay, here's the button"
+          surface for both in-trial (nudge before deadline) and trial-expired
+          (upgrade before data purge). Rendered above the tabs bar so it
+          persists across every tab, which is where a decided-to-pay
+          customer might otherwise get distracted. Component returns null
+          for all statuses that don't need a nudge (active, canceled, free). */}
+      <TrialUpgradeBanner
+        subscription={subscription}
+        planName={plan?.name}
+        onUpgradeClick={() => setPlanOpen(true)}
+      />
+
       <Tabs tabs={visibleTabs} activeTab={activeTab} onChange={setActiveTab} variant="underline" />
 
       {/* Scheduled-change banner — surfaces a queued downgrade so the user
@@ -594,6 +607,8 @@ export default function Billing() {
         hasActiveSubscription={
           subscription?.status === 'active' || subscription?.status === 'trialing'
         }
+        trialEndIso={subscription?.trial_end || null}
+        dataRetentionUntilIso={subscription?.data_retention_until || null}
         onSuccess={(evt) => {
           // Bust the cache immediately so feature gates unlock in the same
           // frame as the success toast — no refresh needed.

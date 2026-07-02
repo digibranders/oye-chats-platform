@@ -264,6 +264,13 @@ def get_current_subscription(client: Client = Depends(get_current_client)):
                 "current_period_end": sub.current_period_end.isoformat() if sub.current_period_end else None,
                 "trial_start": sub.trial_start.isoformat() if sub.trial_start else None,
                 "trial_end": sub.trial_end.isoformat() if sub.trial_end else None,
+                # Wall-clock deadline for the post-trial data-purge cron.
+                # Set when the trial-expiry worker flips status → trial_expired
+                # (trial_end + TRIAL_DATA_RETENTION_DAYS). NULL for anything
+                # that never went through trial expiry; the frontend uses this
+                # to render the "your data will be deleted on X" warning
+                # banner during the grace window.
+                "data_retention_until": (sub.data_retention_until.isoformat() if sub.data_retention_until else None),
                 "canceled_at": sub.canceled_at.isoformat() if sub.canceled_at else None,
                 "cancel_at_period_end": sub.cancel_at_period_end,
                 "payment_provider": sub.payment_provider,
@@ -688,12 +695,14 @@ def change_plan(
 
         sub = get_client_subscription(session, client.id)
 
-        # Universal precheck — same plan is a no-op regardless of branch.
-        # Doing this up here means a customer on a manual Standard sub
-        # who picks Standard again gets a friendly 400 instead of
-        # falling through to checkout and getting a confusing
-        # "configure Stripe price" error.
-        if sub is not None and sub.plan_id == request.plan_id:
+        # Universal precheck — same plan is a no-op UNLESS the current
+        # subscription is a trial that hasn't been paid for yet. A trialing
+        # customer picking their own trial plan is doing a valid trial→paid
+        # conversion (authorise a card, keep the same features, stop the
+        # trial-expiry cron), so we let that case fall through to Branch 3
+        # (fresh Razorpay checkout). Everything else — a real paying customer
+        # re-picking their existing tier — gets the friendly 400 as before.
+        if sub is not None and sub.plan_id == request.plan_id and sub.status != "trialing":
             raise HTTPException(status_code=400, detail="You are already on this plan.")
 
         # ── Branch 1: target is Free ──

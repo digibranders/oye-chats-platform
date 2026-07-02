@@ -4,7 +4,9 @@ import {
     X, Check, Sparkles, Loader2, Crown, Zap,
     ShieldCheck, ExternalLink, Star, AlertCircle, Mail,
     Gift, CheckCircle2, XCircle, X as XSmall,
+    AlertTriangle, Calendar,
 } from 'lucide-react';
+import { daysUntil, formatTrialDate, trialDaysLeft } from '../../utils/trial';
 import {
     getSubscriptionPlans, createCheckoutSession, changePlan,
     applyReferralCode, getBillingGeo, verifyRazorpaySubscription,
@@ -74,6 +76,11 @@ export default function PlanModal({
     currentSubscriptionStatus = null,
     currentBillingCycle = 'monthly',
     hasActiveSubscription = false,
+    // Trial dates for the in-modal context strip. Null when the customer isn't
+    // trialing / in the post-trial grace window. Kept as ISO strings on the
+    // prop surface so the modal has no coupling to the Subscription shape.
+    trialEndIso = null,
+    dataRetentionUntilIso = null,
     onSuccess,
 }) {
     const [plans, setPlans] = useState([]);
@@ -492,6 +499,8 @@ export default function PlanModal({
                                                 currentPlanSlug={currentPlanSlug}
                                                 currentSubscriptionStatus={currentSubscriptionStatus}
                                                 hasActiveSubscription={hasActiveSubscription}
+                                                trialEndIso={trialEndIso}
+                                                dataRetentionUntilIso={dataRetentionUntilIso}
                                                 currentPlan={plans.find((p) => p.slug === currentPlanSlug) || null}
                                                 submitting={submitting}
                                                 submitError={submitError}
@@ -639,7 +648,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
 /** The right-hand "focused plan" detail pane. */
 function FocusedPlan({
     plan, billingCycle, geo, isCurrent, currentPlanSlug, currentSubscriptionStatus,
-    hasActiveSubscription, currentPlan,
+    hasActiveSubscription, trialEndIso, dataRetentionUntilIso, currentPlan,
     submitting, submitError, onCta, referral,
 }) {
     const meta = TIER_META[plan.slug] || { icon: Sparkles, accent: 'slate', description: '' };
@@ -673,6 +682,22 @@ function FocusedPlan({
                     {plan.description || meta.description}
                 </p>
             </div>
+
+            {/* Trial-context strip — rendered inline in the modal so a customer
+                looking at their current plan card can see AT A GLANCE which
+                lifecycle state they're in and what will happen if they don't
+                act. Without this, the modal reads identically for a fresh
+                signup and a day-13 trialing customer, which is exactly the
+                confusion that turned "Current plan" into a churn source. */}
+            {isCurrent && (
+                <TrialContextStrip
+                    status={currentSubscriptionStatus}
+                    planName={plan.name}
+                    trialDays={plan.trial_days}
+                    trialEndIso={trialEndIso}
+                    dataRetentionUntilIso={dataRetentionUntilIso}
+                />
+            )}
 
             {/* Price */}
             <PriceBlock
@@ -719,20 +744,27 @@ function FocusedPlan({
             <div className="space-y-2">
                 {ctas.map((cta, i) => {
                     const isSecondary = cta.variant === 'secondary';
-                    const showIcon = !isSecondary && !isCurrent;
+                    // The dead-button treatment is for the ACTUAL "current plan"
+                    // / "you're on Free" CTAs only, not for any card that
+                    // happens to be the current plan. A trialing customer's
+                    // "Upgrade to Paid" CTA lives on the current-plan card
+                    // but is a live paid conversion, so it needs the accent
+                    // treatment or the button reads as unclickable.
+                    const isDeadCta = cta.kind === 'current' || cta.kind === 'noop';
+                    const showIcon = !isSecondary && !isDeadCta;
                     return (
                         <button
                             key={cta.kind}
                             type="button"
                             onClick={() => onCta(cta.kind)}
-                            disabled={submitting || cta.kind === 'current' || cta.kind === 'noop'}
+                            disabled={submitting || isDeadCta}
                             className={cn(
                                 'w-full inline-flex items-center justify-center gap-2 h-12 rounded-xl font-semibold text-[14px] transition-colors',
                                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40',
                                 'disabled:opacity-60 disabled:cursor-not-allowed',
                                 isSecondary
                                     ? 'border border-surface-200 dark:border-surface-700 bg-transparent text-surface-700 dark:text-surface-200 hover:bg-surface-50 dark:hover:bg-surface-800'
-                                    : isCurrent
+                                    : isDeadCta
                                         ? 'bg-surface-100 dark:bg-surface-800 text-surface-700 dark:text-surface-300 border border-surface-200 dark:border-surface-700'
                                         : accent.cta,
                             )}
@@ -1102,6 +1134,30 @@ function ctasFor({
     hasActiveSubscription, isUpgradeFromPaid, isDowngradeFromPaid,
 }) {
     if (isCurrent) {
+        // Trialing / trial-expired customers landing on THEIR OWN plan card
+        // want to convert the trial into a paid subscription — same tier, no
+        // plan swap. The old "Current plan" dead-button hid that path, which
+        // was a documented churn source (customers who decided to pay had to
+        // hunt for a different plan or a different page). Surface the paid
+        // CTA on the same card instead. `kind: 'paid'` routes handleCta
+        // through /change-plan (trialing → active) or /checkout
+        // (trial_expired → active) depending on ``hasActiveSubscription``.
+        if (currentSubscriptionStatus === 'trialing' || currentSubscriptionStatus === 'trial_expired') {
+            const noteByStatus = {
+                trialing:
+                    'Authorise your card or UPI now to keep ' +
+                    `${plan.name} once the trial ends. We won't charge you until the trial is over.`,
+                trial_expired:
+                    `Restore your ${plan.name} plan and bring your chatbot back live. A secure ` +
+                    'Razorpay checkout will open to authorise your payment method.',
+            };
+            return [{
+                kind: 'paid',
+                variant: 'primary',
+                label: `Upgrade to ${plan.name}`,
+                note: noteByStatus[currentSubscriptionStatus],
+            }];
+        }
         return [{
             kind: 'current',
             variant: 'primary',
@@ -1246,11 +1302,14 @@ function buildFeatureList(plan) {
         );
     }
     if (maxCrawlPages === -1) {
-        // UNLIMITED — paid tiers spend credits per page instead of
-        // hitting a fixed plan cap. Bullet copy mirrors KnowledgeBase's
-        // crawl-form hint so customers see the same language end-to-end.
+        // UNLIMITED — paid tiers spend credits per page. The per-page
+        // credit price used to be inlined here ("(5 credits each)") but
+        // was cut because the number moved to a runtime PricingConfig
+        // value and stopped being a stable marketing fact — see
+        // super-admin credit-cost tuning. Customers still see the
+        // per-action credit breakdown on the pricing page's cost table.
         out.push(
-            'Unlimited pages per crawl (5 credits each)' +
+            'Unlimited pages per crawl' +
                 (maxCrawlDepth != null ? ` · depth ${maxCrawlDepth}` : ''),
         );
     } else if (maxCrawlPages != null) {
@@ -1263,7 +1322,6 @@ function buildFeatureList(plan) {
     const features = plan.features || {};
     if (features.live_chat) out.push('Live chat enabled');
     if (features.bant)      out.push('BANT lead qualification scoring');
-    if (features.bant)      out.push('Behavioral tracking & UTM capture');
     if (features.live_chat) out.push('Webhooks (5 event types)');
 
     if (plan.slug === 'free') {
@@ -1275,6 +1333,13 @@ function buildFeatureList(plan) {
         if (plan.trial_days > 0) out.push(`${plan.trial_days}-day free trial`);
         out.push('Priority email support');
     } else if (plan.slug === 'standard') {
+        // Behavioural tracking + UTM capture is a Standard-only positioning
+        // bullet — the underlying capability is gated by ``features.bant``
+        // (Starter has it too) but it stopped being surfaced on Starter as
+        // part of tightening that card's feature list. Kept as a slug check
+        // rather than a new plan.features flag because the difference is
+        // pure marketing framing, not a runtime entitlement.
+        out.push('Behavioral tracking & UTM capture');
         if (plan.trial_days > 0) out.push(`${plan.trial_days}-day free trial`);
     }
 
@@ -1298,3 +1363,193 @@ function renderPriceLabel(plan, billingCycle, geo, compact = false) {
     const value = `${sym}${Number.isInteger(major) ? major.toLocaleString() : major.toFixed(2)}`;
     return compact ? value : `${value} / ${billingCycle === 'annual' ? 'yr' : 'mo'}`;
 }
+
+// ── Trial context strip ─────────────────────────────────────────────────────
+// Inline "you are here" indicator shown at the top of the focused plan card
+// when the customer is trialing OR in the post-trial grace window. The strip
+// answers three questions the customer would otherwise have to piece together
+// from three different UI surfaces:
+//
+//   * What state am I in? (trial vs. grace period)
+//   * How long is the trial, and when exactly does it end?
+//   * What happens if I do nothing?
+//
+// The trialing state renders as a promotional / "look what you get" card
+// (blue tint, calendar + gift iconography, static "N days free trial" label)
+// because the outer TrialUpgradeBanner in Billing.jsx already owns urgency
+// escalation. Doubling up here would just make the modal feel alarmist for
+// customers on day 2 of a 14-day trial. The trial_expired state is a
+// genuinely worse lifecycle stage, so it keeps the amber/rose warning tone.
+//
+// Ticks every 60s so a customer who leaves the modal open across a day
+// boundary sees the deadline update live.
+
+function TrialContextStrip({ status, planName, trialDays, trialEndIso, dataRetentionUntilIso }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const id = setInterval(() => setNow(Date.now()), 60_000);
+        return () => clearInterval(id);
+    }, []);
+
+    // Only two lifecycle states warrant this strip. Everything else (active,
+    // canceled, past_due, or no subscription) has no trial context to surface.
+    if (status !== 'trialing' && status !== 'trial_expired') return null;
+
+    if (status === 'trialing') {
+        if (!trialEndIso) return null;
+        // Live countdown — decrements as time passes (ticks every 60s via the
+        // ``now`` state above) so the headline reads "14 days free trial"
+        // when a customer starts their trial, then "13", "12", … "1 day
+        // free trial · ends today" as the deadline approaches. Ceil-rounded
+        // to match every other trial countdown in the app (outer banner,
+        // top-bar badge) — a trial ending in 2h still reads "1 day left".
+        // Falls back to the plan-configured trial length if the deadline
+        // itself is unparseable, which shouldn't happen in practice but
+        // beats rendering "NaN days".
+        const liveDaysLeft = trialDaysLeft(trialEndIso, now);
+        const configuredDays = Number(trialDays) > 0 ? Number(trialDays) : 14;
+        const daysForHeadline = liveDaysLeft ?? configuredDays;
+        let headline;
+        if (daysForHeadline <= 0) headline = 'Free trial ends today';
+        else if (daysForHeadline === 1) headline = '1 day free trial left';
+        else headline = `${daysForHeadline} days free trial`;
+        const deadlineLabel = formatTrialDate(trialEndIso);
+        return (
+            <div
+                role="status"
+                className={cn(
+                    'relative overflow-hidden rounded-2xl border p-4 sm:p-5',
+                    'border-blue-200/80 bg-blue-50/80',
+                    'dark:border-blue-500/25 dark:bg-blue-500/[0.07]',
+                )}
+            >
+                <div className="flex items-center gap-4">
+                    {/* Left — circular calendar icon */}
+                    <div
+                        className={cn(
+                            'flex-shrink-0 w-14 h-14 rounded-full flex items-center justify-center',
+                            'bg-blue-100 dark:bg-blue-500/15 ring-1 ring-inset ring-blue-200/70 dark:ring-blue-500/20',
+                        )}
+                    >
+                        <Calendar className="w-6 h-6 text-blue-600 dark:text-blue-300" strokeWidth={1.9} />
+                    </div>
+
+                    {/* Middle — headline + body */}
+                    <div className="min-w-0 flex-1">
+                        <div className="text-[15px] font-bold tracking-tight text-blue-950 dark:text-blue-50">
+                            {headline}
+                        </div>
+                        <p className="mt-1 text-[13px] leading-relaxed text-blue-900/85 dark:text-blue-100/85">
+                            Your chatbot is live with the full <strong className="font-semibold">{planName}</strong> feature set right now. Authorise your card or UPI to keep it running past{' '}
+                            <strong className="font-semibold text-blue-700 dark:text-blue-300">{deadlineLabel}</strong>.
+                        </p>
+                    </div>
+
+                    {/* Right — decorative gift illustration, split off by a
+                        subtle divider so the strip reads as a two-part card
+                        (the offer, then the perk). Hidden on narrow widths so
+                        the strip stays useful on mobile without wrapping the
+                        body copy under the icon. */}
+                    <div
+                        className={cn(
+                            'hidden md:flex flex-shrink-0 items-center justify-center pl-5 ml-1 self-stretch',
+                            'border-l border-blue-200/60 dark:border-blue-500/20',
+                        )}
+                        aria-hidden="true"
+                    >
+                        <GiftDecoration />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // trial_expired — grace-window warning / alarm. Keeps the compact
+    // warning-strip shape so it visually reads as a "problem" surface, not
+    // a "here's the perk" card.
+    if (!dataRetentionUntilIso) return null;
+    const daysLeft = daysUntil(dataRetentionUntilIso, now);
+    if (daysLeft === null) return null;
+    const urgency = daysLeft <= 3 ? 'alarm' : 'warning';
+    const theme = TRIAL_STRIP_THEMES[urgency];
+    const deadlineLabel = formatTrialDate(dataRetentionUntilIso);
+    let statusLabel;
+    if (daysLeft <= 0) statusLabel = 'Your workspace is scheduled for deletion today';
+    else if (daysLeft === 1) statusLabel = '1 day left to save your workspace';
+    else statusLabel = `${daysLeft} days left to save your workspace`;
+    return (
+        <div
+            role={urgency === 'alarm' ? 'alert' : 'status'}
+            className={cn('flex items-start gap-3 rounded-xl border p-3.5', theme.container)}
+        >
+            <div className={cn('flex-shrink-0 rounded-lg p-1.5', theme.iconBg)}>
+                <AlertTriangle className={cn('w-4 h-4', theme.iconColor)} />
+            </div>
+            <div className="min-w-0 flex-1">
+                <div className={cn('text-[13px] font-semibold', theme.headline)}>{statusLabel}</div>
+                <p className={cn('mt-0.5 text-[12px] leading-relaxed', theme.body)}>
+                    Your trial ended and your chatbot is currently offline on visitor sites. Your knowledge base, leads, and settings stay intact until <strong>{deadlineLabel}</strong>, then get permanently deleted. Upgrade to bring the bot back live.
+                </p>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Decorative gift-box illustration for the trialing strip. Rendered as inline
+ * SVG so it can share the exact same currentColor + stroke width as the rest
+ * of the strip's blue palette (no PNG asset, no colour drift across themes).
+ * Sized for the ~64px right column; the ambient sparkles are the only detail
+ * cue that this is a "reward" flourish rather than a generic icon.
+ */
+function GiftDecoration() {
+    return (
+        <svg
+            width="60"
+            height="60"
+            viewBox="0 0 60 60"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            className="text-blue-400/80 dark:text-blue-300/70"
+        >
+            {/* Ambient sparkles top-right */}
+            <path d="M50 8 L50 14 M47 11 L53 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <circle cx="55" cy="18" r="1.1" fill="currentColor" />
+            <path d="M46 22 L46 26 M44 24 L48 24" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            {/* Gift box */}
+            <rect x="12" y="26" width="30" height="22" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+            <rect x="10" y="20" width="34" height="8" rx="1.8" stroke="currentColor" strokeWidth="1.6" />
+            <line x1="27" y1="20" x2="27" y2="48" stroke="currentColor" strokeWidth="1.6" />
+            {/* Ribbon bow */}
+            <path
+                d="M27 20 C 22 14 16 14 18 20 C 20 24 25 22 27 20 Z"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinejoin="round"
+            />
+            <path
+                d="M27 20 C 32 14 38 14 36 20 C 34 24 29 22 27 20 Z"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
+
+const TRIAL_STRIP_THEMES = {
+    warning: {
+        container: 'border-amber-200 bg-amber-50/70 dark:border-amber-500/30 dark:bg-amber-500/10',
+        iconBg: 'bg-amber-100 dark:bg-amber-500/20',
+        iconColor: 'text-amber-600 dark:text-amber-300',
+        headline: 'text-amber-950 dark:text-amber-50',
+        body: 'text-amber-900/85 dark:text-amber-100/85',
+    },
+    alarm: {
+        container: 'border-rose-200 bg-rose-50/70 dark:border-rose-500/30 dark:bg-rose-500/10',
+        iconBg: 'bg-rose-100 dark:bg-rose-500/20',
+        iconColor: 'text-rose-600 dark:text-rose-300',
+        headline: 'text-rose-950 dark:text-rose-50',
+        body: 'text-rose-900/85 dark:text-rose-100/85',
+    },
+};
