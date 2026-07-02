@@ -41,6 +41,12 @@ from app.db.session import get_session
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
+from app.services.seller_profile_service import (
+    SellerProfile,
+    SellerProfileError,
+    get_seller_profile,
+    save_seller_profile,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/superadmin", tags=["superadmin-v2"])
@@ -1283,3 +1289,81 @@ def _coupon_dict(c: Coupon) -> dict[str, Any]:
         "is_active": c.is_active,
         "created_at": c.created_at.isoformat() if c.created_at else "",
     }
+
+
+# ── billing: seller-of-record profile ───────────────────────────────────────
+
+
+class SellerProfileBody(BaseModel):
+    legal_name: str
+    trade_name: str | None = None
+    gstin: str | None = None
+    address_lines: list[str] = Field(default_factory=list)
+    state_code: str | None = None
+    country: str | None = None
+    sac_code: str | None = None
+    tax_rate_bps: int | None = None
+    price_inclusive: bool | None = None
+    lut_active: bool | None = None
+    lut_number: str | None = None
+    invoice_prefix: str | None = None
+    logo_url: str | None = None
+
+
+def _profile_dict(profile: SellerProfile) -> dict[str, Any]:
+    return {
+        "configured": profile.configured,
+        "gst_enabled": profile.gst_enabled,
+        "legal_name": profile.legal_name,
+        "trade_name": profile.trade_name,
+        "gstin": profile.gstin,
+        "address_lines": profile.address_lines,
+        "state_code": profile.state_code,
+        "country": profile.country,
+        "sac_code": profile.sac_code,
+        "tax_rate_bps": profile.tax_rate_bps,
+        "price_inclusive": profile.price_inclusive,
+        "lut_active": profile.lut_active,
+        "lut_number": profile.lut_number,
+        "invoice_prefix": profile.invoice_prefix,
+        "logo_url": profile.logo_url,
+    }
+
+
+@router.get("/billing/seller-profile")
+def read_seller_profile(_admin: Client = Depends(get_superadmin)):
+    """Seller identity printed on tax invoices (invoicing v2 Phase 0)."""
+    with get_session() as session:
+        return _profile_dict(get_seller_profile(session))
+
+
+@router.put("/billing/seller-profile")
+def update_seller_profile(
+    body: SellerProfileBody,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    _require_write(admin)
+    with get_session() as session:
+        before = _profile_dict(get_seller_profile(session))
+        try:
+            profile = save_seller_profile(
+                session,
+                body.model_dump(exclude_none=True),
+                actor_id=admin.id,
+            )
+        except SellerProfileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        after = _profile_dict(profile)
+        record_audit(
+            session,
+            actor=admin,
+            action="billing.seller_profile.update",
+            target_type="pricing_config",
+            target_id="billing.seller_profile",
+            before=before,
+            after=after,
+            request=request,
+        )
+        session.commit()
+        return after
