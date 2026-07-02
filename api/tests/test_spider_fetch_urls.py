@@ -160,3 +160,32 @@ async def test_fetch_urls_missing_key_raises(monkeypatch):
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", None)
     with pytest.raises(CrawlerError):
         await spider_service.fetch_urls(["https://acme.test/a"], use_js=False, client_id=1)
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_streams_successful_pages_via_on_result(monkeypatch):
+    """on_result fires with the full page dict per successful page (streaming
+    ingestion hook) and is skipped for failed pages; a broken callback never
+    aborts the crawl."""
+    monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
+    monkeypatch.setattr(spider_service, "is_cancellation_requested", lambda cid: False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = json.loads(request.content)["url"]
+        if url.endswith("/bad"):
+            return httpx.Response(404, json={"error": "not found"})  # dropped, no retry
+        return httpx.Response(200, json=[{"url": url, "content": f"md:{url}"}])
+
+    streamed: list[dict] = []
+
+    def on_result(page: dict) -> None:
+        streamed.append(page)
+        raise RuntimeError("broken callback must be swallowed")
+
+    urls = ["https://a.test/x", "https://a.test/bad", "https://a.test/y"]
+    data = await spider_service.fetch_urls(urls, client_id=1, on_result=on_result, _client=_mock_client(handler))
+
+    assert sorted(p["url"] for p in streamed) == ["https://a.test/x", "https://a.test/y"]
+    assert all(p["content"].startswith("md:") for p in streamed)
+    # The crawl itself survived the raising callback and returned both pages.
+    assert [p["url"] for p in data["results"]] == ["https://a.test/x", "https://a.test/y"]

@@ -26,6 +26,7 @@ from app.config import (
     GEMINI_EMBED_URL,
     GOOGLE_API_KEY,
 )
+from app.core import embed_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,10 @@ def _embed_one_batch(client: httpx.Client, batch: list[str]) -> list[list[float]
     }
     last_err: str = "unknown error"
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        # Reserve this batch's request-units against the project-wide per-minute
+        # quota before every POST (retries included — each POST is billed) so we
+        # pace under the ceiling instead of bursting into 429s.
+        embed_rate_limiter.acquire(len(batch))
         try:
             resp = client.post(url, params={"key": GOOGLE_API_KEY}, json=body, timeout=_TIMEOUT)
         except httpx.HTTPError as exc:

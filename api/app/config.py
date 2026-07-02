@@ -84,6 +84,17 @@ EMBED_DIMENSIONS = int(_env("EMBED_DIMENSIONS", "768"))  # matches Vector(768) c
 # (network), so a large crawl's ~100 sequential batch calls are the crawl's long
 # pole; concurrency cuts that near-linearly. Kept well under the paid-tier RPM.
 EMBED_CONCURRENCY = int(_env("EMBED_CONCURRENCY", "8"))
+# Gemini counts every content item (not every HTTP call) against a per-minute,
+# per-project embedding-request quota — on the paid tier the default is 3000 RPM.
+# Concurrent crawls all draw from that single project-wide bucket, so without
+# pacing a large or multi-account crawl bursts past it and thrashes on 429s.
+# EMBED_RPM_LIMIT is the ceiling the client throttles itself to; keep a safety
+# margin under the real quota. Raise it after a Gemini tier upgrade (Tier 2 =
+# 5000 RPM → e.g. 4750). See app/core/embed_rate_limiter.py.
+EMBED_RPM_LIMIT = int(_env("EMBED_RPM_LIMIT", "2850"))
+# Token-bucket burst allowance (request-units). One full batch (100) may fire
+# immediately after idle; sustained throughput is still capped at EMBED_RPM_LIMIT.
+EMBED_RATE_BURST = int(_env("EMBED_RATE_BURST", "100"))
 CHUNK_SIZE = int(_env("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(_env("CHUNK_OVERLAP", "200"))
 
@@ -399,3 +410,22 @@ JINA_FALLBACK_ENABLED = _env("JINA_FALLBACK_ENABLED", "true").strip().lower() in
     "yes",
 )
 JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))
+# Which scrape backend page-list fetches try first: "spider" or "jina". The
+# other one becomes the fallback. Env default only — the super-admin Models &
+# RAG page overrides it at runtime via pricing_config (crawl.provider_primary).
+CRAWL_PROVIDER_PRIMARY = _env("CRAWL_PROVIDER_PRIMARY", "spider").strip().lower()
+
+# ── Streaming crawl ingestion ────────────────────────────────────────────────
+# Overlap the embed+ingest phase with the scrape phase: as pages come back from
+# the crawl provider they are ingested in waves instead of waiting for the whole
+# site. Cuts large-crawl wall-clock from scrape+embed to ~max(scrape, embed) and
+# keeps the per-minute embedding quota busy during the scrape. The flag is a
+# kill switch back to the sequential scrape-then-embed behaviour.
+CRAWL_STREAM_INGEST_ENABLED = _env("CRAWL_STREAM_INGEST_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# Pages per ingestion wave. Small enough to start embedding early and bound
+# memory; large enough that per-wave session/commit overhead stays negligible.
+CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))

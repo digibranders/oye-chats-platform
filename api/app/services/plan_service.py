@@ -272,6 +272,22 @@ def get_or_create_usage_record(session: Session, client_id: int) -> UsageRecord:
     """
     record = get_current_usage_record(session, client_id)
     if record:
+        # Keep the current-period record's plan + limits in sync with the
+        # client's CURRENT plan. The record snapshots plan_id/limits at creation
+        # and would otherwise go stale after a mid-period upgrade/downgrade,
+        # showing the old plan/limits until the next period. We only write when
+        # the plan actually changed; used counters are preserved.
+        current = get_client_plan(session, client_id)
+        if current and record.plan_id != current.id:
+            cur_limits = current.limits or {}
+            record.plan_id = current.id
+            record.ai_messages_limit = cur_limits.get("ai_messages", 0)
+            record.live_chat_messages_limit = cur_limits.get("live_chat_messages", 0)
+            record.url_scans_limit = cur_limits.get("url_scans", 0)
+            record.email_summaries_limit = cur_limits.get("email_summaries", 0)
+            record.email_notifications_limit = cur_limits.get("email_notifications", 0)
+            record.storage_limit_mb = cur_limits.get("storage_mb", 0)
+            session.flush()
         return record
 
     # Determine period boundaries from subscription or default to calendar month

@@ -24,6 +24,7 @@ from sqlalchemy import select
 from app.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    CRAWL_PROVIDER_PRIMARY,
     FALLBACK_MODEL,
     LLM_MODEL,
 )
@@ -117,6 +118,22 @@ def get_relevance_threshold(default: float = 0.5) -> float:
         return float(get("rag.relevance_threshold", default))
     except (TypeError, ValueError):
         return default
+
+
+_CRAWL_PROVIDERS = ("spider", "jina")
+
+
+def get_crawl_provider_primary() -> str:
+    """Which scrape backend to try first ("spider" or "jina").
+
+    The other provider becomes the fallback (see crawl_provider). Unknown
+    values fall back to the env default so a bad DB row can never wedge
+    crawling entirely.
+    """
+    value = str(get("crawl.provider_primary", CRAWL_PROVIDER_PRIMARY)).strip().lower()
+    if value not in _CRAWL_PROVIDERS:
+        return CRAWL_PROVIDER_PRIMARY if CRAWL_PROVIDER_PRIMARY in _CRAWL_PROVIDERS else "spider"
+    return value
 
 
 def snapshot() -> dict[str, Any]:
