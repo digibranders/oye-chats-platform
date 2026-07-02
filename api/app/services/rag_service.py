@@ -2853,6 +2853,16 @@ def rag_pipeline(
                 if meeting_data:
                     result.update(meeting_data)
                     _mark_card_shown(chat_session, "meeting")
+                    # Precedence: an explicit scheduling intent wins over a
+                    # live-chat handoff suggestion — otherwise the widget opens
+                    # the booking panel AND auto-triggers the handoff flow in
+                    # the same turn, two competing CTAs.
+                    if result.pop("suggest_handoff", None):
+                        suggest_handoff = False
+                        logger.info(
+                            "Handoff suggestion suppressed by meeting-card precedence | session=%s",
+                            session_id,
+                        )
 
             # Leave-message card: triggered by [LEAVE_MESSAGE_CARD] token from LLM.
             # Skipped when a live-chat handoff is already being suggested so the
@@ -3496,6 +3506,16 @@ async def rag_pipeline_stream(
                 meeting_data = _resolve_meeting_booking(bot, session, session_id, bid)
                 if meeting_data:
                     final_meta.update(meeting_data)
+                    # Precedence: an explicit scheduling intent wins over a
+                    # live-chat handoff suggestion — otherwise the widget opens
+                    # the booking panel AND auto-triggers the handoff flow in
+                    # the same turn, two competing CTAs.
+                    if suggest_handoff:
+                        suggest_handoff = False
+                        logger.info(
+                            "Handoff suggestion suppressed by meeting-card precedence | session=%s",
+                            session_id,
+                        )
                 else:
                     # _resolve_meeting_booking returned {} (provider URL missing or
                     # already booked) — don't flip to card-shown state.
@@ -3576,7 +3596,13 @@ async def rag_pipeline_stream(
 
                     # BANT-based meeting card (only if [MEETING_CARD] didn't already
                     # trigger AND meeting hasn't already been shown this session).
-                    if not final_meta.get("show_booking") and not _card_already_shown(chat_session, "meeting"):
+                    # Unlike the explicit [MEETING_CARD], this card is opportunistic —
+                    # so a handoff suggestion wins over it (mirrors leave-message).
+                    if (
+                        not final_meta.get("show_booking")
+                        and not final_meta.get("suggest_handoff")
+                        and not _card_already_shown(chat_session, "meeting")
+                    ):
                         bant_meeting = _resolve_meeting_booking(bot, session, session_id, bid)
                         if bant_meeting:
                             show_for_sql = (chat_session.bant_tier or "unqualified") == "sql"
