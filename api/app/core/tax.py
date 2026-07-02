@@ -6,6 +6,15 @@ result reconciles exactly: ``taxable + total_tax == total`` and
 ``cgst + sgst + igst == total_tax`` (single rounding point + largest-remainder
 split), which is the property a GST audit checks.
 
+CGST/SGST split — deliberate convention: we round ``total_tax`` once and split
+it (``cgst = total_tax // 2``, odd paisa → SGST), rather than rounding each
+half independently from ``rate/2``. This guarantees ``cgst + sgst`` equals the
+carved-out ``total_tax`` with no reconciliation gap — per-component rounding
+can make the halves sum to ``total_tax ± 1`` paisa and break the inclusive
+"customer pays exactly the sticker price" invariant. The two methods coincide
+exactly at whole-rupee taxable bases (the only granularity billed here); they
+diverge only for sub-rupee bases, which do not occur.
+
 Tax direction (v2 plan §2a): OyeChats/Digibranders is the domestic supplier
 (forward charge), so we compute, show, and remit GST ourselves.
 
@@ -18,9 +27,10 @@ Tax direction (v2 plan §2a): OyeChats/Digibranders is the domestic supplier
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, get_args
 
-SupplyKind = str  # "intra" | "inter" | "export"
-_KINDS = ("intra", "inter", "export")
+SupplyKind = Literal["intra", "inter", "export"]
+_KINDS = get_args(SupplyKind)
 
 
 @dataclass(frozen=True)
@@ -31,8 +41,12 @@ class TaxBreakup:
     igst_minor: int
     total_tax_minor: int
     total_minor: int
-    is_export: bool
+    is_export: bool  # derived: supply_kind == "export"
     supply_kind: SupplyKind
+    rate_bps: int  # the full GST rate applied — snapshotted so the PDF can print "@ 18%"
+    # True only for a zero-rated export under a filed LUT — distinguishes that
+    # legend-bearing case from a genuine 0%-rate supply (both have zero tax).
+    zero_rated_export: bool = False
 
 
 def _round_half_up(numerator: int, denominator: int) -> int:
@@ -51,11 +65,21 @@ def supply_kind(seller_state: str | None, buyer_state: str | None, buyer_country
     intra-state when the buyer's state matches the seller's — and, per Circular
     242/36/2024, a B2C sale with no state on record has its place of supply at
     the supplier's location, i.e. intra-state.
+
+    Precondition: ``seller_state`` and ``buyer_state`` must already be canonical
+    2-char zero-padded GST state codes (as produced by ``seller_profile_service``
+    and validated on ``Client.billing_state_code``). This function compares them
+    literally and does NOT re-pad — ``"7"`` and ``"07"`` would classify as
+    inter-state. Whitespace is tolerated; zero-padding is the caller's job.
     """
-    country = (buyer_country or "IN").strip().upper()
+    # Empty / whitespace-only country means "no country on record" → domestic,
+    # NOT export (a blank must never flip a domestic sale to a zero-rated export).
+    country = (buyer_country or "").strip().upper() or "IN"
     if country != "IN":
         return "export"
-    if not buyer_state or buyer_state == seller_state:
+    seller = (seller_state or "").strip()
+    buyer = (buyer_state or "").strip()
+    if not buyer or buyer == seller:
         return "intra"
     return "inter"
 
@@ -95,6 +119,8 @@ def compute_tax(
             total_minor=amount_minor,
             is_export=True,
             supply_kind=kind,
+            rate_bps=rate_bps,
+            zero_rated_export=True,
         )
 
     # Single rounding point: derive taxable + total_tax + total.
@@ -127,4 +153,6 @@ def compute_tax(
         total_minor=total,
         is_export=is_export,
         supply_kind=kind,
+        rate_bps=rate_bps,
+        zero_rated_export=False,
     )
