@@ -32,6 +32,7 @@ from app.services.url_discovery import discover_website_urls as _discover_urls
 
 logger = logging.getLogger(__name__)
 
+
 def _fetcher(provider: str):
     """Resolve a provider name to its fetch_urls at call time (test-patchable)."""
     return {"spider": _spider_fetch_urls, "jina": _jina_fetch_urls}[provider]
