@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { ExternalLink, X } from 'lucide-react';
 
 /**
  * Validate a meeting URL based on the provider. Only allows HTTPS URLs
@@ -8,6 +8,14 @@ import { X } from 'lucide-react';
 const ALLOWED_HOSTS = {
     calendly: (host) => host === 'calendly.com' || host.endsWith('.calendly.com'),
     zcal: (host) => host === 'zcal.co' || host.endsWith('.zcal.co'),
+    // Cal.com org accounts serve booking pages from subdomains (i.cal.com etc.)
+    calcom: (host) => host === 'cal.com' || host.endsWith('.cal.com'),
+};
+
+const PROVIDER_LABELS = {
+    calendly: 'Calendly',
+    zcal: 'Zcal',
+    calcom: 'Cal.com',
 };
 
 const validateMeetingUrl = (url, provider = 'calendly') => {
@@ -30,6 +38,8 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
     const safeUrl = validateMeetingUrl(calendlyUrl, provider);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
+    const [confirming, setConfirming] = useState(false);
+    const [openedExternally, setOpenedExternally] = useState(false);
 
     useEffect(() => {
         if (!safeUrl) return;
@@ -47,6 +57,21 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
         setError(false);
     };
 
+    const handleManualConfirm = async () => {
+        if (confirming) return;
+        setConfirming(true);
+        try {
+            await onBooked?.({
+                session_id: sessionId,
+                booking_url: calendlyUrl,
+                attendee_email: null,
+                meeting_time: null,
+            });
+        } finally {
+            setConfirming(false);
+        }
+    };
+
     useEffect(() => {
         const handleMessage = (event) => {
             if (provider === 'calendly') {
@@ -59,6 +84,32 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         booking_url: data.payload?.event?.uri || calendlyUrl,
                         attendee_email: data.payload?.invitee?.email || null,
                         meeting_time: data.payload?.event?.start_time || null,
+                    });
+                }
+            } else if (provider === 'calcom') {
+                // Cal.com emits embed events even from a bare booking-page
+                // iframe, wrapped as {originator: "CAL", type, data}. Org
+                // accounts post from their own subdomain (i.cal.com etc.),
+                // so match any *.cal.com origin.
+                let host;
+                try {
+                    host = new URL(event.origin).hostname.toLowerCase();
+                } catch {
+                    return;
+                }
+                if (host !== 'cal.com' && !host.endsWith('.cal.com')) return;
+                const data = event?.data;
+                if (!data || typeof data !== 'object' || data.originator !== 'CAL') return;
+                if (data.type === 'bookingSuccessful' || data.type === 'bookingSuccessfulV2') {
+                    const payload = data.data || {};
+                    const booking = payload.booking || {};
+                    const uid = booking.uid || payload.uid || null;
+                    onBooked?.({
+                        session_id: sessionId,
+                        booking_url: uid ? `https://cal.com/booking/${uid}` : calendlyUrl,
+                        attendee_email:
+                            booking.attendees?.[0]?.email || payload.attendees?.[0]?.email || null,
+                        meeting_time: payload.date || payload.startTime || booking.startTime || null,
                     });
                 }
             } else if (provider === 'zcal') {
@@ -103,13 +154,26 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
             <div className="flex-[0.85] bg-white rounded-t-2xl border-t border-gray-200 shadow-xl flex flex-col overflow-hidden">
                 <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100 shrink-0">
                     <h3 className="text-sm font-semibold text-gray-800">Book a Meeting</h3>
-                    <button
-                        onClick={onDismiss}
-                        className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
-                        aria-label="Close booking widget"
-                    >
-                        <X className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                        <a
+                            href={safeUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => setOpenedExternally(true)}
+                            className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
+                            aria-label="Open booking page in new tab"
+                            title="Open in new tab"
+                        >
+                            <ExternalLink className="w-4 h-4" />
+                        </a>
+                        <button
+                            onClick={onDismiss}
+                            className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
+                            aria-label="Close booking widget"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
                 </div>
                 <div className="flex-1 overflow-hidden relative">
                     {loading && !error && (
@@ -118,19 +182,32 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         </div>
                     )}
                     {error && (
-                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white gap-3">
-                            <p className="text-sm text-gray-600">Could not load booking page</p>
-                            <button
-                                onClick={handleRetry}
-                                className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600"
-                            >
-                                Try again
-                            </button>
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white gap-3 px-6 text-center">
+                            <p className="text-sm text-gray-600">
+                                Could not load the booking page. An ad or privacy blocker may be preventing it.
+                            </p>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={handleRetry}
+                                    className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600"
+                                >
+                                    Try again
+                                </button>
+                                <a
+                                    href={safeUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={() => setOpenedExternally(true)}
+                                    className="px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50"
+                                >
+                                    Open in new tab
+                                </a>
+                            </div>
                         </div>
                     )}
                     <iframe
                         key={error ? 'retry' : 'initial'}
-                        title={`${provider === 'zcal' ? 'Zcal' : 'Calendly'} Booking`}
+                        title={`${PROVIDER_LABELS[provider] || 'Calendly'} Booking`}
                         src={safeUrl}
                         width="100%"
                         height="100%"
@@ -139,6 +216,22 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         sandbox="allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation allow-same-origin"
                     />
                 </div>
+                {/* Manual confirmation fallback. Zcal's postMessage API is
+                    undocumented (the listener above is best-effort), and
+                    bookings completed in an external tab never post back to
+                    this frame — in both cases the visitor must confirm. */}
+                {(provider === 'zcal' || openedExternally) && (
+                    <div className="px-4 py-2.5 border-t border-gray-100 bg-white flex items-center justify-between gap-3 shrink-0">
+                        <p className="text-xs text-gray-500">Finished booking your meeting?</p>
+                        <button
+                            onClick={handleManualConfirm}
+                            disabled={confirming}
+                            className="px-3 py-1.5 text-xs font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-60 shrink-0"
+                        >
+                            {confirming ? 'Confirming…' : 'Yes, I booked it'}
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

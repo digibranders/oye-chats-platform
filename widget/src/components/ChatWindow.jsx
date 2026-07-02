@@ -2167,48 +2167,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 {/* Bot typing indicator */}
                 {isTyping && <TypingIndicator settings={settings} />}
 
-                {/* Meeting booking widget for qualified leads */}
-                {showBooking && calendlyUrl && (
-                    <Suspense fallback={null}>
-                    <MeetingBooking
-                        calendlyUrl={calendlyUrl}
-                        sessionId={sessionId}
-                        provider={meetingProvider || 'calendly'}
-                        onDismiss={() => setShowBooking(false)}
-                        onBooked={async (bookingData) => {
-                            const sid = sessionId || bookingData.session_id;
-                            if (!sid) return;
-                            try {
-                                await submitMeetingBooked(sid, bookingData);
-                                setMeetingBooked(true);
-                                setShowBooking(false);
-                                setMessages(prev => [
-                                    ...prev,
-                                    {
-                                        id: `meeting-booked-${Date.now()}`,
-                                        text: 'Great, your meeting is confirmed. Our team will connect with you soon.',
-                                        sender: 'bot',
-                                        timestamp: new Date().toISOString(),
-                                        feedback: null,
-                                    }
-                                ]);
-                            } catch {
-                                setMessages(prev => [
-                                    ...prev,
-                                    {
-                                        id: `meeting-booked-error-${Date.now()}`,
-                                        text: 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
-                                        sender: 'bot',
-                                        timestamp: new Date().toISOString(),
-                                        feedback: null,
-                                    }
-                                ]);
-                            }
-                        }}
-                    />
-                    </Suspense>
-                )}
-
                 {/* Leave-a-message CTA — inline prompt to open the offline form.
                     Triggered by the [LEAVE_MESSAGE_CARD] sentinel from the RAG
                     pipeline when the visitor asks to email/write to the team.
@@ -2710,6 +2668,54 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 </button>
             </div>
 
+            {/* Meeting booking overlay for qualified leads. Rendered as a
+                SIBLING of the messages area, not inside it: the messages area
+                is a scroll container, and an absolute inset-0 overlay inside
+                one scrolls away with the content — in a long conversation
+                scrolled to the bottom it lands entirely off-screen. Anchored
+                here it pins to the widget shell (the fixed theme container)
+                and stays visible regardless of scroll position. */}
+            {showBooking && calendlyUrl && (
+                <Suspense fallback={null}>
+                <MeetingBooking
+                    calendlyUrl={calendlyUrl}
+                    sessionId={sessionId}
+                    provider={meetingProvider || 'calendly'}
+                    onDismiss={() => setShowBooking(false)}
+                    onBooked={async (bookingData) => {
+                        const sid = sessionId || bookingData.session_id;
+                        if (!sid) return;
+                        try {
+                            await submitMeetingBooked(sid, bookingData);
+                            setMeetingBooked(true);
+                            setShowBooking(false);
+                            setMessages(prev => [
+                                ...prev,
+                                {
+                                    id: `meeting-booked-${Date.now()}`,
+                                    text: 'Great, your meeting is confirmed. Our team will connect with you soon.',
+                                    sender: 'bot',
+                                    timestamp: new Date().toISOString(),
+                                    feedback: null,
+                                }
+                            ]);
+                        } catch {
+                            setMessages(prev => [
+                                ...prev,
+                                {
+                                    id: `meeting-booked-error-${Date.now()}`,
+                                    text: 'Your booking was detected, but we could not sync it yet. We will still follow up with you.',
+                                    sender: 'bot',
+                                    timestamp: new Date().toISOString(),
+                                    feedback: null,
+                                }
+                            ]);
+                        }
+                    }}
+                />
+                </Suspense>
+            )}
+
             {/* ── Unified ChatInput — hidden when any form is active ── */}
             {!showLeadForm &&
              !showRating &&
@@ -2742,7 +2748,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     onBookMeeting={() => {
                         if (settings.meeting_booking_enabled && !meetingBooked) {
                             const p = settings.meeting_provider || 'calendly';
-                            const url = p === 'zcal' ? settings.zcal_url : settings.calendly_url;
+                            const url = { calendly: settings.calendly_url, zcal: settings.zcal_url, calcom: settings.calcom_url }[p] || settings.calendly_url;
                             if (url) {
                                 setCalendlyUrl(url);
                                 setMeetingProvider(p);
