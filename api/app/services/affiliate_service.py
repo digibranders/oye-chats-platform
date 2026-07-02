@@ -248,6 +248,18 @@ def record_click(
 # ─── Attribution (called from the register endpoint) ────────────────────
 
 
+def is_own_code(session: Session, client_id: int, code_row: ReferralCode) -> bool:
+    """True when ``code_row`` belongs to ``client_id``'s own affiliate profile.
+
+    Lets the apply-referral endpoint tell an affiliate *why* their code didn't
+    attach ("you can't use your own code") instead of a generic failure —
+    ``attribute_signup`` itself stays silent by design (signup must never
+    fail on referral problems).
+    """
+    affiliate = session.get(Affiliate, code_row.affiliate_id)
+    return affiliate is not None and affiliate.client_id == client_id
+
+
 def attribute_signup(session: Session, client_id: int, code: str | None) -> bool:
     """Attribute a freshly-created client to a referral code (first-touch wins).
 

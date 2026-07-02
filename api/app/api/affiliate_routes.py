@@ -422,16 +422,33 @@ def apply_referral(
         )
 
     # Valid code but not attributed this call — either previously attributed
-    # to the same code (idempotent — surface the discount), or attributed to
-    # a different code (collision — withhold the discount).
+    # to the same code (idempotent — surface the discount), the caller's OWN
+    # code (self-referral — say so plainly; the old catch-all falsely claimed
+    # "a different code is applied"), a genuine collision with another code,
+    # or a lost race on the last redemption slot.
     with get_session() as session:
         existing = session.query(Client.referral_code_id).filter(Client.id == client.id).first()
-    if existing and existing[0] == code_row.id:
+        own_code = affiliate_service.is_own_code(session, client.id, code_row)
+    existing_code_id = existing[0] if existing else None
+    if existing_code_id == code_row.id:
         return ApplyReferralResponse(
             attributed=False,
             message=f"Referral code {code_row.code} already applied — discount stays on.",
             code=code_row.code,
             discount_pct=affiliate_service.bps_to_pct(code_row.customer_discount_bps),
+        )
+    if own_code:
+        return ApplyReferralResponse(
+            attributed=False,
+            message="You can't use your own referral code — share it with someone else instead.",
+        )
+    if existing_code_id is None:
+        # Not attributed, not their own code, no prior code — the atomic claim
+        # failed: the code ran out of redemptions (or expired) between
+        # validation and the claim.
+        return ApplyReferralResponse(
+            attributed=False,
+            message=f"Referral code {code_row.code} is no longer available (redemption limit reached).",
         )
     return ApplyReferralResponse(
         attributed=False,

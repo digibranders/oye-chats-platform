@@ -88,6 +88,23 @@ class WebhookReplay(RazorpayBillingError):
     """
 
 
+class WebhookOutOfOrder(RazorpayBillingError):
+    """Raised when a webhook references state that doesn't exist locally *yet*.
+
+    Razorpay fires ``subscription.charged`` and ``subscription.activated``
+    near-simultaneously on the first payment, and ``charged`` can win the
+    race — arriving before the activation handler has linked the
+    ``razorpay_subscription_id``. Ack-dropping that event (the old behaviour)
+    permanently lost the period's invoice: Razorpay never retries a 2xx.
+
+    Raising instead routes the event through the standard failure path: the
+    transaction (including the idempotency row) rolls back, the raw event is
+    dead-lettered, and the route returns 5xx so Razorpay redelivers — by which
+    time activation has landed and the retry processes cleanly. Verified in
+    prod 2026-07-02 (client 11's first live charge lost its invoice this way).
+    """
+
+
 # ── Client init ───────────────────────────────────────────────────────────────
 
 
@@ -1342,8 +1359,15 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     razorpay_sub_id = sub_entity.get("id")
     local = _resolve_local_subscription(session, razorpay_sub_id) if razorpay_sub_id else None
     if local is None:
-        logger.warning("subscription.charged for unknown razorpay_subscription_id %s", razorpay_sub_id)
-        return "Subscription not found"
+        # First-charge race: ``charged`` can arrive before ``activated`` links
+        # the razorpay id. Raise (never ack) so the event is dead-lettered and
+        # Razorpay redelivers once activation has landed — otherwise the
+        # period's invoice is silently lost forever. A genuinely foreign sub id
+        # exhausts Razorpay's retries and stays visible in failed_webhooks.
+        logger.warning("subscription.charged for unknown razorpay_subscription_id %s — will retry", razorpay_sub_id)
+        raise WebhookOutOfOrder(
+            f"subscription.charged arrived before {razorpay_sub_id} was linked locally; retry after activation"
+        )
 
     new_period_start = (
         datetime.fromtimestamp(sub_entity["current_start"], tz=UTC) if sub_entity.get("current_start") else None

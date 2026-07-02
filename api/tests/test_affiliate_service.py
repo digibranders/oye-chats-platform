@@ -254,6 +254,20 @@ class TestAttributeSignup:
         assert svc.attribute_signup(db, prospect.id, None) is False
         assert svc.attribute_signup(db, prospect.id, "") is False
 
+    def test_is_own_code_distinguishes_affiliate_from_prospect(self, db):
+        """Backs the apply-referral endpoint's self-referral message: the
+        affiliate's own account must be identified as the code owner, while
+        any other account is not (and can attach the code normally)."""
+        owner = make_client(db)
+        affiliate = make_affiliate(db, owner)
+        code_row = make_code(db, affiliate, "OWNCODE1")
+        prospect = make_client(db)
+
+        assert svc.is_own_code(db, owner.id, code_row) is True
+        assert svc.is_own_code(db, prospect.id, code_row) is False
+        # And the non-owner attaches fine — the guard is owner-only.
+        assert svc.attribute_signup(db, prospect.id, "OWNCODE1") is True
+
 
 # ── create_code ──────────────────────────────────────────────────────────────
 
