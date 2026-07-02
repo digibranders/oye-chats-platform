@@ -121,6 +121,26 @@ def get_relevance_threshold(default: float = 0.5) -> float:
 
 
 _CRAWL_PROVIDERS = ("spider", "jina")
+# Hard bounds for the Jina fetch parallelism knob: 1 keeps it functional,
+# 50 stays a safe margin under the keyed tier's 500 RPM even for fast pages.
+_JINA_CONCURRENCY_MIN = 1
+_JINA_CONCURRENCY_MAX = 50
+
+
+def get_jina_fetch_concurrency() -> int:
+    """How many Jina Reader page fetches run in parallel per crawl.
+
+    Runtime-tunable from the super-admin Crawler card; falls back to the
+    JINA_FETCH_CONCURRENCY env default. Clamped so a bad DB value can never
+    stall a crawl (0) or blow the Jina rate limit.
+    """
+    from app.config import JINA_FETCH_CONCURRENCY
+
+    try:
+        value = int(get("crawl.jina_fetch_concurrency", JINA_FETCH_CONCURRENCY))
+    except (TypeError, ValueError):
+        value = JINA_FETCH_CONCURRENCY
+    return max(_JINA_CONCURRENCY_MIN, min(_JINA_CONCURRENCY_MAX, value))
 
 
 def get_crawl_provider_primary() -> str:

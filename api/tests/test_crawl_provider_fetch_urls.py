@@ -166,3 +166,21 @@ def test_runtime_accessor_rejects_unknown_values(monkeypatch):
 
     monkeypatch.setattr(runtime_config, "get", lambda key, default=None: "playwright")
     assert runtime_config.get_crawl_provider_primary() in ("spider", "jina")
+
+
+def test_jina_fetch_concurrency_clamps_and_falls_back(monkeypatch):
+    from app.services import runtime_config
+
+    # Runtime value wins…
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 15)
+    assert runtime_config.get_jina_fetch_concurrency() == 15
+    # …bad values clamp instead of stalling crawls or blowing the rate limit…
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 0)
+    assert runtime_config.get_jina_fetch_concurrency() == 1
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 999)
+    assert runtime_config.get_jina_fetch_concurrency() == 50
+    # …and garbage falls back to the env default (which get() passes through).
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: "not-a-number")
+    from app.config import JINA_FETCH_CONCURRENCY
+
+    assert runtime_config.get_jina_fetch_concurrency() == max(1, min(50, JINA_FETCH_CONCURRENCY))
