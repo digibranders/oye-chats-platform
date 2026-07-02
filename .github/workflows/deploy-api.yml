@@ -204,6 +204,16 @@ jobs:
             cd api
             /root/.local/bin/uv sync
 
+            # Assert litellm installed cleanly before touching migrations or
+            # restarting services. The 2026-07-01 outage was a partial `uv sync`
+            # that left litellm a hollow namespace package (missing __init__.py):
+            # `import litellm` succeeded but `litellm.completion` was gone, so
+            # every chat 500'd in prod while /health stayed green. `set -e` is
+            # active here, so a failed assertion aborts the deploy before the new
+            # (broken) tree is ever restarted onto.
+            echo "🔎 Verifying litellm imported with its completion API..."
+            /root/.local/bin/uv run python -c "import litellm; assert litellm.completion, 'litellm.completion missing — partial/namespace install; aborting deploy'"
+
             # NOTE: No headless browser or local embedding model runs on this
             # box. Crawling runs on Spider.cloud (Jina Reader fallback), and
             # embeddings run on Google Gemini — both off-box. The playwright/
