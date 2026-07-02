@@ -89,6 +89,7 @@ def normalize_url(url: str) -> str:
 
     return urlunparse((scheme, netloc, path, "", sorted_query, ""))
 
+
 _SKIP_EXTENSIONS = frozenset(
     {
         ".pdf",

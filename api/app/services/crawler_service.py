@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import json
 import logging
@@ -120,6 +121,70 @@ def set_crawl_progress(
     except Exception:
         logger.debug("set_crawl_progress failed for client=%s", client_id, exc_info=True)
         _local_progress[int(client_id)] = payload
+
+
+# ── Heartbeat (keeps _reap_if_stale from killing a long-but-alive crawl) ─────
+# Interval between heartbeat refreshes. Must stay well below
+# ``_HEARTBEAT_STALE_SECONDS`` so a healthy crawl re-stamps several times inside
+# one staleness window even if a poll or two is delayed.
+_HEARTBEAT_REFRESH_INTERVAL = 30
+
+
+def refresh_crawl_heartbeat(client_id: int) -> None:
+    """Re-stamp ``heartbeat_at`` on the client's in-flight ``running`` row.
+
+    Provider-agnostic replacement for the retired subprocess mirror: the
+    orchestrator drives this from a live coroutine (see :func:`crawl_heartbeat`)
+    throughout BOTH the crawl and the batch-embedding phases, neither of which
+    otherwise writes progress. Because the ticks come from the live worker, a
+    genuinely dead worker stops emitting and ``_reap_if_stale`` still fires —
+    only a slow-but-alive job is spared. Touches nothing but the timestamp, and
+    only for ``running`` rows. No-op when no row exists or Redis is unreachable.
+    """
+    import time as _time
+
+    client = get_redis()
+    if client is None:
+        local = _local_progress.get(int(client_id))
+        if local and local.get("status") == "running":
+            local["heartbeat_at"] = _time.time()
+        return
+    try:
+        raw = client.get(_progress_key(client_id))
+        if raw is None:
+            return
+        data = json.loads(raw)
+        if data.get("status") != "running":
+            return
+        data["heartbeat_at"] = _time.time()
+        client.set(_progress_key(client_id), json.dumps(data, default=str), ex=_PROGRESS_TTL)
+    except Exception:
+        logger.debug("refresh_crawl_heartbeat failed for client=%s", client_id, exc_info=True)
+
+
+@contextlib.asynccontextmanager
+async def crawl_heartbeat(client_id: int, *, interval: int = _HEARTBEAT_REFRESH_INTERVAL):
+    """Keep the crawl's Redis heartbeat fresh for the duration of the block.
+
+    Spawns a background task that re-stamps ``heartbeat_at`` every ``interval``
+    seconds while the wrapped pipeline runs — covering long phases with no
+    natural per-item checkpoint (a single blocking Spider ``/crawl`` call, the
+    batch-embedding loop). The task is bound to the caller's coroutine, so if the
+    worker process dies the ticks stop and ``_reap_if_stale`` still catches it.
+    """
+
+    async def _loop() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            refresh_crawl_heartbeat(client_id)
+
+    task = asyncio.create_task(_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 # ── Cancellation flag (Redis + in-process fallback) ────────────────────────
@@ -343,4 +408,3 @@ def get_crawl_progress(client_id: int) -> dict[str, Any]:
     data.setdefault("status", "idle")
     data.setdefault("urls", [])
     return _reap_if_stale(client_id, data)
-

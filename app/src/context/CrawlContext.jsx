@@ -66,6 +66,7 @@ const initialState = {
     // maxPages (the plan ceiling) so "3/47" is shown rather than "3/1200".
     discoveredTotal: null,
     currentUrl: null,
+    phase: null, // server-side phase label, e.g. "Scanning pages" / "Embedding 3,400/9,795 chunks"
     startedAt: null, // epoch seconds (server-side)
     rootUrl: null, // domain we asked to crawl, kept across polls so the UI label is stable
     botId: null, // bot ownership for cancel calls
@@ -88,6 +89,7 @@ function normalizeProgress(raw, prev) {
         // discoveredTotal is client-side only — preserve it across every server poll
         discoveredTotal: prev.discoveredTotal,
         currentUrl: raw?.current_url ?? (urls.length ? urls[urls.length - 1] : prev.currentUrl),
+        phase: raw?.phase ?? prev.phase,
         startedAt: raw?.started_at ?? prev.startedAt,
         rootUrl: prev.rootUrl, // set client-side on startCrawl; server doesn't echo
         botId: prev.botId,

@@ -21,6 +21,8 @@ import time
 
 import litellm
 
+from app.core.langfuse_client import langfuse_generation
+
 logger = logging.getLogger(__name__)
 
 CHUNK_ENRICHMENT_ENABLED: bool = os.getenv("CHUNK_ENRICHMENT_ENABLED", "false").lower() in (
@@ -59,13 +61,15 @@ def enrich_chunk(chunk_text: str, document_summary: str) -> str:
 
     prompt = _build_enrichment_prompt(chunk_text, document_summary)
     try:
-        response = litellm.completion(
-            model=ENRICHMENT_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=_SUMMARY_MAX_TOKENS,
-            metadata={"generation_name": "chunk-enrichment"},
-        )
-        summary = (response.choices[0].message.content or "").strip()
+        with langfuse_generation("chunk-enrichment", model=ENRICHMENT_MODEL, prompt=prompt) as gen:
+            response = litellm.completion(
+                model=ENRICHMENT_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=_SUMMARY_MAX_TOKENS,
+                metadata={"generation_name": "chunk-enrichment"},
+            )
+            summary = (response.choices[0].message.content or "").strip()
+            gen.record_litellm(response, output=summary)
         if summary and len(summary) < 500:
             return f"[Context: {summary}] {chunk_text}"
     except Exception as exc:

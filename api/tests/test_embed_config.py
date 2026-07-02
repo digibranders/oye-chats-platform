@@ -24,6 +24,31 @@ def test_embed_provider_normalized(monkeypatch):
     assert cfg.EMBED_PROVIDER == "google"
 
 
+def test_empty_env_falls_back_to_defaults(monkeypatch):
+    # Reproduces the prod deploy failure: absent secrets arrive as "" (not unset),
+    # and int("") crashed config on import. Empty must fall back to defaults.
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    for k in (
+        "EMBED_DIMENSIONS",
+        "EMBED_PROVIDER",
+        "GEMINI_EMBED_MODEL",
+        "JINA_FALLBACK_ENABLED",
+        "SPIDER_REQUEST_MODE",
+        "SPIDER_TIMEOUT",
+    ):
+        monkeypatch.setenv(k, "")  # empty, not unset
+
+    import app.config as cfg
+
+    importlib.reload(cfg)  # must not raise
+    assert cfg.EMBED_DIMENSIONS == 768
+    assert cfg.EMBED_PROVIDER == "google"
+    assert cfg.GEMINI_EMBED_MODEL == "gemini-embedding-001"
+    assert cfg.JINA_FALLBACK_ENABLED is True
+    assert cfg.SPIDER_REQUEST_MODE == "smart"
+    assert cfg.SPIDER_TIMEOUT == 1600
+
+
 def teardown_module(module):
     import importlib
 

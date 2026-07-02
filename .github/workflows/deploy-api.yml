@@ -42,6 +42,7 @@ jobs:
           EMBED_PROVIDER: ${{ secrets.EMBED_PROVIDER }}
           GEMINI_EMBED_MODEL: ${{ secrets.GEMINI_EMBED_MODEL }}
           EMBED_DIMENSIONS: ${{ secrets.EMBED_DIMENSIONS }}
+          EMBED_CONCURRENCY: ${{ secrets.EMBED_CONCURRENCY }}
           # Crawl — Spider.cloud managed API (sole primary crawler, off-box).
           # SPIDER_API_KEY is the prepaid Spider.cloud key. On a Spider outage
           # the crawl falls back to Jina Reader (PAYG markdown); JINA_API_KEY is
@@ -87,7 +88,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,FRONTEND_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY
+          envs: DB_URL,GOOGLE_API_KEY,OPENAI_API_KEY,CORS_ORIGINS,R2_KEY_ID,R2_APPLICATION_KEY,R2_BUCKET_NAME,R2_ENDPOINT,SENTRY_DSN_BACKEND,SENTRY_RELEASE,LANGFUSE_SECRET_KEY,LANGFUSE_PUBLIC_KEY,BREVO_API_KEY,REDIS_URL,RELEVANCE_GATE_ENABLED,CHUNK_ENRICHMENT_ENABLED,CRAWLER_JS_ALL_PAGES,RERANK_ENABLED,EMBED_PROVIDER,GEMINI_EMBED_MODEL,EMBED_DIMENSIONS,EMBED_CONCURRENCY,SPIDER_API_KEY,SPIDER_REQUEST_MODE,JINA_API_KEY,JINA_FALLBACK_ENABLED,WORKER_MAX_JOBS,STRIPE_SECRET_KEY,STRIPE_PUBLISHABLE_KEY,STRIPE_WEBHOOK_SECRET,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,RAZORPAY_WEBHOOK_SECRET,FRONTEND_URL,GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,GOOGLE_REDIRECT_URI,OAUTH_SUCCESS_REDIRECT_URL,OAUTH_STATE_SECRET,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY
           script: |
             set -e  # Abort on any command failure — don't deploy broken code
 
@@ -173,6 +174,7 @@ jobs:
               "EMBED_PROVIDER=${EMBED_PROVIDER:-google}" \
               "GEMINI_EMBED_MODEL=${GEMINI_EMBED_MODEL:-gemini-embedding-001}" \
               "EMBED_DIMENSIONS=${EMBED_DIMENSIONS:-768}" \
+              "EMBED_CONCURRENCY=${EMBED_CONCURRENCY:-8}" \
               "SPIDER_API_KEY=${SPIDER_API_KEY}" \
               "SPIDER_API_URL=https://api.spider.cloud" \
               "SPIDER_REQUEST_MODE=${SPIDER_REQUEST_MODE:-smart}" \
@@ -201,6 +203,16 @@ jobs:
             # Sync dependencies
             cd api
             /root/.local/bin/uv sync
+
+            # Assert litellm installed cleanly before touching migrations or
+            # restarting services. The 2026-07-01 outage was a partial `uv sync`
+            # that left litellm a hollow namespace package (missing __init__.py):
+            # `import litellm` succeeded but `litellm.completion` was gone, so
+            # every chat 500'd in prod while /health stayed green. `set -e` is
+            # active here, so a failed assertion aborts the deploy before the new
+            # (broken) tree is ever restarted onto.
+            echo "🔎 Verifying litellm imported with its completion API..."
+            /root/.local/bin/uv run python -c "import litellm; assert litellm.completion, 'litellm.completion missing — partial/namespace install; aborting deploy'"
 
             # NOTE: No headless browser or local embedding model runs on this
             # box. Crawling runs on Spider.cloud (Jina Reader fallback), and

@@ -212,13 +212,32 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 # --- Health Check ---
 
 
+def _llm_ready() -> bool:
+    """Cheap LLM-path readiness signal for ``/health/full``.
+
+    The 2026-07-01 outage was a partial ``uv sync`` that left litellm as a
+    hollow namespace package (missing ``__init__.py``): ``import litellm``
+    succeeded, so the app booted, but ``litellm.completion`` was absent — every
+    chat 500'd while ``/health`` stayed green because it never touched the LLM
+    path. This verifies the already-imported litellm module still exposes its
+    public completion API. It is a local attribute check — **not** a network or
+    paid LLM call — so it is safe to run on every health hit without caching.
+    """
+    return hasattr(_litellm, "completion")
+
+
 def _gather_health() -> tuple[dict, bool, bool]:
     """Collect subsystem health.
 
     Returns ``(payload, ready_to_serve, fully_ok)``:
       - ``ready_to_serve`` — DB + Redis reachable; the API can serve chats.
-      - ``fully_ok`` — ``ready_to_serve`` **and** worker alive (or
-        intentionally disabled via ``WORKER_ENABLED=false``).
+        Deliberately excludes the LLM signal so ``/health`` (the LB / deploy
+        readiness gate) keeps its DB+Redis-only response-code semantics.
+      - ``fully_ok`` — ``ready_to_serve`` **and** worker alive (or intentionally
+        disabled via ``WORKER_ENABLED=false``) **and** the litellm completion
+        API is importable. A hollow-litellm install (see :func:`_llm_ready`)
+        flips ``fully_ok`` to False so ``/health/full`` 503s and pages oncall,
+        which the 2026-07-01 outage did not.
     """
     from datetime import UTC, datetime
 
@@ -275,9 +294,13 @@ def _gather_health() -> tuple[dict, bool, bool]:
             except Exception:
                 pass
 
+    # -- LLM readiness check --
+    # Local attribute probe, not a paid/network call — see _llm_ready docstring.
+    llm_ok = _llm_ready()
+
     ready_to_serve = db_ok and redis_ok
     worker_required_ok = worker_status in ("alive", "disabled")
-    fully_ok = ready_to_serve and worker_required_ok
+    fully_ok = ready_to_serve and worker_required_ok and llm_ok
 
     if fully_ok:
         status_label = "healthy"
@@ -295,6 +318,11 @@ def _gather_health() -> tuple[dict, bool, bool]:
             "last_seen": worker_last_seen,
             "age_seconds": round(worker_age_s, 1) if worker_age_s is not None else None,
             "heartbeat_ttl_seconds": WORKER_HEARTBEAT_TTL,
+        },
+        "llm": {
+            "status": "ready" if llm_ok else "unavailable",
+            "import_ok": llm_ok,
+            "detail": None if llm_ok else "litellm.completion missing — partial/namespace install",
         },
         "pool": pool_stats,
         "version": "1.0.0",

@@ -9,6 +9,7 @@ to full-text search (see rag_service).
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 from app.config import EMBED_PROVIDER
 from app.services.gemini_embedding import embed_texts as _google_embed
@@ -16,15 +17,21 @@ from app.services.gemini_embedding import embed_texts as _google_embed
 logger = logging.getLogger(__name__)
 
 
-def embed_chunks(chunk_content_list: list[str]) -> list[list[float]]:
-    """Embed a list of text chunks, returning one 768-dim vector per chunk."""
+def embed_chunks(
+    chunk_content_list: list[str],
+    *,
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> list[list[float]]:
+    """Embed a list of text chunks, returning one 768-dim vector per chunk.
+
+    ``progress_cb(done, total)`` — if given — fires as embed batches complete
+    (batches run concurrently under the hood; see gemini_embedding.embed_texts).
+    """
     if not chunk_content_list:
         return []
     if EMBED_PROVIDER != "google":
-        raise RuntimeError(
-            f"Unsupported EMBED_PROVIDER={EMBED_PROVIDER!r} (only 'google' is supported)"
-        )
-    return _google_embed(chunk_content_list)
+        raise RuntimeError(f"Unsupported EMBED_PROVIDER={EMBED_PROVIDER!r} (only 'google' is supported)")
+    return _google_embed(chunk_content_list, progress_cb=progress_cb)
 
 
 async def embed_chunks_async(chunk_content_list: list[str]) -> list[list[float]]:

@@ -1,17 +1,20 @@
 """Selects the crawl backend: Spider.cloud primary, Jina Reader fallback.
 
-``run_full_crawl`` imports ``crawl_website`` / ``fetch_urls`` from here. Spider is
-the sole primary crawler (no local browser). On a Spider ``CrawlerError`` we fall
-back to Jina Reader (PAYG markdown, off-box):
+``run_full_crawl`` imports ``crawl_website`` / ``fetch_urls`` from here.
 
-* recursive crawl → discover URLs (browser-free ``url_discovery``) then Jina each;
-* explicit ordered list → Jina the list directly.
+``crawl_website`` is **sitemap-first**: it enumerates the site's authoritative
+page list via ``url_discovery`` (robots.txt + sitemap.xml, browser-free) and
+scrapes every URL through the same path as an explicit crawl — so it reaches
+deep/orphan pages that a depth-limited link crawl misses. Only when a site has
+no usable sitemap does it fall back to Spider's recursive link crawl. Every
+scrape has Spider→Jina failover built in via ``fetch_urls``.
 
-Both backends return the identical crawl_data shape, so the ingest pipeline is
+Both paths return the identical crawl_data shape, so the ingest pipeline is
 provider-agnostic.
 """
 
 import logging
+from collections.abc import Callable
 
 from app.config import JINA_FALLBACK_ENABLED
 from app.services.crawler_service import CrawlerError
@@ -22,34 +25,59 @@ from app.services.url_discovery import discover_website_urls as _discover_urls
 
 logger = logging.getLogger(__name__)
 
-# When Spider can't determine a page cap, discover at most this many URLs to hand
-# to the Jina fallback (keeps a runaway site from ballooning the fallback fetch).
-_FALLBACK_DISCOVERY_CAP = 1000
+# Ceiling on URLs pulled from a sitemap when no explicit page cap is given, so a
+# runaway site can't balloon the scrape set.
+_FALLBACK_DISCOVERY_CAP = 5000
 
 
-async def crawl_website(url: str, **kwargs) -> dict:
-    """Crawl a site via Spider; on failure discover URLs + fetch via Jina Reader.
+async def crawl_website(
+    url: str,
+    *,
+    max_pages: int | None = None,
+    use_js: bool = False,
+    client_id: int | None = None,
+    on_page: Callable[[str, bool], None] | None = None,
+    max_depth: int | None = None,
+    concurrency: int | None = None,
+) -> dict:
+    """Crawl a site to (at most) ``max_pages`` pages, sitemap-first.
 
-    ``kwargs`` are forwarded verbatim to Spider: ``max_pages``, ``use_js``,
-    ``client_id``, ``max_depth``, ``concurrency``.
+    1. Enumerate the sitemap/robots page list (``url_discovery``), capped at
+       ``max_pages`` — this is the authoritative set and includes deep/orphan
+       pages a link crawl never reaches.
+    2. Scrape each URL via :func:`fetch_urls` (Spider→Jina failover, ordered,
+       per-page ``on_page`` progress).
+    3. If the site has no usable sitemap (discovery yields only the seed), fall
+       back to Spider's recursive link crawl (``max_depth``/``concurrency``),
+       with a Jina fallback on Spider failure.
     """
+    cap = max_pages or _FALLBACK_DISCOVERY_CAP
     try:
-        return await _spider_crawl(url, **kwargs)
+        discovered = await _discover_urls(url, max_urls=cap, timeout=25.0)
+    except Exception:
+        logger.warning("Sitemap discovery failed for %s — trying Spider link crawl", url, exc_info=True)
+        discovered = []
+
+    if len(discovered) > 1:
+        logger.info("Sitemap-seeded crawl: scraping %d URLs for %s (cap=%s)", len(discovered), url, cap)
+        return await fetch_urls(discovered, use_js=use_js, client_id=client_id, on_page=on_page)
+
+    # No usable sitemap — Spider recursive link crawl, Jina fallback on failure.
+    logger.info("No usable sitemap for %s — Spider recursive link crawl (depth=%s)", url, max_depth)
+    try:
+        return await _spider_crawl(
+            url,
+            max_pages=max_pages,
+            use_js=use_js,
+            client_id=client_id,
+            max_depth=max_depth,
+            concurrency=concurrency,
+        )
     except CrawlerError:
         if not JINA_FALLBACK_ENABLED:
             raise
-        logger.warning(
-            "Spider crawl failed for %s — falling back to Jina via discovery", url, exc_info=True
-        )
-        max_pages = kwargs.get("max_pages") or 0
-        discovered = await _discover_urls(
-            url, max_urls=(max_pages or _FALLBACK_DISCOVERY_CAP), timeout=20.0
-        )
-        if not discovered:
-            discovered = [url]  # discovery came up empty — at least fetch the seed
-        return await _jina_fetch_urls(
-            discovered, use_js=kwargs.get("use_js", False), client_id=kwargs.get("client_id")
-        )
+        logger.warning("Spider crawl failed for %s — Jina fallback", url, exc_info=True)
+        return await _jina_fetch_urls(discovered or [url], use_js=use_js, client_id=client_id, on_page=on_page)
 
 
 async def fetch_urls(urls: list[str], **kwargs) -> dict:
@@ -63,7 +91,5 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
     except CrawlerError:
         if not JINA_FALLBACK_ENABLED:
             raise
-        logger.warning(
-            "Spider fetch_urls failed (%d urls) — falling back to Jina", len(urls), exc_info=True
-        )
+        logger.warning("Spider fetch_urls failed (%d urls) — falling back to Jina", len(urls), exc_info=True)
         return await _jina_fetch_urls(urls, **kwargs)

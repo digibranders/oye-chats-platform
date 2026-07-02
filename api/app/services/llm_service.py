@@ -1,11 +1,10 @@
 import asyncio
-import contextlib
 import logging
 
 import litellm
 
 from app.config import FALLBACK_MODEL_KEY_SET, PRIMARY_MODEL_KEY_SET
-from app.core.langfuse_client import get_langfuse
+from app.core.langfuse_client import langfuse_generation
 from app.services import runtime_config
 
 
@@ -95,33 +94,10 @@ def generate_response(
         _apply_model_family_kwargs(kwargs, _primary_model())
 
         generation_name = (metadata or {}).get("generation_name", "llm-generation")
-        lf = get_langfuse()
-        _lf_mgr = (
-            lf.start_as_current_observation(
-                name=generation_name,
-                as_type="generation",
-                model=_primary_model(),
-                input=[{"role": "user", "content": prompt}],
-            )
-            if lf
-            else None
-        )
-        _lf_span = _lf_mgr.__enter__() if _lf_mgr is not None else None
-        try:
+        with langfuse_generation(generation_name, model=_primary_model(), prompt=prompt) as gen:
             response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
-            if _lf_span is not None:
-                with contextlib.suppress(Exception):
-                    usage = getattr(response, "usage", None)
-                    _lf_span.update(
-                        output=content or "",
-                        model=getattr(response, "model", None) or _primary_model(),
-                        usage={"input": usage.prompt_tokens, "output": usage.completion_tokens} if usage else None,
-                    )
-        finally:
-            if _lf_mgr is not None:
-                with contextlib.suppress(Exception):
-                    _lf_mgr.__exit__(None, None, None)
+            gen.record_litellm(response, output=content)
 
         if content:
             logger.info(f"LLM response received | length={len(content)}")
@@ -167,8 +143,10 @@ Return ONLY the tone description, nothing else."""
         if _fallbacks:
             kwargs["fallbacks"] = _fallbacks
         _apply_model_family_kwargs(kwargs, _primary_model())
-        response = litellm.completion(**kwargs)
-        tone = (response.choices[0].message.content or "").strip()
+        with langfuse_generation("brand-tone-extraction", model=_primary_model(), prompt=prompt) as gen:
+            response = litellm.completion(**kwargs)
+            tone = (response.choices[0].message.content or "").strip()
+            gen.record_litellm(response, output=tone)
         if tone and len(tone) < 500:
             logger.info(f"Brand tone extracted: {tone[:80]}...")
             return tone
@@ -213,8 +191,10 @@ Website content:
         if _fallbacks:
             kwargs["fallbacks"] = _fallbacks
         _apply_model_family_kwargs(kwargs, _primary_model())
-        response = litellm.completion(**kwargs)
-        text = (response.choices[0].message.content or "").strip()
+        with langfuse_generation("company-context-extraction", model=_primary_model(), prompt=prompt) as gen:
+            response = litellm.completion(**kwargs)
+            text = (response.choices[0].message.content or "").strip()
+            gen.record_litellm(response, output=text)
         if not text:
             return None
 
@@ -274,64 +254,48 @@ async def _stream_from_model(
     it is pending!"). The ``finally`` block below explicitly aborts the wrapper.
     """
     generation_name = (metadata or {}).get("generation_name", "llm-stream")
-    lf = get_langfuse()
-    _lf_mgr = (
-        lf.start_as_current_observation(
-            name=generation_name,
-            as_type="generation",
-            model=model,
-            input=[{"role": "user", "content": prompt}],
-        )
-        if lf
-        else None
-    )
-    _lf_span = _lf_mgr.__enter__() if _lf_mgr is not None else None
     _output = ""
-    try:
-        kwargs: dict = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": True,
-            "metadata": metadata,
-        }
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        _apply_model_family_kwargs(kwargs, model)
-        response = await litellm.acompletion(**kwargs)
+    with langfuse_generation(generation_name, model=model, prompt=prompt) as gen:
         try:
-            response_iter = response.__aiter__()
-            while True:
-                try:
-                    chunk = await asyncio.wait_for(
-                        response_iter.__anext__(),
-                        timeout=_STREAM_CHUNK_TIMEOUT_S,
-                    )
-                except StopAsyncIteration:
-                    break
-                except TimeoutError as exc:
-                    raise TimeoutError(
-                        f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled"
-                    ) from exc
-                content = chunk.choices[0].delta.content
-                if content:
-                    _output += content
-                    yield content
+            kwargs: dict = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": True,
+                "metadata": metadata,
+            }
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            _apply_model_family_kwargs(kwargs, model)
+            response = await litellm.acompletion(**kwargs)
+            try:
+                response_iter = response.__aiter__()
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            response_iter.__anext__(),
+                            timeout=_STREAM_CHUNK_TIMEOUT_S,
+                        )
+                    except StopAsyncIteration:
+                        break
+                    except TimeoutError as exc:
+                        raise TimeoutError(
+                            f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled"
+                        ) from exc
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        _output += content
+                        yield content
+            finally:
+                aclose = getattr(response, "aclose", None)
+                if aclose is not None:
+                    try:
+                        await aclose()
+                    except Exception as close_err:
+                        logger.debug(f"LiteLLM stream aclose() raised on cleanup: {close_err}")
         finally:
-            aclose = getattr(response, "aclose", None)
-            if aclose is not None:
-                try:
-                    await aclose()
-                except Exception as close_err:
-                    logger.debug(f"LiteLLM stream aclose() raised on cleanup: {close_err}")
-    finally:
-        if _lf_span is not None:
-            with contextlib.suppress(Exception):
-                _lf_span.update(output=_output, model=model)
-        if _lf_mgr is not None:
-            with contextlib.suppress(Exception):
-                _lf_mgr.__exit__(None, None, None)
+            gen.update(output=_output, model=model)
 
 
 async def generate_response_stream(

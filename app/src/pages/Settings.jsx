@@ -1,11 +1,12 @@
 import { useSearchParams } from 'react-router-dom';
-import { User, Shield, Bell, Palette, Briefcase, CodeXml } from 'lucide-react';
+import { User, Shield, Bell, Palette, Briefcase, Headphones, CodeXml } from 'lucide-react';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
 import ProfileTab from './settings/ProfileTab';
 import SecurityTab from './settings/SecurityTab';
 import NotificationsTab from './settings/NotificationsTab';
 import AppearanceTab from './settings/AppearanceTab';
+import LiveChatTab from './settings/LiveChatTab';
 import WorkspaceTab from './settings/WorkspaceTab';
 import ContactTab from './settings/ContactTab';
 
@@ -14,6 +15,7 @@ const TABS = [
     { id: 'security', label: 'Security', icon: Shield, Component: SecurityTab },
     { id: 'notifications', label: 'Notifications', icon: Bell, Component: NotificationsTab },
     { id: 'appearance', label: 'Appearance', icon: Palette, Component: AppearanceTab },
+    { id: 'live_chat', label: 'Live Chat', icon: Headphones, Component: LiveChatTab },
     { id: 'workspace', label: 'Workspace', icon: Briefcase, Component: WorkspaceTab },
     { id: 'contact', label: 'Need something custom?', icon: CodeXml, Component: ContactTab, divider: true },
 ];
