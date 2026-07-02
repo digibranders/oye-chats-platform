@@ -344,10 +344,14 @@ def batch_web_ingestion(
             (typically ``bot_id``); ignored when ``cost_per_page`` is 0.
 
     Returns:
-        ``{"chunks": int, "pages_charged": int, "credits_deducted": int}``.
+        ``{"chunks": int, "pages_charged": int, "credits_deducted": int,
+        "aborted": bool}`` — ``aborted`` is True when ingestion stopped early
+        because billing can no longer proceed (insufficient credits / kill
+        switch). Streaming callers use it to stop scheduling further waves
+        instead of wasting embedding quota on pages that can't be paid for.
     """
     if not pages:
-        return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
+        return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
 
     # Local import: credit_service depends on db.models which already imports
     # heavily — keep this lazy so importing pipeline.py stays cheap and there
@@ -436,7 +440,7 @@ def batch_web_ingestion(
 
         if not all_chunk_contents:
             logger.info("No new content to process")
-            return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
+            return {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
 
         # Embed all chunks. embed_chunks sub-batches internally and runs the
         # batches concurrently (EMBED_CONCURRENCY), which is the main lever on
@@ -452,6 +456,7 @@ def batch_web_ingestion(
         total = 0
         pages_charged = 0
         credits_deducted = 0
+        aborted = False
         for boundary in page_boundaries:
             start = boundary["start_idx"]
             count = boundary["count"]
@@ -504,6 +509,7 @@ def batch_web_ingestion(
                     exc.available,
                 )
                 # Stop ingesting further pages — the user can't pay for them.
+                aborted = True
                 break
             except credit_service.KillSwitchActive:
                 session.rollback()
@@ -513,6 +519,7 @@ def batch_web_ingestion(
                     boundary["url"],
                     client_id,
                 )
+                aborted = True
                 break
             except Exception as e:
                 logger.error(f"Failed to insert chunks for {boundary['url']}: {e}")
@@ -537,6 +544,7 @@ def batch_web_ingestion(
         "chunks": total,
         "pages_charged": pages_charged,
         "credits_deducted": credits_deducted,
+        "aborted": aborted,
     }
 
 

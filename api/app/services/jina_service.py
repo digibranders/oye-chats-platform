@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import httpx
 
-from app.config import JINA_API_KEY, JINA_FETCH_CONCURRENCY, JINA_READER_URL
+from app.config import JINA_API_KEY, JINA_READER_URL
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,9 @@ _TIMEOUT = 60.0
 # Called once per page as it finishes: ``(url, ok)``. Mirrors spider_service so
 # the crawl fallback reports live progress the same way the primary does.
 PageProgressCallback = Callable[[str, bool], None]
+# Full page dict per successful page, as it lands — mirrors spider_service so
+# streaming ingestion works identically on the fallback path.
+PageResultCallback = Callable[[dict], None]
 
 
 def _empty() -> dict:
@@ -57,23 +60,33 @@ async def fetch_urls(
     use_js: bool = False,  # noqa: ARG001 — parity with spider_service; Jina renders JS server-side
     client_id: int | None = None,
     on_page: PageProgressCallback | None = None,
+    on_result: PageResultCallback | None = None,
     _client: httpx.AsyncClient | None = None,
 ) -> dict:
     """Fetch an explicit, ordered URL list as markdown. Preserves order; drops
     failures. ``on_page(url, ok)`` — if given — fires per completed page for live
-    progress; a broken callback is swallowed so it can't abort the fetch."""
+    progress; ``on_result(page)`` — if given — fires with the full page dict per
+    successful page (streaming ingestion). Broken callbacks are swallowed so
+    they can't abort the fetch."""
     if not urls:
         return _empty()
 
     owns_client = _client is None
     client = _client or httpx.AsyncClient(timeout=_TIMEOUT)
-    sem = asyncio.Semaphore(JINA_FETCH_CONCURRENCY)
+    # Resolved per crawl (not at import) so the super-admin Crawler card can
+    # tune parallelism at runtime; falls back to the env default.
+    from app.services import runtime_config
+
+    sem = asyncio.Semaphore(runtime_config.get_jina_fetch_concurrency())
 
     async def _fetch_and_report(url: str) -> dict | None:
         page = await _fetch_one(client, url, sem)
         if on_page is not None:
             with contextlib.suppress(Exception):
                 on_page(url, page is not None)
+        if on_result is not None and page is not None:
+            with contextlib.suppress(Exception):
+                on_result(page)
         return page
 
     try:

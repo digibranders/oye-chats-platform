@@ -14,7 +14,7 @@ import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -39,6 +39,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.services.audit_service import record_audit
+from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
 
 logger = logging.getLogger(__name__)
@@ -291,6 +292,16 @@ def reset_password(
         target = session.get(Client, client_id)
         if not target:
             raise HTTPException(status_code=404, detail="Client not found")
+
+        # Issue a real password-reset: generate a 6-digit OTP (15-min TTL) and
+        # email it to the customer, reusing the same mechanism as the customer
+        # self-service /auth/request-password-reset + /auth/reset-password flow.
+        # The customer sets their own new password — the super-admin never sees
+        # or sets it. (Previously this endpoint only audit-logged and no-op'd.)
+        otp = str(secrets.randbelow(900000) + 100000)
+        target.reset_otp = otp
+        target.reset_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+
         record_audit(
             session,
             actor=admin,
@@ -300,7 +311,18 @@ def reset_password(
             request=request,
         )
         session.commit()
-    return {"ok": True}
+        target_email = target.email
+
+    try:
+        send_password_reset_email(target_email, otp)
+    except Exception as exc:  # noqa: BLE001 — surface a clean 502 to the caller
+        logger.error("Failed to send password-reset email for client %s: %s", client_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not send the password-reset email. Please try again.",
+        ) from exc
+
+    return {"ok": True, "message": "Password-reset email sent to the customer."}
 
 
 # ── Bots ────────────────────────────────────────────────────────────────────
@@ -878,11 +900,26 @@ _KNOWN_MODELS = [
 ]
 
 
+_KNOWN_CRAWL_PROVIDERS = [
+    {
+        "id": "spider",
+        "label": "Spider.cloud",
+        "notes": "Bulk scraper with JS rendering and a recursive link-crawl mode (used when a site has no sitemap).",
+    },
+    {
+        "id": "jina",
+        "label": "Jina Reader",
+        "notes": "PAYG markdown-native reader (r.jina.ai). Renders JS server-side; no recursive mode.",
+    },
+]
+
+
 @router.get("/model-config")
 def get_model_config(_admin: Client = Depends(get_superadmin)):
     """Return the active model + RAG knobs and the catalog of selectable models."""
     from app.services import runtime_config
 
+    crawl_primary = runtime_config.get_crawl_provider_primary()
     return {
         "primary_model": runtime_config.get_primary_model(),
         "fallback_model": runtime_config.get_fallback_model(),
@@ -893,7 +930,14 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
             "rerank_top_n": runtime_config.get_rerank_top_n(),
             "relevance_threshold": runtime_config.get_relevance_threshold(),
         },
+        "crawler": {
+            "primary_provider": crawl_primary,
+            "fallback_provider": "jina" if crawl_primary == "spider" else "spider",
+            "jina_fetch_concurrency": runtime_config.get_jina_fetch_concurrency(),
+            "spider_fetch_concurrency": runtime_config.get_spider_fetch_concurrency(),
+        },
         "known_models": _KNOWN_MODELS,
+        "known_crawl_providers": _KNOWN_CRAWL_PROVIDERS,
     }
 
 
@@ -905,6 +949,9 @@ class ModelConfigPatch(BaseModel):
     chunk_overlap: int | None = Field(default=None, ge=0, le=2000)
     rerank_top_n: int | None = Field(default=None, ge=1, le=20)
     relevance_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    crawl_provider_primary: Literal["spider", "jina"] | None = None
+    jina_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
+    spider_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
 
 
 @router.put("/model-config")
@@ -931,6 +978,9 @@ def patch_model_config(
         "chunk_overlap": "rag.chunk_overlap",
         "rerank_top_n": "rag.rerank_top_n",
         "relevance_threshold": "rag.relevance_threshold",
+        "crawl_provider_primary": "crawl.provider_primary",
+        "jina_fetch_concurrency": "crawl.jina_fetch_concurrency",
+        "spider_fetch_concurrency": "crawl.spider_fetch_concurrency",
     }
 
     changed: dict[str, Any] = {}
@@ -969,6 +1019,7 @@ def patch_model_config(
         "primary_model": runtime_config.get_primary_model(),
         "fallback_model": runtime_config.get_fallback_model(),
         "gate_model": runtime_config.get_gate_model(),
+        "crawl_provider_primary": runtime_config.get_crawl_provider_primary(),
     }
 
 
@@ -1128,6 +1179,9 @@ def langfuse_summary(
 def system_health_full(_admin: Client = Depends(get_superadmin)):
     """Detailed health snapshot with per-service connectivity."""
     from app.config import settings
+    from app.core.cache import get_redis
+    from app.worker.enqueue import WORKER_ENABLED
+    from app.worker.tasks import WORKER_HEARTBEAT_KEY
 
     health: dict[str, Any] = {"status": "healthy", "version": getattr(settings, "VERSION", "unknown")}
 
@@ -1138,6 +1192,35 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
     except Exception:
         health["database"] = "unreachable"
         health["status"] = "degraded"
+
+    # -- Redis --
+    redis_ok = False
+    redis_client = None
+    try:
+        redis_client = get_redis()
+        if redis_client is not None:
+            redis_client.ping()
+            redis_ok = True
+    except Exception:
+        redis_ok = False
+    health["redis"] = "connected" if redis_ok else "unreachable"
+    if not redis_ok:
+        health["status"] = "degraded"
+
+    # -- Worker heartbeat: the ARQ worker refreshes WORKER_HEARTBEAT_KEY on a
+    # short interval, so a present key means it checked in within the TTL. --
+    if not WORKER_ENABLED:
+        health["worker"] = "disabled"
+    else:
+        worker_alive = False
+        if redis_ok and redis_client is not None:
+            try:
+                worker_alive = redis_client.get(WORKER_HEARTBEAT_KEY) is not None
+            except Exception:
+                worker_alive = False
+        health["worker"] = "connected" if worker_alive else "unreachable"
+        if not worker_alive:
+            health["status"] = "degraded"
 
     health["razorpay"] = "connected" if getattr(settings, "RAZORPAY_ENABLED", False) else "disabled"
     health["storage"] = "connected" if getattr(settings, "R2_BUCKET_NAME", None) else "unknown"

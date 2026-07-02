@@ -55,3 +55,143 @@ async def test_fetch_urls_reraises_without_fallback(monkeypatch):
     monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", boom)
     with pytest.raises(CrawlerError):
         await crawl_provider.fetch_urls(["https://a.test/x"], use_js=False, client_id=1)
+
+
+# ── Runtime-configurable provider order ──────────────────────────────────────
+
+
+def _ok(results_from, urls):
+    return {
+        "results": [{"url": u, "content": f"{results_from}:{u}"} for u in urls],
+        "recommended_colors": [],
+        "discovered_total": len(urls),
+        "queue_remaining": 0,
+    }
+
+
+def _empty_data(urls):
+    return {"results": [], "recommended_colors": [], "discovered_total": len(urls), "queue_remaining": 0}
+
+
+@pytest.mark.asyncio
+async def test_jina_primary_runs_jina_first(monkeypatch):
+    """crawl.provider_primary=jina flips the order: Jina first, Spider untouched
+    on success."""
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("jina", "spider"))
+    called = {"spider": False}
+
+    async def fake_jina(urls, **kw):
+        return _ok("jina", urls)
+
+    async def fake_spider(urls, **kw):  # pragma: no cover - must NOT run
+        called["spider"] = True
+        return _ok("spider", urls)
+
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", fake_jina)
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", fake_spider)
+
+    data = await crawl_provider.fetch_urls(["https://a.test/x"], use_js=False, client_id=1)
+    assert data["results"][0]["content"] == "jina:https://a.test/x"
+    assert called["spider"] is False
+
+
+@pytest.mark.asyncio
+async def test_jina_primary_empty_results_fall_back_to_spider(monkeypatch):
+    """Jina fails soft (drops pages, never raises) — zero results for a
+    non-empty list must trigger the Spider fallback."""
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("jina", "spider"))
+
+    async def fake_jina(urls, **kw):
+        return _empty_data(urls)
+
+    async def fake_spider(urls, **kw):
+        return _ok("spider", urls)
+
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", fake_jina)
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", fake_spider)
+
+    data = await crawl_provider.fetch_urls(["https://a.test/x"], use_js=False, client_id=1)
+    assert data["results"][0]["content"] == "spider:https://a.test/x"
+
+
+@pytest.mark.asyncio
+async def test_spider_primary_empty_results_fall_back_to_jina(monkeypatch):
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("spider", "jina"))
+
+    async def fake_spider(urls, **kw):
+        return _empty_data(urls)
+
+    async def fake_jina(urls, **kw):
+        return _ok("jina", urls)
+
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", fake_spider)
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", fake_jina)
+
+    data = await crawl_provider.fetch_urls(["https://a.test/x"], use_js=False, client_id=1)
+    assert data["results"][0]["content"] == "jina:https://a.test/x"
+
+
+@pytest.mark.asyncio
+async def test_jina_fallback_disabled_only_gates_jina_as_fallback(monkeypatch):
+    """JINA_FALLBACK_ENABLED=false must not block the spider fallback when the
+    configured primary is Jina."""
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", False)
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("jina", "spider"))
+
+    async def fake_jina(urls, **kw):
+        return _empty_data(urls)
+
+    async def fake_spider(urls, **kw):
+        return _ok("spider", urls)
+
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", fake_jina)
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", fake_spider)
+
+    data = await crawl_provider.fetch_urls(["https://a.test/x"], use_js=False, client_id=1)
+    assert data["results"][0]["content"] == "spider:https://a.test/x"
+
+
+def test_provider_order_resolves_from_runtime_config(monkeypatch):
+    from app.services import runtime_config
+
+    monkeypatch.setattr(runtime_config, "get_crawl_provider_primary", lambda: "jina")
+    assert crawl_provider._provider_order() == ("jina", "spider")
+    monkeypatch.setattr(runtime_config, "get_crawl_provider_primary", lambda: "spider")
+    assert crawl_provider._provider_order() == ("spider", "jina")
+
+
+def test_runtime_accessor_rejects_unknown_values(monkeypatch):
+    from app.services import runtime_config
+
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: "playwright")
+    assert runtime_config.get_crawl_provider_primary() in ("spider", "jina")
+
+
+def test_jina_fetch_concurrency_clamps_and_falls_back(monkeypatch):
+    from app.services import runtime_config
+
+    # Runtime value wins…
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 15)
+    assert runtime_config.get_jina_fetch_concurrency() == 15
+    # …bad values clamp instead of stalling crawls or blowing the rate limit…
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 0)
+    assert runtime_config.get_jina_fetch_concurrency() == 1
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 999)
+    assert runtime_config.get_jina_fetch_concurrency() == 50
+    # …and garbage falls back to the env default (which get() passes through).
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: "not-a-number")
+    from app.config import JINA_FETCH_CONCURRENCY
+
+    assert runtime_config.get_jina_fetch_concurrency() == max(1, min(50, JINA_FETCH_CONCURRENCY))
+
+
+def test_spider_fetch_concurrency_clamps_and_falls_back(monkeypatch):
+    from app.services import runtime_config
+
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 25)
+    assert runtime_config.get_spider_fetch_concurrency() == 25
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: -3)
+    assert runtime_config.get_spider_fetch_concurrency() == 1
+    monkeypatch.setattr(runtime_config, "get", lambda key, default=None: 500)
+    assert runtime_config.get_spider_fetch_concurrency() == 50

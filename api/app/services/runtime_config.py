@@ -24,6 +24,7 @@ from sqlalchemy import select
 from app.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    CRAWL_PROVIDER_PRIMARY,
     FALLBACK_MODEL,
     LLM_MODEL,
 )
@@ -117,6 +118,59 @@ def get_relevance_threshold(default: float = 0.5) -> float:
         return float(get("rag.relevance_threshold", default))
     except (TypeError, ValueError):
         return default
+
+
+_CRAWL_PROVIDERS = ("spider", "jina")
+# Hard bounds for the per-provider fetch parallelism knobs: 1 keeps crawls
+# functional, 50 stays a safe margin under provider rate limits (Jina keyed
+# tier = 500 RPM; Spider handles render load server-side).
+_FETCH_CONCURRENCY_MIN = 1
+_FETCH_CONCURRENCY_MAX = 50
+
+
+def _fetch_concurrency(key: str, default: int) -> int:
+    try:
+        value = int(get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(_FETCH_CONCURRENCY_MIN, min(_FETCH_CONCURRENCY_MAX, value))
+
+
+def get_jina_fetch_concurrency() -> int:
+    """How many Jina Reader page fetches run in parallel per crawl.
+
+    Runtime-tunable from the super-admin Crawler card; falls back to the
+    JINA_FETCH_CONCURRENCY env default. Clamped so a bad DB value can never
+    stall a crawl (0) or blow the Jina rate limit.
+    """
+    from app.config import JINA_FETCH_CONCURRENCY
+
+    return _fetch_concurrency("crawl.jina_fetch_concurrency", JINA_FETCH_CONCURRENCY)
+
+
+def get_spider_fetch_concurrency() -> int:
+    """How many Spider /scrape calls run in parallel per crawl (sitemap-seeded
+    and ordered fetches; the recursive crawl's concurrency is plan-driven).
+
+    Runtime-tunable from the super-admin Crawler card; falls back to the
+    SPIDER_FETCH_CONCURRENCY env default.
+    """
+    from app.config import SPIDER_FETCH_CONCURRENCY
+
+    return _fetch_concurrency("crawl.spider_fetch_concurrency", SPIDER_FETCH_CONCURRENCY)
+
+
+def get_crawl_provider_primary() -> str:
+    """Which scrape backend to try first ("spider" or "jina").
+
+    The other provider becomes the fallback (see crawl_provider). Unknown
+    values fall back to the env default so a bad DB row can never wedge
+    crawling entirely.
+    """
+    value = str(get("crawl.provider_primary", CRAWL_PROVIDER_PRIMARY)).strip().lower()
+    if value not in _CRAWL_PROVIDERS:
+        return CRAWL_PROVIDER_PRIMARY if CRAWL_PROVIDER_PRIMARY in _CRAWL_PROVIDERS else "spider"
+    return value
 
 
 def snapshot() -> dict[str, Any]:

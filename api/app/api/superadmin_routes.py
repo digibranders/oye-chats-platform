@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 from app.api.auth import get_superadmin
+from app.api.superadmin_plan_routes import _plan_monthly_usd_cents
 from app.core.feedback import (
     FEEDBACK_AREAS,
     FEEDBACK_RESOLVED_STATES,
@@ -15,7 +16,7 @@ from app.core.feedback import (
     FEEDBACK_TYPES,
 )
 from app.core.security import get_password_hash
-from app.db.models import ChatMessage, ChatSession, Client, Plan, PlatformFeedback, Subscription
+from app.db.models import Bot, ChatMessage, ChatSession, Client, CreditLedger, Plan, PlatformFeedback, Subscription
 from app.db.session import get_session
 from app.services.audit_service import record_audit
 
@@ -146,11 +147,44 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
 
         primary_sub: dict[int, Subscription] = {}
         active_counts: dict[int, int] = {}
+        mrr_by_client: dict[int, int] = {}
+        mrr_statuses = ("active", "trialing")  # matches /superadmin/revenue
         for s in subs:
             if s.status in active_statuses:
                 active_counts[s.client_id] = active_counts.get(s.client_id, 0) + 1
+            if s.status in mrr_statuses:
+                p = plan_by_id.get(s.plan_id)
+                if p:
+                    mrr_by_client[s.client_id] = mrr_by_client.get(s.client_id, 0) + (
+                        _plan_monthly_usd_cents(p, s.billing_cycle) * s.operator_quantity
+                    )
             if _better(s, primary_sub.get(s.client_id)):
                 primary_sub[s.client_id] = s
+
+        # Bots per client + current credit balance (SUM(delta), the ledger's
+        # documented source of truth). Both batch-loaded — one grouped query each.
+        bots_by_client = (
+            dict(
+                session.execute(
+                    select(Bot.client_id, func.count(Bot.id))
+                    .where(Bot.client_id.in_(client_ids))
+                    .group_by(Bot.client_id)
+                ).all()
+            )
+            if client_ids
+            else {}
+        )
+        credits_by_client = (
+            dict(
+                session.execute(
+                    select(CreditLedger.client_id, func.coalesce(func.sum(CreditLedger.delta), 0))
+                    .where(CreditLedger.client_id.in_(client_ids))
+                    .group_by(CreditLedger.client_id)
+                ).all()
+            )
+            if client_ids
+            else {}
+        )
 
         result = []
         for c in clients:
@@ -169,6 +203,9 @@ def list_clients(superadmin: Client = Depends(get_superadmin)):
                     "plan_slug": plan.slug if plan else None,
                     "subscription_status": sub.status if sub else None,
                     "active_subscriptions": active_counts.get(c.id, 0),
+                    "mrr_cents": mrr_by_client.get(c.id, 0),
+                    "bots_count": bots_by_client.get(c.id, 0),
+                    "credits_balance": credits_by_client.get(c.id, 0),
                     "created_at": c.created_at.isoformat() if c.created_at else None,
                 }
             )

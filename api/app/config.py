@@ -397,6 +397,10 @@ SPIDER_API_URL = _env("SPIDER_API_URL", "https://api.spider.cloud").rstrip("/")
 SPIDER_REQUEST_MODE = _env("SPIDER_REQUEST_MODE", "smart").strip().lower()
 # Per-crawl wall-clock budget (seconds).
 SPIDER_TIMEOUT = int(_env("SPIDER_TIMEOUT", "1600"))
+# Parallel Spider /scrape calls for sitemap-seeded and ordered fetches (Spider
+# handles the render load server-side). Env default only — the super-admin
+# Crawler card overrides it at runtime (crawl.spider_fetch_concurrency).
+SPIDER_FETCH_CONCURRENCY = int(_env("SPIDER_FETCH_CONCURRENCY", "10"))
 
 # ── Crawl fallback: Jina Reader (PAYG markdown) ──────────────────────────────
 # When Spider fails, fetch pages via https://r.jina.ai/<url>. PAYG, off-box,
@@ -410,3 +414,22 @@ JINA_FALLBACK_ENABLED = _env("JINA_FALLBACK_ENABLED", "true").strip().lower() in
     "yes",
 )
 JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))
+# Which scrape backend page-list fetches try first: "spider" or "jina". The
+# other one becomes the fallback. Env default only — the super-admin Models &
+# RAG page overrides it at runtime via pricing_config (crawl.provider_primary).
+CRAWL_PROVIDER_PRIMARY = _env("CRAWL_PROVIDER_PRIMARY", "spider").strip().lower()
+
+# ── Streaming crawl ingestion ────────────────────────────────────────────────
+# Overlap the embed+ingest phase with the scrape phase: as pages come back from
+# the crawl provider they are ingested in waves instead of waiting for the whole
+# site. Cuts large-crawl wall-clock from scrape+embed to ~max(scrape, embed) and
+# keeps the per-minute embedding quota busy during the scrape. The flag is a
+# kill switch back to the sequential scrape-then-embed behaviour.
+CRAWL_STREAM_INGEST_ENABLED = _env("CRAWL_STREAM_INGEST_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# Pages per ingestion wave. Small enough to start embedding early and bound
+# memory; large enough that per-wave session/commit overhead stays negligible.
+CRAWL_INGEST_WAVE_PAGES = int(_env("CRAWL_INGEST_WAVE_PAGES", "25"))

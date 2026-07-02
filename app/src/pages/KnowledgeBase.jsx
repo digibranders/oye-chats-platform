@@ -149,9 +149,13 @@ export default function KnowledgeBase() {
           // ``-1`` is the UNLIMITED sentinel: paid tiers no longer cap
           // pages per crawl — the hint copy switches to credit-based
           // language in that case (see render below).
-          maxPages: limits.max_crawl_pages ?? 100,
+          // Fallbacks must match the backend's _DEFAULT_CRAWL_LIMITS floor
+          // (plan_service.py) — advertising more than the crawler will
+          // actually allow (the old 100 here vs 20 enforced) misleads users
+          // whose plan row is missing the crawl keys.
+          maxPages: limits.max_crawl_pages ?? 20,
           maxDepth: limits.max_crawl_depth ?? 3,
-          jsMaxPages: limits.max_crawl_js_pages ?? 25,
+          jsMaxPages: limits.max_crawl_js_pages ?? 10,
         });
       })
       .catch(() => {
