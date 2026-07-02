@@ -21,6 +21,7 @@ from app.config import (
 )
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
+from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
@@ -478,6 +479,93 @@ def list_invoices(client: Client = Depends(get_current_client)):
             }
             for inv in invoices
         ]
+
+
+# ── Billing details (buyer tax identity for invoicing v2) ─────────────────────
+
+
+class BillingDetailsBody(BaseModel):
+    # All optional — PATCH semantics via exclude_unset: omitted fields keep
+    # their stored value; an explicit null clears the field.
+    legal_name: str | None = None
+    gstin: str | None = None
+    billing_address: dict[str, str] | None = None
+    billing_country: str | None = None
+    billing_state_code: str | None = None
+    billing_email: str | None = None
+
+
+def _billing_details_dict(client: Client) -> dict:
+    return {
+        "legal_name": client.legal_name,
+        "company_name": client.company_name,
+        "gstin": client.gstin,
+        "billing_address": client.billing_address,
+        "billing_country": client.billing_country,
+        "billing_state_code": client.billing_state_code,
+        "billing_email": client.billing_email,
+    }
+
+
+@router.get("/billing-details")
+def get_billing_details(client: Client = Depends(get_current_client)):
+    """The buyer identity used on tax invoices (invoicing v2 Phase 1)."""
+    return _billing_details_dict(client)
+
+
+@router.put("/billing-details")
+def update_billing_details(body: BillingDetailsBody, client: Client = Depends(get_current_client)):
+    fields = body.model_dump(exclude_unset=True)
+
+    gstin_provided = "gstin" in fields
+    gstin = None
+    if gstin_provided and fields["gstin"]:
+        gstin = normalize_gstin(fields["gstin"])
+        if not is_valid_gstin(gstin):
+            raise HTTPException(status_code=422, detail="GSTIN failed format/checksum validation")
+
+    state_provided = "billing_state_code" in fields
+    state = fields.get("billing_state_code")
+    if gstin:
+        # The GSTIN's first two digits are the authoritative place-of-supply
+        # state; a conflicting explicit state is a client error, not a silent
+        # override.
+        if state and str(state).strip().zfill(2) != gstin[:2]:
+            raise HTTPException(status_code=422, detail="billing_state_code does not match the GSTIN's state digits")
+        state = gstin[:2]
+        state_provided = True
+    if state:
+        state = str(state).strip().zfill(2)
+        if state not in VALID_STATE_CODES:
+            raise HTTPException(status_code=422, detail=f"Unknown GST state code: {state}")
+
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if "legal_name" in fields:
+            row.legal_name = (fields["legal_name"] or "").strip() or None
+        if gstin_provided:
+            row.gstin = gstin
+        if "billing_address" in fields:
+            row.billing_address = fields["billing_address"]
+        if "billing_country" in fields:
+            row.billing_country = (fields["billing_country"] or "").strip().upper() or None
+        if state_provided:
+            row.billing_state_code = state
+        if "billing_email" in fields:
+            row.billing_email = (fields["billing_email"] or "").strip() or None
+        session.commit()
+        session.refresh(row)
+        # Keep the dependency-injected object in sync for the response.
+        for attr in (
+            "legal_name",
+            "gstin",
+            "billing_address",
+            "billing_country",
+            "billing_state_code",
+            "billing_email",
+        ):
+            setattr(client, attr, getattr(row, attr))
+    return _billing_details_dict(client)
 
 
 # ── Checkout & Billing Portal ──
