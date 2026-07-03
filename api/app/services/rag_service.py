@@ -88,7 +88,7 @@ _download_card_re = re.compile(r"\[DOWNLOAD_CARD:([^\s\|\]]{1,500})\|([^\]\n]{1,
 # History: PR #234 used a keyword-free ``\[[^\]\n]{1,300}\](?!\()`` sweep that
 # stripped every bracket not followed by ``(``, corrupting all of the above on
 # every answer for every bot. Anchoring on the card prefixes is the fix.
-_LEAKED_BRACKET_RE = re.compile(r"\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,700}\]")
+_LEAKED_BRACKET_RE = re.compile(r"\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,720}\]")
 
 
 def _strip_llm_card_prose(text: str) -> str:

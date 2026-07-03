@@ -63,7 +63,7 @@ const DOWNLOAD_CARD_PATTERN = /\[DOWNLOAD_CARD:[^\s|\]]{1,500}\|[^\]\n]{1,200}\]
 //
 // History: PR #234 used a keyword-free /\[[^\]\n]{1,300}\](?!\()/g sweep that
 // deleted every bracket not followed by "(", corrupting all of the above.
-const LLM_LEAKED_BRACKET_PATTERN = /\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,700}\]/g;
+const LLM_LEAKED_BRACKET_PATTERN = /\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,720}\]/g;
 
 const MAX_SENTINEL_LEN = STREAM_SENTINELS.reduce((m, s) => Math.max(m, s.length), 0);
 
