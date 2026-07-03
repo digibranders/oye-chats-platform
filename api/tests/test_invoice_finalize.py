@@ -30,8 +30,8 @@ def _seller(db, **overrides):
     save_seller_profile(db, payload, actor_id=None)
 
 
-def _invoice(db, client_id, amount=179900, **kw):
-    inv = Invoice(client_id=client_id, amount_cents=amount, currency="inr", status="paid", **kw)
+def _invoice(db, client_id, amount=179900, currency="inr", **kw):
+    inv = Invoice(client_id=client_id, amount_cents=amount, currency=currency, status="paid", **kw)
     db.add(inv)
     db.flush()
     return inv
@@ -131,3 +131,59 @@ def test_snapshots_captured(db, enabled):
     assert inv.buyer_snapshot["gstin"] == "29AAGCB7383J1Z4"
     assert inv.buyer_snapshot["legal_name"] == "Acme Industries Pvt Ltd"
     assert inv.line_items[0]["amount_minor"] == 179900
+
+
+def test_non_inr_currency_is_skipped(db, enabled):
+    _seller(db)
+    c = _client(db, "fin-usd@test.example", billing_state_code="27")
+    inv = _invoice(db, c.id, currency="usd")
+    assert invoice_service.finalize_invoice(db, inv) is False
+    assert inv.invoice_number is None
+    assert inv.invoice_type == "legacy"
+
+
+def test_unconfigured_seller_yields_receipt(db, enabled):
+    # No seller profile persisted at all → defaults (gst_enabled False) → receipt.
+    c = _client(db, "fin-noseller@test.example", billing_state_code="27")
+    inv = _invoice(db, c.id)
+    assert invoice_service.finalize_invoice(db, inv) is True
+    assert inv.invoice_type == "receipt"
+    assert inv.invoice_number.startswith("DB/")  # default prefix
+
+
+def test_finalized_tax_fields_survive_status_flip(db, enabled):
+    _seller(db)
+    c = _client(db, "fin-immut@test.example", billing_state_code="27")
+    inv = _invoice(db, c.id)
+    invoice_service.finalize_invoice(db, inv)
+    number, taxable, tax = inv.invoice_number, inv.taxable_value_minor, inv.total_tax_minor
+    # A refund flips status for display only; the tax facts stay frozen.
+    inv.status = "refunded"
+    db.flush()
+    assert inv.invoice_number == number
+    assert inv.taxable_value_minor == taxable
+    assert inv.total_tax_minor == tax
+
+
+def test_finalize_safely_rolls_back_burned_serial_on_late_failure(db, enabled, monkeypatch):
+    # A failure AFTER the serial is allocated must roll back the counter via the
+    # savepoint, so no number is burned and the money path is unaffected.
+    _seller(db)
+    c = _client(db, "fin-safe@test.example", billing_state_code="27")
+    inv = _invoice(db, c.id)
+
+    def _boom(_buyer):
+        raise RuntimeError("snapshot boom")
+
+    original = invoice_service._buyer_snapshot
+    monkeypatch.setattr(invoice_service, "_buyer_snapshot", _boom)
+    assert invoice_service.finalize_invoice_safely(db, inv) is False
+    assert inv.invoice_number is None  # savepoint rolled the enrichment back
+
+    # Restore only the snapshot helper (keep the enabled flag) and prove the
+    # serial was NOT burned by the failed attempt.
+    monkeypatch.setattr(invoice_service, "_buyer_snapshot", original)
+    c2 = _client(db, "fin-safe2@test.example", billing_state_code="27")
+    inv2 = _invoice(db, c2.id)
+    assert invoice_service.finalize_invoice_safely(db, inv2) is True
+    assert inv2.invoice_number.endswith("000001")

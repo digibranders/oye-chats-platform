@@ -10,6 +10,7 @@ documents are immutable — corrections are credit notes, never edits.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -20,6 +21,8 @@ from app import config
 from app.core.tax import compute_tax, supply_kind
 from app.db.models import Client, Invoice, InvoiceCounter
 from app.services.seller_profile_service import SellerProfile, get_seller_profile
+
+logger = logging.getLogger(__name__)
 
 
 def financial_year_label(dt: datetime) -> str:
@@ -98,6 +101,17 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         return False
     if invoice.invoice_number:  # already finalized — immutable, never re-touch
         return False
+    # The tax engine assumes INR paise. Razorpay charges are INR; this guards a
+    # non-INR (e.g. Stripe-fallback USD) charge from being taxed as rupees and
+    # minting a false tax invoice — such rows stay legacy until a
+    # currency-aware path exists.
+    if (invoice.currency or "").lower() != "inr":
+        logger.warning(
+            "invoice %s currency %r is not INR — skipping finalize (stays legacy)",
+            invoice.id,
+            invoice.currency,
+        )
+        return False
 
     seller = get_seller_profile(session)
     buyer = session.get(Client, invoice.client_id)
@@ -127,6 +141,8 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         # Place of supply: the buyer's state for a domestic sale (supplier's
         # own state when B2C with no state on record — Circular 242); undefined
         # for exports.
+        # Phase 7: GSTR-1 Table 6A (exports) needs a POS code ("96"/port state);
+        # the NULL here is resolved in the GSTR export, not stored on the doc.
         invoice.place_of_supply = None if kind == "export" else (buyer_state or seller.state_code)
     else:
         # No seller GSTIN → issue a plain numbered receipt, no tax breakup.
@@ -136,6 +152,29 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
     invoice.issued_at = issued
     invoice.seller_snapshot = _seller_snapshot(seller)
     invoice.buyer_snapshot = _buyer_snapshot(buyer)
+    # Phase 3 stores a single header-derived line; the Phase 4 PDF composes the
+    # full Rule-46 line (HSN/SAC, qty, per-line taxable) from the header fields
+    # above. Enrich this list if multi-line invoices (plan + overage) are added.
     invoice.line_items = [{"description": invoice.description, "amount_minor": invoice.amount_cents}]
     session.flush()
     return True
+
+
+def finalize_invoice_safely(session: Session, invoice: Invoice) -> bool:
+    """Finalize inside a SAVEPOINT, swallowing any failure.
+
+    Invoicing runs in shadow mode inside the payment webhook's transaction, so
+    it must NEVER block the money path (credit grants, renewals). A failed
+    finalize rolls back only its own writes — including any counter increment,
+    so no serial is burned — leaving a legacy row for a later reconciliation
+    pass, while the outer transaction (and the customer's credits) proceeds.
+    """
+    try:
+        with session.begin_nested():
+            return finalize_invoice(session, invoice)
+    except Exception:
+        logger.exception(
+            "invoice finalize failed for invoice %s; leaving legacy row (shadow mode)",
+            invoice.id,
+        )
+        return False

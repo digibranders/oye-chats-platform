@@ -79,3 +79,21 @@ def test_concurrent_allocation_is_gapless(db, pg_engine):
 def test_engine_url_available(db):
     # Guard: the concurrency test needs a real engine URL, not a mock bind.
     assert str(db.get_bind().url).startswith("postgresql")
+
+
+def test_rolled_back_allocation_does_not_burn_serial(db, pg_engine):
+    # Gap-freedom under failure: an allocation that rolls back must reuse the
+    # serial, not leave a hole (Rule 46). Uses prefix "RB" to avoid other tests.
+    dt = datetime(2026, 7, 2, tzinfo=UTC)
+    s1 = Session(pg_engine)
+    try:
+        assert allocate_invoice_number(s1, "RB", dt) == "RB/26-27/000001"
+        s1.rollback()
+    finally:
+        s1.close()
+    s2 = Session(pg_engine)
+    try:
+        assert allocate_invoice_number(s2, "RB", dt) == "RB/26-27/000001"  # reused, no gap
+        s2.rollback()
+    finally:
+        s2.close()

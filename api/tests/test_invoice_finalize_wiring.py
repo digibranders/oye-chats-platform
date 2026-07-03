@@ -86,3 +86,52 @@ def test_charged_leaves_legacy_row_when_disabled(db, monkeypatch):
     assert inv.invoice_type == "legacy"
     assert inv.invoice_number is None
     assert inv.taxable_value_minor is None
+
+
+def test_topup_produces_numbered_invoice_when_enabled(db, monkeypatch):
+    monkeypatch.setattr(config, "INVOICING_V2_ENABLED", True)
+    _seller(db)
+    c = Client(
+        name="t",
+        email="wire-topup@e.com",
+        api_key="key-wire-topup",
+        billing_state_code="27",
+        billing_country="IN",
+    )
+    db.add(c)
+    db.commit()
+    payload = {
+        "payment": {
+            "entity": {
+                "id": "pay_topup_wire",
+                "order_id": "order_topup_wire",
+                "amount": 179900,
+                "currency": "INR",
+                "notes": {"purpose": "topup", "client_id": str(c.id), "credits": "2000", "amount_inr": "1799"},
+            }
+        }
+    }
+    rzp._handle_payment_captured(db, payload)
+    db.commit()
+
+    inv = db.execute(select(Invoice).where(Invoice.razorpay_payment_id == "pay_topup_wire")).scalar_one()
+    assert inv.invoice_type == "tax_invoice"
+    assert inv.invoice_number.startswith("DB/")
+    assert inv.total_tax_minor == 27442
+
+
+def test_charged_replay_does_not_renumber(db, monkeypatch):
+    monkeypatch.setattr(config, "INVOICING_V2_ENABLED", True)
+    _seller(db)
+    _make_sub(db, "wire-replay@e.com")
+    payload = _charged("sub_wire-replay@e.com", E2, "pay_replay")
+    rzp._handle_subscription_charged(db, payload)
+    db.commit()
+    # Replay the same payment id → the existing-invoice branch must skip
+    # creating (and re-numbering) a second invoice.
+    rzp._handle_subscription_charged(db, payload)
+    db.commit()
+
+    invs = db.execute(select(Invoice).where(Invoice.razorpay_payment_id == "pay_replay")).scalars().all()
+    assert len(invs) == 1
+    assert invs[0].invoice_number is not None
