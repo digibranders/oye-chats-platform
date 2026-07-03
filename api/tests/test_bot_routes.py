@@ -114,6 +114,36 @@ class TestCreateBot:
         assert any(isinstance(r, Bot) for r in added)
         assert any(isinstance(r, Notification) for r in added)
 
+    def test_new_bot_defaults_domain_check_enabled(self, monkeypatch):
+        # Secure-by-default: a bot created without an explicit
+        # ``domain_check_enabled`` must enforce origins. Combined with the
+        # fail-open on empty allowlist, this locks new bots down as soon as
+        # domains are configured without bricking unconfigured ones.
+        from app.api import bot_routes
+        from app.db.models import Bot
+        from app.services.plan_entitlements_service import AddBotDecision
+
+        session = MagicMock()
+        added = []
+        session.add.side_effect = added.append
+        monkeypatch.setattr(bot_routes, "get_session", lambda: _session_ctx(session))
+
+        app = _build_app(auth_override=_client_auth())
+        tc = TestClient(app)
+
+        allowed = AddBotDecision(allowed=True, reason="ok", must_subscribe=False, active_bot_count=0)
+        with patch(
+            "app.services.plan_entitlements_service.can_client_add_new_bot",
+            return_value=allowed,
+        ):
+            # No website and no allowed_domains -> empty allowlist, flag still on.
+            response = tc.post("/bots", json={"name": "Bare Bot"})
+
+        assert response.status_code == 201
+        created = next(r for r in added if isinstance(r, Bot))
+        assert created.domain_check_enabled is True
+        assert list(created.allowed_domains or []) == []
+
     def test_operator_without_permission_rejected(self, monkeypatch):
         from app.api import bot_routes
 

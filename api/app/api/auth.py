@@ -403,11 +403,13 @@ def _bot_from_cache_dict(data: dict) -> Bot:
 def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
     """Reject widget requests whose Origin/Referer is not in ``bot.allowed_domains``.
 
-    No-op when ``domain_check_enabled`` is false (default). When enabled, the
-    ``Origin`` header is the source of truth; ``Referer`` is used as a fallback
-    for older clients that omit ``Origin`` on same-origin POSTs. Missing both
-    headers is a hard reject so a non-browser client cannot bypass the check
-    by simply omitting the headers.
+    No-op when ``domain_check_enabled`` is false, and also fails open when the
+    flag is true but ``allowed_domains`` is empty -- enforcement only bites once
+    an allowlist is actually configured. When enforcing, the ``Origin`` header
+    is the source of truth; ``Referer`` is used as a fallback for older clients
+    that omit ``Origin`` on same-origin POSTs. Missing both headers is a hard
+    reject so a non-browser client cannot bypass the check by simply omitting
+    the headers.
     """
     if not getattr(bot, "domain_check_enabled", False):
         return
@@ -420,9 +422,16 @@ def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
             detail="origin_not_allowed",
         )
 
+    allowed: list[str] = list(bot.allowed_domains or [])
+    if not allowed:
+        # Fail-open on an empty allowlist: enforcement only bites when an
+        # allowlist is actually configured. This lets us default the flag ON
+        # for new bots (and backfill it for configured ones) without bricking
+        # any bot that has ``domain_check_enabled`` set but no domains listed.
+        return
+
     origin = request.headers.get("origin") or request.headers.get("referer")
     hostname = extract_hostname(origin)
-    allowed: list[str] = list(bot.allowed_domains or [])
     if not is_origin_allowed(hostname, allowed):
         logger.info(
             "Widget request rejected by origin check: bot_id=%s origin=%r hostname=%r",

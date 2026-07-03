@@ -65,3 +65,14 @@ def test_derive_from_website_empty_or_invalid():
 def test_derive_from_website_localhost_single_entry():
     # Wildcards over localhost make no sense, so we only emit the literal.
     assert _derive_allowed_domains_from_website("http://localhost:5174") == ["localhost"]
+
+
+def test_bot_model_defaults_domain_check_enabled_on():
+    # Secure-by-default at the ORM layer: the column default flips the flag ON
+    # for newly inserted bots. The Python-side ``default`` is applied on flush,
+    # so assert the column's configured default rather than the unflushed
+    # instance attribute (which is None before flush).
+    from app.db.models import Bot
+
+    assert Bot.__table__.c.domain_check_enabled.default.arg is True
+    assert Bot.__table__.c.domain_check_enabled.server_default.arg == "true"
