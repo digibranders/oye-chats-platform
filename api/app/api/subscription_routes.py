@@ -1158,9 +1158,29 @@ def resume_subscription(
 ):
     """Resume a subscription that was scheduled for cancellation.
 
+    ``/cancel`` issues the Razorpay cancel IMMEDIATELY with
+    ``cancel_at_cycle_end=1`` (``razorpay_service.cancel_subscription(sub,
+    at_period_end=True)``) before flipping the local ``cancel_at_period_end``
+    flag. Razorpay has NO un-cancel / resume API for an at-cycle-end-cancelled
+    subscription, so merely clearing the local flags would LIE: the gateway
+    still cancels at period end → involuntary churn while the UI says
+    "resumed" (BL-3).
+
+    So we mirror the honest sibling ``cancel_scheduled_change_endpoint``:
+    because the mandate is dead at the gateway, we re-authorise by minting a
+    FRESH Razorpay subscription for the same plan/cycle (tagging the
+    predecessor via ``prev_razorpay_subscription_id`` so it is retired at the
+    new sub's activation webhook) and return ``mandate_action:
+    "reauthorise_required"`` with the checkout payload. We do NOT clear the
+    local cancel flags or claim success here — the row must not pretend the
+    cancellation was undone until the customer actually re-authorises and the
+    activation webhook lands.
+
     Pass ``bot_id`` to resume a specific bot's subscription (N3); omit to act on
     the account's highest-tier subscription.
     """
+    from app.services import razorpay_service
+
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
         sub = _resolve_target_subscription(session, client.id, request.bot_id)
@@ -1170,14 +1190,44 @@ def resume_subscription(
         if not sub.cancel_at_period_end:
             raise HTTPException(status_code=400, detail="Subscription is not scheduled for cancellation.")
 
-        sub.cancel_at_period_end = False
-        sub.canceled_at = None
-        sub.cancel_reason = None
+        plan = sub.plan
+        if plan is None:
+            raise HTTPException(status_code=500, detail="Subscription has no associated plan.")
+
+        billing_cycle = sub.billing_cycle or "monthly"
+        extra_notes = (
+            {"prev_razorpay_subscription_id": sub.razorpay_subscription_id} if sub.razorpay_subscription_id else None
+        )
+        try:
+            checkout = razorpay_service.create_subscription(
+                session,
+                client,
+                plan,
+                billing_cycle,
+                extra_notes=extra_notes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except razorpay_service.RazorpayBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
         session.commit()
-
-        logger.info(f"Client {client.id} resumed subscription {sub.id}")
-
-        return {"message": "Subscription resumed successfully."}
+        checkout.setdefault("provider", "razorpay")
+        logger.info(
+            "Client %s requested resume for sub=%s → re-authorise required (fresh sub %s)",
+            client.id,
+            sub.id,
+            checkout.get("subscription_id"),
+        )
+        return {
+            "status": "reauthorise_required",
+            "mandate_action": "reauthorise_required",
+            "message": (
+                "The previous mandate was cancelled at the payment provider and "
+                "cannot be un-cancelled. Re-authorise payment to keep your plan."
+            ),
+            "checkout": checkout,
+        }
 
 
 # ── Operator-seat add-on ──
