@@ -7,6 +7,7 @@ subscription cancellation. Razorpay webhook handling lives in
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -533,39 +534,61 @@ def update_billing_details(body: BillingDetailsBody, client: Client = Depends(ge
     fields = body.model_dump(exclude_unset=True)
 
     gstin_provided = "gstin" in fields
-    gstin = None
+    new_gstin = None
     if gstin_provided and fields["gstin"]:
-        gstin = normalize_gstin(fields["gstin"])
-        if not is_valid_gstin(gstin):
+        new_gstin = normalize_gstin(fields["gstin"])
+        if not is_valid_gstin(new_gstin):
             raise HTTPException(status_code=422, detail="GSTIN failed format/checksum validation")
 
     state_provided = "billing_state_code" in fields
-    state = fields.get("billing_state_code")
-    if gstin:
-        # The GSTIN's first two digits are the authoritative place-of-supply
-        # state; a conflicting explicit state is a client error, not a silent
-        # override.
-        if state and str(state).strip().zfill(2) != gstin[:2]:
-            raise HTTPException(status_code=422, detail="billing_state_code does not match the GSTIN's state digits")
-        state = gstin[:2]
-        state_provided = True
-    if state:
-        state = str(state).strip().zfill(2)
-        if state not in VALID_STATE_CODES:
-            raise HTTPException(status_code=422, detail=f"Unknown GST state code: {state}")
+    raw_state = str(fields.get("billing_state_code") or "").strip()
+    new_state = raw_state.zfill(2) if raw_state else None  # ""/whitespace clears to NULL
+    if new_state and new_state not in VALID_STATE_CODES:
+        raise HTTPException(status_code=422, detail=f"Unknown GST state code: {new_state}")
+
+    country_provided = "billing_country" in fields
+    new_country = (str(fields.get("billing_country") or "")).strip().upper() or None
+    if new_country and not re.fullmatch(r"[A-Z]{2}", new_country):
+        raise HTTPException(status_code=422, detail="billing_country must be a 2-letter ISO code")
 
     with get_session() as session:
         row = session.get(Client, client.id)
+        # Cross-field consistency is checked on the EFFECTIVE (stored +
+        # incoming) values so a two-request sequence can't assemble an
+        # incoherent combination a single request would have rejected.
+        eff_gstin = new_gstin if gstin_provided else row.gstin
+        eff_state = new_state if state_provided else row.billing_state_code
+        eff_country = new_country if country_provided else row.billing_country
+        if eff_gstin:
+            # The GSTIN's first two digits are the authoritative place-of-supply
+            # state; a conflicting explicit state is a client error, not a
+            # silent override.
+            if state_provided and eff_state and eff_state != eff_gstin[:2]:
+                raise HTTPException(
+                    status_code=422, detail="billing_state_code does not match the GSTIN's state digits"
+                )
+            eff_state = eff_gstin[:2]
+            # An Indian GST registration cannot belong to a foreign-billed
+            # buyer — that combination would mint an export invoice carrying a
+            # domestic GSTIN (and lets a customer self-declare out of IGST).
+            if eff_country not in (None, "IN"):
+                raise HTTPException(
+                    status_code=422,
+                    detail="billing_country must be IN when a GSTIN is set (clear the GSTIN first)",
+                )
+
         if "legal_name" in fields:
             row.legal_name = (fields["legal_name"] or "").strip() or None
         if gstin_provided:
-            row.gstin = gstin
+            row.gstin = new_gstin
         if "billing_address" in fields:
             row.billing_address = fields["billing_address"]
-        if "billing_country" in fields:
-            row.billing_country = (fields["billing_country"] or "").strip().upper() or None
-        if state_provided:
-            row.billing_state_code = state
+        if country_provided:
+            row.billing_country = new_country
+        if state_provided or gstin_provided:
+            # Self-healing: whenever a GSTIN is on record the stored state
+            # follows its digits.
+            row.billing_state_code = eff_state if eff_gstin else (new_state if state_provided else eff_state)
         if "billing_email" in fields:
             row.billing_email = (fields["billing_email"] or "").strip() or None
         session.commit()
