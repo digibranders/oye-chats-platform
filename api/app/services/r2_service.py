@@ -21,6 +21,48 @@ from app.config import R2_APPLICATION_KEY, R2_BUCKET_NAME, R2_ENDPOINT, R2_KEY_I
 
 logger = logging.getLogger(__name__)
 
+# Content types safe to store (and later serve) verbatim on a chat attachment.
+# Anything NOT on this allowlist is stored as ``application/octet-stream`` so a
+# scriptable payload (SVG/HTML/JS/XML) can never be served inline from the app
+# origin as its declared type — the root of the stored-XSS vector (NB-1).
+_SAFE_CHAT_FILE_CONTENT_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/heic",
+        "image/heif",
+        "image/avif",
+        "application/pdf",
+        "text/plain",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.ms-powerpoint",
+    }
+)
+
+_DEFAULT_CHAT_FILE_CONTENT_TYPE = "application/octet-stream"
+
+
+def _safe_chat_file_content_type(content_type: str | None) -> str:
+    """Return a storage-safe content type for a chat attachment.
+
+    Caller-supplied content types are only trusted when they appear on an
+    explicit allowlist of non-scriptable types; everything else (including
+    ``image/svg+xml``, ``text/html`` and any script-capable type, as well as a
+    missing value) collapses to ``application/octet-stream``.
+    """
+    if not content_type:
+        return _DEFAULT_CHAT_FILE_CONTENT_TYPE
+    normalized = content_type.split(";", 1)[0].strip().lower()
+    if normalized in _SAFE_CHAT_FILE_CONTENT_TYPES:
+        return normalized
+    return _DEFAULT_CHAT_FILE_CONTENT_TYPE
+
 
 def process_image_for_logo(file_data, target_size=(512, 512)):
     """
@@ -142,7 +184,7 @@ def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> s
         raise
 
 
-def upload_chat_file(file_data: bytes, original_filename: str, content_type: str) -> str:
+def upload_chat_file(file_data: bytes, original_filename: str, content_type: str | None) -> str:
     """Upload a chat attachment (image, PDF, etc.) to R2.
 
     Unlike upload_to_r2 (which crops/resizes logos), this preserves files as-is.
@@ -151,12 +193,18 @@ def upload_chat_file(file_data: bytes, original_filename: str, content_type: str
     ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
     unique_key = f"chat-files/{uuid.uuid4()}.{ext}"
 
+    # Never store a caller-supplied scriptable content type verbatim: an SVG or
+    # HTML payload stored as its declared type could be served inline and
+    # executed from the app origin (stored XSS). Unknown/scriptable types are
+    # neutralized to application/octet-stream (NB-1).
+    safe_content_type = _safe_chat_file_content_type(content_type)
+
     try:
         s3_client.put_object(
             Bucket=R2_BUCKET_NAME,
             Key=unique_key,
             Body=file_data,
-            ContentType=content_type,
+            ContentType=safe_content_type,
         )
         return unique_key
     except ClientError as e:
