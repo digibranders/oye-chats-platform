@@ -5,8 +5,6 @@ import re
 from langchain_core.documents import Document as LCDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app.config import CHUNK_OVERLAP, CHUNK_SIZE
-
 # Markdown-aware separators: prefer splitting at document structure boundaries
 # before falling back to paragraphs, sentences, and words.
 _SEPARATORS = [
@@ -58,9 +56,19 @@ def chunk_text(pages_data: list[dict], document_name: str = "") -> list[LCDocume
         2. Propagate ``##``/``###`` section headers to orphaned chunks
         3. Prepend document identity + title + page metadata prefix
     """
+    # Chunk sizing is runtime-tunable from the super-admin Models & RAG card
+    # (pricing_config: rag.chunk_size / rag.chunk_overlap), falling back to the
+    # CHUNK_SIZE / CHUNK_OVERLAP env defaults. Read once per call so every page
+    # in this batch is split with a consistent size, and so a mid-crawl change
+    # only affects subsequent waves. Lazy import avoids an import-time cycle
+    # (runtime_config → db.session → …).
+    from app.services import runtime_config
+
+    chunk_size = runtime_config.get_chunk_size()
+    chunk_overlap = runtime_config.get_chunk_overlap()
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         length_function=len,
         is_separator_regex=False,
         separators=_SEPARATORS,

@@ -946,6 +946,9 @@ def get_model_config(_admin: Client = Depends(get_superadmin)):
             "rerank_top_n": runtime_config.get_rerank_top_n(),
             "relevance_threshold": runtime_config.get_relevance_threshold(),
         },
+        "embed": {
+            "concurrency": runtime_config.get_embed_concurrency(),
+        },
         "crawler": {
             "primary_provider": crawl_primary,
             "fallback_provider": "jina" if crawl_primary == "spider" else "spider",
@@ -965,6 +968,7 @@ class ModelConfigPatch(BaseModel):
     chunk_overlap: int | None = Field(default=None, ge=0, le=2000)
     rerank_top_n: int | None = Field(default=None, ge=1, le=20)
     relevance_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    embed_concurrency: int | None = Field(default=None, ge=1, le=64)
     crawl_provider_primary: Literal["spider", "jina"] | None = None
     jina_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
     spider_fetch_concurrency: int | None = Field(default=None, ge=1, le=50)
@@ -994,6 +998,7 @@ def patch_model_config(
         "chunk_overlap": "rag.chunk_overlap",
         "rerank_top_n": "rag.rerank_top_n",
         "relevance_threshold": "rag.relevance_threshold",
+        "embed_concurrency": "embed.concurrency",
         "crawl_provider_primary": "crawl.provider_primary",
         "jina_fetch_concurrency": "crawl.jina_fetch_concurrency",
         "spider_fetch_concurrency": "crawl.spider_fetch_concurrency",

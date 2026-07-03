@@ -52,17 +52,43 @@ class TestPropagateHeaders:
 class TestChunkText:
     def test_basic_chunking(self):
         pages_data = [{"text": "Hello world. " * 200, "metadata": {"page": 1}}]
-        with patch("app.ingestion.chunking.CHUNK_SIZE", 100), patch("app.ingestion.chunking.CHUNK_OVERLAP", 20):
+        with (
+            patch("app.services.runtime_config.get_chunk_size", return_value=100),
+            patch("app.services.runtime_config.get_chunk_overlap", return_value=20),
+        ):
             chunks = chunk_text(pages_data)
         assert len(chunks) > 1
         assert all(c.metadata.get("chunk_index") is not None for c in chunks)
 
     def test_chunk_index_sequential(self):
         pages_data = [{"text": "Word " * 500, "metadata": {"page": 1}}]
-        with patch("app.ingestion.chunking.CHUNK_SIZE", 100), patch("app.ingestion.chunking.CHUNK_OVERLAP", 20):
+        with (
+            patch("app.services.runtime_config.get_chunk_size", return_value=100),
+            patch("app.services.runtime_config.get_chunk_overlap", return_value=20),
+        ):
             chunks = chunk_text(pages_data)
         indices = [c.metadata["chunk_index"] for c in chunks]
         assert indices == list(range(len(chunks)))
+
+    def test_respects_runtime_chunk_size(self):
+        """chunk_text must read sizing from runtime_config (super-admin tunable),
+        not a frozen env constant — otherwise the dashboard knob is a no-op.
+
+        Regression guard for the wiring fix: a smaller runtime chunk_size yields
+        strictly more chunks for the same input.
+        """
+        pages_data = [{"text": "Sentence number. " * 400, "metadata": {"page": 1}}]
+        with (
+            patch("app.services.runtime_config.get_chunk_size", return_value=200),
+            patch("app.services.runtime_config.get_chunk_overlap", return_value=0),
+        ):
+            small = chunk_text(pages_data)
+        with (
+            patch("app.services.runtime_config.get_chunk_size", return_value=2000),
+            patch("app.services.runtime_config.get_chunk_overlap", return_value=0),
+        ):
+            large = chunk_text(pages_data)
+        assert len(small) > len(large)
 
     def test_document_name_prefix(self):
         pages_data = [{"text": "Some content here.", "metadata": {"page": 1}}]

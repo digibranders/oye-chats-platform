@@ -106,6 +106,31 @@ def get_chunk_overlap() -> int:
         return CHUNK_OVERLAP
 
 
+# Embed-batch parallelism bounds: 1 keeps embedding functional, 64 is a safe
+# ceiling — even one text per batchEmbedContents request stays well under the
+# Gemini per-project embedding RPM quota at this fan-out.
+_EMBED_CONCURRENCY_MIN = 1
+_EMBED_CONCURRENCY_MAX = 64
+
+
+def get_embed_concurrency() -> int:
+    """How many embed batches are POSTed to the provider concurrently.
+
+    Runtime-tunable from the super-admin Models & RAG card
+    (pricing_config: ``embed.concurrency``); falls back to the
+    ``EMBED_CONCURRENCY`` env default. Clamped so a bad DB value can never
+    stall embedding (0) or fan out past the provider rate limit. This is the
+    main live lever on large-crawl embed wall-clock.
+    """
+    from app.config import EMBED_CONCURRENCY
+
+    try:
+        value = int(get("embed.concurrency", EMBED_CONCURRENCY))
+    except (TypeError, ValueError):
+        return EMBED_CONCURRENCY
+    return max(_EMBED_CONCURRENCY_MIN, min(_EMBED_CONCURRENCY_MAX, value))
+
+
 def get_rerank_top_n(default: int = 5) -> int:
     try:
         return int(get("rag.rerank_top_n", default))

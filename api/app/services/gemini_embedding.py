@@ -16,11 +16,11 @@ import re
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from time import perf_counter
 
 import httpx
 
 from app.config import (
-    EMBED_CONCURRENCY,
     EMBED_DIMENSIONS,
     GEMINI_EMBED_MODEL,
     GEMINI_EMBED_URL,
@@ -133,10 +133,11 @@ def embed_texts(
 ) -> list[list[float]]:
     """Embed ``texts`` → EMBED_DIMENSIONS-wide, L2-normalized vectors.
 
-    Batches of ``_MAX_BATCH`` are sent to Gemini **concurrently** (up to
-    ``EMBED_CONCURRENCY``) since embedding is network-bound — this is the main
-    lever on large-crawl wall-clock. Output order matches input order regardless
-    of completion order. ``progress_cb(done, total)`` fires as batches finish.
+    Batches of ``_MAX_BATCH`` are sent to Gemini **concurrently** (up to the
+    runtime-tunable ``embed.concurrency``, super-admin Models & RAG card) since
+    embedding is network-bound — this is the main lever on large-crawl
+    wall-clock. Output order matches input order regardless of completion order.
+    ``progress_cb(done, total)`` fires as batches finish.
 
     Raises RuntimeError on a missing key or persistent API failure. Callers rely
     on that: ingestion retries via ARQ; the query path degrades to full-text
@@ -154,7 +155,13 @@ def embed_texts(
     results: list[list[list[float]]] = [[] for _ in batches]
     total = len(texts)
     done = 0
-    workers = max(1, min(EMBED_CONCURRENCY, len(batches)))
+    # Lazy import: keeps this module free of a services→db import-time cycle.
+    from app.services import runtime_config
+
+    workers = max(1, min(runtime_config.get_embed_concurrency(), len(batches)))
+    # perf_counter is imported directly (not via ``time``) so the retry tests
+    # that stub ``time.sleep`` don't accidentally break throughput timing.
+    start = perf_counter()
     try:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             future_to_idx = {pool.submit(_embed_one_batch, client, b): i for i, b in enumerate(batches)}
@@ -168,6 +175,20 @@ def embed_texts(
     finally:
         if owns_client:
             client.close()
+
+    # Throughput line for the crawl/embed speed test: texts/s is the number to
+    # watch. gemini-embedding-001 embeds one input per request, so this is
+    # RPM-bound — the ceiling is EMBED_RPM_LIMIT ÷ 60, not raw worker count.
+    elapsed = perf_counter() - start
+    logger.info(
+        "embed throughput: %d texts / %d batches in %.2fs (%.0f texts/s, %d workers, dim=%d)",
+        total,
+        len(batches),
+        elapsed,
+        (total / elapsed) if elapsed > 0 else 0.0,
+        workers,
+        EMBED_DIMENSIONS,
+    )
 
     out: list[list[float]] = []
     for r in results:
