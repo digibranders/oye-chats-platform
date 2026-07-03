@@ -10,6 +10,8 @@ time so that later config edits never mutate already-issued documents.
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,11 +22,19 @@ from sqlalchemy.orm import Session
 from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.db.models import PricingConfig
 
+logger = logging.getLogger(__name__)
+
 SELLER_PROFILE_KEY = "billing.seller_profile"
 
 # Rule 46(b): serial ≤16 chars. "PPP/YY-YY/NNNNNN" = len(prefix) + 13.
 _MAX_PREFIX_LEN = 3
 _MAX_RATE_BPS = 4000  # sanity ceiling, not a tax opinion
+
+# Document-type series that must never collide with the seller's tax-invoice
+# prefix: receipts get their own serial series (Rule 46's consecutive-serial
+# requirement applies to tax invoices; interleaving receipts would put
+# phantom gaps in the GSTR-1 document range). Credit notes follow in Phase 5.
+RESERVED_PREFIXES = {"RCT": "receipt", "CN": "credit-note"}
 
 
 class SellerProfileError(ValueError):
@@ -65,31 +75,48 @@ class SellerProfile:
         return bool(self.gstin)
 
 
+def _clamped_prefix(raw: Any, fallback: str) -> str:
+    """Read-path defense: a raw psql edit storing a 4-char/Unicode prefix must
+    not silently break every finalize (InvoiceCounter.prefix is String(3))."""
+    prefix = str(raw or "").strip().upper()
+    if re.fullmatch(r"[A-Z0-9]{1,3}", prefix):
+        return prefix
+    logger.warning("seller profile has invalid invoice_prefix %r; falling back to %r", raw, fallback)
+    return fallback
+
+
 def get_seller_profile(session: Session) -> SellerProfile:
     row = session.get(PricingConfig, SELLER_PROFILE_KEY)
     if row is None or not isinstance(row.value, dict):
         return SellerProfile()
     defaults = SellerProfile()
     data: dict[str, Any] = row.value
+    raw_state = data.get("state_code") or None
     return SellerProfile(
         configured=True,
         legal_name=str(data.get("legal_name", "")),
         trade_name=str(data.get("trade_name", defaults.trade_name)),
         gstin=data.get("gstin") or None,
         address_lines=[str(x) for x in data.get("address_lines", [])],
-        state_code=data.get("state_code") or None,
+        state_code=str(raw_state).strip().zfill(2) if raw_state else None,
         country=str(data.get("country", defaults.country)),
         sac_code=str(data.get("sac_code", defaults.sac_code)),
         tax_rate_bps=_safe_int(data.get("tax_rate_bps", defaults.tax_rate_bps), defaults.tax_rate_bps),
         price_inclusive=bool(data.get("price_inclusive", defaults.price_inclusive)),
         lut_active=bool(data.get("lut_active", defaults.lut_active)),
         lut_number=data.get("lut_number") or None,
-        invoice_prefix=str(data.get("invoice_prefix", defaults.invoice_prefix)),
+        invoice_prefix=_clamped_prefix(data.get("invoice_prefix", defaults.invoice_prefix), defaults.invoice_prefix),
         logo_url=data.get("logo_url") or None,
     )
 
 
 def _validate(payload: dict[str, Any]) -> dict[str, Any]:
+    # Explicit JSON null means "clear / restore the code default" for every
+    # field — dropping None keys up front makes that uniform and prevents
+    # str(None) → "None" from ever reaching a statutory field (legal name,
+    # SAC) or silently flipping price_inclusive to exclusive.
+    payload = {k: v for k, v in payload.items() if v is not None}
+
     defaults = SellerProfile()
     legal_name = str(payload.get("legal_name", "")).strip()
     if not legal_name:
@@ -104,10 +131,13 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
         gstin = None
 
     prefix = str(payload.get("invoice_prefix", defaults.invoice_prefix)).strip().upper()
-    if not (1 <= len(prefix) <= _MAX_PREFIX_LEN) or not prefix.isalnum():
+    # ASCII-only (str.isalnum accepts Unicode digits, which GSTR serials reject).
+    if not re.fullmatch(r"[A-Z0-9]{1,3}", prefix):
         raise SellerProfileError(
-            f"invoice_prefix must be 1-{_MAX_PREFIX_LEN} alphanumeric chars (Rule 46 16-char serial limit)"
+            f"invoice_prefix must be 1-{_MAX_PREFIX_LEN} ASCII alphanumeric chars (Rule 46 16-char serial limit)"
         )
+    if prefix in RESERVED_PREFIXES:
+        raise SellerProfileError(f"invoice_prefix {prefix!r} is reserved for the {RESERVED_PREFIXES[prefix]} series")
 
     raw_rate = payload.get("tax_rate_bps", defaults.tax_rate_bps)
     try:
@@ -118,8 +148,11 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
         raise SellerProfileError(f"tax_rate_bps must be between 0 and {_MAX_RATE_BPS}")
 
     sac_code = str(payload.get("sac_code", defaults.sac_code)).strip()
-    if not sac_code:
-        raise SellerProfileError("sac_code is required")
+    # 4-8 digits: SAC is 6 digits (e.g. 997331), HSN 4/6/8. Also keeps it
+    # inside invoices.hsn_sac VARCHAR(8) — an overlong value here would make
+    # every finalize fail silently inside its savepoint.
+    if not re.fullmatch(r"[0-9]{4,8}", sac_code):
+        raise SellerProfileError("sac_code must be 4-8 digits (SAC/HSN)")
 
     raw_address = payload.get("address_lines", [])
     if not isinstance(raw_address, list):
@@ -136,6 +169,19 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
         if state_code is not None and state_code not in VALID_STATE_CODES:
             raise SellerProfileError(f"Unknown GST state code: {payload.get('state_code')}")
 
+    country = str(payload.get("country", defaults.country)).strip().upper() or defaults.country
+    if not re.fullmatch(r"[A-Z]{2}", country):
+        raise SellerProfileError("country must be a 2-letter ISO code")
+
+    # Checkout charges exactly the sticker price; exclusive pricing would
+    # invoice tax ON TOP of money never collected. Reject until a checkout
+    # that actually adds tax exists.
+    if not bool(payload.get("price_inclusive", defaults.price_inclusive)):
+        raise SellerProfileError(
+            "price_inclusive=false is not supported: checkout collects the sticker price, "
+            "so exclusive pricing would invoice more than was paid"
+        )
+
     lut_active = bool(payload.get("lut_active", defaults.lut_active))
     lut_number = (str(payload.get("lut_number")).strip() or None) if payload.get("lut_number") else None
     if lut_active and not lut_number:
@@ -147,10 +193,10 @@ def _validate(payload: dict[str, Any]) -> dict[str, Any]:
         "gstin": gstin,
         "address_lines": [str(x).strip() for x in raw_address if str(x).strip()],
         "state_code": state_code,
-        "country": str(payload.get("country", defaults.country)).strip().upper() or defaults.country,
+        "country": country,
         "sac_code": sac_code,
         "tax_rate_bps": tax_rate_bps,
-        "price_inclusive": bool(payload.get("price_inclusive", defaults.price_inclusive)),
+        "price_inclusive": True,
         "lut_active": lut_active,
         "lut_number": lut_number,
         "invoice_prefix": prefix,
@@ -166,7 +212,9 @@ def save_seller_profile(session: Session, payload: dict[str, Any], *, actor_id: 
     from the admin UI can never silently wipe the GSTIN or tax rate. To clear a
     field, send it explicitly (e.g. ``{"gstin": null}``).
     """
-    existing = session.get(PricingConfig, SELLER_PROFILE_KEY)
+    # Lock the row for the read-merge-write so two concurrent admin PATCHes
+    # can't silently drop each other's fields (lost update).
+    existing = session.get(PricingConfig, SELLER_PROFILE_KEY, with_for_update=True)
     base = dict(existing.value) if existing is not None and isinstance(existing.value, dict) else {}
     merged = {**base, **payload}
     value = _validate(merged)
@@ -180,4 +228,9 @@ def save_seller_profile(session: Session, payload: dict[str, Any], *, actor_id: 
     )
     session.execute(stmt)
     session.flush()
+    # The FOR UPDATE read above pins the row in the identity map and the Core
+    # upsert does not expire it — without this, the re-read below (and the
+    # route's response/audit "after") would return the pre-save values.
+    if existing is not None:
+        session.expire(existing)
     return get_seller_profile(session)

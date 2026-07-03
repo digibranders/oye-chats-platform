@@ -132,3 +132,64 @@ def test_reader_survives_corrupt_stored_row(db, admin_id):
     db.flush()
     profile = get_seller_profile(db)  # must not raise
     assert profile.tax_rate_bps == 1800  # falls back to default
+
+
+def test_null_legal_name_rejected_not_stored_as_string_none(db, admin_id):
+    save_seller_profile(db, {"legal_name": "Digibranders Pvt Ltd"}, actor_id=admin_id)
+    with pytest.raises(SellerProfileError, match="legal_name"):
+        save_seller_profile(db, {"legal_name": None}, actor_id=admin_id)
+    assert get_seller_profile(db).legal_name == "Digibranders Pvt Ltd"
+
+
+def test_null_sac_and_price_inclusive_restore_defaults(db, admin_id):
+    save_seller_profile(db, {"legal_name": "X Ltd", "sac_code": "998434"}, actor_id=admin_id)
+    profile = save_seller_profile(
+        db, {"legal_name": "X Ltd", "sac_code": None, "price_inclusive": None}, actor_id=admin_id
+    )
+    assert profile.sac_code == "997331"  # default restored, never "None"
+    assert profile.price_inclusive is True
+
+
+def test_overlong_or_nondigit_sac_rejected(db, admin_id):
+    with pytest.raises(SellerProfileError, match="sac_code"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "sac_code": "997331 - SaaS"}, actor_id=admin_id)
+    with pytest.raises(SellerProfileError, match="sac_code"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "sac_code": "997331000"}, actor_id=admin_id)
+
+
+def test_unicode_prefix_rejected(db, admin_id):
+    with pytest.raises(SellerProfileError, match="prefix"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "invoice_prefix": "١٢٣"}, actor_id=admin_id)
+
+
+def test_reserved_receipt_prefix_rejected(db, admin_id):
+    with pytest.raises(SellerProfileError, match="reserved"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "invoice_prefix": "RCT"}, actor_id=admin_id)
+
+
+def test_exclusive_pricing_rejected(db, admin_id):
+    with pytest.raises(SellerProfileError, match="price_inclusive"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "price_inclusive": False}, actor_id=admin_id)
+
+
+def test_bad_country_rejected(db, admin_id):
+    with pytest.raises(SellerProfileError, match="country"):
+        save_seller_profile(db, {"legal_name": "X Ltd", "country": "India"}, actor_id=admin_id)
+
+
+def test_read_path_clamps_corrupt_prefix_and_state(db, admin_id):
+    from app.db.models import PricingConfig
+    from app.services.seller_profile_service import SELLER_PROFILE_KEY
+
+    # Simulate a raw psql edit that bypassed validation.
+    db.add(
+        PricingConfig(
+            key=SELLER_PROFILE_KEY,
+            value={"legal_name": "X", "invoice_prefix": "OYEC", "state_code": "7"},
+            updated_by=admin_id,
+        )
+    )
+    db.flush()
+    profile = get_seller_profile(db)
+    assert profile.invoice_prefix == "DB"  # clamped to default, not "OYEC"
+    assert profile.state_code == "07"  # zero-padded on read
