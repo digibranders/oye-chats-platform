@@ -31,6 +31,7 @@ from app.db.models import (
     CreditLedger,
     Document,
     ImpersonationToken,
+    Invoice,
     LeadInfo,
     LLMCallLog,
     Operator,
@@ -1380,3 +1381,157 @@ def update_seller_profile(
         )
         session.commit()
         return after
+
+
+# ── billing: invoice console (invoicing v2 Phase 6) ─────────────────────────
+
+
+def _send_invoice_email_now(to_email: str, invoice: Invoice, pdf_url: str) -> None:
+    """Indirection point (tests substitute it) around the invoice email."""
+    from app.services.email_service import send_invoice_email
+
+    send_invoice_email(to_email, invoice, pdf_url)
+
+
+def _invoice_row(inv: Invoice, client_name: str | None) -> dict[str, Any]:
+    return {
+        "id": inv.id,
+        "client_id": inv.client_id,
+        "client_name": client_name,
+        "invoice_number": inv.invoice_number,
+        "invoice_type": inv.invoice_type,
+        "status": inv.status,
+        "amount_cents": inv.amount_cents,
+        "currency": inv.currency,
+        "taxable_value_minor": inv.taxable_value_minor,
+        "total_tax_minor": inv.total_tax_minor,
+        "supply_kind": inv.supply_kind,
+        "is_export": inv.is_export,
+        "pdf_url": inv.pdf_url,
+        "credit_note_of_id": inv.credit_note_of_id,
+        "issued_at": inv.issued_at.isoformat() if inv.issued_at else None,
+        "created_at": inv.created_at.isoformat() if inv.created_at else None,
+    }
+
+
+@router.get("/invoices")
+def list_all_invoices(
+    _admin: Client = Depends(get_superadmin),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    invoice_type: str | None = Query(None),
+    client_id: int | None = Query(None),
+    search: str | None = Query(None, max_length=120),
+    include_legacy: bool = Query(False),
+):
+    """All issued documents (tax invoices / credit notes / receipts), newest first.
+
+    Legacy payment-history rows are excluded by default — they are not legal
+    documents; flip ``include_legacy`` for the raw payment mirror.
+    """
+    with get_session() as session:
+        stmt = select(Invoice, Client.name).join(Client, Invoice.client_id == Client.id)
+        if not include_legacy:
+            stmt = stmt.where(Invoice.invoice_number.isnot(None))
+        if invoice_type:
+            stmt = stmt.where(Invoice.invoice_type == invoice_type)
+        if client_id:
+            stmt = stmt.where(Invoice.client_id == client_id)
+        if search:
+            needle = f"%{search.strip()}%"
+            stmt = stmt.where(
+                Invoice.invoice_number.ilike(needle) | Client.email.ilike(needle) | Client.name.ilike(needle)
+            )
+        total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+        rows = session.execute(stmt.order_by(desc(Invoice.id)).offset((page - 1) * limit).limit(limit)).all()
+        return {
+            "total": int(total),
+            "page": page,
+            "limit": limit,
+            "items": [_invoice_row(inv, client_name) for inv, client_name in rows],
+        }
+
+
+@router.get("/invoices/{invoice_id}")
+def invoice_detail(invoice_id: int, _admin: Client = Depends(get_superadmin)):
+    with get_session() as session:
+        inv = session.get(Invoice, invoice_id)
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        client = session.get(Client, inv.client_id)
+        return {
+            **_invoice_row(inv, client.name if client else None),
+            "razorpay_payment_id": inv.razorpay_payment_id,
+            "razorpay_invoice_id": inv.razorpay_invoice_id,
+            "tax_rate_bps": inv.tax_rate_bps,
+            "cgst_minor": inv.cgst_minor,
+            "sgst_minor": inv.sgst_minor,
+            "igst_minor": inv.igst_minor,
+            "hsn_sac": inv.hsn_sac,
+            "place_of_supply": inv.place_of_supply,
+            "seller_snapshot": inv.seller_snapshot,
+            "buyer_snapshot": inv.buyer_snapshot,
+            "line_items": inv.line_items,
+            "description": inv.description,
+            "period_start": inv.period_start.isoformat() if inv.period_start else None,
+            "period_end": inv.period_end.isoformat() if inv.period_end else None,
+            "invoice_url": inv.invoice_url,
+        }
+
+
+@router.post("/invoices/{invoice_id}/resend-email")
+def resend_invoice_email(invoice_id: int, request: Request, admin: Client = Depends(get_superadmin)):
+    """Re-send the document email to the buyer (e.g. after a lost delivery)."""
+    _require_write(admin)
+    with get_session() as session:
+        inv = session.get(Invoice, invoice_id)
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        if not inv.invoice_number or not inv.pdf_url:
+            raise HTTPException(status_code=409, detail="Invoice has no rendered PDF yet — regenerate first.")
+        to_email = (inv.buyer_snapshot or {}).get("email")
+        if not to_email:
+            raise HTTPException(status_code=409, detail="Invoice has no buyer email on record.")
+        _send_invoice_email_now(to_email, inv, inv.pdf_url)
+        record_audit(
+            session,
+            actor=admin,
+            action="billing.invoice.resend_email",
+            target_type="invoice",
+            target_id=inv.id,
+            after={"to": to_email, "invoice_number": inv.invoice_number},
+            request=request,
+        )
+        session.commit()
+        return {"sent_to": to_email, "invoice_number": inv.invoice_number}
+
+
+@router.post("/invoices/{invoice_id}/regenerate-pdf")
+def regenerate_invoice_pdf(invoice_id: int, request: Request, admin: Client = Depends(get_superadmin)):
+    """Queue a fresh PDF render (template fix, corrupted object, …).
+
+    Clears ``pdf_url`` so the 5-minute worker sweep re-renders and re-uploads
+    under a NEW capability URL; the old R2 object simply becomes unreferenced.
+    The document data itself is immutable — only the rendering is redone.
+    """
+    _require_write(admin)
+    with get_session() as session:
+        inv = session.get(Invoice, invoice_id)
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        if not inv.invoice_number:
+            raise HTTPException(status_code=409, detail="Legacy rows have no document to regenerate.")
+        before = {"pdf_url": inv.pdf_url}
+        inv.pdf_url = None
+        inv.invoice_url = None
+        record_audit(
+            session,
+            actor=admin,
+            action="billing.invoice.regenerate_pdf",
+            target_type="invoice",
+            target_id=inv.id,
+            before=before,
+            request=request,
+        )
+        session.commit()
+        return {"invoice_number": inv.invoice_number, "queued": True}
