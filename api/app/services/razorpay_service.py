@@ -1341,20 +1341,45 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 # against the razorpay id in case of any future reordering. Each
                 # cancel is wrapped so one gateway failure can't abort the
                 # activation (the local flip below still stops entitlement).
+                gateway_cancel_ok = True
                 if old.razorpay_subscription_id and old.razorpay_subscription_id != razorpay_sub_id:
                     try:
                         cancel_subscription(old, at_period_end=False)
                     except Exception:
-                        logger.exception(
-                            "Failed to gateway-cancel superseded subscription %s "
-                            "at activation of %s (client %s) — continuing so the "
-                            "new subscription still activates",
+                        # The gateway cancel FAILED, so the old UPI mandate is
+                        # still LIVE at Razorpay and will keep debiting the
+                        # customer (the BL-4 double-charge, relocated to the
+                        # failure path). We cannot leave the old row locally
+                        # ``active``: the partial unique index
+                        # ``ix_subscriptions_client_legacy_active`` allows only
+                        # ONE active/trialing/past_due client-level (bot_id NULL)
+                        # subscription per client, so a second active row would
+                        # make the new sub's INSERT below fail and abort the
+                        # whole activation (losing the resilience property). So
+                        # we still flip it out of the active set, but we do NOT
+                        # pretend it was a clean cancel — we stamp a distinct
+                        # ``cancel_reason`` so the still-live mandate is
+                        # queryable for reconcile/retry, and log at ERROR
+                        # (alert-worthy). This is materially safer than the
+                        # original silent lie: the failure is loud and the row
+                        # is distinguishable from a normal cancel.
+                        gateway_cancel_ok = False
+                        logger.error(
+                            "Gateway-cancel FAILED for superseded subscription %s "
+                            "at activation of %s (client %s) — the old UPI mandate "
+                            "is STILL LIVE at Razorpay and will keep debiting the "
+                            "customer. Marked local row canceled with "
+                            "cancel_reason=gateway_cancel_failed_mandate_live for "
+                            "manual/automated reconciliation.",
                             old.razorpay_subscription_id,
                             razorpay_sub_id,
                             client_id,
+                            exc_info=True,
                         )
                 old.status = "canceled"
                 old.canceled_at = datetime.now(UTC)
+                if not gateway_cancel_ok:
+                    old.cancel_reason = "gateway_cancel_failed_mandate_live"
 
         # ``notes.prev_razorpay_subscription_id`` is set by the upgrade /
         # scheduled-promotion paths so we can recognise this is a transition

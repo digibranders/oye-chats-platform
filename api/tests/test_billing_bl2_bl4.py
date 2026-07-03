@@ -243,8 +243,21 @@ def test_activation_gateway_cancels_old_sibling(db):
 
 
 def test_activation_gateway_cancel_failure_does_not_abort(db):
-    """A failing sibling gateway-cancel must not abort the activation — the new
-    sub is still created and the old is still flipped canceled locally."""
+    """A failing sibling gateway-cancel must not abort the activation, and must
+    not SILENTLY lie about the old mandate.
+
+    Resilience: the new sub is still created (one failing cancel can't abort the
+    whole activation).
+
+    Truthfulness: because the gateway cancel raised, the old UPI mandate is still
+    LIVE at Razorpay. The partial unique index
+    ``ix_subscriptions_client_legacy_active`` forbids two active client-level
+    rows, so the old row cannot stay ``active`` without failing the new row's
+    INSERT — instead it is flipped canceled but stamped with a DISTINCT
+    ``cancel_reason`` (``gateway_cancel_failed_mandate_live``) so the still-live
+    mandate is queryable for reconcile/retry, and the failure is logged at ERROR
+    naming the old razorpay id + client id. This is materially safer than the
+    original silent BL-4 lie."""
     from app.services import razorpay_service as rzp
 
     client = _make_client(db, email="sibling-fail@e.com")
@@ -262,14 +275,113 @@ def test_activation_gateway_cancel_failure_does_not_abort(db):
         prev_sub_id="sub_old_sibfail",
     )
 
+    with (
+        patch.object(rzp, "_get_razorpay", return_value=fake),
+        patch.object(rzp, "logger") as mock_logger,
+    ):
+        rzp._handle_subscription_activated(db, payload)
+        db.commit()
+        # The failed gateway-cancel is alert-worthy: logged at ERROR, naming the
+        # still-live old razorpay id and the client so it can be reconciled.
+        assert mock_logger.error.called, "failed gateway-cancel must log at ERROR"
+        error_blob = " ".join(str(c) for c in mock_logger.error.call_args_list)
+        assert "sub_old_sibfail" in error_blob
+        assert str(client.id) in error_blob
+
+    # Resilience preserved — activation completed, the new sub is active.
+    new = db.query(Subscription).filter_by(razorpay_subscription_id="sub_new_sibfail").one()
+    assert new.status == "active"
+    # Truthfulness — the old row carries the distinct reconcile marker so it is
+    # NOT indistinguishable from a clean cancel (the original silent lie).
+    db.refresh(old)
+    assert old.cancel_reason == "gateway_cancel_failed_mandate_live"
+
+
+def test_activation_gateway_cancel_success_marks_clean_cancel(db):
+    """When the sibling gateway-cancel SUCCEEDS, the old row is canceled cleanly
+    with NO reconcile marker (regression guard for the failure-path change)."""
+    from app.services import razorpay_service as rzp
+
+    client = _make_client(db, email="sibling-ok@e.com")
+    std = _make_plan(db, slug="std-sibok", price_cents=399900)
+    pro = _make_plan(db, slug="pro-sibok", price_cents=799900)
+    old = _make_sub(db, client, std, razorpay_subscription_id="sub_old_sibok", status="active")
+    db.commit()
+
+    fake = MagicMock()  # cancel succeeds (no side_effect)
+    payload = _activation_payload(
+        razorpay_sub_id="sub_new_sibok",
+        client_id=client.id,
+        plan_id=pro.id,
+        prev_sub_id="sub_old_sibok",
+    )
+
     with patch.object(rzp, "_get_razorpay", return_value=fake):
         rzp._handle_subscription_activated(db, payload)
     db.commit()
 
     db.refresh(old)
     assert old.status == "canceled"
-    new = db.query(Subscription).filter_by(razorpay_subscription_id="sub_new_sibfail").one()
-    assert new.status == "active"
+    assert old.cancel_reason is None
+
+
+def _make_bot(db, client: Client, name: str):
+    from app.db.models import Bot
+
+    bot = Bot(client_id=client.id, name=name, bot_key=name)
+    db.add(bot)
+    db.flush()
+    return bot
+
+
+def _make_per_bot_sub(db, client: Client, plan: Plan, bot, *, razorpay_subscription_id: str) -> Subscription:
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        bot_id=bot.id,
+        status="active",
+        payment_provider="razorpay",
+        razorpay_subscription_id=razorpay_subscription_id,
+        current_period_start=datetime(2026, 1, 1, tzinfo=UTC),
+        current_period_end=datetime(2026, 1, 31, tzinfo=UTC),
+    )
+    sub.plan = plan
+    db.add(sub)
+    db.flush()
+    return sub
+
+
+def test_checkout_allowed_when_only_per_bot_sub(db):
+    """The BL-4 re-checkout guard is ACCOUNT-scoped. A client whose only active
+    subscription is a PER-BOT sub (bot_id NOT NULL) has never bought an
+    account-level plan, so a first ``/checkout`` must succeed (200,
+    ``create_subscription`` called) rather than being wrongly 409'd."""
+    from app.api import auth, subscription_routes
+
+    client = _make_client(db, email="bl4-perbot@e.com")
+    bot_plan = _make_plan(db, slug="botplan-bl4", price_cents=199900)
+    acct_plan = _make_plan(db, slug="acct-bl4", price_cents=799900)
+    bot = _make_bot(db, client, "bot-bl4-perbot")
+    _make_per_bot_sub(db, client, bot_plan, bot, razorpay_subscription_id="sub_perbot_bl4")
+    db.commit()
+
+    app = FastAPI()
+    app.include_router(subscription_routes.router)
+    app.dependency_overrides[auth.get_current_client_strict] = lambda: client
+    api = TestClient(app, raise_server_exceptions=False)
+
+    with (
+        patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
+        patch.object(subscription_routes, "lock_client_for_billing", lambda *a, **k: None),
+        patch(
+            "app.services.razorpay_service.create_subscription",
+            return_value={"provider": "razorpay", "subscription_id": "sub_acct_new"},
+        ) as create_sub,
+    ):
+        resp = api.post("/subscriptions/checkout", json={"plan_id": acct_plan.id, "billing_cycle": "monthly"})
+
+    assert resp.status_code == 200, resp.text
+    create_sub.assert_called_once()
 
 
 # ── BL-2: upgrade defers the old-mandate cancel ────────────────────────────────

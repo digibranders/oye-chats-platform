@@ -792,10 +792,23 @@ def create_checkout(
         # orchestrates the cancel+recreate+re-authorize re-auth flow. Only an
         # active/trialing/past_due sub WITH a gateway mandate blocks; a
         # terminal (canceled/expired) or manual (no razorpay id) sub does not.
-        from app.services.plan_service import get_client_subscription
-
-        existing_sub = get_client_subscription(session, client.id)
-        if existing_sub is not None and existing_sub.razorpay_subscription_id:
+        #
+        # The guard is ACCOUNT-scoped (``bot_id IS NULL``). ``/checkout`` only
+        # ever creates account-level subscriptions, so a per-bot subscription
+        # (bot_id NOT NULL) must not block a legitimate first account purchase.
+        # Deliberately NOT using ``get_client_subscription`` here — that spans
+        # per-bot subs, which would wrongly 409 a per-bot-only client.
+        existing_account_sub = session.execute(
+            select(Subscription)
+            .where(
+                Subscription.client_id == client.id,
+                Subscription.bot_id.is_(None),
+                Subscription.status.in_(("active", "trialing", "past_due")),
+                Subscription.razorpay_subscription_id.is_not(None),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing_account_sub is not None:
             raise HTTPException(
                 status_code=409,
                 detail="You already have an active subscription. Use change-plan to upgrade or downgrade.",
