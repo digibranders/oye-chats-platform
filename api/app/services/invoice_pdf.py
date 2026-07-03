@@ -14,7 +14,7 @@ must keep working (tests, previews) even where those are absent.
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, select_autoescape
@@ -146,7 +146,7 @@ _TEMPLATE = """\
       <div class="muted">No: <strong>{{ inv.invoice_number }}</strong></div>
       <div class="muted">Date: {{ issue_date }}</div>
       {% if against -%}
-      <div class="muted">Against invoice: <strong>{{ against }}</strong></div>
+      <div class="muted">Against invoice: <strong>{{ against }}</strong>{% if against_date %} dated {{ against_date }}{% endif %}</div>
       {%- endif %}
       {% if inv.period_start and inv.period_end -%}
       <div class="muted">Service period: {{ period }}</div>
@@ -250,11 +250,20 @@ def render_invoice_html(invoice: Invoice) -> str:
     seller = invoice.seller_snapshot or {}
     buyer = invoice.buyer_snapshot or {}
     against = None
+    against_date = None
     if invoice.invoice_type == "credit_note":
-        against = next(
-            (item.get("against_invoice") for item in (invoice.line_items or []) if item.get("against_invoice")),
-            None,
-        )
+        ref_item = next((item for item in (invoice.line_items or []) if item.get("against_invoice")), None)
+        if ref_item:
+            against = ref_item.get("against_invoice")
+            raw_date = ref_item.get("against_invoice_date")
+            if raw_date:
+                try:
+                    parsed = datetime.fromisoformat(raw_date)
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=UTC)
+                    against_date = f"{parsed.astimezone(IST):%d %b %Y}"
+                except ValueError:
+                    against_date = None
 
     tax_rows = []
     export_legend = None
@@ -289,6 +298,7 @@ def render_invoice_html(invoice: Invoice) -> str:
         inv=invoice,
         title=titles.get(invoice.invoice_type, "RECEIPT"),
         against=against,
+        against_date=against_date,
         issue_date=f"{issued_ist:%d %b %Y}",
         period=period,
         seller=seller,

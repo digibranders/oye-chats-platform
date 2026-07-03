@@ -471,7 +471,11 @@ def list_invoices(client: Client = Depends(get_current_client)):
                 "amount_cents": inv.amount_cents,
                 "currency": inv.currency,
                 "status": inv.status,
-                "description": inv.description,
+                # Description on numbered rows can carry serials ("Credit note
+                # against DB/26-27/000001") — gated like the other v2 fields.
+                "description": (
+                    inv.description if (inv.invoice_number is None or app_config.INVOICE_EMAILS_ENABLED) else None
+                ),
                 # v2 documents (numbered rows) follow the same customer-facing
                 # kill switch as the tax fields below — a rendered PDF must
                 # never leak while delivery is disabled. Unnumbered legacy rows

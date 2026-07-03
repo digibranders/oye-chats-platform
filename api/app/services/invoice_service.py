@@ -14,7 +14,7 @@ import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -239,12 +239,33 @@ def create_credit_note(
     refund_minor = int(refund_minor)
     if refund_minor <= 0:
         return None
-    # A reversal can never exceed the invoiced consideration.
-    refund_minor = min(refund_minor, int(original.amount_cents or 0))
 
-    existing = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == provider_ref)).scalars().first()
+    existing = (
+        session.execute(
+            select(Invoice).where(Invoice.razorpay_payment_id == provider_ref, Invoice.invoice_type == "credit_note")
+        )
+        .scalars()
+        .first()
+    )
     if existing is not None:
         return existing
+
+    # Reversals can never exceed the invoiced consideration CUMULATIVELY —
+    # Razorpay caps refunds at the captured amount, but a partial refund
+    # followed by a full-amount chargeback (distinct provider_refs) would
+    # otherwise over-reverse the document's tax.
+    already_reversed = session.execute(
+        select(func.coalesce(func.sum(Invoice.amount_cents), 0)).where(Invoice.credit_note_of_id == original.id)
+    ).scalar_one()
+    remaining = int(original.amount_cents or 0) - int(already_reversed)
+    if remaining <= 0:
+        logger.warning(
+            "credit note skipped for invoice %s: consideration already fully reversed (ref %s)",
+            original.id,
+            provider_ref,
+        )
+        return None
+    refund_minor = min(refund_minor, remaining)
 
     issued = datetime.now(UTC)
     note = Invoice(
@@ -253,7 +274,7 @@ def create_credit_note(
         bot_id=original.bot_id,
         amount_cents=refund_minor,
         currency=original.currency,
-        status="paid",
+        status="issued",  # a credit note is not a paid charge — distinct chip in the UI
         razorpay_payment_id=provider_ref,
         razorpay_invoice_id=original.razorpay_invoice_id,
         invoice_type="credit_note",
@@ -272,6 +293,8 @@ def create_credit_note(
                 "description": f"Refund — {original.description or 'service'}",
                 "amount_minor": refund_minor,
                 "against_invoice": original.invoice_number,
+                # Rule 53(1A): the corresponding tax invoice's serial AND date.
+                "against_invoice_date": original.issued_at.isoformat() if original.issued_at else None,
             }
         ],
     )
@@ -281,7 +304,10 @@ def create_credit_note(
         breakup = compute_tax(
             refund_minor,
             original.tax_rate_bps,
-            inclusive=True,  # refund amount is the gross the customer gets back
+            # The refund amount is the gross the customer gets back. Inclusive
+            # is safe to hardcode: seller_profile_service rejects
+            # price_inclusive=False, so every finalized original was inclusive.
+            inclusive=True,
             kind=original.supply_kind or "intra",
             lut_active=bool(seller_snap.get("lut_active")),
         )

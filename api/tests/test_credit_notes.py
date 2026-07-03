@@ -109,18 +109,59 @@ def test_refund_exceeding_original_is_clamped(db, enabled):
     assert note.amount_cents == orig.amount_cents  # never reverse more than was invoiced
 
 
-def test_refund_handler_issues_credit_note(db, enabled, monkeypatch):
+def test_refund_created_claws_but_does_not_issue_note(db, enabled):
+    # refund.created = initiated, not settled. A bank refund can still FAIL —
+    # issuing the Section 34 document here would risk a credit note for a
+    # refund that never happened (F1).
+    from app.services import razorpay_service as rzp
+
+    _seller(db)
+    orig = _finalized_invoice(db, "cn-created@test.example")
+    payload = {"refund": {"entity": {"id": "rfnd_created_1", "payment_id": orig.razorpay_payment_id, "amount": 179900}}}
+    rzp._handle_refund_created(db, payload)
+    db.commit()
+    assert orig.status == "refunded"  # clawback + display flip happen immediately
+    notes = db.execute(select(Invoice).where(Invoice.credit_note_of_id == orig.id)).scalars().all()
+    assert notes == []  # no legal document until settlement
+
+
+def test_refund_processed_issues_credit_note(db, enabled, monkeypatch):
     from app.services import razorpay_service as rzp
 
     _seller(db)
     orig = _finalized_invoice(db, "cn-wire@test.example")
     payload = {"refund": {"entity": {"id": "rfnd_wire_1", "payment_id": orig.razorpay_payment_id, "amount": 179900}}}
+    # Normal sequence: created (claw) then processed (claw no-ops, note issues).
     rzp._handle_refund_created(db, payload)
+    rzp._handle_refund_processed(db, payload)
     db.commit()
     note = db.execute(select(Invoice).where(Invoice.credit_note_of_id == orig.id)).scalar_one()
     assert note.invoice_type == "credit_note"
     assert note.invoice_number.startswith("CN/")
+    assert note.status == "issued"
+    assert note.line_items[0]["against_invoice_date"] is not None  # Rule 53: serial AND date
     assert orig.status == "refunded"
+
+
+def test_refund_then_dispute_cannot_over_reverse(db, enabled):
+    # F3: partial refund note + full-amount chargeback must clamp cumulatively.
+    from app.services import razorpay_service as rzp
+
+    _seller(db)
+    orig = _finalized_invoice(db, "cn-cumul@test.example")
+    refund_payload = {
+        "refund": {"entity": {"id": "rfnd_cumul_1", "payment_id": orig.razorpay_payment_id, "amount": 89950}}
+    }
+    rzp._handle_refund_processed(db, refund_payload)
+    dispute_payload = {
+        "dispute": {"entity": {"id": "disp_cumul_1", "payment_id": orig.razorpay_payment_id, "amount": 179900}}
+    }
+    rzp._handle_dispute_lost(db, dispute_payload)
+    db.commit()
+    notes = db.execute(select(Invoice).where(Invoice.credit_note_of_id == orig.id)).scalars().all()
+    total_reversed = sum(n.amount_cents for n in notes)
+    assert total_reversed <= orig.amount_cents  # never more than the consideration
+    assert total_reversed == 179900  # 89950 + clamped 89950
 
 
 def test_dispute_lost_issues_credit_note(db, enabled, monkeypatch):

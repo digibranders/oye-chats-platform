@@ -1778,13 +1778,19 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
         _info_row(f"{doc_label} no.", _html.escape(invoice.invoice_number)),
         _info_row("Amount", amount),
     ]
+    is_credit_note = invoice.invoice_type == "credit_note"
     if invoice.total_tax_minor:
-        rows.append(_info_row("GST included", _fmt_invoice_inr(invoice.total_tax_minor)))
+        rows.append(
+            _info_row("GST reversed" if is_credit_note else "GST included", _fmt_invoice_inr(invoice.total_tax_minor))
+        )
     seller_name = _html.escape((invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME)
+    lead = (
+        f"<p>Your refund has been processed. The credit note from {seller_name} is ready.</p>"
+        if is_credit_note
+        else f"<p>Thank you for your payment. Your {doc_label.lower()} from {seller_name} is ready.</p>"
+    )
     content = (
-        f"<p>Thank you for your payment. Your {doc_label.lower()} from {seller_name} is ready.</p>"
-        + _info_table(rows, bg="#f8fafc", border_color="#e2e8f0")
-        + _cta_button(f"Download {doc_label}", pdf_url)
+        lead + _info_table(rows, bg="#f8fafc", border_color="#e2e8f0") + _cta_button(f"Download {doc_label}", pdf_url)
     )
     html = _base_template(
         f"Your {doc_label.lower()} is ready",

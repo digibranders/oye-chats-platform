@@ -855,12 +855,14 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         "payment.captured": _handle_payment_captured,
         "payment.failed": _handle_payment_failed,
         "order.paid": _handle_payment_captured,  # alias path for top-ups
-        # Refunds — both event names land in the same handler. Razorpay
-        # fires ``refund.created`` on initiation and ``refund.processed``
-        # when settlement clears; we treat them identically and rely on
-        # the upstream event-id dedupe so the same id never lands twice.
+        # Refunds — the credit CLAWBACK runs on whichever event arrives first
+        # (``refund.created`` fires at initiation, so the customer can't spend
+        # during settlement), but the Section 34 CREDIT NOTE is only issued on
+        # ``refund.processed`` — a bank refund can still FAIL after creation,
+        # and a legal document for a refund that never happened is a GST audit
+        # defect that cannot be quietly deleted.
         "refund.created": _handle_refund_created,
-        "refund.processed": _handle_refund_created,
+        "refund.processed": _handle_refund_processed,
         "refund.failed": _handle_refund_failed,
         # Disputes / chargebacks. Razorpay withdraws the funds on ``lost`` —
         # that's when we claw the credits back. ``created`` / ``won`` only move
@@ -1720,14 +1722,12 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     )
 
     # Razorpay refunds may be partial; keep the full/partial distinction so the
-    # billing UI can render the right copy.
+    # billing UI can render the right copy. The Section 34 credit note is NOT
+    # issued here — refund.created only means "initiated", and a bank refund
+    # can still fail; the note is issued by _handle_refund_processed once the
+    # settlement actually clears.
     inv.status = "refunded" if refund_minor >= charge_minor else "partially_refunded"
     session.flush()
-
-    # Section 34 credit note reversing the numbered document (no-op for legacy
-    # rows). Savepoint-isolated: a note failure must never undo the clawback —
-    # a missed note surfaces in reconciliation and is re-issuable from admin.
-    invoice_service.create_credit_note_safely(session, inv, refund_minor, provider_ref=refund_id)
 
     logger.info(
         "Razorpay refund: invoice=%s refund=%s amount_minor=%s clawed=%s entry=%s",
@@ -1738,6 +1738,32 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         entry_id,
     )
     return f"Refund processed: {clawed} credit(s) clawed back from invoice {inv.id}"
+
+
+def _handle_refund_processed(session: Session, payload: dict[str, Any]) -> str:
+    """Refund SETTLED — run the clawback path (a no-op when ``refund.created``
+    already clawed, via the ``refund:{id}`` dedup) and then issue the Section 34
+    credit note. Issuing only on settlement means a bank-failed refund can never
+    leave behind a legal document for money that was never returned (the CN's
+    own idempotency rides on ``provider_ref`` = the refund id).
+    """
+    result = _handle_refund_created(session, payload)
+
+    refund_entity = (payload.get("refund") or {}).get("entity") or {}
+    refund_id = refund_entity.get("id")
+    payment_id = refund_entity.get("payment_id")
+    refund_minor = int(refund_entity.get("amount") or 0)
+    if not refund_id or not payment_id or refund_minor <= 0:
+        return result
+    inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+    if inv is None:
+        return result
+    # Savepoint-isolated: a note failure must never undo the clawback — a
+    # missed note surfaces in reconciliation and is re-issuable from admin.
+    note = invoice_service.create_credit_note_safely(session, inv, refund_minor, provider_ref=refund_id)
+    if note is not None:
+        return f"{result}; credit note {note.invoice_number} issued"
+    return result
 
 
 def _handle_refund_failed(session: Session, payload: dict[str, Any]) -> str:
@@ -1836,6 +1862,10 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
     # Chargeback = funds withdrawn → same Section 34 credit note as a refund.
     if dispute_id:
         invoice_service.create_credit_note_safely(session, inv, dispute_minor, provider_ref=dispute_id)
+    else:
+        # No dispute id → no idempotency key → no note. Reconciliation catches
+        # the dispute_lost invoice without a linked credit note.
+        logger.warning("dispute.lost without id on invoice %s — credit note skipped for reconciliation", inv.id)
     return f"Dispute {dispute_id} lost: {clawed} credit(s) clawed from invoice {inv.id}"
 
 
