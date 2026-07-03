@@ -18,44 +18,43 @@ jobs:
           DB_URL: ${{ secrets.DB_URL }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
           R2_KEY_ID: ${{ secrets.R2_KEY_ID }}
           R2_APPLICATION_KEY: ${{ secrets.R2_APPLICATION_KEY }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
           SENTRY_DSN_BACKEND: ${{ secrets.SENTRY_DSN_BACKEND }}
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ vars.LANGFUSE_PUBLIC_KEY }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           # Pass the deployed git SHA so Sentry tags every event with a
           # release; spikes can then be pinned to a specific commit.
           SENTRY_RELEASE: ${{ github.sha }}
-          # Toggle-able feature flags (set in GitHub secrets to flip without a code push)
-          RELEVANCE_GATE_ENABLED: ${{ secrets.RELEVANCE_GATE_ENABLED }}
-          CHUNK_ENRICHMENT_ENABLED: ${{ secrets.CHUNK_ENRICHMENT_ENABLED }}
-          CRAWLER_JS_ALL_PAGES: ${{ secrets.CRAWLER_JS_ALL_PAGES }}
-          RERANK_ENABLED: ${{ secrets.RERANK_ENABLED }}
+          # Toggle-able feature flags (set as GitHub Actions *variables* to flip without a code push)
+          RELEVANCE_GATE_ENABLED: ${{ vars.RELEVANCE_GATE_ENABLED }}
+          CHUNK_ENRICHMENT_ENABLED: ${{ vars.CHUNK_ENRICHMENT_ENABLED }}
+          CRAWLER_JS_ALL_PAGES: ${{ vars.CRAWLER_JS_ALL_PAGES }}
+          RERANK_ENABLED: ${{ vars.RERANK_ENABLED }}
           # Embeddings — Google Gemini (off-box) is the sole provider, reusing
           # GOOGLE_API_KEY. Unset values fall back to safe defaults below.
-          EMBED_PROVIDER: ${{ secrets.EMBED_PROVIDER }}
-          GEMINI_EMBED_MODEL: ${{ secrets.GEMINI_EMBED_MODEL }}
-          EMBED_DIMENSIONS: ${{ secrets.EMBED_DIMENSIONS }}
-          EMBED_CONCURRENCY: ${{ secrets.EMBED_CONCURRENCY }}
+          EMBED_PROVIDER: ${{ vars.EMBED_PROVIDER }}
+          GEMINI_EMBED_MODEL: ${{ vars.GEMINI_EMBED_MODEL }}
+          EMBED_DIMENSIONS: ${{ vars.EMBED_DIMENSIONS }}
+          EMBED_CONCURRENCY: ${{ vars.EMBED_CONCURRENCY }}
           # Crawl — Spider.cloud managed API (sole primary crawler, off-box).
           # SPIDER_API_KEY is the prepaid Spider.cloud key. On a Spider outage
           # the crawl falls back to Jina Reader (PAYG markdown); JINA_API_KEY is
           # optional (keyless works at lower RPM).
           SPIDER_API_KEY: ${{ secrets.SPIDER_API_KEY }}
-          SPIDER_REQUEST_MODE: ${{ secrets.SPIDER_REQUEST_MODE }}
+          SPIDER_REQUEST_MODE: ${{ vars.SPIDER_REQUEST_MODE }}
           JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
-          JINA_FALLBACK_ENABLED: ${{ secrets.JINA_FALLBACK_ENABLED }}
+          JINA_FALLBACK_ENABLED: ${{ vars.JINA_FALLBACK_ENABLED }}
           # ARQ concurrency. Default 5 (crawling runs off-box on Spider, so this
           # is no longer RAM/Chromium-bound). Real ceiling is embedding CPU on the
           # box + the DB pool (~15 conns for 1 worker). Go beyond ~5-6 only with a
           # bigger DB pool / more vCPUs / bge-small embeddings.
-          WORKER_MAX_JOBS: ${{ secrets.WORKER_MAX_JOBS }}
+          WORKER_MAX_JOBS: ${{ vars.WORKER_MAX_JOBS }}
           # Billing — Stripe (international) + Razorpay (primary, INR/UPI).
           # Missing values become empty strings on the droplet, which
           # config.py treats as "provider disabled". Webhook secrets are
@@ -63,26 +62,26 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_ID: ${{ vars.RAZORPAY_KEY_ID }}
           RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
           RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
           # Frontend URL for Stripe success/cancel and Razorpay return redirects.
-          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
           # Google OAuth (Sign in with Google). All five are required — the
           # frontend probes /auth/google/status on every page load and hides
           # the button when the backend isn't configured. Missing any of
           # these in the secrets set silently breaks production OAuth on
           # the next deploy because this workflow rewrites .env in full.
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REDIRECT_URI: ${{ secrets.GOOGLE_REDIRECT_URI }}
-          OAUTH_SUCCESS_REDIRECT_URL: ${{ secrets.OAUTH_SUCCESS_REDIRECT_URL }}
+          GOOGLE_REDIRECT_URI: ${{ vars.GOOGLE_REDIRECT_URI }}
+          OAUTH_SUCCESS_REDIRECT_URL: ${{ vars.OAUTH_SUCCESS_REDIRECT_URL }}
           OAUTH_STATE_SECRET: ${{ secrets.OAUTH_STATE_SECRET }}
           # Web Push (VAPID) for in-app / operator push notifications. Both are
           # required for PUSH_ENABLED to flip on; without them push silently
           # disables (PUSH_ENABLED=False). VAPID_SUBJECT is intentionally left to
           # the config default (mailto:SUPPORT_EMAIL).
-          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
         with:
           host: ${{ secrets.DO_HOST }}
