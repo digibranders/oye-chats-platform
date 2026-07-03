@@ -612,10 +612,11 @@ def expire_old_topups(session: Session) -> int:
         unused = grant.delta - consumed - already_expired
         if unused <= 0:
             continue
-        _acquire_client_lock(session, grant.client_id)
+        _acquire_client_lock(session, grant.client_id, grant.bot_id)
         session.add(
             CreditLedger(
                 client_id=grant.client_id,
+                bot_id=grant.bot_id,
                 delta=-unused,
                 reason="expiry",
                 grant_id=grant.id,
