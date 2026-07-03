@@ -1724,6 +1724,11 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     inv.status = "refunded" if refund_minor >= charge_minor else "partially_refunded"
     session.flush()
 
+    # Section 34 credit note reversing the numbered document (no-op for legacy
+    # rows). Savepoint-isolated: a note failure must never undo the clawback —
+    # a missed note surfaces in reconciliation and is re-issuable from admin.
+    invoice_service.create_credit_note_safely(session, inv, refund_minor, provider_ref=refund_id)
+
     logger.info(
         "Razorpay refund: invoice=%s refund=%s amount_minor=%s clawed=%s entry=%s",
         inv.id,
@@ -1828,6 +1833,9 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
     )
     inv.status = "dispute_lost"
     session.flush()
+    # Chargeback = funds withdrawn → same Section 34 credit note as a refund.
+    if dispute_id:
+        invoice_service.create_credit_note_safely(session, inv, dispute_minor, provider_ref=dispute_id)
     return f"Dispute {dispute_id} lost: {clawed} credit(s) clawed from invoice {inv.id}"
 
 

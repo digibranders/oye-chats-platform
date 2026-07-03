@@ -206,3 +206,122 @@ def finalize_invoice_safely(session: Session, invoice: Invoice) -> bool:
             invoice.id,
         )
         return False
+
+
+CREDIT_NOTE_SERIES_PREFIX = "CN"
+
+
+def create_credit_note(
+    session: Session,
+    original: Invoice,
+    refund_minor: int,
+    *,
+    provider_ref: str,
+) -> Invoice | None:
+    """Issue a credit note reversing (part of) a finalized invoice (Section 34).
+
+    The reversal is computed with the ORIGINAL document's frozen parameters
+    (rate, supply kind, LUT status from its seller snapshot) so a later config
+    change can never alter how an old invoice unwinds — and a full refund
+    reproduces the original figures exactly. Amounts are positive magnitudes;
+    ``invoice_type='credit_note'`` carries the semantic negation.
+
+    Idempotent on ``provider_ref`` (the Razorpay refund/dispute id, stored in
+    ``razorpay_payment_id`` — the provider reference of THIS document — whose
+    unique index also backstops races). Returns the existing note on replay,
+    ``None`` when there is nothing to reverse (flag off, legacy/unnumbered
+    original, zero amount).
+    """
+    if not config.INVOICING_V2_ENABLED:
+        return None
+    if not original.invoice_number:  # legacy row — no legal document to reverse
+        return None
+    refund_minor = int(refund_minor)
+    if refund_minor <= 0:
+        return None
+    # A reversal can never exceed the invoiced consideration.
+    refund_minor = min(refund_minor, int(original.amount_cents or 0))
+
+    existing = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == provider_ref)).scalars().first()
+    if existing is not None:
+        return existing
+
+    issued = datetime.now(UTC)
+    note = Invoice(
+        client_id=original.client_id,
+        subscription_id=original.subscription_id,
+        bot_id=original.bot_id,
+        amount_cents=refund_minor,
+        currency=original.currency,
+        status="paid",
+        razorpay_payment_id=provider_ref,
+        razorpay_invoice_id=original.razorpay_invoice_id,
+        invoice_type="credit_note",
+        credit_note_of_id=original.id,
+        issued_at=issued,
+        seller_snapshot=original.seller_snapshot,
+        buyer_snapshot=original.buyer_snapshot,
+        place_of_supply=original.place_of_supply,
+        supply_kind=original.supply_kind,
+        hsn_sac=original.hsn_sac,
+        is_export=original.is_export,
+        paid_at=issued,
+        description=f"Credit note against {original.invoice_number}",
+        line_items=[
+            {
+                "description": f"Refund — {original.description or 'service'}",
+                "amount_minor": refund_minor,
+                "against_invoice": original.invoice_number,
+            }
+        ],
+    )
+
+    if original.invoice_type == "tax_invoice" and original.tax_rate_bps is not None:
+        seller_snap = original.seller_snapshot or {}
+        breakup = compute_tax(
+            refund_minor,
+            original.tax_rate_bps,
+            inclusive=True,  # refund amount is the gross the customer gets back
+            kind=original.supply_kind or "intra",
+            lut_active=bool(seller_snap.get("lut_active")),
+        )
+        note.tax_rate_bps = breakup.rate_bps
+        note.taxable_value_minor = breakup.taxable_minor
+        note.cgst_minor = breakup.cgst_minor
+        note.sgst_minor = breakup.sgst_minor
+        note.igst_minor = breakup.igst_minor
+        note.total_tax_minor = breakup.total_tax_minor
+
+    session.add(note)
+    session.flush()
+    note.invoice_number = allocate_invoice_number(session, CREDIT_NOTE_SERIES_PREFIX, issued)
+    session.flush()
+    return note
+
+
+def create_credit_note_safely(
+    session: Session,
+    original: Invoice,
+    refund_minor: int,
+    *,
+    provider_ref: str,
+) -> Invoice | None:
+    """``create_credit_note`` inside a SAVEPOINT, swallowing failures.
+
+    Runs inside the refund/dispute webhook transaction after the credit
+    clawback — a credit-note failure must never undo the clawback or fail the
+    webhook. CAVEAT: the refund is deduped upstream on the refund id, so a
+    swallowed failure here is NOT retried by webhook redelivery — the missed
+    note surfaces in the Phase 7 reconciliation (numbered refunds without a
+    linked credit note) and can be re-issued from the superadmin console.
+    """
+    try:
+        with session.begin_nested():
+            return create_credit_note(session, original, refund_minor, provider_ref=provider_ref)
+    except Exception:
+        logger.exception(
+            "credit-note creation failed for invoice %s (ref %s); flagged for reconciliation",
+            original.id,
+            provider_ref,
+        )
+        return None

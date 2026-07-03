@@ -145,6 +145,9 @@ _TEMPLATE = """\
       <h1>{{ title }}</h1>
       <div class="muted">No: <strong>{{ inv.invoice_number }}</strong></div>
       <div class="muted">Date: {{ issue_date }}</div>
+      {% if against -%}
+      <div class="muted">Against invoice: <strong>{{ against }}</strong></div>
+      {%- endif %}
       {% if inv.period_start and inv.period_end -%}
       <div class="muted">Service period: {{ period }}</div>
       {%- endif %}
@@ -240,9 +243,18 @@ def render_invoice_html(invoice: Invoice) -> str:
         issued = issued.replace(tzinfo=UTC)
     issued_ist = issued.astimezone(IST)
 
-    is_tax_invoice = invoice.invoice_type == "tax_invoice"
+    # Credit notes reversing a tax invoice carry the same breakup table; plain
+    # receipts (and their credit notes) have no tax section.
+    is_tax_invoice = invoice.invoice_type in ("tax_invoice", "credit_note") and invoice.taxable_value_minor is not None
+    titles = {"tax_invoice": "TAX INVOICE", "credit_note": "CREDIT NOTE", "receipt": "RECEIPT"}
     seller = invoice.seller_snapshot or {}
     buyer = invoice.buyer_snapshot or {}
+    against = None
+    if invoice.invoice_type == "credit_note":
+        against = next(
+            (item.get("against_invoice") for item in (invoice.line_items or []) if item.get("against_invoice")),
+            None,
+        )
 
     tax_rows = []
     export_legend = None
@@ -275,7 +287,8 @@ def render_invoice_html(invoice: Invoice) -> str:
 
     return _template.render(
         inv=invoice,
-        title="TAX INVOICE" if is_tax_invoice else "RECEIPT",
+        title=titles.get(invoice.invoice_type, "RECEIPT"),
+        against=against,
         issue_date=f"{issued_ist:%d %b %Y}",
         period=period,
         seller=seller,

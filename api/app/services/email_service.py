@@ -1771,7 +1771,7 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
 
     from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
 
-    doc_label = "Tax invoice" if invoice.invoice_type == "tax_invoice" else "Receipt"
+    doc_label = {"tax_invoice": "Tax invoice", "credit_note": "Credit note"}.get(invoice.invoice_type, "Receipt")
     # Same Indian-grouped formatting as the PDF so the two documents agree.
     amount = _fmt_invoice_inr(invoice.amount_cents)
     rows = [
