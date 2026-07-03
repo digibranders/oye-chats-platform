@@ -442,11 +442,19 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
             subs = (
                 session.execute(
                     select(Subscription).where(
+                        # Scope tightly to rows that still carry a queued change.
+                        # This is what lets us safely re-include ``canceled``
+                        # rows below without resurrecting ordinary cancels — a
+                        # promoted row has already had its scheduled trio cleared.
+                        Subscription.scheduled_plan_id.is_not(None),
                         Subscription.scheduled_change_at.is_not(None),
                         Subscription.scheduled_change_at <= now,
-                        # Only promote rows that are still alive — don't
-                        # resurrect a row a human / webhook already finalised.
-                        Subscription.status.in_(("active", "trialing", "past_due")),
+                        # ``canceled`` is included because a ``cancel_at_cycle_end``
+                        # mandate fires ``subscription.cancelled`` (not
+                        # ``completed``) at cutover; if that webhook was dropped
+                        # the row is ``canceled`` but the downgrade is still
+                        # pending. This is the backstop for BL-1.
+                        Subscription.status.in_(("active", "trialing", "past_due", "canceled")),
                     )
                 )
                 .scalars()

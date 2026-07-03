@@ -1631,6 +1631,36 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     return f"Subscription {razorpay_sub_id} charged"
 
 
+def _promote_scheduled_if_pending(session: Session, local: Subscription) -> str | None:
+    """Promote a queued scheduled downgrade if the row carries one.
+
+    Shared by both ``subscription.completed`` and ``subscription.cancelled``
+    so the two cutover paths can't drift. Under a ``cancel_at_cycle_end``
+    mandate (which is how a scheduled paid downgrade is set up) Razorpay fires
+    ``subscription.cancelled`` at the cutover — NOT ``subscription.completed``
+    — so the cancelled handler MUST run this before its terminal cancel or the
+    queued downgrade is lost (BL-1).
+
+    Returns a status message when a promotion happened, or ``None`` when there
+    was nothing to promote (no queued change, or already promoted). Delegates
+    to ``transition_service.promote_scheduled_change``, which is idempotent
+    and also notifies the customer of the re-auth link (NB-3).
+    """
+    if not local.scheduled_plan_id:
+        return None
+
+    from app.services import transition_service
+
+    new_payload = transition_service.promote_scheduled_change(session, local)
+    session.flush()
+    if new_payload is None:
+        # Race or stale state (e.g. scheduled plan vanished) — the promotion
+        # helper already cleared the trio. Let the caller apply its terminal
+        # status.
+        return None
+    return "promoted scheduled change"
+
+
 def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) -> str:
     sub_entity = _extract_subscription_entity(payload)
     if not sub_entity:
@@ -1638,6 +1668,15 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
+
+    # A ``cancel_at_cycle_end`` mandate fires this event at the cutover of a
+    # scheduled downgrade. Promote the queued change BEFORE the terminal flip
+    # so the customer transitions into the lower tier instead of dropping to
+    # no-subscription (BL-1). ``promote_scheduled_change`` marks the old row
+    # terminal itself and notifies the customer.
+    if _promote_scheduled_if_pending(session, local) is not None:
+        return f"Subscription {sub_entity.get('id')} cancelled → promoted scheduled change"
+
     local.status = "canceled"
     local.canceled_at = datetime.now(UTC)
     session.flush()
@@ -1662,18 +1701,7 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     if not local:
         return "Subscription not found"
 
-    if local.scheduled_plan_id:
-        # Promotion path. ``promote_scheduled_change`` flips status to
-        # expired itself so the partial-unique index allows the new row.
-        from app.services import transition_service
-
-        new_payload = transition_service.promote_scheduled_change(session, local)
-        session.flush()
-        if new_payload is None:
-            # Race or stale state — fall through to plain expiry below.
-            local.status = "expired"
-            session.flush()
-            return f"Subscription {sub_entity.get('id')} completed (scheduled change cleared)"
+    if _promote_scheduled_if_pending(session, local) is not None:
         return f"Subscription {sub_entity.get('id')} completed → promoted scheduled change"
 
     local.status = "expired"

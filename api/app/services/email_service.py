@@ -1761,6 +1761,71 @@ def send_trial_data_deleted_email(
         _capture_email_failure(exc, event="trial_data_deleted", email=to_email)
 
 
+def send_downgrade_reauth_email(
+    to_email: str,
+    *,
+    name: str | None,
+    old_plan_name: str,
+    new_plan_name: str,
+    reauth_url: str,
+) -> None:
+    """Tell the customer their scheduled downgrade cutover needs a new mandate.
+
+    Razorpay's Update Subscription API is blocked for UPI, so a scheduled
+    plan change cancels the old mandate at the period end and requires the
+    customer to re-authorize a fresh mandate for the lower plan. Without this
+    email the customer would be silently stranded with no active subscription
+    and no path back (NB-3). ``reauth_url`` is the Razorpay hosted checkout
+    ``short_url`` for the newly created lower-plan subscription.
+    """
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"One quick step to finish your switch to {html.escape(new_plan_name)}"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Hi {safe_name} &mdash; your billing cycle on "
+        f'<strong style="color:{_INK_900};">{html.escape(old_plan_name)}</strong> '
+        f"has ended and your scheduled move to "
+        f'<strong style="color:{_INK_900};">{html.escape(new_plan_name)}</strong> is ready. '
+        f"Because your payments run on a UPI mandate, we can&rsquo;t change the plan on the "
+        f"existing mandate &mdash; you&rsquo;ll need to authorize a new one for the lower plan."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"It takes under a minute. Until you confirm, your account stays paused "
+        f"on the new plan &mdash; so please complete it soon to keep your bot live."
+        f"</p>"
+        f"{_trial_cta_button(reauth_url, f'Authorize {new_plan_name}')}"
+        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Changed your mind, or need a hand? Reply to this email or write to "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=(f"Authorize your new {new_plan_name} mandate to finish the switch and keep your bot live."),
+        body_inner=body_inner,
+        visitor=False,
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Action needed: confirm your switch to {new_plan_name}",
+            html_body,
+        )
+    except Exception as exc:
+        logger.warning("downgrade_reauth_email_failed for %s: %s", to_email, exc)
+        _capture_email_failure(exc, event="downgrade_reauth", email=to_email)
+
+
 def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
     """Send the customer their finalized invoice/receipt with a download link.
 
