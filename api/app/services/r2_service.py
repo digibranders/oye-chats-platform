@@ -201,3 +201,22 @@ def upload_to_r2(file_data, filename, content_type):
 
 # Backwards-compatibility alias — older imports may still call `upload_to_b2`.
 upload_to_b2 = upload_to_r2
+
+
+def upload_invoice_pdf(pdf_bytes: bytes, key: str) -> str:
+    """Upload a rendered invoice PDF and return its public URL.
+
+    The key must already carry its unguessable capability token (see
+    ``worker.tasks._invoice_pdf_key``) — sequential serials alone would make
+    customer invoices enumerable on the public CDN domain.
+    """
+    try:
+        s3_client.put_object(Bucket=R2_BUCKET_NAME, Key=key, Body=pdf_bytes, ContentType="application/pdf")
+        return _build_public_url(key)
+    except ClientError as e:
+        error_msg = (
+            f"R2 invoice upload failed (ClientError): "
+            f"{e.response['Error']['Message'] if 'Error' in e.response else str(e)}"
+        )
+        logger.error(error_msg)
+        raise Exception(error_msg) from e

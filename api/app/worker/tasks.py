@@ -1208,3 +1208,114 @@ async def task_send_visitor_message_email(
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)
+
+
+# ── Invoicing v2: PDF rendering sweep (Phase 4) ──────────────────────────────
+#
+# Indirection points (module-level so tests can substitute them): the sweep is
+# a self-healing cron rather than a per-webhook enqueue — any invoice that
+# finalizes gets its PDF within one sweep interval, failures retry for free on
+# the next tick, and nothing threads through the payment transaction.
+
+
+def _invoice_pdf_session():
+    from app.db.session import get_session
+
+    return get_session()
+
+
+def _render_invoice_pdf(invoice) -> bytes:
+    from app.services.invoice_pdf import render_invoice_pdf
+
+    return render_invoice_pdf(invoice)
+
+
+def _upload_invoice_pdf(data: bytes, key: str) -> str:
+    from app.services.r2_service import upload_invoice_pdf
+
+    return upload_invoice_pdf(data, key)
+
+
+def _send_invoice_email(to_email: str, invoice, url: str) -> None:
+    from app.services.email_service import send_invoice_email
+
+    send_invoice_email(to_email, invoice, url)
+
+
+def _invoice_pdf_key(invoice_number: str) -> str:
+    """R2 object key for an invoice PDF.
+
+    Serials are sequential, and the bucket is served from a public CDN — a
+    predictable key would make every customer's invoice enumerable. A random
+    token turns the URL into an unguessable capability (the Stripe
+    hosted-invoice pattern). Slashes in the legal serial are folded to dashes.
+    """
+    import secrets
+
+    safe = invoice_number.replace("/", "-")
+    fy = invoice_number.split("/")[1] if invoice_number.count("/") == 2 else "misc"
+    return f"invoices/{fy}/{safe}-{secrets.token_hex(8)}.pdf"
+
+
+async def task_render_invoice_pdfs(ctx: dict) -> int:
+    """Cron sweep: render + store the PDF for finalized invoices lacking one.
+
+    Picks numbered invoices with ``pdf_url IS NULL``, renders the Rule-46
+    document, uploads to R2 under a capability URL, and stamps
+    ``pdf_url``/``invoice_url``. Emails the customer only when
+    ``INVOICE_EMAILS_ENABLED`` (shadow mode keeps documents admin-only).
+    Per-invoice failures are logged and left for the next sweep; the money
+    path is never involved. Returns the number of PDFs produced.
+    """
+    import asyncio
+
+    from sqlalchemy import select as sa_select
+
+    from app import config
+    from app.db.models import Invoice as InvoiceModel
+
+    if not config.INVOICING_V2_ENABLED:
+        return 0
+
+    def _run() -> int:
+        done = 0
+        with _invoice_pdf_session() as session:
+            pending = (
+                session.execute(
+                    sa_select(InvoiceModel)
+                    .where(InvoiceModel.invoice_number.isnot(None), InvoiceModel.pdf_url.is_(None))
+                    .order_by(InvoiceModel.id)
+                    .limit(25)
+                )
+                .scalars()
+                .all()
+            )
+            for invoice in pending:
+                try:
+                    pdf = _render_invoice_pdf(invoice)
+                    url = _upload_invoice_pdf(pdf, _invoice_pdf_key(invoice.invoice_number))
+                    invoice.pdf_url = url
+                    invoice.invoice_url = url
+                    session.commit()
+                    done += 1
+                except Exception:  # noqa: BLE001 — one bad invoice must not block the sweep
+                    session.rollback()
+                    logger.exception("task_render_invoice_pdfs: failed for invoice %s; will retry", invoice.id)
+                    continue
+                if config.INVOICE_EMAILS_ENABLED:
+                    # Best-effort post-commit; a lost email is re-sendable from
+                    # the superadmin console (Phase 6 adds an emailed_at marker
+                    # for retryable delivery).
+                    to_email = (invoice.buyer_snapshot or {}).get("email")
+                    if to_email:
+                        try:
+                            _send_invoice_email(to_email, invoice, url)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("task_render_invoice_pdfs: email failed for invoice %s", invoice.id)
+        return done
+
+    loop = asyncio.get_running_loop()
+    total = await loop.run_in_executor(None, _run)
+    if total:
+        logger.info("task_render_invoice_pdfs: rendered %d invoice PDF(s)", total)
+    return total

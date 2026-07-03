@@ -1759,3 +1759,32 @@ def send_trial_data_deleted_email(
     except Exception as exc:
         logger.warning("trial_data_deleted_email_failed for %s: %s", _trial_redact(to_email), exc)
         _capture_email_failure(exc, event="trial_data_deleted", email=to_email)
+
+
+def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
+    """Send the customer their finalized invoice/receipt with a download link.
+
+    Called from the PDF-rendering sweep (worker.tasks.task_render_invoice_pdfs)
+    only when INVOICE_EMAILS_ENABLED — shadow mode never emails.
+    """
+    doc_label = "Tax invoice" if invoice.invoice_type == "tax_invoice" else "Receipt"
+    amount = f"₹{invoice.amount_cents / 100:,.2f}"
+    rows = [
+        _info_row(f"{doc_label} no.", invoice.invoice_number),
+        _info_row("Amount", amount),
+    ]
+    if invoice.total_tax_minor:
+        rows.append(_info_row("GST included", f"₹{invoice.total_tax_minor / 100:,.2f}"))
+    seller_name = (invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME
+    content = (
+        f"<p>Thank you for your payment. Your {doc_label.lower()} from {seller_name} is ready.</p>"
+        + _info_table(rows, bg="#f8fafc", border_color="#e2e8f0")
+        + _cta_button(f"Download {doc_label}", pdf_url)
+    )
+    html = _base_template(
+        f"Your {doc_label.lower()} is ready",
+        content,
+        preheader=f"{doc_label} {invoice.invoice_number} — {amount}",
+        category="Billing",
+    )
+    send_email_async(to_email, f"{doc_label} {invoice.invoice_number} from {seller_name}", html)
