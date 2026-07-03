@@ -1547,3 +1547,115 @@ def regenerate_invoice_pdf(invoice_id: int, request: Request, admin: Client = De
         )
         session.commit()
         return {"invoice_number": inv.invoice_number, "queued": True}
+
+
+# ── billing: GSTR export + reconciliation (invoicing v2 Phase 7) ────────────
+
+
+@router.get("/billing/gstr-export")
+def gstr_export_csv(
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="IST calendar month, e.g. 2026-07"),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Document-level GSTR-1-style CSV for the CA (B2B / B2CS / EXP / CDNR
+    sections + per-section summary). Amounts in RUPEES (two decimals) — the
+    filing is rupee-denominated, unlike the API's minor units."""
+    import csv
+    import io
+
+    from fastapi.responses import PlainTextResponse
+
+    from app.services import invoice_reports
+
+    with get_session() as session:
+        try:
+            rows = invoice_reports.gstr_document_rows(session, month)
+            summary = invoice_reports.gstr_summary(session, month)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _r(minor: int | None) -> str:
+        return f"{(minor or 0) / 100:.2f}"
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "section",
+            "invoice_number",
+            "invoice_date",
+            "buyer_name",
+            "buyer_gstin",
+            "place_of_supply",
+            "hsn_sac",
+            "rate_percent",
+            "gross_value",
+            "taxable_value",
+            "cgst",
+            "sgst",
+            "igst",
+            "total_tax",
+            "against_invoice",
+            "against_invoice_date",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row["section"],
+                row["invoice_number"],
+                row["invoice_date"],
+                row["buyer_name"] or "",
+                row["buyer_gstin"] or "",
+                row["place_of_supply"] or "",
+                row["hsn_sac"] or "",
+                f"{(row['rate_bps'] or 0) / 100:.2f}",
+                _r(row["gross_minor"]),
+                _r(row["taxable_minor"]),
+                _r(row["cgst_minor"]),
+                _r(row["sgst_minor"]),
+                _r(row["igst_minor"]),
+                _r(row["total_tax_minor"]),
+                row["against_invoice"] or "",
+                row["against_invoice_date"] or "",
+            ]
+        )
+    writer.writerow([])
+    writer.writerow(["SUMMARY", "section", "count", "gross_value", "taxable_value", "total_tax"])
+    for name, bucket in sorted(summary["sections"].items()):
+        writer.writerow(
+            [
+                "SUMMARY",
+                name,
+                bucket["count"],
+                _r(bucket["gross_minor"]),
+                _r(bucket["taxable_minor"]),
+                _r(bucket["total_tax_minor"]),
+            ]
+        )
+    grand = summary["grand_total"]
+    writer.writerow(
+        [
+            "SUMMARY",
+            "TOTAL",
+            grand["count"],
+            _r(grand["gross_minor"]),
+            _r(grand["taxable_minor"]),
+            _r(grand["total_tax_minor"]),
+        ]
+    )
+    return PlainTextResponse(
+        buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="gstr-{month}.csv"'},
+    )
+
+
+@router.get("/billing/reconciliation")
+def billing_reconciliation(_admin: Client = Depends(get_superadmin)):
+    """Anomaly report — every list should be empty in a healthy system."""
+    from app.services import invoice_reports
+
+    with get_session() as session:
+        anomalies = invoice_reports.reconciliation_anomalies(session)
+    return {"counts": {k: len(v) for k, v in anomalies.items()}, **anomalies}

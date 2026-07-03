@@ -32,6 +32,7 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_handoff_escalation,
     task_ingest_documents,
     task_ingest_web_batch,
+    task_invoice_reconciliation_alert,
     task_process_webhook_retries,
     task_promote_scheduled_downgrades,
     task_reembed_document,
@@ -117,6 +118,7 @@ class WorkerSettings:
     functions = [
         task_ingest_documents,
         task_ingest_web_batch,
+        task_invoice_reconciliation_alert,
         task_crawl_and_ingest,
         task_deliver_webhook,
         task_send_email,
@@ -133,6 +135,7 @@ class WorkerSettings:
         task_send_visitor_message_email,
         task_reembed_document,
         task_render_invoice_pdfs,
+        task_invoice_reconciliation_alert,
     ]
 
     # Cron jobs:
@@ -165,6 +168,9 @@ class WorkerSettings:
         # Invoice PDF sweep — every 5 min; renders/uploads documents for
         # freshly finalized invoices (invoicing v2, no-op while flag is off).
         cron(task_render_invoice_pdfs, minute=set(range(1, 60, 5))),
+        # Invoice anomaly sweep — daily at 01:00 UTC, after the midnight
+        # billing crons have settled.
+        cron(task_invoice_reconciliation_alert, hour=1, minute=0),
     ]
 
     # Redis connection

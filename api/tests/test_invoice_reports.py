@@ -146,3 +146,92 @@ def test_anomaly_stuck_pdfs_and_broken_totals(db, enabled):
     anomalies = invoice_reports.reconciliation_anomalies(db)
     assert any(r["id"] == stuck.id for r in anomalies["pdfs_pending"])
     assert [r["id"] for r in anomalies["broken_totals"]] == [broken.id]
+
+
+def test_gstr_export_csv_endpoint(db, enabled, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient as HttpClient
+
+    from app.api import superadmin_routes_v2
+    from app.api.auth import get_superadmin
+
+    @contextmanager
+    def _ctx(session):
+        yield session
+
+    _seller(db)
+    inv = _finalized(db, "rep-csv@test.example", gstin="29AAGCB7383J1Z4", state="29")
+    monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(superadmin_routes_v2.router)
+    app.dependency_overrides[get_superadmin] = lambda: SimpleNamespace(
+        id=None, name="A", is_superadmin=True, superadmin_role="owner"
+    )
+    c = HttpClient(app)
+    res = c.get(f"/superadmin/billing/gstr-export?month={THIS_MONTH}")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("text/csv")
+    body = res.text
+    assert inv.invoice_number in body
+    assert "B2B" in body
+    # Rupee-denominated with the exact carve-out figures.
+    assert "1524.58" in body and "274.42" in body
+    assert "SUMMARY,TOTAL,1" in body
+    # Malformed month → validation error, not a crash.
+    assert c.get("/superadmin/billing/gstr-export?month=garbage").status_code == 422
+
+
+def test_reconciliation_endpoint(db, enabled, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient as HttpClient
+
+    from app.api import superadmin_routes_v2
+    from app.api.auth import get_superadmin
+
+    @contextmanager
+    def _ctx(session):
+        yield session
+
+    _seller(db)
+    orphan = _finalized(db, "rep-rec@test.example")
+    orphan.status = "refunded"
+    db.flush()
+    monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(superadmin_routes_v2.router)
+    app.dependency_overrides[get_superadmin] = lambda: SimpleNamespace(
+        id=None, name="A", is_superadmin=True, superadmin_role="owner"
+    )
+    res = HttpClient(app).get("/superadmin/billing/reconciliation")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["counts"]["refunds_without_credit_note"] == 1
+    assert body["refunds_without_credit_note"][0]["id"] == orphan.id
+
+
+def test_reconciliation_cron_counts_and_logs(db, enabled, monkeypatch, caplog):
+    import asyncio
+    import logging
+    from contextlib import contextmanager
+
+    from app.worker import tasks as worker_tasks
+
+    @contextmanager
+    def _ctx():
+        yield db
+
+    _seller(db)
+    orphan = _finalized(db, "rep-cron@test.example")
+    orphan.status = "dispute_lost"
+    db.flush()
+    monkeypatch.setattr(worker_tasks, "_invoice_pdf_session", _ctx)
+    with caplog.at_level(logging.ERROR):
+        total = asyncio.run(worker_tasks.task_invoice_reconciliation_alert({}))
+    assert total >= 1
+    assert any("reconciliation anomalies" in r.message for r in caplog.records)

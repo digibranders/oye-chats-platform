@@ -1360,3 +1360,34 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     if total:
         logger.info("task_render_invoice_pdfs: rendered %d invoice PDF(s)", total)
     return total
+
+
+async def task_invoice_reconciliation_alert(ctx: dict) -> int:
+    """Daily cron: surface invoice anomalies loudly (error-level → Sentry).
+
+    The issuing pipeline deliberately tolerates some failures inline (a
+    savepoint-swallowed credit note, a stuck PDF render) so the money path is
+    never blocked — this sweep is the guarantee those never stay silent.
+    Returns the total anomaly count.
+    """
+    import asyncio
+
+    from app import config
+    from app.services import invoice_reports
+
+    if not config.INVOICING_V2_ENABLED:
+        return 0
+
+    def _run() -> int:
+        with _invoice_pdf_session() as session:
+            anomalies = invoice_reports.reconciliation_anomalies(session)
+        total = sum(len(v) for v in anomalies.values())
+        if total:
+            logger.error(
+                "invoice reconciliation anomalies: %s",
+                {k: [r["invoice_number"] or r["id"] for r in v] for k, v in anomalies.items() if v},
+            )
+        return total
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)
