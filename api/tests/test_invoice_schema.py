@@ -106,6 +106,11 @@ def test_list_invoices_exposes_tax_fields(db, monkeypatch):
     def _ctx(session):
         yield session
 
+    from app import config as app_config
+
+    # Customer visibility of the v2 fields is gated on the customer-facing
+    # flag; shadow-mode invoices must not leak numbers to customers.
+    monkeypatch.setattr(app_config, "INVOICE_EMAILS_ENABLED", True)
     client = _mk_client(db, "inv-list-tax@test.example")
     db.add(
         Invoice(
@@ -140,3 +145,44 @@ def test_invoice_currency_defaults_to_inr(db):
     db.add(inv)
     db.flush()
     assert inv.currency == "inr"
+
+
+def test_list_invoices_hides_tax_fields_in_shadow_mode(db, monkeypatch):
+    from contextlib import contextmanager
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient as HttpClient
+
+    from app import config as app_config
+    from app.api import subscription_routes
+    from app.api.auth import get_current_client_strict
+
+    @contextmanager
+    def _ctx(session):
+        yield session
+
+    monkeypatch.setattr(app_config, "INVOICE_EMAILS_ENABLED", False)
+    client = _mk_client(db, "inv-shadow@test.example")
+    db.add(
+        Invoice(
+            client_id=client.id,
+            amount_cents=179900,
+            currency="inr",
+            status="paid",
+            invoice_type="tax_invoice",
+            invoice_number="DB/25-26/000042",
+            total_tax_minor=27442,
+        )
+    )
+    db.flush()
+    monkeypatch.setattr(subscription_routes, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(subscription_routes.router)
+    app.dependency_overrides[get_current_client_strict] = lambda: client
+    res = HttpClient(app).get("/subscriptions/invoices")
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    # Shadow mode: legacy fields intact, v2 fields nulled.
+    assert row["amount_cents"] == 179900
+    assert row["invoice_number"] is None
+    assert row["total_tax_minor"] is None

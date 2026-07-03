@@ -53,7 +53,9 @@ def test_intra_state_tax_invoice(db, enabled):
     inv = _invoice(db, c.id)
     assert invoice_service.finalize_invoice(db, inv) is True
     assert inv.invoice_type == "tax_invoice"
-    assert inv.invoice_number == "DB/26-27/000001" or inv.invoice_number.startswith("DB/")
+    # Exact serial pinned against the FY derived from the actual issue instant
+    # (a literal FY string would go stale; an `or startswith` could never fail).
+    assert inv.invoice_number == f"DB/{invoice_service.financial_year_label(inv.issued_at)}/000001"
     assert inv.taxable_value_minor == 152458
     assert inv.cgst_minor == 13721 and inv.sgst_minor == 13721
     assert inv.igst_minor == 0
@@ -101,8 +103,27 @@ def test_receipt_mode_without_seller_gstin(db, enabled):
     inv = _invoice(db, c.id)
     invoice_service.finalize_invoice(db, inv)
     assert inv.invoice_type == "receipt"
-    assert inv.invoice_number is not None
+    # Receipts run on their own reserved series, never the tax-invoice range.
+    assert inv.invoice_number.startswith("RCT/")
     assert inv.total_tax_minor is None  # no tax breakup in receipt mode
+
+
+def test_receipts_never_consume_tax_invoice_serials(db, enabled):
+    # Receipt issued pre-GSTIN, then GST mode enabled mid-FY: the first tax
+    # invoice must still be serial 000001 of the DB series (Rule 46 gapless
+    # range must not interleave receipts).
+    _seller(db, gstin=None)
+    c = _client(db, "fin-series@test.example", billing_state_code="27")
+    receipt = _invoice(db, c.id)
+    invoice_service.finalize_invoice(db, receipt)
+    assert receipt.invoice_number.startswith("RCT/")
+
+    _seller(db, gstin="27AAPFU0939F1ZV")  # GSTIN added mid-FY
+    tax_inv = _invoice(db, c.id)
+    invoice_service.finalize_invoice(db, tax_inv)
+    assert tax_inv.invoice_type == "tax_invoice"
+    assert tax_inv.invoice_number.endswith("000001")
+    assert tax_inv.invoice_number.startswith("DB/")
 
 
 def test_idempotent_second_call_is_noop(db, enabled):
@@ -148,7 +169,7 @@ def test_unconfigured_seller_yields_receipt(db, enabled):
     inv = _invoice(db, c.id)
     assert invoice_service.finalize_invoice(db, inv) is True
     assert inv.invoice_type == "receipt"
-    assert inv.invoice_number.startswith("DB/")  # default prefix
+    assert inv.invoice_number.startswith("RCT/")  # reserved receipt series
 
 
 def test_finalized_tax_fields_survive_status_flip(db, enabled):

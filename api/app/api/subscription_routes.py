@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app import config as app_config
 from app.api.auth import get_current_client_strict as get_current_client
 from app.config import (
     BILLING_PROVIDER,
@@ -478,18 +479,24 @@ def list_invoices(client: Client = Depends(get_current_client)):
                 "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
                 "created_at": inv.created_at.isoformat() if inv.created_at else None,
                 # Invoicing v2 tax-document fields (null on legacy rows).
-                "invoice_number": inv.invoice_number,
-                "invoice_type": inv.invoice_type,
-                "issued_at": inv.issued_at.isoformat() if inv.issued_at else None,
-                "taxable_value_minor": inv.taxable_value_minor,
-                "total_tax_minor": inv.total_tax_minor,
-                "cgst_minor": inv.cgst_minor,
-                "sgst_minor": inv.sgst_minor,
-                "igst_minor": inv.igst_minor,
-                "tax_rate_bps": inv.tax_rate_bps,
-                "hsn_sac": inv.hsn_sac,
-                "supply_kind": inv.supply_kind,
-                "is_export": inv.is_export,
+                # Nulled while invoices run in SHADOW mode — customers must not
+                # see (and book against) invoice numbers that are still under
+                # verification. INVOICE_EMAILS_ENABLED is the customer-facing
+                # switch (Phase 4/6); keys stay present so the schema is stable.
+                "invoice_number": inv.invoice_number if app_config.INVOICE_EMAILS_ENABLED else None,
+                "invoice_type": inv.invoice_type if app_config.INVOICE_EMAILS_ENABLED else None,
+                "issued_at": (
+                    inv.issued_at.isoformat() if (inv.issued_at and app_config.INVOICE_EMAILS_ENABLED) else None
+                ),
+                "taxable_value_minor": inv.taxable_value_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "total_tax_minor": inv.total_tax_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "cgst_minor": inv.cgst_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "sgst_minor": inv.sgst_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "igst_minor": inv.igst_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "tax_rate_bps": inv.tax_rate_bps if app_config.INVOICE_EMAILS_ENABLED else None,
+                "hsn_sac": inv.hsn_sac if app_config.INVOICE_EMAILS_ENABLED else None,
+                "supply_kind": inv.supply_kind if app_config.INVOICE_EMAILS_ENABLED else None,
+                "is_export": inv.is_export if app_config.INVOICE_EMAILS_ENABLED else None,
             }
             for inv in invoices
         ]

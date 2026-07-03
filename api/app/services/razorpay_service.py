@@ -1392,6 +1392,9 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
                 currency=str(pay_entity.get("currency", "INR")).lower(),
                 status="paid",
                 razorpay_payment_id=rzp_payment_id,
+                # Razorpay's own invoice entity for this cycle — payment
+                # evidence linking our document to theirs, not the tax doc.
+                razorpay_invoice_id=pay_entity.get("invoice_id"),
                 period_start=new_period_start,
                 period_end=new_period_end,
                 description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),

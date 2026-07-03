@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -24,13 +25,29 @@ from app.services.seller_profile_service import SellerProfile, get_seller_profil
 
 logger = logging.getLogger(__name__)
 
+IST = ZoneInfo("Asia/Kolkata")
+
+# Receipts (no seller GSTIN yet) get their own serial series so they never
+# interleave with the Rule 46 tax-invoice range reported in GSTR-1 Table 13.
+# Reserved in seller_profile_service.RESERVED_PREFIXES so an admin can't
+# collide with it. Credit notes (Phase 5) will use "CN".
+RECEIPT_SERIES_PREFIX = "RCT"
+
 
 def financial_year_label(dt: datetime) -> str:
-    """Indian financial year label for ``dt`` — FY runs 1 Apr – 31 Mar.
+    """Indian financial year label for ``dt`` — FY runs 1 Apr – 31 Mar **IST**.
 
-    e.g. 2 Jul 2026 → ``"26-27"``; 31 Mar 2026 → ``"25-26"``.
+    The FY boundary is an Indian-calendar fact, so the instant is converted to
+    Asia/Kolkata before reading the month (a webhook at 20:00 UTC on 31 Mar is
+    already 1 Apr in India — numbering it in the old FY would be an audit
+    flag). Naive datetimes are treated as UTC.
+
+    e.g. 2 Jul 2026 → ``"26-27"``; 31 Mar 2026 00:00 UTC → ``"25-26"``.
     """
-    start = dt.year if dt.month >= 4 else dt.year - 1
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    ist = dt.astimezone(IST)
+    start = ist.year if ist.month >= 4 else ist.year - 1
     return f"{start % 100:02d}-{(start + 1) % 100:02d}"
 
 
@@ -148,7 +165,11 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         # No seller GSTIN → issue a plain numbered receipt, no tax breakup.
         invoice.invoice_type = "receipt"
 
-    invoice.invoice_number = allocate_invoice_number(session, seller.invoice_prefix, issued)
+    # Receipts run on their own series so the tax-invoice serial range stays
+    # consecutive (Rule 46(b) / GSTR-1 Table 13) even if GST mode is enabled
+    # mid-FY.
+    series_prefix = seller.invoice_prefix if invoice.invoice_type == "tax_invoice" else RECEIPT_SERIES_PREFIX
+    invoice.invoice_number = allocate_invoice_number(session, series_prefix, issued)
     invoice.issued_at = issued
     invoice.seller_snapshot = _seller_snapshot(seller)
     invoice.buyer_snapshot = _buyer_snapshot(buyer)

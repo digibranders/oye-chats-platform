@@ -97,3 +97,11 @@ def test_rolled_back_allocation_does_not_burn_serial(db, pg_engine):
         s2.rollback()
     finally:
         s2.close()
+
+
+def test_financial_year_boundary_is_ist_not_utc():
+    # 31 Mar 20:00 UTC is already 1 Apr 01:30 IST — the Indian FY has flipped,
+    # so the serial must land in the NEW FY series even though UTC says March.
+    assert financial_year_label(datetime(2026, 3, 31, 20, 0, tzinfo=UTC)) == "26-27"
+    # And just before the IST boundary it stays in the old FY.
+    assert financial_year_label(datetime(2026, 3, 31, 18, 0, tzinfo=UTC)) == "25-26"
