@@ -376,10 +376,12 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # Legacy FK — kept during migration transition
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True)
-    # New FK — primary association
-    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True)
+    # Legacy FK — kept during migration transition. Indexed (ix_documents_client_id)
+    # for the tenant filter in the vector-search query (repository.py).
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True, index=True)
+    # New FK — primary association. Indexed (ix_documents_bot_id) for the tenant
+    # filter in the vector-search query (repository.py).
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True, index=True)
 
     document_name = Column(String, nullable=False)
     # Explicit ingestion source (remediation M7): "upload" for a file the
@@ -390,7 +392,7 @@ class Document(Base):
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)
-    embedding = Column(Vector(768), nullable=True)  # nullable during re-embed; NOT NULL restored after backfill
+    embedding = Column(Vector(768), nullable=False)  # NOT NULL restored after 768-dim re-embed backfill (NB-2)
     search_vector = Column(TSVECTOR)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -398,7 +400,19 @@ class Document(Base):
     client = relationship("Client", back_populates="documents", foreign_keys=[client_id])
     bot = relationship("Bot", back_populates="documents")
 
-    __table_args__ = (Index("ix_documents_search_vector", "search_vector", postgresql_using="gin"),)
+    __table_args__ = (
+        Index("ix_documents_search_vector", "search_vector", postgresql_using="gin"),
+        # HNSW ANN index for vector retrieval. cosine ops match the ``<=>``
+        # operator used by the search query in repository.py (see migration
+        # b7d1c3e5f9a2). bot_id/client_id b-tree indexes are declared via
+        # ``index=True`` on their columns above.
+        Index(
+            "documents_embedding_hnsw_idx",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
 
 class LeadInfo(Base):
