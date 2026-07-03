@@ -1540,6 +1540,35 @@ export const getInvoices = async () => {
     }
 };
 
+/**
+ * Fetch the buyer tax identity printed on invoices (invoicing v2).
+ * @returns {Promise<{legal_name, company_name, gstin, billing_address, billing_country, billing_state_code, billing_email}>}
+ */
+export const getBillingDetails = async () => {
+    try {
+        const response = await api.get('/subscriptions/billing-details');
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to load billing details');
+    }
+};
+
+/**
+ * Update billing details with PATCH semantics: send only the fields that
+ * changed; an explicit ``null`` clears a field. The backend derives
+ * ``billing_state_code`` from the GSTIN's first two digits when one is set
+ * and returns 422 with a human-readable ``detail`` on invalid combinations.
+ * @param {object} patch - Subset of billing-details fields to change.
+ */
+export const updateBillingDetails = async (patch) => {
+    try {
+        const response = await api.put('/subscriptions/billing-details', patch);
+        return response.data;
+    } catch (error) {
+        throw buildApiError(error, 'Failed to update billing details');
+    }
+};
+
 export const createCheckoutSession = async (planId, billingCycle = 'monthly') => {
     try {
         const response = await api.post('/subscriptions/checkout', {

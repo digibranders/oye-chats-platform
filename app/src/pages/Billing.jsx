@@ -40,7 +40,9 @@ import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
 import TrialUpgradeBanner from '../components/billing/TrialUpgradeBanner';
+import BillingDetailsCard from '../components/billing/BillingDetailsCard';
 import { cn } from '../lib/utils';
+import { formatMoney } from '../lib/currency';
 import { trialDaysLeft } from '../utils/trial';
 
 const fmtNumber = (n) => Number(n || 0).toLocaleString();
@@ -58,15 +60,12 @@ function planSeatPriceCents(plan) {
   return plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0;
 }
 
-function fmtCurrency(amountMinor) {
-  const symbol = '$';
-  const major = Number(amountMinor || 0) / 100;
-  // Hide decimals on round amounts ($19 not $19.00). Sub-dollar fractions show 2dp.
-  const useDecimals = !Number.isInteger(major);
-  return `${symbol}${major.toLocaleString(undefined, {
-    minimumFractionDigits: useDecimals ? 2 : 0,
-    maximumFractionDigits: useDecimals ? 2 : 0,
-  })}`;
+// Delegates to the shared money formatter. Amounts on this page are the
+// USD headline columns (monthly_price_usd_cents / extra_seat_price_usd_cents),
+// so the default currency stays 'usd'; pass an explicit currency for any
+// amount that carries one.
+function fmtCurrency(amountMinor, currency = 'usd') {
+  return formatMoney(amountMinor, currency);
 }
 
 function fmtDate(iso) {
@@ -1314,6 +1313,10 @@ function SeatsTab({
           </div>
         </CardContent>
       </Card>
+
+      {/* Buyer tax identity for invoices (invoicing v2) — self-contained
+          card that loads/saves /subscriptions/billing-details itself. */}
+      <BillingDetailsCard />
     </div>
   );
 }
