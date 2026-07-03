@@ -683,7 +683,38 @@ def grant_subscription_period_once(
     A ``None`` ``period_end`` (event missing ``current_end``) still grants but
     cannot advance the marker; that is logged so a missing period is visible
     rather than silently double-granting on a later event.
+
+    Concurrency (T5 review): the ``last_granted_period_end`` marker check below
+    is the idempotency decision, and it is shared by two independent callers —
+    the renewal cron and the ``subscription.charged`` webhook — that can run in
+    overlapping transactions for the *same* period. The advisory lock inside
+    ``reset_monthly_plan_credits`` / ``grant_plan_credits`` only serializes the
+    ledger writes, not this read, so without a lock here both callers could read
+    the same stale marker, both decide to grant, and each write a ``plan_grant``
+    (an extra month of credits). ``ProcessedWebhook`` does not cover this because
+    the cron shares no event id with the webhook. We take a ``SELECT ... FOR
+    UPDATE`` row lock on the subscription and re-read it *before* the marker
+    check so the decision runs against committed, locked data: if a concurrent
+    transaction grants and commits for this period first, the loser blocks on the
+    row lock, then observes the advanced marker and no-ops. Every caller passes a
+    persistent, flushed subscription whose own columns are not dirty at this
+    point (the ``current_period_*`` writes happen after this helper returns), so
+    refreshing does not discard pending changes. The lock is re-entrant with the
+    later advisory lock (a different lock space) and cannot deadlock on a row the
+    session already owns.
+
+    We ``flush`` before the refresh because the session is configured with
+    ``autoflush=False``: without it, ``refresh`` would issue its ``SELECT ... FOR
+    UPDATE`` *before* pushing a marker set earlier in the same transaction (e.g.
+    ``subscription.activated`` then ``subscription.charged`` handled in one
+    transaction), reload the pre-set committed value, and clobber our own marker
+    back — reintroducing the double-grant it is meant to prevent. Flushing makes
+    the re-read observe read-your-own-writes; the FOR UPDATE still returns the
+    latest committed row, so a concurrent committed grant is still seen.
     """
+    session.flush()
+    session.refresh(subscription, with_for_update=True)
+
     if (
         period_end is not None
         and subscription.last_granted_period_end is not None
