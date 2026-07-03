@@ -48,6 +48,12 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # Give the HNSW build enough working memory to stay in-memory instead of
+    # falling back to a much slower on-disk build (prod default is 64MB, too
+    # small for ~30k×768-dim vectors). SET LOCAL is transaction-scoped, so it
+    # fits alembic's single-transaction migration model and reverts afterward.
+    op.execute("SET LOCAL maintenance_work_mem = '512MB'")
+
     # IDX — HNSW ANN index on the embedding, cosine ops to match the retrieval
     # query's ``<=>`` operator (see repository.py). Stable name so downgrade /
     # ORM metadata can reference it.
