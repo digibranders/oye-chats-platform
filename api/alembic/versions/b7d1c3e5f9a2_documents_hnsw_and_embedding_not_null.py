@@ -16,9 +16,11 @@ NB-2 — restore embedding NOT NULL
   ``embedding`` until the re-embed backfill completed; no follow-up did it.
   A NULL-embedding row is non-functional — the vector search filters on
   ``embedding <=> ... < :max_dist`` so NULL rows silently drop out and are
-  never retrievable. Before setting NOT NULL we DELETE any remaining
-  NULL-embedding rows: they can never be searched, and the recovery path is a
-  re-ingest of the source document (the ARQ re-embed task, or re-upload).
+  never retrievable. Rather than silently deleting those (customer-visible)
+  document rows, this migration FAILS LOUDLY if any NULL-embedding rows
+  remain: the operator must re-embed them (via the ARQ re-embed backfill) or
+  explicitly purge them before running the migration. Only when zero NULL
+  rows remain does it set the column NOT NULL.
 
 Operational note: HNSW index builds can be slow and take a heavy lock on a
 large production ``documents`` table. On prod this may warrant running the
@@ -32,6 +34,8 @@ Create Date: 2026-07-03
 """
 
 from collections.abc import Sequence
+
+import sqlalchemy as sa
 
 from alembic import op
 
@@ -55,20 +59,29 @@ def upgrade() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS ix_documents_bot_id ON documents (bot_id)")
     op.execute("CREATE INDEX IF NOT EXISTS ix_documents_client_id ON documents (client_id)")
 
-    # NB-2 — remove non-functional NULL-embedding rows before restoring the
-    # NOT NULL constraint. These rows can never be returned by vector search
-    # (the query filters on ``embedding <=> ... < :max_dist``); the recovery
-    # path is re-ingesting the source document. On the dev DB this is a no-op
-    # (0 NULL rows).
-    op.execute("DELETE FROM documents WHERE embedding IS NULL")
+    # NB-2 — restore the NOT NULL constraint, but refuse to silently destroy
+    # data. NULL-embedding rows are non-functional (vector search filters on
+    # ``embedding <=> ... < :max_dist`` so they never surface) yet they still
+    # back the customer-visible knowledge-base listing. Fail loudly and let the
+    # operator decide (re-embed via the ARQ re-embed backfill, or explicitly
+    # purge) rather than deleting rows here with no audit trail and no undo.
+    conn = op.get_bind()
+    null_count = conn.execute(sa.text("SELECT COUNT(*) FROM documents WHERE embedding IS NULL")).scalar()
+    if null_count:
+        raise RuntimeError(
+            f"{null_count} documents have NULL embedding. Re-embed them (ARQ re-embed "
+            "backfill) or explicitly purge them before running this migration; refusing "
+            "to silently delete customer document rows."
+        )
     op.alter_column("documents", "embedding", nullable=False)
 
 
 def downgrade() -> None:
     """Downgrade schema.
 
-    Note: the DELETE of NULL-embedding rows in ``upgrade()`` cannot be undone —
-    downgrade only restores nullability and drops the indexes.
+    ``upgrade()`` no longer deletes any rows (it fails loudly on NULL embeddings
+    instead), so downgrade cleanly reverses it: restore nullability and drop the
+    indexes.
     """
     op.alter_column("documents", "embedding", nullable=True)
 
