@@ -595,7 +595,7 @@ def test_webhook_signature_roundtrip_accepts_valid_hmac():
 
     Razorpay's webhook signature is exactly this construction (we call into
     the SDK utility, which the SDK implements as ``hmac.new(secret, body,
-    sha256).hexdigest()`` — same as Stripe but with their secret). This test
+    sha256).hexdigest()``). This test
     locks down the contract end-to-end without any network call.
     """
     import hashlib

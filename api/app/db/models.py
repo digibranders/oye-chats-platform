@@ -811,20 +811,15 @@ class Plan(Base):
     # Price per additional operator seat above the included number, in cents.
     extra_seat_price_cents = Column(Integer, default=1500, server_default="1500", nullable=False)
 
-    # Stripe integration
-    stripe_product_id = Column(String, nullable=True)
-    stripe_monthly_price_id = Column(String, nullable=True)
-    stripe_annual_price_id = Column(String, nullable=True)
-
     # Razorpay integration
     razorpay_plan_id_monthly = Column(String, nullable=True)
     razorpay_plan_id_annual = Column(String, nullable=True)
 
     # Fixed USD headline pricing (cents). Independent of the INR columns —
-    # set deliberately, NEVER converted live. Shown to non-Indian visitors and
-    # charged by Stripe. NULL → caller falls back to a DISPLAY_USD_TO_INR
-    # conversion for legacy rows that predate these columns. See
-    # ``app.core.pricing.display_price`` and ADR D2/D3 in the billing plan.
+    # set deliberately, NEVER converted live. Shown to non-Indian visitors.
+    # NULL → caller falls back to a DISPLAY_USD_TO_INR conversion for legacy
+    # rows that predate these columns. See ``app.core.pricing.display_price``
+    # and ADR D2/D3 in the billing plan.
     monthly_price_usd_cents = Column(Integer, nullable=True)
     annual_price_usd_cents = Column(Integer, nullable=True)
     extra_seat_price_usd_cents = Column(Integer, nullable=True)
@@ -914,16 +909,12 @@ class Subscription(Base):
 
     # The Razorpay plan actually billed against — a discounted plan when a
     # referral code applied, else identical to the base plan's razorpay id.
-    # Entitlements always follow plan_id (the base plan). NULL for Stripe /
-    # legacy rows that predate the discount engine.
+    # Entitlements always follow plan_id (the base plan). NULL for legacy rows
+    # that predate the discount engine.
     razorpay_billing_plan_id = Column(String, nullable=True)
 
     # Payment provider IDs
-    payment_provider = Column(
-        String, default="stripe", server_default="stripe", nullable=False
-    )  # stripe|razorpay|manual
-    stripe_subscription_id = Column(String, unique=True, index=True, nullable=True)
-    stripe_customer_id = Column(String, index=True, nullable=True)
+    payment_provider = Column(String, default="razorpay", server_default="razorpay", nullable=False)  # razorpay|manual
     razorpay_subscription_id = Column(String, unique=True, index=True, nullable=True)
     razorpay_customer_id = Column(String, index=True, nullable=True)
     # Set when a paid→paid transition replaces an existing Razorpay mandate.
@@ -1033,7 +1024,7 @@ class UsageRecord(Base):
 
 
 class Invoice(Base):
-    """Payment history — synced from Stripe/Razorpay via webhooks."""
+    """Payment history — synced from Razorpay via webhooks."""
 
     __tablename__ = "invoices"
 
@@ -1051,7 +1042,6 @@ class Invoice(Base):
     status = Column(String, default="pending", server_default="pending", nullable=False)  # paid|pending|failed|refunded
 
     # Provider references
-    stripe_invoice_id = Column(String, unique=True, index=True, nullable=True)
     razorpay_payment_id = Column(String, unique=True, index=True, nullable=True)
 
     # Links
@@ -1126,7 +1116,7 @@ class InvoiceCounter(Base):
 
 
 class PaymentMethod(Base):
-    """Stored payment methods for a client — synced from Stripe/Razorpay."""
+    """Stored payment methods for a client — synced from Razorpay."""
 
     __tablename__ = "payment_methods"
 
@@ -1134,7 +1124,7 @@ class PaymentMethod(Base):
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # Provider
-    provider = Column(String, nullable=False)  # stripe|razorpay
+    provider = Column(String, nullable=False)  # razorpay
     type = Column(String, nullable=False)  # card|upi|bank
     last4 = Column(String(4), nullable=True)
     brand = Column(String, nullable=True)  # visa|mastercard|amex|etc
@@ -1144,7 +1134,6 @@ class PaymentMethod(Base):
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Provider references
-    stripe_payment_method_id = Column(String, unique=True, index=True, nullable=True)
     razorpay_token_id = Column(String, unique=True, index=True, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -1250,7 +1239,7 @@ class PricingConfig(Base):
 
 
 class ProcessedWebhook(Base):
-    """Idempotency log for Stripe / Razorpay webhook event IDs.
+    """Idempotency log for Razorpay webhook event IDs.
 
     Webhook providers retry on 5xx and may deliver duplicates. We store the
     event ID on first successful processing; subsequent deliveries with the
@@ -1260,14 +1249,14 @@ class ProcessedWebhook(Base):
     __tablename__ = "processed_webhooks"
 
     event_id = Column(Text, primary_key=True)
-    provider = Column(Text, nullable=False, index=True)  # 'stripe' | 'razorpay'
+    provider = Column(Text, nullable=False, index=True)  # 'razorpay'
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class FailedWebhook(Base):
     """Dead-letter store for billing webhooks whose processing failed.
 
-    When a verified Razorpay/Stripe webhook raises during processing, the
+    When a verified Razorpay webhook raises during processing, the
     handler's transaction is rolled back (including the ``processed_webhooks``
     idempotency row), and the raw event is persisted here in a separate
     transaction so it survives that rollback. The provider is then asked to
@@ -1280,7 +1269,7 @@ class FailedWebhook(Base):
     __tablename__ = "failed_webhooks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    provider = Column(Text, nullable=False, index=True)  # 'razorpay' | 'stripe'
+    provider = Column(Text, nullable=False, index=True)  # 'razorpay'
     # Provider event id (``x-razorpay-event-id``); may be absent on some deliveries.
     event_id = Column(Text, nullable=True, index=True)
     event_type = Column(Text, nullable=True)  # e.g. 'payment.captured'

@@ -74,9 +74,7 @@ def _invoice_provider(inv: Invoice) -> str:
     """Derive the billing provider from the stored gateway reference.
 
     A Razorpay payment id marks a real gateway charge; everything else (manual
-    super-admin grants, legacy rows) is reported as ``manual``. The Stripe id
-    is intentionally ignored — Stripe is the legacy fallback and the dashboard
-    is Razorpay/manual only.
+    super-admin grants, legacy rows) is reported as ``manual``.
     """
     return "razorpay" if inv.razorpay_payment_id else "manual"
 
@@ -1307,7 +1305,7 @@ def list_payment_methods(
     """Stored payment methods across clients (card / UPI / bank).
 
     Newest first, capped at 500, filterable by ``client_id``. Provider token
-    references (``stripe_payment_method_id`` / ``razorpay_token_id``) are never
+    references (``razorpay_token_id``) are never
     returned — only the non-sensitive display fields. Client names batch-loaded.
     """
     with get_session() as session:

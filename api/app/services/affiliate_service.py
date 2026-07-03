@@ -87,7 +87,7 @@ def _assert_not_reserved(code: str) -> None:
 # existing import (``from app.services.affiliate_service import pct_to_bps``)
 # keeps working without dragging the old behaviour around. Centralising
 # means an admin's ``12.345%`` becomes the SAME bps value here, in the
-# billing-service Stripe coupon flow, and in the audit metadata — fixing
+# legacy coupon flow, and in the audit metadata — fixing
 # the "quote vs invoice differ by 1 bps" gap surfaced by the audit.
 from app.core.money import bps_to_pct, pct_to_bps  # noqa: E402,F401
 

@@ -736,7 +736,7 @@ def create_checkout(
 
         # Only resolve/apply the referral discount on a provider that can realise
         # it (N4). Today only Razorpay is live; gating here means that if the
-        # Stripe path is ever re-enabled before its coupon realiser exists, the
+        # a non-Razorpay path is ever added before its coupon realiser exists, the
         # discount is not silently dropped (customer over-charged) — it's simply
         # not resolved until the provider can honour it.
         provider = _resolve_provider()
@@ -810,7 +810,7 @@ def change_plan(
 
         # ── Branch 1: target is Free ──
         # No payment needed. If the customer has an upstream provider sub
-        # (Stripe OR Razorpay), schedule cancellation at period-end so they
+        # schedule cancellation at period-end so they
         # keep paid features for the rest of the cycle they already paid for,
         # AND cancel the upstream mandate so the provider stops charging the
         # card / UPI. If they have a manual sub (no upstream id), the swap is
@@ -1112,7 +1112,7 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
     Each seat above ``plan.included_operator_seats`` costs
     ``extra_seat_price_cents`` per month (default ₹1,199). Both Razorpay
     (``subscription.edit`` with new quantity, ``schedule_change_at='now'``)
-    and Stripe (subscription item quantity update) handle the upstream
+    handles the upstream
     proration. The local mirror is updated immediately so live-chat seat
     enforcement sees the new limit without webhook latency.
     """
@@ -1377,7 +1377,7 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
     """Find a pack whose configured amount matches ``requested_amount``.
 
     Top-up packs in the new (INR) schema use the ``amount`` key; legacy
-    Stripe-era packs used ``usd``. We accept either so older admin clients
+    Legacy packs used ``usd``. We accept either so older admin clients
     continue to work during cutover.
     """
     for pack in packs:

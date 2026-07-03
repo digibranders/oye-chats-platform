@@ -390,7 +390,7 @@ export default function Billing() {
     + (usage?.document_upload?.credits_used || 0);
 
   // Two-step seat change: open the confirmation modal first so the user
-  // sees the price + payment provider (Razorpay/Stripe) BEFORE we touch
+  // sees the price + payment provider (Razorpay) BEFORE we touch
   // their subscription. The actual API call happens in ``confirmSeatChange``,
   // invoked from the modal's confirm button.
   function handleSeatChange(delta) {

@@ -321,7 +321,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     """Cron task: grant the new month's plan credits for subscriptions whose
     current_period_end has been reached, then roll the period forward.
 
-    Stripe's ``invoice.paid`` webhook is the canonical trigger for renewals;
+    Razorpay's ``subscription.charged`` webhook is the canonical trigger for renewals;
     this cron is a safety net that catches missed webhooks (and is the *only*
     trigger for free-tier subs, since no payment ever fires there). The
     webhook handler is idempotent (skips when balance was already renewed in
@@ -417,7 +417,7 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
     """Cron: promote subscriptions whose scheduled downgrade cutover has passed.
 
     Razorpay's ``subscription.completed`` webhook is the canonical trigger;
-    this cron is a safety net for webhook outages and for the manual / Stripe
+    this cron is a safety net for webhook outages and for the manual
     legacy paths that don't emit ``completed`` cleanly. Both routes call into
     ``transition_service.promote_scheduled_change``, which is idempotent — if
     the webhook already promoted the row the cron's match-set is empty.
@@ -881,7 +881,7 @@ async def task_expire_past_due_subscriptions(ctx: dict) -> int:
     """Cron: flip ``past_due`` subscriptions to ``expired`` once the dunning
     grace window has elapsed.
 
-    Stripe and Razorpay both retry failed payments for ~7 days. Up to that
+    Razorpay retries failed payments for ~7 days. Up to that
     point ``status = 'past_due'`` keeps the customer's full access so a
     rescued card resumes service without interruption. After
     ``PAYMENT_FAILED_GRACE_DAYS`` we stop bleeding LLM / credit cost on a

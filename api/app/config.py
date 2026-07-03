@@ -300,7 +300,7 @@ GOOGLE_OAUTH_ENABLED = bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRE
 # Where the OAuth callback redirects the browser after issuing the api_key.
 # The frontend reads the api_key from the URL fragment, persists it, and
 # routes the user into the dashboard. Defaults to FRONTEND_URL so a single
-# env var configures both Stripe and OAuth in dev.
+# env var configures OAuth in dev.
 OAUTH_SUCCESS_REDIRECT_URL = os.getenv("OAUTH_SUCCESS_REDIRECT_URL", f"{FRONTEND_URL}/auth/callback")
 
 # HMAC key for signing the short-lived OAuth ``state`` cookie. Falls back to
@@ -337,7 +337,7 @@ TRIAL_DATA_RETENTION_DAYS = int(_env("TRIAL_DATA_RETENTION_DAYS", "15"))
 
 # Dunning grace window — how long a subscription stays in ``past_due`` (full
 # feature access for the customer) before the auto-expire cron flips it to
-# ``expired`` and the regular gates kick in. Stripe's own dunning sequence
+# ``expired`` and the regular gates kick in. Razorpay's own dunning sequence
 # is typically 3 retries over ~7 days, so the default lines up with "we've
 # given the gateway time to recover the card, now stop bleeding LLM credits".
 PAYMENT_FAILED_GRACE_DAYS = int(_env("PAYMENT_FAILED_GRACE_DAYS", "7"))

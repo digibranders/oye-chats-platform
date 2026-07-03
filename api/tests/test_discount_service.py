@@ -1,6 +1,6 @@
 """Unit tests for the provider-agnostic discount resolver.
 
-All tests are offline — no database, no Razorpay/Stripe calls.
+All tests are offline — no database, no Razorpay calls.
 The resolver's job is purely: given a client and session, return
 (discount_bps, audit_meta) based on the client's attached referral code.
 """

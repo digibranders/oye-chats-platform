@@ -2,7 +2,7 @@
 
 Razorpay is the primary billing provider for OyeChats — Indian customers,
 INR pricing, UPI Autopay for recurring mandates. This module mirrors the
-shape of ``billing_service`` (Stripe) so the routes layer can pick a provider
+shape expected by the routes layer
 based on ``Subscription.payment_provider``.
 
 Conventions:
@@ -18,7 +18,7 @@ Conventions:
   rest of the API still boots when keys aren't configured — useful for local
   dev and for the test suite.
 * Idempotency uses ``ProcessedWebhook`` keyed on the ``x-razorpay-event-id``
-  HTTP header. The same table is shared with the Stripe handler.
+  HTTP header.
 
 References (Razorpay docs, validated against this implementation):
 
@@ -155,9 +155,7 @@ def create_topup_order(
 
     currency = str(pack.get("currency", "INR")).upper()
     if currency != "INR":
-        raise ValueError(
-            f"Razorpay only supports INR top-ups; got '{currency}'. Use the Stripe provider for non-INR packs."
-        )
+        raise ValueError(f"Razorpay only supports INR top-ups; got '{currency}'.")
 
     rzp = _get_razorpay()
     amount_inr = int(pack["amount"])
@@ -636,7 +634,7 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
 
     Razorpay's parameter is ``cancel_at_cycle_end`` (1 = at end, 0 = now).
     Local DB state is updated by the webhook handler — we don't double-write
-    here, mirroring the Stripe flow.
+    here.
     """
     if not subscription.razorpay_subscription_id:
         logger.warning(
@@ -803,7 +801,6 @@ def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
     sent confirmation emails. We now use an atomic
     ``INSERT … ON CONFLICT DO NOTHING`` and key off ``rowcount``: the worker
     whose insert won proceeds, the loser sees ``rowcount == 0`` and bails.
-    Mirrors the Stripe path in ``billing_service._record_or_skip_webhook``.
     Postgres-only — every deployment is Postgres + pgvector.
     """
     if not event_id:
@@ -1305,7 +1302,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # customer who upgrades to Standard mid-cycle sees their leftover
         # free credits stacked on top of the new grant (e.g. 500 + 10,000
         # → 10,500 / 10,000). Mirrors the same reset → grant ordering used
-        # by the Stripe change-plan path and ``start_trial_subscription``.
+        # by the change-plan path and ``start_trial_subscription``.
         # Sets the period marker so the first subscription.charged for this
         # period is a no-op (H4).
         _grant_subscription_period(session, local, current_period_end)
@@ -1661,7 +1658,7 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     shape; the ``payment_id`` lets us locate the local ``Invoice`` row we
     wrote at capture time. Each event is uniquely identified by Razorpay's
     own event id (deduped one layer up via ``_record_or_skip_event``), so
-    the cumulative-vs-delta bookkeeping that ``charge.refunded`` on Stripe
+    the cumulative-vs-delta bookkeeping that other gateways'
     needs is not required here: each refund event represents exactly its
     own amount.
 
@@ -1719,7 +1716,7 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
     )
 
-    # Razorpay refunds may be partial; mirror Stripe's distinction so the
+    # Razorpay refunds may be partial; keep the full/partial distinction so the
     # billing UI can render the right copy.
     inv.status = "refunded" if refund_minor >= charge_minor else "partially_refunded"
     session.flush()

@@ -101,8 +101,8 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         return False
     if invoice.invoice_number:  # already finalized — immutable, never re-touch
         return False
-    # The tax engine assumes INR paise. Razorpay charges are INR; this guards a
-    # non-INR (e.g. Stripe-fallback USD) charge from being taxed as rupees and
+    # The tax engine assumes INR paise. Razorpay charges are INR; this guards
+    # any non-INR charge from being taxed as rupees and
     # minting a false tax invoice — such rows stay legacy until a
     # currency-aware path exists.
     if (invoice.currency or "").lower() != "inr":
