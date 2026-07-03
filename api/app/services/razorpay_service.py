@@ -1330,6 +1330,29 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 .all()
             )
             for old in existing:
+                # Retire the predecessor's UPI mandate AT THE GATEWAY, not just
+                # locally. The re-auth model keeps the old mandate live until the
+                # new one authorizes (so an abandoned checkout doesn't strand the
+                # customer); now that the new sub is active we cancel the old one
+                # immediately so Razorpay stops debiting it (BL-4 double-charge).
+                #
+                # ``existing`` is queried before ``local`` is inserted, so it can
+                # never contain the just-activated row — but we guard defensively
+                # against the razorpay id in case of any future reordering. Each
+                # cancel is wrapped so one gateway failure can't abort the
+                # activation (the local flip below still stops entitlement).
+                if old.razorpay_subscription_id and old.razorpay_subscription_id != razorpay_sub_id:
+                    try:
+                        cancel_subscription(old, at_period_end=False)
+                    except Exception:
+                        logger.exception(
+                            "Failed to gateway-cancel superseded subscription %s "
+                            "at activation of %s (client %s) — continuing so the "
+                            "new subscription still activates",
+                            old.razorpay_subscription_id,
+                            razorpay_sub_id,
+                            client_id,
+                        )
                 old.status = "canceled"
                 old.canceled_at = datetime.now(UTC)
 

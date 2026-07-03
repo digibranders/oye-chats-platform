@@ -783,6 +783,23 @@ def create_checkout(
         if plan.monthly_price_cents == 0 and plan.slug != "enterprise":
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
+        # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a
+        # FIRST purchase. A subscribed customer hitting it again would mint a
+        # SECOND Razorpay subscription + second UPI mandate — Razorpay can't
+        # swap a UPI plan in place, so both mandates would debit the customer
+        # (double-charge). Plan changes must go through ``/change-plan``, which
+        # orchestrates the cancel+recreate+re-authorize re-auth flow. Only an
+        # active/trialing/past_due sub WITH a gateway mandate blocks; a
+        # terminal (canceled/expired) or manual (no razorpay id) sub does not.
+        from app.services.plan_service import get_client_subscription
+
+        existing_sub = get_client_subscription(session, client.id)
+        if existing_sub is not None and existing_sub.razorpay_subscription_id:
+            raise HTTPException(
+                status_code=409,
+                detail="You already have an active subscription. Use change-plan to upgrade or downgrade.",
+            )
+
         from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service
 

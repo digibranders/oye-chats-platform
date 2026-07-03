@@ -5,9 +5,12 @@ subscription transitions need:
 
   * Remaining-credit lookup for upgrade rollover (``remaining_plan_credits``).
   * Razorpay-specific paid→paid upgrade flow (``execute_paid_upgrade``):
-    cancel old mandate immediately, open new sub, stash the customer's
-    unused plan credits so the activation webhook can re-grant them as a
-    top-up once payment clears.
+    open a new sub and stash the customer's unused plan credits so the
+    activation webhook can re-grant them as a top-up once payment clears.
+    The OLD mandate is NOT cancelled here — under the UPI re-auth model it
+    stays live until the new subscription authorizes and is retired at the
+    new sub's activation webhook (so an abandoned checkout can't strand the
+    customer).
   * Razorpay-specific paid→paid downgrade flow (``schedule_paid_downgrade``):
     queue the new plan to take effect at the current period's end. The old
     mandate is cancelled at-period-end on the gateway so Razorpay stops
@@ -107,12 +110,15 @@ def execute_paid_upgrade(
     new_plan: Plan,
     billing_cycle: str,
 ) -> dict[str, Any]:
-    """Cancel the current Razorpay mandate, open a checkout sheet for the new plan.
+    """Open a checkout sheet for the new plan (UPI re-auth model, BL-2).
 
-    Snapshots the customer's unused plan credits on the OLD sub's row so
-    the activation webhook can re-grant them as a top-up after payment
-    clears — keeping the route handler free of cross-step state. Returns
-    the Razorpay checkout payload the frontend hands to
+    Does NOT cancel the current mandate — the old subscription stays live
+    until the new one authorizes, then is retired at the new sub's
+    activation webhook (see ``_handle_subscription_activated``'s sibling
+    sweep). Snapshots the customer's unused plan credits on the OLD sub's
+    row so the activation webhook can re-grant them as a top-up after
+    payment clears — keeping the route handler free of cross-step state.
+    Returns the Razorpay checkout payload the frontend hands to
     ``new Razorpay({...})``.
 
     NOTE on ``upgrade_credit_pending_cents``: the column name is historical
@@ -122,20 +128,24 @@ def execute_paid_upgrade(
     documented here and at the call sites.
 
     Raises:
-        RazorpayBillingError: gateway-side cancellation or creation failed.
+        RazorpayBillingError: gateway-side creation of the new subscription failed.
     """
     from app.services import razorpay_service
 
-    # Snapshot unused plan credits BEFORE we cancel anything — the activation
-    # webhook will call ``reset_monthly_plan_credits`` before granting the
-    # new plan's allowance, so reading the breakdown later would return 0.
+    # Snapshot unused plan credits BEFORE the new plan's allowance is granted —
+    # the activation webhook will call ``reset_monthly_plan_credits`` before
+    # granting the new allowance, so reading the breakdown later would return 0.
     rollover_credits = remaining_plan_credits(session, client.id)
 
-    # Cancel immediately — the customer is paying for the new tier in the
-    # very next step, so we don't want the old mandate's autopay to fire
-    # again. We do this BEFORE creating the new sub so a gateway failure
-    # leaves the old mandate intact (safer than the reverse ordering).
-    razorpay_service.cancel_subscription(sub, at_period_end=False)
+    # DO NOT cancel the old mandate here (BL-2). Razorpay's UPI mandates can't be
+    # swapped in place, so a plan change is cancel+recreate+re-authorize. Under
+    # the re-auth model the OLD mandate must stay live until the NEW subscription
+    # authorizes; if we hard-cancelled it now and the customer abandoned the
+    # Razorpay checkout modal, they'd be stranded — old service gone, new never
+    # authorized, and the rollover credits stuck in ``upgrade_credit_pending_cents``.
+    # The old sub is retired instead at the NEW sub's activation webhook, where
+    # ``_handle_subscription_activated`` gateway-cancels the superseded sibling
+    # (identified via ``prev_razorpay_subscription_id`` in the new sub's notes).
 
     sub.upgrade_credit_pending_cents = rollover_credits
     sub.cancel_reason = sub.cancel_reason or "auto_upgrade"
