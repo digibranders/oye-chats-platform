@@ -570,7 +570,45 @@ def test_payment_captured_grants_topup_when_purpose_marker_present():
     # grant_topup(session, client_id, amount, note=...)
     assert args[1] == 9
     assert args[2] == 2000
-    assert "Top-up ₹1599 pack" in kwargs.get("note", "")
+    # No display_price in notes (legacy order) → INR pack label fallback.
+    assert "Credits top-up — ₹1599 pack (2,000 credits)" in kwargs.get("note", "")
+
+
+def test_payment_captured_topup_names_usd_pack_from_display_price():
+    """Orders created after the USD-reprice carry ``notes.display_price``; the
+    invoice/grant description names the pack the customer actually chose while
+    all legal amounts stay INR."""
+    from app.services import razorpay_service
+
+    payload = {
+        "payment": {
+            "entity": {
+                "id": "pay_test002",
+                "order_id": "order_test002",
+                "amount": 1999900,
+                "currency": "INR",
+                "notes": {
+                    "purpose": "topup",
+                    "client_id": "9",
+                    "credits": "32500",
+                    "amount_inr": "19999",
+                    "display_price": "$249",
+                },
+            }
+        }
+    }
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = None
+
+    with patch("app.services.credit_service.grant_topup") as grant:
+        razorpay_service._handle_payment_captured(session, payload)
+
+    grant.assert_called_once()
+    _, kwargs = grant.call_args
+    assert "Credits top-up — $249 pack (32,500 credits)" in kwargs.get("note", "")
+    invoice = session.add.call_args[0][0]
+    assert invoice.description == "Credits top-up — $249 pack (32,500 credits)"
+    assert invoice.amount_cents == 1999900  # legal value stays INR paise
 
 
 def test_payment_captured_ignored_for_non_topup_payments():
@@ -595,7 +633,7 @@ def test_webhook_signature_roundtrip_accepts_valid_hmac():
 
     Razorpay's webhook signature is exactly this construction (we call into
     the SDK utility, which the SDK implements as ``hmac.new(secret, body,
-    sha256).hexdigest()`` — same as Stripe but with their secret). This test
+    sha256).hexdigest()``). This test
     locks down the contract end-to-end without any network call.
     """
     import hashlib

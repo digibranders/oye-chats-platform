@@ -1423,7 +1423,9 @@ export default function KnowledgeBase() {
                           <td className="px-5 py-3.5 text-sm text-surface-500 dark:text-surface-400">
                             {isUrl
                               ? `${(doc.page_count ?? 0).toLocaleString()} ${doc.page_count === 1 ? 'page' : 'pages'}`
-                              : `${(doc.chunk_count ?? 0).toLocaleString()} ${doc.chunk_count === 1 ? 'chunk' : 'chunks'}`}
+                              : doc.doc_page_count != null
+                                ? `${doc.doc_page_count.toLocaleString()} ${doc.doc_page_count === 1 ? 'page' : 'pages'}`
+                                : `${(doc.chunk_count ?? 0).toLocaleString()} ${doc.chunk_count === 1 ? 'chunk' : 'chunks'}`}
                           </td>
                           <td className="px-5 py-3.5 text-sm text-surface-400 tabular-nums">
                             {formatDuration(doc.duration_seconds)}

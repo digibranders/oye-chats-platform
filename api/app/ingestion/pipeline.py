@@ -12,10 +12,14 @@ from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_f
 from app.db.repository import delete_chunks_for_url, insert_documents, is_document_processed
 from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
-from app.ingestion.cleaner import clean_text
+from app.ingestion.cleaner import clean_text, extract_media_urls
 from app.ingestion.embedder import embed_chunks
 from app.ingestion.enrichment import CHUNK_ENRICHMENT_ENABLED, enrich_chunks_batch
 from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
+from app.ingestion.youtube_metadata import (
+    enrich_media_urls_with_channel_videos,
+    enrich_media_urls_with_durations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +43,12 @@ def _extract_title_from_markdown(content: str) -> str | None:
     return None
 
 
-os.makedirs(ARCHIVE_DIR, exist_ok=True)
-
-# Failed uploads land here so they leave the input folder and don't get
-# reprocessed on every run (the "poison pill" pattern). Subfolder of
-# ARCHIVE_DIR keeps the configuration surface unchanged.
-QUARANTINE_DIR = os.path.join(ARCHIVE_DIR, "_quarantine")
-os.makedirs(QUARANTINE_DIR, exist_ok=True)
+# Failed uploads are quarantined (rather than archived) so they leave the
+# input folder and don't get reprocessed on every run (the "poison pill"
+# pattern). Both archive and quarantine are namespaced per tenant — see
+# ``_tenant_archive_dir`` / ``_tenant_quarantine_dir`` — so one tenant's cold
+# storage can never mix with another's, mirroring the per-tenant upload dir.
+_QUARANTINE_SUBDIR = "_quarantine"
 
 
 def calculate_hash(text: str) -> str:
@@ -142,8 +145,35 @@ def _ingest_document(
     #    templated landing pages that only differed in their nav/footer
     #    boilerplate could collide on hash and be silently skipped, even
     #    though their actual unique-content chunks differed.
-    cleaned_pages_data = [{"text": clean_text(p["text"]), "metadata": p.get("metadata", {})} for p in pages_data]
-    cleaned_full_text = " ".join(p["text"] for p in cleaned_pages_data)
+    #    Media URL extraction runs on the *raw* page text (pre-clean) because
+    #    the cleaner strips ``[label](url)`` markdown link wrappers — capture
+    #    YouTube/downloadable URLs first, attach them to page metadata, and
+    #    let chunking propagate that metadata to every chunk of the page.
+    cleaned_pages_data: list[dict[str, Any]] = []
+    cleaned_texts: list[str] = []
+    for p in pages_data:
+        page_meta = dict(p.get("metadata", {}))
+        media = extract_media_urls(p["text"])
+        if media:
+            # Layer 1.5 auto-discover: when a channel URL was captured on
+            # this page (e.g. "Follow us on YouTube: youtube.com/@brand"),
+            # expand it into every video on that channel BEFORE the
+            # metadata scrape below so the newly-discovered videos also
+            # get title+duration filled in. In-process cached so a
+            # channel URL appearing on many pages only fetches once.
+            enrich_media_urls_with_channel_videos(media)
+            # Fetch YouTube durations + titles once per video at ingest
+            # time so the widget can render a duration pill and the LLM
+            # can match by title. Cached in-process; failures are silent.
+            enrich_media_urls_with_durations(media)
+            page_meta["media_urls"] = media
+        cleaned_text = clean_text(p["text"])
+        cleaned_texts.append(cleaned_text)
+        cleaned_pages_data.append({"text": cleaned_text, "metadata": page_meta})
+    # Parallel ``list[str]`` of the text values so ``str.join`` type-checks —
+    # ``cleaned_pages_data`` has mixed value types (str + dict), so a bare
+    # ``p["text"] for p in cleaned_pages_data`` widens to ``str | dict``.
+    cleaned_full_text = " ".join(cleaned_texts)
     # Hash the boilerplate-normalised form so harmless footer-date drift
     # between re-crawls doesn't trigger re-ingest + re-billing. See
     # ``_normalize_for_dedup_hash`` for the patterns being stripped.
@@ -226,6 +256,9 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
     scanned-only PDF, etc.) would be reprocessed on every run and block all
     subsequent files behind it indefinitely.
     """
+    if not os.path.isdir(folder_path):
+        logger.info("run_folder_ingestion: folder %s does not exist — nothing to ingest", folder_path)
+        return 0
     supported_extensions = [".pdf", ".docx", ".txt", ".md"]
     files = [f for f in os.listdir(folder_path) if any(f.lower().endswith(ext) for ext in supported_extensions)]
 
@@ -276,9 +309,9 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
             # quarantine so the next run isn't blocked by the same poison pill.
             try:
                 if failed:
-                    move_to_quarantine(file_path, file_name)
+                    move_to_quarantine(file_path, file_name, client_id=client_id, bot_id=bot_id)
                 else:
-                    move_to_archive(file_path, file_name)
+                    move_to_archive(file_path, file_name, client_id=client_id, bot_id=bot_id)
             except Exception as mv_err:
                 logger.error(f"Could not move {file_name} out of upload folder: {mv_err}")
 
@@ -406,6 +439,15 @@ def batch_web_ingestion(
                 # Stamp the crawl start on every chunk so the source's total time
                 # taken = max(created_at) - crawl_started_at can be read back later.
                 page_meta["crawl_started_at"] = crawl_started_at
+            # Media URL extraction MUST run on the raw ``content`` (pre-clean)
+            # because ``clean_text`` strips ``[label](url)`` markdown link
+            # wrappers, which is how most crawled pages format video and file
+            # references. Capture here, enrich YouTube entries with duration
+            # (one-time per video, cached), propagate via chunk metadata.
+            media = extract_media_urls(content)
+            if media:
+                enrich_media_urls_with_durations(media)
+                page_meta["media_urls"] = media
             pages_data = [{"text": cleaned, "metadata": page_meta}]
             chunks = chunk_text(pages_data, document_name=url)
 
@@ -548,17 +590,57 @@ def batch_web_ingestion(
     }
 
 
-def move_to_archive(file_path: str, filename: str):
-    """
-    Move a file to the archive directory.
-    If a file with the same name exists, append a timestamp to avoid collision.
-    """
-    dest_path = os.path.join(ARCHIVE_DIR, filename)
+def _tenant_storage_dir(client_id: int, bot_id: int | None, *segments: str, create: bool = True) -> str:
+    """Resolve a per-tenant cold-storage directory rooted at ``ARCHIVE_DIR``.
 
+    Layout mirrors the per-tenant upload dir (``documents/{client_id}/{bot_id}/``):
+    archive/quarantine live at ``{ARCHIVE_DIR}/{client_id}/{bot_id}/[...]`` so one
+    tenant's processed/failed files can never mix with another's. ``bot_id is
+    None`` (account-level uploads) uses a reserved ``_none`` segment that can
+    never collide with a real bot id.
+
+    Path components are integers (or the literal ``_quarantine``), so this can't
+    be traversed; the ``is_relative_to`` guard is defense-in-depth to guarantee
+    the result stays inside the archive root even if that ever changes.
+    """
+    base_dir = os.path.realpath(ARCHIVE_DIR)
+    bot_segment = str(bot_id) if bot_id is not None else "_none"
+    tenant_dir = os.path.realpath(os.path.join(base_dir, str(client_id), bot_segment, *segments))
+    if os.path.commonpath([tenant_dir, base_dir]) != base_dir:
+        raise ValueError(f"Refusing storage path outside archive root: {tenant_dir}")
+    if create:
+        os.makedirs(tenant_dir, exist_ok=True)
+    return tenant_dir
+
+
+def _tenant_archive_dir(client_id: int, bot_id: int | None, *, create: bool = True) -> str:
+    """Per-tenant archive directory: ``{ARCHIVE_DIR}/{client_id}/{bot_id}/``."""
+    return _tenant_storage_dir(client_id, bot_id, create=create)
+
+
+def _tenant_quarantine_dir(client_id: int, bot_id: int | None, *, create: bool = True) -> str:
+    """Per-tenant quarantine directory (a subfolder of the tenant archive dir)."""
+    return _tenant_storage_dir(client_id, bot_id, _QUARANTINE_SUBDIR, create=create)
+
+
+def _dest_with_collision_suffix(dest_dir: str, filename: str) -> str:
+    """Return a destination path in ``dest_dir``, appending a timestamp only if
+    ``filename`` already exists there (keeps both copies instead of clobbering).
+    """
+    dest_path = os.path.join(dest_dir, filename)
     if os.path.exists(dest_path):
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         name, ext = os.path.splitext(filename)
-        dest_path = os.path.join(ARCHIVE_DIR, f"{name}_{timestamp}{ext}")
+        dest_path = os.path.join(dest_dir, f"{name}_{timestamp}{ext}")
+    return dest_path
+
+
+def move_to_archive(file_path: str, filename: str, *, client_id: int, bot_id: int | None):
+    """
+    Move a processed file to the tenant's archive directory.
+    If a file with the same name exists, append a timestamp to avoid collision.
+    """
+    dest_path = _dest_with_collision_suffix(_tenant_archive_dir(client_id, bot_id), filename)
 
     try:
         shutil.move(file_path, dest_path)
@@ -567,22 +649,64 @@ def move_to_archive(file_path: str, filename: str):
         logger.error(f"Failed to archive {filename}: {e}")
 
 
-def move_to_quarantine(file_path: str, filename: str):
-    """Move a file that failed ingestion to the quarantine folder.
+def move_to_quarantine(file_path: str, filename: str, *, client_id: int, bot_id: int | None):
+    """Move a file that failed ingestion to the tenant's quarantine folder.
 
     Same collision-avoidance pattern as ``move_to_archive``. Quarantining
     (rather than deleting) preserves the original for forensic review while
     ensuring the next ingestion run isn't blocked by the same poison pill.
     """
-    dest_path = os.path.join(QUARANTINE_DIR, filename)
-
-    if os.path.exists(dest_path):
-        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        name, ext = os.path.splitext(filename)
-        dest_path = os.path.join(QUARANTINE_DIR, f"{name}_{timestamp}{ext}")
+    dest_path = _dest_with_collision_suffix(_tenant_quarantine_dir(client_id, bot_id), filename)
 
     try:
         shutil.move(file_path, dest_path)
         logger.warning(f"Quarantined failed file: {dest_path}")
     except Exception as e:
         logger.error(f"Failed to quarantine {filename}: {e}")
+
+
+def delete_archived_copies(client_id: int, bot_id: int | None, filename: str) -> int:
+    """Remove a tenant's archived and quarantined copies of ``filename``.
+
+    Called from the document-delete path so deleting a document also purges its
+    cold-storage copies instead of leaving orphaned tenant data behind. Matches
+    both the verbatim archived name and any ``{stem}_{timestamp}{ext}`` copies
+    produced by the collision-avoidance suffix. Best-effort: logs and continues
+    on individual failures, and is a harmless no-op for sources that were never
+    archived (e.g. crawled URLs). Returns the number of files removed.
+    """
+    base_name = os.path.basename(filename)
+    if not base_name:
+        return 0
+
+    stem, ext = os.path.splitext(base_name)
+    # Precisely matches the collision-renamed variants (see
+    # ``_dest_with_collision_suffix``) so we never delete an unrelated file the
+    # same tenant happens to have named ``{stem}_something{ext}``.
+    collision_pattern = re.compile(rf"^{re.escape(stem)}_\d{{8}}_\d{{6}}{re.escape(ext)}$")
+
+    removed = 0
+    for directory in (
+        _tenant_archive_dir(client_id, bot_id, create=False),
+        _tenant_quarantine_dir(client_id, bot_id, create=False),
+    ):
+        if not os.path.isdir(directory):
+            continue
+        try:
+            entries = os.listdir(directory)
+        except OSError as e:
+            logger.error(f"Could not scan archive dir {directory}: {e}")
+            continue
+        for name in entries:
+            if name != base_name and not collision_pattern.fullmatch(name):
+                continue
+            target = os.path.join(directory, name)
+            if not os.path.isfile(target):
+                continue
+            try:
+                os.remove(target)
+                removed += 1
+                logger.info(f"Removed archived copy: {target}")
+            except OSError as e:
+                logger.error(f"Failed to remove archived copy {target}: {e}")
+    return removed

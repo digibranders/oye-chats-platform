@@ -22,6 +22,7 @@ from app.db.repository import (
     count_documents_for_bot,
     ensure_chat_session,
     get_all_documents_for_bot,
+    get_bot_media_urls,
     get_chat_history,
     get_lead_info_by_session,
     search_keyword_documents,
@@ -57,6 +58,456 @@ _CTA_Q_MAX_LEN = 140
 
 _meeting_card_re = re.compile(r"\[MEETING_CARD\]")
 _leave_message_card_re = re.compile(r"\[LEAVE_MESSAGE_CARD\]")
+
+# ── Media cards ────────────────────────────────────────────────────────────
+# YouTube video IDs are strictly 11 chars from the URL-safe alphabet — pin
+# the pattern to that shape so a stray "[YOUTUBE_CARD:xyz]" from a
+# hallucination or a broken chunk can't slip through as valid.
+_youtube_card_re = re.compile(r"\[YOUTUBE_CARD:([A-Za-z0-9_-]{11})\]")
+# Downloadable file card: URL segment cannot contain whitespace, pipes, or
+# closing brackets (those would make the token unparseable); filename allows
+# spaces up to a reasonable cap. The URL length cap (500) matches the widest
+# reasonable KB-hosted asset URL and keeps a malformed token from swallowing
+# unbounded trailing text.
+_download_card_re = re.compile(r"\[DOWNLOAD_CARD:([^\s\|\]]{1,500})\|([^\]\n]{1,200})\]")
+
+
+# ``_extract_media_card`` peels VALID media-card sentinels out of the answer
+# (a strict ``[YOUTUBE_CARD:<11-char id>]`` / ``[DOWNLOAD_CARD:<url>|<name>]``).
+# But the LLM sometimes ECHOES a media-card marker into prose in a shape the
+# strict parser rejects — a wrong-length video id, a stray ``[YOUTUBE_CARD:
+# video below]``, a ``[DOWNLOAD_CARD:...]`` missing its pipe, etc. Those leaked
+# markers would otherwise reach the visitor's bubble as raw tokens.
+#
+# This regex targets EXACTLY those two card-marker prefixes and nothing else.
+# It is deliberately NARROW: any other bracketed content is legitimate and
+# MUST be preserved verbatim — citation markers (``[1]``), ranges
+# (``[9am-5pm]``), code subscripts (``list[0]``, ``a[i]``), key labels
+# (``[Enter]``, ``[Ctrl+C]``), and markdown link labels (``[label](url)``).
+#
+# History: PR #234 used a keyword-free ``\[[^\]\n]{1,300}\](?!\()`` sweep that
+# stripped every bracket not followed by ``(``, corrupting all of the above on
+# every answer for every bot. Anchoring on the card prefixes is the fix.
+_LEAKED_BRACKET_RE = re.compile(r"\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,720}\]")
+
+
+def _strip_llm_card_prose(text: str) -> str:
+    """Strip leaked media-card markers the LLM echoed into prose.
+
+    ``_extract_media_card`` runs first and removes every WELL-FORMED
+    ``[YOUTUBE_CARD:...]`` / ``[DOWNLOAD_CARD:...]`` sentinel (and captures
+    the card payload). This is the follow-up scrub for MALFORMED echoes of
+    those same markers — the strict parser leaves them behind, so without
+    this pass a raw ``[YOUTUBE_CARD:...]`` token could reach the visitor.
+
+    It matches ONLY the two card-marker prefixes. Every other bracketed
+    span is legitimate content and is left untouched: citation markers
+    (``[1]``), ranges (``[9am-5pm]``), code subscripts (``list[0]``), key
+    labels (``[Enter]``), and markdown links (``[label](url)``).
+    """
+    if not text:
+        return text
+    cleaned = _LEAKED_BRACKET_RE.sub("", text)
+    # Collapse the runs of whitespace / blank lines we may have left
+    # where a bracket used to sit, so the resulting text reads
+    # naturally instead of leaving " double space " gaps or stray blank
+    # paragraphs mid-answer.
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _extract_media_card(text: str) -> tuple[str, dict | None]:
+    """Strip media-card sentinels from an LLM response and return card data.
+
+    The system prompt allows at most one media card per turn; if the LLM
+    ignores that rule and emits several, the FIRST occurrence wins and the
+    rest are stripped silently so the persisted answer stays consistent
+    with the card that actually renders.
+
+    Returns ``(cleaned_text, card_data)`` where ``card_data`` is one of:
+        ``{"type": "youtube",  "video_id": "..."}``
+        ``{"type": "download", "url": "...", "name": "..."}``
+        ``None`` — no card sentinel was present.
+    """
+    if not text:
+        return text, None
+
+    yt_match = _youtube_card_re.search(text)
+    dl_match = _download_card_re.search(text)
+
+    card: dict | None = None
+    if yt_match and (dl_match is None or yt_match.start() <= dl_match.start()):
+        card = {"type": "youtube", "video_id": yt_match.group(1)}
+    elif dl_match:
+        card = {
+            "type": "download",
+            "url": dl_match.group(1),
+            "name": dl_match.group(2).strip() or "download",
+        }
+
+    # Strip every occurrence of both sentinels — even the "loser" — so no
+    # raw token leaks into the persisted message content. rstrip cleans up
+    # the trailing whitespace/newline that typically sits after the sentinel
+    # (the system prompt tells the LLM to emit it on its own line at end).
+    cleaned = _youtube_card_re.sub("", text)
+    cleaned = _download_card_re.sub("", cleaned).rstrip()
+    return cleaned, card
+
+
+def _log_media_visibility_in_context(retrieved_chunks, session_id: str, path: str) -> None:
+    """Diagnostic: log exactly what media the LLM sees for this turn.
+
+    Every RAG turn emits one ``media_context_visibility`` line. The four
+    combinations of (media_available, card_emitted) diagnose the whole
+    pipeline end-to-end:
+
+      * available=0 → ingestion didn't attach ``media_urls`` (re-ingest
+        the KB with the current code, or that KB never had URLs at all).
+      * available>0, no ``media_card`` log later → LLM saw the URLs but
+        refused to emit the sentinel (prompt-discipline issue — tighten
+        wording; or check that the API restarted so the newer prompt is
+        actually loaded).
+      * available>0, ``safety-net fired`` log later → LLM wrote a
+        markdown link / bare URL instead of the sentinel; server
+        promoted it to a card automatically.
+      * available>0, ``token detected`` log later → LLM followed the
+        rules cleanly.
+
+    Cheap: a linear pass over top-K chunks. Kept out of the hot loop.
+    """
+    videos: list[str] = []
+    videos_with_duration: list[str] = []
+    files: list[str] = []
+    for chunk in retrieved_chunks or []:
+        meta = getattr(chunk, "metadata_info", None)
+        if not isinstance(meta, dict):
+            continue
+        media = meta.get("media_urls")
+        if not isinstance(media, dict):
+            continue
+        for yt in media.get("youtube") or []:
+            if not isinstance(yt, dict):
+                continue
+            vid = yt.get("video_id")
+            if not isinstance(vid, str) or not vid or vid in videos:
+                continue
+            videos.append(vid)
+            duration = yt.get("duration_seconds")
+            if isinstance(duration, int) and duration > 0:
+                videos_with_duration.append(vid)
+        for entry in media.get("files") or []:
+            url = entry.get("url") if isinstance(entry, dict) else None
+            if isinstance(url, str) and url and url not in files:
+                files.append(url)
+    logger.info(
+        "media_context_visibility | session=%s path=%s videos=%d "
+        "videos_with_duration=%d files=%d video_ids=%s files=%s",
+        session_id,
+        path,
+        len(videos),
+        len(videos_with_duration),
+        len(files),
+        ",".join(videos[:5]) or "-",
+        ",".join(files[:3]) or "-",
+    )
+
+
+# ── Media-card safety net ──────────────────────────────────────────────────
+# The LLM sometimes emits a YouTube/file URL as a markdown link
+# (``[label](https://youtube.com/watch?v=…)``) or a bare URL in prose
+# instead of the required ``[YOUTUBE_CARD:VIDEO_ID]`` sentinel — the
+# system prompt forbids this but occasional discipline drift is real.
+# When that happens for a URL that we already captured at ingestion (i.e.
+# it lives in some retrieved chunk's ``Available media``), we promote
+# the loose URL to a proper card server-side so the visitor still gets
+# the intended rendering instead of a stray blue link.
+#
+# Matches BOTH a markdown link wrapper AND a bare URL in one pattern.
+# The alternation captures the URL + video_id from whichever branch
+# fires: groups (2, 3) for the markdown-linked form, groups (4, 5) for
+# the bare form. The wrapper alternative is placed first so it wins on
+# text where both would match at the same position.
+_YT_URL_CORE = (
+    r"https?://(?:www\.|m\.)?"
+    r"(?:youtube\.com/(?:watch\?(?:[^\s]*&)?v=|embed/|v/|shorts/)|youtu\.be/)"
+    r"([A-Za-z0-9_-]{11})"
+    r"(?:[?&#][^\s)\]]*)?"
+)
+_YOUTUBE_LINK_OR_BARE_RE = re.compile(
+    r"(\[[^\]\n]{0,200}\]\(" + _YT_URL_CORE + r"\))"  # groups 1 (wrapper), 2 (video_id)
+    r"|(" + _YT_URL_CORE + r")",  # groups 3 (bare URL), 4 (video_id)
+    re.IGNORECASE,
+)
+
+_DOWNLOAD_URL_CORE = (
+    r"https?://[^\s\"'<>()\[\]]+\.(?:pdf|docx?|xlsx?|pptx?|csv|zip|rtf|odt|ods|odp)(?:\?[^\s\"'<>()\[\]]*)?"
+)
+_DOWNLOAD_LINK_OR_BARE_RE = re.compile(
+    r"(\[[^\]\n]{0,200}\]\((" + _DOWNLOAD_URL_CORE + r")\))"  # groups 1 (wrapper), 2 (URL)
+    r"|(" + _DOWNLOAD_URL_CORE + r")",  # groups 3 (bare URL)
+    re.IGNORECASE,
+)
+
+_URL_TRAIL_PUNCT = ".,;:!?)]}>\"'"
+
+
+def _collect_available_media(retrieved_chunks) -> tuple[set[str], set[str]]:
+    """Build a whitelist of (video_ids, file_urls) from retrieved chunks.
+
+    Only URLs that appeared in the "Available media" of a chunk that
+    actually reached the LLM are eligible for safety-net promotion. This
+    stops the safety net from rewriting arbitrary YouTube URLs a visitor
+    might reference in prose (``"hey what about youtube.com/watch?v=xyz"``)
+    into cards — we only rewrite the URLs we ourselves showed the LLM.
+    """
+    yt_ids: set[str] = set()
+    file_urls: set[str] = set()
+    if not retrieved_chunks:
+        return yt_ids, file_urls
+    for chunk in retrieved_chunks:
+        meta = getattr(chunk, "metadata_info", None)
+        if not isinstance(meta, dict):
+            continue
+        media = meta.get("media_urls")
+        if not isinstance(media, dict):
+            continue
+        for yt in media.get("youtube") or []:
+            vid = yt.get("video_id") if isinstance(yt, dict) else None
+            if isinstance(vid, str) and vid:
+                yt_ids.add(vid)
+        for entry in media.get("files") or []:
+            url = entry.get("url") if isinstance(entry, dict) else None
+            if isinstance(url, str) and url:
+                file_urls.add(url)
+    return yt_ids, file_urls
+
+
+def _drop_hallucinated_media_card(
+    card: dict | None, allowed_video_ids: set[str], allowed_file_urls: set[str]
+) -> dict | None:
+    """Return the card only if its ``video_id`` / ``url`` is in the allowed set.
+
+    Guards against the failure mode where the LLM emits a
+    ``[YOUTUBE_CARD:...]`` sentinel for a video it recalled from training
+    data or an earlier turn — not from the current turn's catalog. The
+    card would render pointing at a video the KB doesn't actually
+    contain, which is worse than emitting no card at all.
+    """
+    if card is None:
+        return None
+    card_type = card.get("type")
+    if card_type == "youtube":
+        vid = card.get("video_id")
+        if isinstance(vid, str) and vid in allowed_video_ids:
+            return card
+        logger.info("Dropped hallucinated media card | type=youtube video_id=%s", vid)
+        return None
+    if card_type == "download":
+        url = card.get("url")
+        if isinstance(url, str) and url in allowed_file_urls:
+            return card
+        logger.info("Dropped hallucinated media card | type=download url=%s", url)
+        return None
+    return card
+
+
+# Trailing "would you like the video/podcast/episode/PDF/notes?" pattern
+# the LLM writes when it is *about* to reference a card-eligible item but
+# hedges into a permission-request instead of just emitting the sentinel.
+# The safety net below promotes an available-media item to a card AND
+# strips the ask from the text, so the visitor sees "here's the founding
+# story episode." + card instead of "Would you like the episode or the
+# notes?". Kept anchored to end-of-answer so we don't fire on unrelated
+# mid-answer questions the LLM might legitimately want to keep.
+_ASK_OPENER_RE = re.compile(r"(?i)\b(?:would\s+you\s+like|want\s+(?:me\s+to|the))\b")
+_VIDEO_ASK_KEYWORDS = ("episode", "video", "podcast", "walkthrough", "demo", "recording")
+_FILE_ASK_KEYWORDS = (
+    "notes",
+    "pdf",
+    "worksheet",
+    "playbook",
+    "guide",
+    "reference",
+    "template",
+    "brochure",
+    "one-pager",
+    "onepager",
+    "deck",
+    "whitepaper",
+    "white-paper",
+    "checklist",
+)
+
+
+def _handle_trailing_media_ask(
+    text: str, retrieved_chunks, existing_card: dict | None = None
+) -> tuple[str, dict | None]:
+    """Strip trailing "would you like the video/PDF/notes?" asks — never
+    promote a card from the ask itself.
+
+    ARCHITECTURAL PRINCIPLE (a real founder-question bug is why this
+    exists in this shape today): if the LLM had a specific, on-topic
+    card to surface, it would emit the sentinel directly. When it
+    instead hedges with "Want me to share that episode?", it is signalling
+    UNCERTAINTY — and any card the server picks in that vacuum will,
+    empirically, be a wrong-topic card. A wrong-topic card looks like
+    a bug to the visitor; NO card just looks like a normal answer.
+
+    So this helper's job is now purely to KEEP THE ANSWER TEXT CLEAN:
+
+    1. LLM emitted a card + asked about the OTHER media type
+       ("here's the PDF. Would you like me to pull up the video for you?").
+       → Strip the ask so the visitor sees the PDF card + clean text,
+         no dangling permission question. Existing card is preserved.
+
+    2. LLM emitted NO card and asked "Would you like the notes?"
+       → Strip the ask. Return NO card. Text ends cleanly.
+         The LLM's discipline (per the system prompt's "the card IS the
+         offer" rule) is the mechanism for surfacing cards, not an
+         after-the-fact guess.
+
+    The URL-based safety net above still promotes when the LLM writes a
+    specific URL in prose — that has zero ambiguity about WHICH item to
+    surface. Only the trailing-ask promotion (which had to guess) is gone.
+    """
+    if not text:
+        return text, existing_card
+
+    ask_match = _ASK_OPENER_RE.search(text)
+    if ask_match is None:
+        return text, existing_card
+    # Look only at the tail of the answer starting at the ask opener; if
+    # the tail doesn't end with "?" it's some other kind of sentence and
+    # we should leave it alone.
+    tail = text[ask_match.start() :].rstrip()
+    if not tail.endswith("?"):
+        return text, existing_card
+    tail_lower = tail.lower()
+
+    wants_video = any(k in tail_lower for k in _VIDEO_ASK_KEYWORDS)
+    wants_file = any(k in tail_lower for k in _FILE_ASK_KEYWORDS)
+    if not (wants_video or wants_file):
+        return text, existing_card
+
+    cleaned = text[: ask_match.start()].rstrip(" \t\n.,;:")
+
+    if existing_card is not None:
+        logger.info(
+            "Trailing media ask stripped (existing card kept) | existing_type=%s",
+            existing_card.get("type"),
+        )
+    else:
+        logger.info("Trailing media ask stripped (no card promoted — LLM was hedging, not offering)")
+    return cleaned, existing_card
+
+
+# Backwards-compatible name — kept so existing callers work.
+_promote_from_trailing_media_ask = _handle_trailing_media_ask
+
+
+def _promote_loose_url_to_media_card(text: str, retrieved_chunks) -> tuple[str, dict | None]:
+    """Safety net: if the LLM wrote a URL instead of a sentinel, convert it.
+
+    Only fires when:
+      * ``_extract_media_card`` found no explicit sentinel, AND
+      * the LLM's answer contains a URL (markdown-linked or bare) whose
+        target sits in one of the retrieved chunks' ``Available media``.
+
+    On promotion the matched URL (plus its ``[label](…)`` wrapper if
+    present) is removed from ``text`` and a proper card payload is
+    returned. Only the FIRST eligible URL is promoted — enforcing the
+    "one card per response" rule on the server side too.
+    """
+    if not text or not retrieved_chunks:
+        return text, None
+    yt_ids, file_urls = _collect_available_media(retrieved_chunks)
+    if not yt_ids and not file_urls:
+        return text, None
+
+    # 1) YouTube — check markdown-linked and bare URL forms.
+    for match in _YOUTUBE_LINK_OR_BARE_RE.finditer(text):
+        # Wrapper form is groups (1, 2); bare form is groups (3, 4).
+        video_id = match.group(2) or match.group(4)
+        if not video_id or video_id not in yt_ids:
+            continue
+        cleaned = (text[: match.start()] + text[match.end() :]).rstrip(_URL_TRAIL_PUNCT + " \t")
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).rstrip()
+        logger.info(
+            "Media card safety-net fired (youtube) | video_id=%s form=%s",
+            video_id,
+            "wrapper" if match.group(1) else "bare",
+        )
+        return cleaned, {"type": "youtube", "video_id": video_id}
+
+    # 2) Downloadable file — same treatment.
+    for match in _DOWNLOAD_LINK_OR_BARE_RE.finditer(text):
+        url = match.group(2) or match.group(3)
+        if not url:
+            continue
+        url = url.rstrip(_URL_TRAIL_PUNCT)
+        if url not in file_urls:
+            continue
+        cleaned = (text[: match.start()] + text[match.end() :]).rstrip(_URL_TRAIL_PUNCT + " \t")
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).rstrip()
+        path = url.split("?", 1)[0]
+        name = path.rsplit("/", 1)[-1] or "download"
+        logger.info(
+            "Media card safety-net fired (download) | url=%s form=%s",
+            url,
+            "wrapper" if match.group(1) else "bare",
+        )
+        return cleaned, {"type": "download", "url": url, "name": name}
+
+    return text, None
+
+
+def _enrich_media_card_from_context(card: dict | None, retrieved_chunks) -> None:
+    """Backfill card payload with metadata already captured at ingest time.
+
+    The LLM only emits the video_id / URL. Everything else (duration,
+    filename we can use for display) was captured at ingestion and lives
+    on the retrieved chunks' ``metadata_info.media_urls``. Look it up
+    here so the widget doesn't have to re-fetch YouTube for details we
+    already have.
+
+    Mutates ``card`` in place. Silent no-op when ``card`` is ``None``,
+    the type is unknown, or the value doesn't appear in any retrieved
+    chunk (LLM hallucinated the id, or the chunk that carried it was
+    dropped from the top-K after reranking).
+    """
+    if not card or not isinstance(card, dict):
+        return
+    if not retrieved_chunks:
+        return
+
+    card_type = card.get("type")
+    if card_type == "youtube":
+        video_id = card.get("video_id")
+        if not video_id:
+            return
+        for chunk in retrieved_chunks:
+            meta = getattr(chunk, "metadata_info", None)
+            if not isinstance(meta, dict):
+                continue
+            media = meta.get("media_urls")
+            if not isinstance(media, dict):
+                continue
+            for yt in media.get("youtube") or []:
+                if not isinstance(yt, dict) or yt.get("video_id") != video_id:
+                    continue
+                duration = yt.get("duration_seconds")
+                if isinstance(duration, int) and duration > 0:
+                    card["duration_seconds"] = duration
+                title = yt.get("title")
+                if isinstance(title, str) and title:
+                    # Pass the server-scraped title to the widget so the
+                    # card can render its final label without waiting on
+                    # the client-side oEmbed roundtrip (one less network
+                    # request per card, and the pill/title show together
+                    # instead of the title flickering in a beat later).
+                    card["title"] = title
+                return
 
 
 def _resolve_meeting_booking(bot, session, session_id: str, bot_id: int) -> dict:
@@ -604,6 +1055,129 @@ def contains_system_prompt_leak(text: str) -> bool:
     if not text:
         return False
     return any(sentinel in text for sentinel in _LEAKAGE_SENTINELS)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Media card context helper
+# ─────────────────────────────────────────────────────────────────────────────
+# YouTube video IDs + downloadable file URLs captured at ingestion time (see
+# ``extract_media_urls`` in cleaner.py and ``enrich_media_urls_with_metadata``
+# in youtube_metadata.py). Assembled into a single "AVAILABLE MEDIA" catalog
+# appended to the retrieved reference context so the LLM sees the full media
+# palette from ALL retrieved chunks (deduplicated by video_id / URL) and can
+# pick the topic-matching one per the strict rules in ``build_hybrid_prompt``.
+
+# Aggregate cap across ALL retrieved chunks. Chunks can share videos (they
+# often do — pypdf packs multiple episodes into one page, and RAG retrieves
+# adjacent chunks from the same page); the dedup below folds those into a
+# single catalog line, and the cap stops a pathological KB with dozens of
+# unique videos from ballooning the LLM prompt.
+# Bumped from 8/6 → 25/15 so a bot with a real content library (~20+
+# YouTube channel videos, ~10+ downloadable resources) is not silently
+# truncated in the LLM's Available Media catalog. Cost per turn: ~500
+# extra prompt tokens when the catalog fires — negligible on gpt-5.4-mini.
+# The truncation was the "how many videos do you have" undercount bug.
+_MAX_CATALOG_VIDEOS = 25
+_MAX_CATALOG_FILES = 15
+
+
+def _iter_media_urls_from_chunks(retrieved_chunks) -> list[dict]:
+    """Extract the ``media_urls`` dicts from a list of retrieved chunks.
+
+    Uniform shape so the caller can concatenate retrieved-chunk media
+    with bot-wide DB-fetched media without special-casing each source.
+    """
+    out: list[dict] = []
+    for chunk in retrieved_chunks or []:
+        meta = getattr(chunk, "metadata_info", None)
+        if not isinstance(meta, dict):
+            continue
+        media = meta.get("media_urls")
+        if isinstance(media, dict):
+            out.append(media)
+    return out
+
+
+def _build_media_catalog(media_sources: list[dict]) -> str:
+    """Return a single "AVAILABLE MEDIA" block covering every video or file
+    across the provided sources — deduplicated by video_id / URL, ordered
+    by first appearance, capped to prevent prompt bloat.
+
+    ``media_sources`` is a list of ``media_urls`` dicts, each shaped like
+    ``{"youtube": [{"video_id": "...", ...}], "files": [{"url": "...", ...}]}``.
+    Concatenating retrieved-chunk media with a bot-wide DB fetch (via
+    :func:`app.db.repository.get_bot_media_urls`) lets the LLM see the
+    full KB palette rather than being confined to whichever URLs happened
+    to ride with the top-K retrieved chunks — the fix for the "wrong
+    topic card" pattern when pypdf groups unrelated episodes onto the
+    same page.
+
+    Shape (only sections with entries are rendered)::
+
+        AVAILABLE MEDIA (pick the ONE whose title best matches ...):
+          - YouTube video "Busybox in Containers: ..." (video_id=neWpaEOf3XM): https://...
+          - YouTube video "What is a Shell-Less Container?" (video_id=1pPSjboIzoU): https://...
+          - Downloadable file (cve-triage-playbook.pdf): https://...
+
+    Empty string when no source carries media.
+    """
+    if not media_sources:
+        return ""
+
+    seen_videos: set[str] = set()
+    seen_files: set[str] = set()
+    video_lines: list[str] = []
+    file_lines: list[str] = []
+
+    for media in media_sources:
+        if not isinstance(media, dict):
+            continue
+
+        for yt in media.get("youtube") or []:
+            if len(video_lines) >= _MAX_CATALOG_VIDEOS:
+                break
+            if not isinstance(yt, dict):
+                continue
+            video_id = yt.get("video_id")
+            url = yt.get("url")
+            if not (isinstance(video_id, str) and video_id and isinstance(url, str) and url):
+                continue
+            if video_id in seen_videos:
+                continue
+            seen_videos.add(video_id)
+            # Title lets the LLM match the visitor's topic to the right
+            # video. Populated at ingest time by
+            # ``enrich_media_urls_with_metadata``; may be absent on
+            # legacy chunks ingested before that pass existed.
+            title = yt.get("title")
+            if isinstance(title, str) and title:
+                video_lines.append(f'  - YouTube video "{title}" (video_id={video_id}): {url}')
+            else:
+                video_lines.append(f"  - YouTube video (video_id={video_id}): {url}")
+
+        for entry in media.get("files") or []:
+            if len(file_lines) >= _MAX_CATALOG_FILES:
+                break
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("url")
+            name = entry.get("name") or "download"
+            if not isinstance(url, str) or not url:
+                continue
+            if url in seen_files:
+                continue
+            seen_files.add(url)
+            file_lines.append(f"  - Downloadable file ({name}): {url}")
+
+    if not video_lines and not file_lines:
+        return ""
+
+    return (
+        "\n═══════════════════════════════════════════════════════\n"
+        "AVAILABLE MEDIA (pick the ONE whose title best matches the "
+        "visitor's question, then emit its sentinel per the MEDIA CARDS rules):\n"
+        "═══════════════════════════════════════════════════════\n" + "\n".join(video_lines + file_lines)
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1686,6 +2260,194 @@ MEETING BOOKING (inline card):
 
   Do not repeat the card if booking was already offered in this conversation."""
 
+    # Media cards (YouTube video + downloadable file). Rules are static and
+    # always included so OpenAI prompt caching keeps them free after the first
+    # request per bot. Whether a card is actually emitted is fully determined
+    # at inference time by whether the retrieved context contains an
+    # ``AVAILABLE MEDIA`` catalog — see ``_build_media_catalog``.
+    media_cards_section = """
+MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
+  Two sentinels are available for surfacing media that appears in the
+  retrieved reference material as an inline card in the chat bubble:
+
+    [YOUTUBE_CARD:VIDEO_ID]      renders a YouTube thumbnail + title card
+    [DOWNLOAD_CARD:URL|FILENAME] renders a downloadable file attachment card
+
+  ─── HARD RULE (READ THIS FIRST) ───
+  If the retrieved REFERENCE INFORMATION below contains an "Available
+  media" block, and the visitor's question falls into ANY of the
+  high-intent categories listed further down, you MUST emit exactly ONE
+  sentinel at the end of your answer. Emit it PROACTIVELY — do NOT ask
+  the visitor "would you like the video / PDF?" first, and do NOT write
+  the URL as a markdown link. Just answer the question, then drop the
+  sentinel on its own line. That is the entire mechanism by which the
+  card renders in the widget.
+
+  ─── FORBIDDEN OUTPUT SHAPES ───
+  The following are HALLUCINATIONS or bugs — never emit any of them:
+
+    ✗ [Watch the video](https://youtube.com/watch?v=…)      ← markdown link, breaks card rendering
+    ✗ https://youtube.com/watch?v=… (bare URL in prose)     ← breaks card rendering
+    ✗ "Would you like me to share the video?"               ← asks instead of surfacing
+    ✗ "Want the podcast episode or the episode notes?"      ← asks instead of picking one and emitting
+    ✗ "Which would you prefer — the video or the PDF?"      ← same anti-pattern, forces the visitor to choose
+    ✗ "I can show you the episode if you'd like"            ← teasing instead of showing
+    ✗ "Here's the link: youtube.com/watch?v=…"              ← inline URL, breaks card rendering
+    ✗ [YouTube card below] / [Video card] / [Download card] ← prose placeholder; the sentinel below IS the card, no need to announce it
+    ✗ "See the card that follows" / "As shown in the card"  ← never describe or reference the card in prose
+    ✗ Two or more sentinels in one reply                    ← violates one-card-per-response
+
+  If a YouTube URL appears in the "Available media" block and you are
+  going to reference the video in your answer, the ONLY correct way to
+  surface it is ``[YOUTUBE_CARD:VIDEO_ID]`` on its own line at the end.
+  Same for downloads: ``[DOWNLOAD_CARD:URL|FILENAME]`` on its own line.
+
+  ─── NO REDUNDANT FOLLOW-UP WHEN A CARD IS EMITTED ───
+  When you emit ``[YOUTUBE_CARD:…]`` or ``[DOWNLOAD_CARD:…]``, your
+  answer text MUST NOT also contain a trailing question that asks
+  whether to share the same content. The card IS the offer. Examples
+  of what to STRIP from the tail of your answer when a card is emitted:
+
+    ✗ "Want the founding-story episode?"
+    ✗ "Would you like the PDF notes too?"
+    ✗ "Should I share the full walkthrough?"
+    ✗ Any "…or the…?" question that offers a choice between two things
+      you're already able to show.
+
+  When BOTH a relevant video AND a relevant download exist for the
+  visitor's question, DO NOT ask them which they prefer — pick the
+  single best match (video for "how does it work / show me / walkthrough"
+  intents; download for "give me a template / worksheet / brochure"
+  intents) and emit ONE card. Never emit two.
+
+  Normal BANT / qualification follow-ups (``[CTA:dim]``) and unrelated
+  clarifying questions in the body are still fine on card-emitting turns
+  — the ban is specifically on "would you like this thing I'm about to
+  give you?" style questions, because the card renders the offer itself.
+
+  ─── WHEN THE SENTINEL IS REQUIRED ───
+  ALL of the following must hold before you may emit one:
+
+    1. The specific video_id / URL you emit appears verbatim in the
+       "AVAILABLE MEDIA" catalog at the end of the REFERENCE INFORMATION
+       below. NEVER invent, recall from memory, or guess a YouTube ID or
+       file URL — that is a hallucination.
+    2. The visitor's current question falls into a HIGH-INTENT category:
+         a) Company overview / "who are you" / "what does the company do"
+         b) How the product or service works / product demos / walkthroughs
+         c) Tutorials, "how do I…", "show me…" requests
+         d) An EXPLICIT request to see a video or download a resource
+            ("do you have a video on this?", "can I get a brochure?")
+         e) A topic-specific question where the available media is
+            clearly the best answer (e.g. visitor asks about CVE triage
+            and there is a CVE-triage video/PDF in the catalog)
+    3. TOPIC MATCH BY TITLE — the media title must clearly correspond
+       to what the visitor asked about. When several videos are listed
+       in the catalog, compare each video's title against the visitor's
+       question and pick the single best fit:
+         * visitor asks about "busybox" → pick the video whose title
+           mentions Busybox, NOT a generic "container security" one.
+         * visitor asks about "compliance" → pick the Compliance-titled
+           video, not the CVE-titled one.
+         * visitor asks a BROAD introductory question ("what does the
+           company do", "give me an overview", "tell me about you") →
+           prefer a video whose title contains "Introduction",
+           "Overview", "About", or the company name. Skip narrow-topic
+           videos for broad questions.
+       If NO title clearly matches the specific topic in the question,
+       do NOT emit a card — a wrong-topic card is worse than no card.
+    4. You emit AT MOST ONE media card in the entire response. If both a
+       relevant video and a relevant file exist, pick the single best
+       match. Never emit two card sentinels in one reply.
+
+  When all four hold, emitting the sentinel is REQUIRED, not optional.
+
+  ─── WHEN YOU MUST NOT EMIT A MEDIA CARD ───
+    - Direct factual Q&A ("what are your hours", "what's the price",
+      "where are you based", "do you support X"). Answer in text.
+    - Any turn where no "Available media" block is present in context.
+    - Small talk, greetings, thanks, off-topic pivots, refusals.
+    - You are uncertain whether the media matches the question.
+    - The same card was already emitted earlier in this conversation.
+
+  ─── FORMATTING ───
+    - Emit the sentinel on its OWN LINE at the end of your answer, with
+      a blank line separating it from the last paragraph of prose.
+    - Use the video_id EXACTLY as it appears in the "Available media"
+      block (11 characters, letters/digits/underscore/hyphen). Do NOT
+      wrap the sentinel in a markdown link, parentheses, or backticks.
+    - For [DOWNLOAD_CARD:URL|FILENAME], pass the full URL from the
+      "Available media" block and its human-readable filename separated
+      by a single pipe. Example:
+        [DOWNLOAD_CARD:https://example.com/brochure.pdf|brochure.pdf]
+
+  ─── DEFAULT POSTURE ───
+  When a relevant Available-media item exists AND the question is
+  high-intent, LEAN TOWARD emitting the card — proactively surface it
+  rather than asking the visitor whether they'd like it. Asking "would
+  you like the video?" when you already have the video is a worse
+  experience than just showing it. Reserve the "when in doubt, skip it"
+  discipline for cases where the media is a genuinely poor topical
+  match, not for hedging in general.
+
+  ─── COUNT / LIST QUESTIONS ARE NOT "SURFACE ONE" QUESTIONS ───
+  If the visitor's question is about the QUANTITY, LIST, or CATALOG of
+  media — "how many videos do you have?", "list your podcast episodes",
+  "what videos do you cover?", "do you have any downloadable guides?" —
+  respond with a TEXT SUMMARY of the count and topical breakdown, and
+  emit AT MOST ONE representative card (an intro / overview one, not a
+  narrow-topic one). Do NOT interpret a count/list question as "pick a
+  single video to surface"; the visitor is asking about the SHAPE of
+  the catalog, not requesting to watch a specific piece.
+
+    visitor: "how many videos do you have?"
+    ✗ WRONG: [YOUTUBE_CARD:some-random-id]  ← surfaces one video only
+    ✓ RIGHT: "We have around 20 videos across the CleanStart channel —
+             topics range from container security basics (shell-less
+             containers, base images) to product deep-dives (CleanSight),
+             CVE management, and compliance. A good starting point is
+             our overview video below.
+             [YOUTUBE_CARD:IB7GGzCNy-U]"     ← count + summary + ONE intro card
+
+    visitor: "list your podcast episodes"
+    ✓ RIGHT: bullet the episodes by title from the Available Media
+             catalog; optionally end with ONE representative episode card.
+
+  ─── HEDGE-BAN (READ TWICE) ───
+  If your answer is a DEFLECTION or FALLBACK — the visitor asked about
+  something you don't have concrete info on and you're pivoting to
+  "our team owns that" or "here's what I can confirm instead" — then
+  you MUST NOT mention any specific episode, video, PDF, worksheet, or
+  downloadable by name at all. NEVER end a deflection with "Want me to
+  share the X episode?" or "Would you like the Y worksheet?". The
+  visitor asked about A; naming a specific piece of content B while
+  deflecting A is a hedge that produces WRONG-TOPIC cards. Concrete
+  examples:
+
+    visitor: "who are the founders?"
+    ✗ WRONG: "That sits with our team. The founding team is discussed
+             in the From Stealth to Spotlight episode. Want me to
+             share that episode?"    ← names a specific episode + hedges
+    ✓ RIGHT: "That specific detail sits with our team. Our founders
+             worked on secure base images before coming out of stealth;
+             our team can share more if you'd like to connect."
+
+    visitor: "what's your revenue?"
+    ✗ WRONG: "I don't have that figure. Would you like our investor
+             one-pager?"             ← names a specific PDF + hedges
+    ✓ RIGHT: "That figure sits with our team. I can connect you if
+             it's relevant to your evaluation."
+
+  When you have a specific card to surface for the ACTUAL question,
+  emit the sentinel directly (no permission-ask). When you don't,
+  deflect cleanly WITHOUT naming any specific piece of content. Those
+  are the only two shapes.
+
+  ─── PRECEDENCE ───
+  [MEETING_CARD] and [LEAVE_MESSAGE_CARD] outrank media cards. If the
+  visitor's turn qualifies for a booking or async-message card, emit
+  that one and do NOT also emit a media card."""
+
     # Build optional sections (truncate to prevent prompt bloat)
     if custom_system_prompt:
         sanitized_prompt = _sanitize_system_prompt(custom_system_prompt)
@@ -1865,6 +2627,7 @@ RULES:
 {qualification_section}
 {handoff_section}
 {meeting_section}
+{media_cards_section}
 {response_style_block}
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
@@ -2021,7 +2784,8 @@ class _StreamCtaSanitizer:
 
     Strategy: a tiny state machine. As soon as we see ``[`` we hold output
     back into a buffer and watch whether the prefix is still consistent with
-    one of the known sentinel headers (``[CTA:`` / ``[CTA_Q:``). Three exits:
+    one of the known sentinel headers (``[CTA:`` / ``[CTA_Q:`` /
+    ``[YOUTUBE_CARD:`` / ``[DOWNLOAD_CARD:``). Three exits:
 
     1. Header completes → enter "in_sentinel" mode and swallow up to ``]``.
     2. Buffer diverges from every header (e.g. markdown ``[link]``) → flush
@@ -2033,8 +2797,19 @@ class _StreamCtaSanitizer:
     across ``feed`` calls.
     """
 
-    _HEADERS = ("[CTA:", "[CTA_Q:")
-    _MAX_SENTINEL_LEN = 250  # safety cap; longer than any realistic [CTA_Q:…]
+    # Every colon-delimited sentinel header the LLM may emit inline. Each ends
+    # with ':' and closes at the next ']', which is exactly the shape this
+    # state machine swallows — so [YOUTUBE_CARD:id] and [DOWNLOAD_CARD:url|name]
+    # are scrubbed mid-stream the same way [CTA:…] is, instead of leaking their
+    # raw token into the visitor's bubble before the post-stream
+    # _extract_media_card runs. (Fixed-body tokens like [MEETING_CARD] carry no
+    # ':' body and are stripped post-stream, not here.)
+    _HEADERS = ("[CTA:", "[CTA_Q:", "[YOUTUBE_CARD:", "[DOWNLOAD_CARD:")
+    # Safety cap on how much we hold while a close bracket is pending. Must
+    # exceed the longest legitimate sentinel: a [DOWNLOAD_CARD:url|name] can
+    # carry a ~500-char URL + ~200-char filename (see _download_card_re), so
+    # 800 keeps a well-formed download card from tripping the give-up path.
+    _MAX_SENTINEL_LEN = 800
 
     __slots__ = ("_buf", "_in_sentinel", "_pending_space", "_last_emitted")
 
@@ -2499,6 +3274,14 @@ def rag_pipeline(
                         # so the LLM generates a proper handoff response.
                         cache_delete(_cache_key)
                         logger.info(f"QA cache invalidated (handoff detected) | bot_id={bid}")
+                    elif bid is not None and get_bot_media_urls(session, bot_id=bid, limit=1):
+                        # Media-eligible bots never serve from cache — see
+                        # streaming-path equivalent for the full rationale.
+                        cache_delete(_cache_key)
+                        logger.info(
+                            "QA cache invalidated (media-eligible bot — media selection is per-turn) | bot_id=%s",
+                            bid,
+                        )
                     else:
                         logger.info(f"QA cache hit | bot_id={bid} | session={session_id}")
                         bot_msg = add_chat_message(
@@ -2690,8 +3473,22 @@ def rag_pipeline(
                     f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
                 )
             context_text = "\n---\n".join(context_parts)
+            # Combine retrieved-chunk media with the bot-wide DB fetch so
+            # the LLM sees EVERY video/file in the knowledge base — not
+            # only the URLs that happened to ride with the top-K retrieved
+            # chunks. The bot-wide sweep is the fix for the "wrong topic
+            # card" pattern where retrieval returned shell-less chunks for
+            # a busybox question and starved the model of the right
+            # option. Retrieved-chunk media is listed first so
+            # first-occurrence-wins dedup keeps the most retrieval-relevant
+            # entry at the top of the catalog.
+            media_sources = _iter_media_urls_from_chunks(final_results)
+            if bid is not None:
+                media_sources.extend(get_bot_media_urls(session, bot_id=bid))
+            context_text += _build_media_catalog(media_sources)
             context_text += _build_date_hints(context_text, date.today())
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+            _log_media_visibility_in_context(final_results, session_id, "nonstream")
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
             bant_config = get_framework_config(bot) if is_bant_enabled else None
@@ -2754,6 +3551,54 @@ def rag_pipeline(
             _leave_msg_card_detected = bool(_leave_message_card_re.search(answer))
             if _leave_msg_card_detected:
                 answer = _leave_message_card_re.sub("", answer).rstrip()
+
+            # Strip media card sentinels ([YOUTUBE_CARD:id] / [DOWNLOAD_CARD:url|name])
+            # AFTER meeting/leave-message strips so precedence rules in the
+            # system prompt hold on the server too — booking/message cards
+            # own the CTA slot when both fire, but media may still ride
+            # alongside them as a separate inline card in the metadata.
+            answer, _media_card = _extract_media_card(answer)
+            # LLM sometimes writes prose placeholders like "[YouTube card
+            # below]" instead of just emitting the sentinel — strip those
+            # so they don't leak into the visitor's chat bubble.
+            answer = _strip_llm_card_prose(answer)
+            # Whitelist = retrieved-chunk media + bot-wide media (same set
+            # the LLM saw in its Available media catalog). Validation drops
+            # cards whose IDs point at a video the KB does NOT actually
+            # contain — the LLM sometimes emits IDs recalled from training
+            # data or an earlier turn's context. A wrong-video card is
+            # worse than no card.
+            _allowed_yt, _allowed_files = _collect_available_media(final_results)
+            if bid is not None:
+                _bot_media_for_validate = get_bot_media_urls(session, bot_id=bid)
+                for _bm in _bot_media_for_validate:
+                    for _yt in _bm.get("youtube") or []:
+                        if isinstance(_yt, dict) and isinstance(_yt.get("video_id"), str):
+                            _allowed_yt.add(_yt["video_id"])
+                    for _f in _bm.get("files") or []:
+                        if isinstance(_f, dict) and isinstance(_f.get("url"), str):
+                            _allowed_files.add(_f["url"])
+            _media_card = _drop_hallucinated_media_card(_media_card, _allowed_yt, _allowed_files)
+            if _media_card is None:
+                # Safety net #1: LLM sometimes ignores the "emit the sentinel"
+                # rule and writes a markdown-linked or bare URL instead. When
+                # the referenced URL is in the retrieved Available media,
+                # promote it to a proper card and strip the loose URL so the
+                # answer text doesn't render a raw link next to nothing.
+                answer, _media_card = _promote_loose_url_to_media_card(answer, final_results)
+            # Trailing-ask handler runs UNCONDITIONALLY — it must strip the
+            # "Would you like me to pull up the video?" hedge even when a
+            # card is already set (the LLM's tic of emitting the PDF card
+            # then asking about the video, or vice-versa). Existing card
+            # wins; the ask about the other type is silently stripped.
+            answer, _media_card = _handle_trailing_media_ask(answer, final_results, _media_card)
+            _enrich_media_card_from_context(_media_card, final_results)
+            if _media_card:
+                logger.info(
+                    "Media card token detected | session=%s type=%s",
+                    session_id,
+                    _media_card.get("type"),
+                )
 
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
@@ -2864,6 +3709,11 @@ def rag_pipeline(
                             session_id,
                         )
 
+            # Media card (YouTube / downloadable file): the widget renders one
+            # inline card at the end of the message when this key is present.
+            if _media_card:
+                result["media_card"] = _media_card
+
             # Leave-message card: triggered by [LEAVE_MESSAGE_CARD] token from LLM.
             # Skipped when a live-chat handoff is already being suggested so the
             # two calls-to-action never compete in the same turn.
@@ -2893,7 +3743,20 @@ def rag_pipeline(
             # meeting card, leave-message card, or CTA button. These are not
             # stored in the cache payload and would silently vanish on future
             # hits, making a cached response miss its intended call-to-action.
-            _skip_cache_for_turn = suggest_handoff or _meeting_card_detected or _leave_msg_card_detected or bool(_cta)
+            _skip_cache_for_turn = (
+                suggest_handoff
+                or _meeting_card_detected
+                or _leave_msg_card_detected
+                or bool(_cta)
+                or _media_card is not None
+                # Skip cache for any bot with media in its KB — which video
+                # or file to surface for a given question is a per-turn
+                # decision the LLM must re-make (as the KB grows, the best
+                # match for the same question changes). Caching would
+                # freeze a wrong-video card forever until manual invalidation.
+                or bool(_allowed_yt)
+                or bool(_allowed_files)
+            )
             if _cache_key and not _skip_cache_for_turn:
                 cache_set(_cache_key, {"answer": answer, "sources": result["sources"]}, QA_RESPONSE_TTL)
 
@@ -3097,6 +3960,19 @@ async def rag_pipeline_stream(
                         # response with the suggest_handoff flag.
                         cache_delete(_cache_key)
                         logger.info(f"QA cache invalidated (handoff detected) | bot_id={bid}")
+                    elif bid is not None and get_bot_media_urls(session, bot_id=bid, limit=1):
+                        # Media-eligible bots never serve from cache: which
+                        # video/file to surface is per-question (the same
+                        # question can legitimately map to different cards
+                        # as the KB grows), and cached text can carry stale
+                        # or wrong-topic URLs from before the media-card
+                        # logic existed. Invalidate the stale entry and
+                        # fall through to a fresh LLM turn.
+                        cache_delete(_cache_key)
+                        logger.info(
+                            "QA cache invalidated (media-eligible bot — media selection is per-turn) | bot_id=%s",
+                            bid,
+                        )
                     else:
                         logger.info(f"QA stream cache hit | bot_id={bid} | session={session_id}")
                         cached_answer = cached_qa["answer"]
@@ -3314,8 +4190,16 @@ async def rag_pipeline_stream(
                     f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
                 )
             context_text = "\n---\n".join(context_parts)
+            # See non-streaming path for rationale — combine retrieved-chunk
+            # media with the bot-wide DB fetch so the LLM sees every
+            # video/file in the KB and can pick by topic match.
+            media_sources = _iter_media_urls_from_chunks(final_results)
+            if bid is not None:
+                media_sources.extend(get_bot_media_urls(session, bot_id=bid))
+            context_text += _build_media_catalog(media_sources)
             context_text += _build_date_hints(context_text, date.today())
             history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+            _log_media_visibility_in_context(final_results, session_id, "stream")
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
             bant_config = get_framework_config(bot) if is_bant_enabled else None
@@ -3342,6 +4226,12 @@ async def rag_pipeline_stream(
 
             _stream_error = False
             _leak_aborted = False
+            # ``chunk_count`` is read after the try/except (line ~4140 for the
+            # cache-skip decision), so it MUST be initialized outside the try
+            # — otherwise a rare exception thrown while entering the try
+            # itself leaves it unbound and the read blows up with a fresh
+            # ``UnboundLocalError`` on top of the original stream failure.
+            chunk_count = 0
             # Strip [CTA:…] / [CTA_Q:…] sentinels from the stream as they arrive,
             # so the visitor never sees the raw token typed into the bubble. The
             # post-stream _strip_cta_marker call still runs against full_answer
@@ -3349,7 +4239,6 @@ async def rag_pipeline_stream(
             # display-side safeguard.
             cta_sanitizer = _StreamCtaSanitizer()
             try:
-                chunk_count = 0
                 async for chunk in generate_response_stream(
                     prompt,
                     temperature=0.3,
@@ -3450,6 +4339,49 @@ async def rag_pipeline_stream(
                 full_answer = _leave_message_card_re.sub("", full_answer).rstrip()
                 logger.info("Leave-message card token detected | session=%s", session_id)
 
+            # Detect + strip media card sentinels ([YOUTUBE_CARD:id] /
+            # [DOWNLOAD_CARD:url|name]). At most one per response — the helper
+            # picks the first occurrence when the LLM ignores the rule and
+            # emits multiple. Runs on the streaming path AFTER meeting +
+            # leave-message strip so precedence with those cards is preserved
+            # in ``final_meta`` below.
+            full_answer, _media_card = _extract_media_card(full_answer)
+            # LLM sometimes writes prose placeholders like "[YouTube card
+            # below]" instead of just emitting the sentinel — strip those
+            # from the persisted answer (streamed display is scrubbed by
+            # the widget's sentinelStripper in real time).
+            full_answer = _strip_llm_card_prose(full_answer)
+            # Whitelist validation (streaming path) — see non-streaming
+            # path for rationale. Drops cards whose IDs the LLM recalled
+            # from memory rather than the current turn's catalog.
+            _allowed_yt, _allowed_files = _collect_available_media(final_results)
+            if bid is not None:
+                _bot_media_for_validate = get_bot_media_urls(session, bot_id=bid)
+                for _bm in _bot_media_for_validate:
+                    for _yt in _bm.get("youtube") or []:
+                        if isinstance(_yt, dict) and isinstance(_yt.get("video_id"), str):
+                            _allowed_yt.add(_yt["video_id"])
+                    for _f in _bm.get("files") or []:
+                        if isinstance(_f, dict) and isinstance(_f.get("url"), str):
+                            _allowed_files.add(_f["url"])
+            _media_card = _drop_hallucinated_media_card(_media_card, _allowed_yt, _allowed_files)
+            if _media_card is None:
+                # Safety net #1 (streaming path): promote a loose URL to a
+                # card when the LLM skipped the sentinel but referenced a
+                # URL from the retrieved Available media.
+                full_answer, _media_card = _promote_loose_url_to_media_card(full_answer, final_results)
+            # Trailing-ask handler — same unconditional call as the non-
+            # streaming path. Strips "Would you like the video?" even
+            # when a PDF card is already set (or vice versa).
+            full_answer, _media_card = _handle_trailing_media_ask(full_answer, final_results, _media_card)
+            _enrich_media_card_from_context(_media_card, final_results)
+            if _media_card:
+                logger.info(
+                    "Media card token detected | session=%s type=%s",
+                    session_id,
+                    _media_card.get("type"),
+                )
+
             # Safety net: if the intent classifier missed handoff but the LLM
             # still produced a handoff-style response, override suggest_handoff.
             if not suggest_handoff and not _stream_error:
@@ -3544,7 +4476,15 @@ async def rag_pipeline_stream(
                     # aren't stored in the cache payload and would silently vanish
                     # on future hits, making a cached response miss its CTA.
                     _skip_cache_for_turn = (
-                        suggest_handoff or _meeting_card_detected or _leave_msg_card_detected or bool(cta_data)
+                        suggest_handoff
+                        or _meeting_card_detected
+                        or _leave_msg_card_detected
+                        or bool(cta_data)
+                        or _media_card is not None
+                        # Skip cache for any bot with media in its KB — see
+                        # non-streaming path for the full rationale.
+                        or bool(_allowed_yt)
+                        or bool(_allowed_files)
                     )
                     if _cache_key and full_answer and chunk_count > 0 and not _skip_cache_for_turn:
                         cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
@@ -3573,6 +4513,12 @@ async def rag_pipeline_stream(
                         final_meta["suggest_handoff"] = True
                     if cta_data:
                         final_meta["cta"] = cta_data
+                    # Media card (YouTube video or downloadable file) — widget
+                    # renders one inline card at the end of the message when
+                    # this key is present in FINAL_METADATA. Coexists with
+                    # meeting / leave-message cards per system prompt rules.
+                    if _media_card:
+                        final_meta["media_card"] = _media_card
 
                     # Mark meeting card as shown for per-session dedupe (only if
                     # resolution actually populated show_booking above).

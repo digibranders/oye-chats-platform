@@ -1094,10 +1094,11 @@ def create_bot(
         else:
             resolved_domains = _derive_allowed_domains_from_website(request.website)
 
-        if request.domain_check_enabled is None:
-            resolved_check_enabled = bool(resolved_domains)
-        else:
-            resolved_check_enabled = bool(request.domain_check_enabled)
+        # Secure-by-default: when the caller doesn't specify the flag we turn
+        # origin enforcement ON. This is safe even when ``resolved_domains`` is
+        # empty because ``_enforce_bot_origin`` fails open on an empty allowlist
+        # -- the bot only gets locked down once its owner configures domains.
+        resolved_check_enabled = True if request.domain_check_enabled is None else bool(request.domain_check_enabled)
 
         new_bot = Bot(
             client_id=auth["client_id"],
@@ -1219,10 +1220,9 @@ def create_bot_checkout(request: BotCheckoutRequest, auth=Depends(get_current_cl
             resolved_domains = request.allowed_domains
         else:
             resolved_domains = _derive_allowed_domains_from_website(request.website)
-        if request.domain_check_enabled is None:
-            resolved_check_enabled = bool(resolved_domains)
-        else:
-            resolved_check_enabled = bool(request.domain_check_enabled)
+        # Secure-by-default: enforcement ON when unspecified (fails open on an
+        # empty allowlist, so this never bricks a bot without configured domains).
+        resolved_check_enabled = True if request.domain_check_enabled is None else bool(request.domain_check_enabled)
 
         try:
             payload = razorpay_service.create_per_bot_subscription(

@@ -6,10 +6,8 @@ provider layer:
 
   Razorpay → razorpay_service.resolve_discounted_plan()
              (creates / reuses a lower-amount Razorpay plan)
-  Stripe   → billing_service._ensure_referral_coupon()
-             (creates / reuses a Stripe coupon) — Phase 4
 
-Nothing here imports razorpay or stripe; this module is safe to call on
+Nothing here imports razorpay; this module is safe to call on
 any provider path.
 """
 

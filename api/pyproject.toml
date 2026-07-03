@@ -28,6 +28,10 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.0.0",
     "boto3>=1.34.0",
     "pypdf>=4.0.0",
+    # Invoice PDF rendering (invoicing v2 Phase 4). Needs system pango:
+    # macOS `brew install pango` (+ DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib),
+    # Ubuntu `apt install libpango-1.0-0 libpangoft2-1.0-0`.
+    "weasyprint>=63",
     "python-docx>=1.0.0",
     "Pillow>=10.0.0",
     "bcrypt>=4.0.0",
@@ -73,3 +77,25 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "--cov=app --cov-report=term-missing --cov-fail-under=15"
+
+# Pyrefly (type checker) — pin to the project's 3.11 venv so it stops
+# scanning /opt/anaconda3/lib/python3.13 for our imports and reporting
+# "Cannot find module 'app.*'" errors. Matches ``requires-python`` above.
+# Rebuild the .venv with ``uv sync`` if the path ever drifts.
+[tool.pyrefly]
+project-includes = ["app", "tests"]
+project-excludes = [
+    # ARQ background-worker task functions. Every "error" here is a false
+    # positive from SQLAlchemy 1.x-style ``Column(Type)`` model declarations
+    # — Pyrefly sees ``bot.name`` as ``Column[str]`` instead of ``str``,
+    # then flags every assignment / function call as a type mismatch. The
+    # code runs fine (descriptors resolve to real Python values at runtime).
+    # The correct long-term fix is migrating models to SQLAlchemy 2.0's
+    # ``Mapped[X] = mapped_column(...)`` pattern, which needs care because
+    # 25 models × ~500 columns wants its own change window. Until that
+    # migration lands, exclude this file so the IDE isn't shouting "34
+    # errors" that a reader would waste time investigating.
+    "app/worker/tasks.py",
+]
+python-version = "3.11.0"
+python-interpreter = ".venv/bin/python3.11"

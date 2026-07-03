@@ -32,9 +32,11 @@ from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
     task_handoff_escalation,
     task_ingest_documents,
     task_ingest_web_batch,
+    task_invoice_reconciliation_alert,
     task_process_webhook_retries,
     task_promote_scheduled_downgrades,
     task_reembed_document,
+    task_render_invoice_pdfs,
     task_renew_due_subscriptions,
     task_send_email,
     task_send_template_email,
@@ -131,6 +133,8 @@ class WorkerSettings:
         task_handoff_escalation,
         task_send_visitor_message_email,
         task_reembed_document,
+        task_render_invoice_pdfs,
+        task_invoice_reconciliation_alert,
     ]
 
     # Cron jobs:
@@ -160,6 +164,12 @@ class WorkerSettings:
         # Dunning auto-expire — once a day at 00:25 UTC, after the trial
         # crons so a same-day card rescue beats the grace-elapsed cut.
         cron(task_expire_past_due_subscriptions, hour=0, minute=25),
+        # Invoice PDF sweep — every 5 min; renders/uploads documents for
+        # freshly finalized invoices (invoicing v2, no-op while flag is off).
+        cron(task_render_invoice_pdfs, minute=set(range(1, 60, 5))),
+        # Invoice anomaly sweep — daily at 01:00 UTC, after the midnight
+        # billing crons have settled.
+        cron(task_invoice_reconciliation_alert, hour=1, minute=0),
     ]
 
     # Redis connection

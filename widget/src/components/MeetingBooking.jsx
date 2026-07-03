@@ -32,6 +32,34 @@ const validateMeetingUrl = (url, provider = 'calendly') => {
     }
 };
 
+/**
+ * Build the iframe src from a validated URL. Calendly only dispatches
+ * postMessage events (including ``calendly.event_scheduled``, which drives our
+ * auto-close) when the embed URL carries ``embed_domain`` and
+ * ``embed_type=Inline`` — its own widget.js appends these, so a bare URL never
+ * fires the event and the panel would stay open after a successful booking.
+ * ``hide_gdpr_banner`` also suppresses Calendly's in-frame cookie banner, which
+ * otherwise crowds the small widget panel. Other providers load unchanged.
+ */
+const buildIframeSrc = (safeUrl, provider) => {
+    if (provider !== 'calendly') return safeUrl;
+    try {
+        const url = new URL(safeUrl);
+        if (!url.searchParams.has('embed_domain')) {
+            url.searchParams.set('embed_domain', window.location.hostname);
+        }
+        if (!url.searchParams.has('embed_type')) {
+            url.searchParams.set('embed_type', 'Inline');
+        }
+        if (!url.searchParams.has('hide_gdpr_banner')) {
+            url.searchParams.set('hide_gdpr_banner', '1');
+        }
+        return url.toString();
+    } catch {
+        return safeUrl;
+    }
+};
+
 const IFRAME_LOAD_TIMEOUT_MS = 15000;
 
 const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider = 'calendly' }) => {
@@ -39,7 +67,6 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
     const [confirming, setConfirming] = useState(false);
-    const [openedExternally, setOpenedExternally] = useState(false);
     const [cspBlocked, setCspBlocked] = useState(false);
 
     useEffect(() => {
@@ -184,7 +211,6 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                             href={safeUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={() => setOpenedExternally(true)}
                             className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
                             aria-label="Open booking page in new tab"
                             title="Open in new tab"
@@ -227,7 +253,6 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                                     href={safeUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    onClick={() => setOpenedExternally(true)}
                                     className={
                                         cspBlocked
                                             ? 'px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600'
@@ -242,7 +267,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                     <iframe
                         key={error ? 'retry' : 'initial'}
                         title={`${PROVIDER_LABELS[provider] || 'Calendly'} Booking`}
-                        src={safeUrl}
+                        src={buildIframeSrc(safeUrl, provider)}
                         width="100%"
                         height="100%"
                         frameBorder="0"
@@ -250,22 +275,25 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         sandbox="allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation allow-same-origin"
                     />
                 </div>
-                {/* Manual confirmation fallback. Zcal's postMessage API is
-                    undocumented (the listener above is best-effort), and
-                    bookings completed in an external tab never post back to
-                    this frame — in both cases the visitor must confirm. */}
-                {(provider === 'zcal' || openedExternally) && (
-                    <div className="px-4 py-2.5 border-t border-gray-100 bg-white flex items-center justify-between gap-3 shrink-0">
-                        <p className="text-xs text-gray-500">Finished booking your meeting?</p>
-                        <button
-                            onClick={handleManualConfirm}
-                            disabled={confirming}
-                            className="px-3 py-1.5 text-xs font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-60 shrink-0"
-                        >
-                            {confirming ? 'Confirming…' : 'Yes, I booked it'}
-                        </button>
-                    </div>
-                )}
+                {/* Manual finish bar — always available. Calendly auto-closes
+                    the panel via its ``event_scheduled`` postMessage (see the
+                    embed params in buildIframeSrc), but postMessage can be
+                    stripped by ad/privacy blockers, Zcal's event API is
+                    undocumented, and external-tab bookings never post back to
+                    this frame. This button is the guaranteed way to confirm the
+                    booking and close the panel in every one of those cases. On a
+                    successful booking the parent unmounts this panel, so no
+                    explicit hide is needed here. */}
+                <div className="px-4 py-2.5 border-t border-gray-100 bg-white flex items-center justify-between gap-3 shrink-0">
+                    <p className="text-xs text-gray-500">Finished booking your meeting?</p>
+                    <button
+                        onClick={handleManualConfirm}
+                        disabled={confirming}
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-60 shrink-0"
+                    >
+                        {confirming ? 'Confirming…' : 'Done'}
+                    </button>
+                </div>
             </div>
         </div>
     );

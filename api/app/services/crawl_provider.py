@@ -11,9 +11,13 @@ instead of raising).
 ``crawl_website`` is **sitemap-first**: it enumerates the site's authoritative
 page list via ``url_discovery`` (robots.txt + sitemap.xml, browser-free) and
 scrapes every URL through the same path as an explicit crawl — so it reaches
-deep/orphan pages that a depth-limited link crawl misses. Only when a site has
-no usable sitemap does it fall back to Spider's recursive link crawl (Spider is
-the only backend with a recursive mode, so that path ignores the provider
+deep/orphan pages that a depth-limited link crawl misses. When a site has no
+usable sitemap it falls back to a browser-free same-domain link scan
+(``discover_via_links``) and scrapes the result through the same
+provider-agnostic path — so the primary/fallback toggle is honored there too.
+Only when neither a sitemap nor crawlable links exist (e.g. a client-rendered
+SPA) does it fall back to Spider's recursive link crawl (Spider is the only
+backend with a recursive mode, so that last-resort path ignores the provider
 order).
 
 Both paths return the identical crawl_data shape, so the ingest pipeline is
@@ -28,6 +32,7 @@ from app.services.crawler_service import CrawlerError
 from app.services.jina_service import fetch_urls as _jina_fetch_urls
 from app.services.spider_service import crawl_website as _spider_crawl
 from app.services.spider_service import fetch_urls as _spider_fetch_urls
+from app.services.url_discovery import discover_via_links as _discover_links
 from app.services.url_discovery import discover_website_urls as _discover_urls
 
 logger = logging.getLogger(__name__)
@@ -70,11 +75,16 @@ async def crawl_website(
     2. Scrape each URL via :func:`fetch_urls` (runtime-configured primary with
        failover to the other provider, ordered, per-page ``on_page`` progress,
        per-page ``on_result`` streaming).
-    3. If the site has no usable sitemap (discovery yields only the seed), fall
-       back to Spider's recursive link crawl (``max_depth``/``concurrency``),
-       with a Jina fallback on Spider failure. The recursive crawl is a single
-       blocking call, so it cannot stream ``on_result`` — callers must handle
-       "no pages streamed" (the orchestrator's final ingest sweep does).
+    3. If the site has no usable sitemap (discovery yields only the seed), scan
+       same-domain ``<a href>`` links (``discover_via_links``, browser-free) and
+       scrape any that are found via the same :func:`fetch_urls` path — so the
+       provider toggle and failover apply here too.
+    4. Only if neither a sitemap nor crawlable links exist (e.g. a
+       client-rendered SPA) fall back to Spider's recursive link crawl
+       (``max_depth``/``concurrency``), with a Jina fallback on Spider failure
+       that replays whatever URLs were discovered. The recursive crawl is a
+       single blocking call, so it cannot stream ``on_result`` — callers must
+       handle "no pages streamed" (the orchestrator's final ingest sweep does).
     """
     cap = max_pages or _FALLBACK_DISCOVERY_CAP
     try:
@@ -84,11 +94,30 @@ async def crawl_website(
         discovered = []
 
     if len(discovered) > 1:
-        logger.info("Sitemap-seeded crawl: scraping %d URLs for %s (cap=%s)", len(discovered), url, cap)
+        logger.info("crawl_path mode=sitemap urls=%d url=%s cap=%s", len(discovered), url, cap)
         return await fetch_urls(discovered, use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result)
 
-    # No usable sitemap — Spider recursive link crawl, Jina fallback on failure.
-    logger.info("No usable sitemap for %s — Spider recursive link crawl (depth=%s)", url, max_depth)
+    # No usable sitemap. Before falling back to Spider's recursive crawl (the
+    # only backend that can discover pages, so that path ignores the provider
+    # toggle), try a browser-free same-domain link scan. When it finds real
+    # links we scrape them through the provider-agnostic ``fetch_urls`` path —
+    # so the primary/fallback setting is honored here too, and a Spider outage
+    # no longer silently collapses a sitemap-less crawl to a single page.
+    linked: list[str] = []
+    try:
+        linked = await _discover_links(url, max_urls=cap, timeout=25.0)
+    except Exception:
+        logger.warning("Link discovery failed for %s — trying Spider link crawl", url, exc_info=True)
+
+    if len(linked) > 1:
+        logger.info("crawl_path mode=links urls=%d url=%s cap=%s", len(linked), url, cap)
+        return await fetch_urls(linked, use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result)
+
+    # Neither a sitemap nor crawlable links (e.g. a client-rendered SPA). Spider's
+    # recursive crawl with a JS engine is the only backend that can discover
+    # pages here; Jina has no recursive mode, so on Spider failure it can only
+    # replay the URLs we already discovered.
+    logger.info("crawl_path mode=spider_recursive url=%s depth=%s", url, max_depth)
     try:
         return await _spider_crawl(
             url,
@@ -101,9 +130,15 @@ async def crawl_website(
     except CrawlerError:
         if not JINA_FALLBACK_ENABLED:
             raise
-        logger.warning("Spider crawl failed for %s — Jina fallback", url, exc_info=True)
+        fallback_urls = linked or discovered or [url]
+        logger.warning(
+            "crawl_path mode=jina_recursive_fallback url=%s urls=%d (Spider recursive crawl failed)",
+            url,
+            len(fallback_urls),
+            exc_info=True,
+        )
         return await _jina_fetch_urls(
-            discovered or [url], use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result
+            fallback_urls, use_js=use_js, client_id=client_id, on_page=on_page, on_result=on_result
         )
 
 
@@ -112,32 +147,63 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
     failover to the other one.
 
     The provider order is a runtime setting (``crawl.provider_primary``).
-    Failover fires when the primary raises ``CrawlerError`` or comes back with
-    zero pages for a non-empty list — the latter is how Jina fails (it drops
-    pages instead of raising). Both providers replay the exact list in order,
-    so order and coverage are preserved across a failover.
+    Failover fires when the primary raises ``CrawlerError`` or drops pages —
+    zero results replays the whole list, a *partial* result retries only the
+    URLs the primary missed. Dropping pages (rather than raising) is how Jina
+    fails. Results are merged and returned in the original input order, so a
+    flaky primary no longer silently shrinks coverage and successfully-scraped
+    pages are never re-fetched on the fallback.
 
     ``JINA_FALLBACK_ENABLED=false`` disables Jina *as a fallback* only; an
     explicit jina-primary configuration still runs Jina first.
     """
     primary, fallback = _provider_order()
+    primary_data: dict | None = None
     primary_error: CrawlerError | None = None
     try:
-        data = await _fetcher(primary)(urls, **kwargs)
-        if data.get("results") or not urls:
-            return data
-        logger.warning("%s fetch_urls returned 0/%d pages — treating as failure", primary, len(urls))
+        primary_data = await _fetcher(primary)(urls, **kwargs)
     except CrawlerError as exc:
         primary_error = exc
+
+    if primary_data is not None:
+        got = {p["url"] for p in primary_data.get("results", [])}
+        missing = [u for u in urls if u not in got]
+        if not missing:
+            return primary_data  # full success (also the empty-input case)
+        logger.warning("%s fetch_urls returned %d/%d pages — retrying the rest", primary, len(got), len(urls))
+    else:
+        missing = list(urls)
+
     if fallback == "jina" and not JINA_FALLBACK_ENABLED:
+        # Jina fallback is off: keep whatever the primary delivered rather than
+        # discard a partial result; only a hard primary failure surfaces.
+        if primary_data is not None:
+            return primary_data
         if primary_error is not None:
             raise primary_error
         raise CrawlerError(f"{primary} returned no pages and the Jina fallback is disabled")
+
     logger.warning(
-        "%s fetch_urls failed (%d urls) — falling back to %s",
+        "%s fetch_urls failed (%d/%d urls) — falling back to %s",
         primary,
+        len(missing),
         len(urls),
         fallback,
         exc_info=primary_error is not None,
     )
-    return await _fetcher(fallback)(urls, **kwargs)
+    fallback_data = await _fetcher(fallback)(missing, **kwargs)
+
+    # Merge primary successes with the fallback retry, de-duplicated by URL and
+    # emitted in the original input order (fallback wins for any overlap).
+    merged: dict[str, dict] = {}
+    if primary_data is not None:
+        for page in primary_data.get("results", []):
+            merged[page["url"]] = page
+    for page in fallback_data.get("results", []):
+        merged[page["url"]] = page
+    return {
+        "results": [merged[u] for u in urls if u in merged],
+        "recommended_colors": primary_data.get("recommended_colors", []) if primary_data else [],
+        "discovered_total": len(urls),
+        "queue_remaining": 0,
+    }

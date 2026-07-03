@@ -15,13 +15,14 @@ required; the module skips when none is reachable at ``DB_URL``.
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, make_url, select
+from sqlalchemy import create_engine, func, make_url, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
-from app.db.models import Base, Client, Invoice, Plan, Subscription
+from app.db.models import Base, Client, CreditLedger, Invoice, Plan, Subscription
 from app.services import credit_service
 from app.services import razorpay_service as rzp
 
@@ -577,3 +578,54 @@ def test_refund_failed_restores_clawed_credits(db):
     rzp._handle_refund_failed(db, failed)
     db.commit()
     assert _balances(db, client.id, bot.id) == 500
+
+
+def _raw_pool_sum(db, client_id):
+    """Raw ledger sum for the account pool scope (``bot_id IS NULL``)."""
+    return int(
+        db.scalar(
+            select(func.coalesce(func.sum(CreditLedger.delta), 0)).where(
+                CreditLedger.client_id == client_id,
+                CreditLedger.bot_id.is_(None),
+            )
+        )
+        or 0
+    )
+
+
+def test_expire_old_topups_scopes_expiry_debit_to_the_bot_ledger(db):
+    """P2-expiry — a per-bot top-up expiry must debit the bot's ledger, not the pool.
+
+    The offsetting ``expiry`` row was previously written without ``bot_id``, so an
+    expired per-bot top-up landed in the account pool (``bot_id IS NULL``): the
+    bot's balance stayed inflated (expired credits still spendable there) while
+    the pool was driven negative. The debit must carry the grant's ``bot_id``.
+    """
+    client = _client(db)
+    bot = _bot(db, client, key="bot-expiry1")
+
+    # Per-bot top-up, then backdate its expiry into the past so the cron sweeps it.
+    grant = credit_service.grant_topup(db, client.id, 400, bot_id=bot.id)
+    grant.expires_at = datetime.now(UTC) - timedelta(days=1)
+    db.commit()
+
+    pool_before = _raw_pool_sum(db, client.id)
+
+    expired = credit_service.expire_old_topups(db)
+    db.commit()
+
+    assert expired == 400
+
+    expiry_row = db.scalar(
+        select(CreditLedger).where(
+            CreditLedger.grant_id == grant.id,
+            CreditLedger.reason == "expiry",
+        )
+    )
+    assert expiry_row is not None
+    # The debit must be scoped to the bot ledger, NOT the account pool.
+    assert expiry_row.bot_id == bot.id
+
+    # Bot balance is drained to zero; the account pool raw sum is untouched.
+    assert _balances(db, client.id, bot.id) == 0
+    assert _raw_pool_sum(db, client.id) == pool_before

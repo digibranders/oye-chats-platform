@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import {
   CreditCard, Zap, ArrowUpRight, MessageSquare, Globe, Users, HardDrive,
   Mail, Shield, Crown, CheckCircle, XCircle, AlertTriangle, ExternalLink,
-  Receipt, Sparkles, Bot, Headphones,
+  Receipt, Sparkles, Bot, Headphones, Download,
 } from 'lucide-react';
 import {
   getCurrentSubscription, getSubscriptionUsage, getSubscriptionPlans,
@@ -14,6 +14,7 @@ import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/ui/PageHeader';
 import Progress from '../components/ui/Progress';
 import { cn } from '../lib/utils';
+import { formatMoney } from '../lib/currency';
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -38,9 +39,25 @@ function usageColor(pct) {
   return 'primary';
 }
 
-function formatCents(cents) {
-  return `$${(cents / 100).toFixed(2)}`;
+// Delegates to the shared money formatter — plan rows carry a ``currency``
+// field (paise for INR plans, cents for USD) and invoice rows carry
+// ``inv.currency``; pass it through so ₹ amounts get Indian digit grouping.
+function formatCents(cents, currency = 'usd') {
+  return formatMoney(cents, currency);
 }
+
+// Small human label for the invoicing-v2 document type. Legacy rows
+// (invoice_type null) render without a type chip.
+const INVOICE_TYPE_LABELS = {
+  tax_invoice: 'Tax invoice',
+  credit_note: 'Credit note',
+  receipt: 'Receipt',
+};
+
+const INVOICE_STATUS_STYLES = {
+  paid: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10',
+  issued: 'text-sky-600 dark:text-sky-400 bg-sky-500/10',
+};
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -179,8 +196,8 @@ export default function Subscription() {
               {subscription ? (
                 <p className="text-[13px] text-surface-500 dark:text-surface-400 mt-0.5">
                   {plan?.pricing_model === 'per_operator'
-                    ? `${formatCents(plan?.monthly_price_cents || 0)}/operator/mo`
-                    : formatCents(plan?.monthly_price_cents || 0) + '/mo'
+                    ? `${formatCents(plan?.monthly_price_cents || 0, plan?.currency)}/operator/mo`
+                    : formatCents(plan?.monthly_price_cents || 0, plan?.currency) + '/mo'
                   }
                   {subscription.billing_cycle === 'annual' && ' (billed annually)'}
                   {subscription.current_period_end && ` · Renews ${formatDate(subscription.current_period_end)}`}
@@ -270,7 +287,7 @@ export default function Subscription() {
           {usage.overage?.messages > 0 && (
             <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
               <p className="text-[13px] text-amber-700 dark:text-amber-300">
-                <strong>{usage.overage.messages.toLocaleString()}</strong> overage messages · Estimated charge: <strong>{formatCents(usage.overage.amount_cents)}</strong>
+                <strong>{usage.overage.messages.toLocaleString()}</strong> overage messages · Estimated charge: <strong>{formatCents(usage.overage.amount_cents, plan?.currency)}</strong>
               </p>
             </div>
           )}
@@ -327,7 +344,7 @@ export default function Subscription() {
                       <p className="text-lg font-bold text-surface-900 dark:text-white">Custom</p>
                     ) : (
                       <p className="text-lg font-bold text-surface-900 dark:text-white">
-                        {price === 0 ? 'Free' : formatCents(price)}
+                        {price === 0 ? 'Free' : formatCents(price, p.currency)}
                         {price > 0 && (
                           <span className="text-[12px] font-normal text-surface-500">
                             /{p.pricing_model === 'per_operator' ? 'operator/' : ''}mo
@@ -430,39 +447,92 @@ export default function Subscription() {
       {/* Invoices */}
       {invoices.length > 0 && (
         <motion.div {...fadeUp} className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
-          <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-4">Payment History</h3>
+          <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-4">Invoices</h3>
           <div className="space-y-2">
-            {invoices.slice(0, 10).map(inv => (
-              <div key={inv.id} className="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors">
-                <div className="flex items-center gap-3">
-                  <Receipt size={16} className="text-surface-400" />
-                  <div>
-                    <p className="text-[13px] font-medium text-surface-700 dark:text-surface-300">
-                      {inv.description || 'Invoice'}
-                    </p>
-                    <p className="text-[11px] text-surface-500">{formatDate(inv.created_at)}</p>
+            {invoices.slice(0, 10).map(inv => {
+              const isCreditNote = inv.invoice_type === 'credit_note';
+              const typeLabel = INVOICE_TYPE_LABELS[inv.invoice_type];
+              const statusStyle = INVOICE_STATUS_STYLES[inv.status] || 'text-amber-600 dark:text-amber-400 bg-amber-500/10';
+              const amount = formatCents(Math.abs(inv.amount_cents || 0), inv.currency);
+              const gstAmount = inv.total_tax_minor
+                ? formatCents(Math.abs(inv.total_tax_minor), inv.currency)
+                : null;
+              return (
+                <div key={inv.id} className="flex items-center justify-between gap-3 py-2.5 px-3 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Receipt size={16} className="text-surface-400 flex-shrink-0" />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {inv.invoice_number ? (
+                          <p className="text-[13px] font-medium font-mono text-surface-700 dark:text-surface-300 truncate">
+                            {inv.invoice_number}
+                          </p>
+                        ) : (
+                          <p className="text-[13px] font-medium text-surface-700 dark:text-surface-300 truncate">
+                            {inv.description || 'Invoice'}
+                          </p>
+                        )}
+                        {typeLabel && (
+                          <span className={cn(
+                            'px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider',
+                            isCreditNote
+                              ? 'text-sky-600 dark:text-sky-400 bg-sky-500/10'
+                              : 'text-surface-500 dark:text-surface-400 bg-surface-500/10',
+                          )}>
+                            {typeLabel}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-surface-500">
+                        {formatDate(inv.issued_at || inv.created_at)}
+                        {gstAmount && (
+                          <span>
+                            {' · '}
+                            {isCreditNote ? `GST reversed ${gstAmount}` : `incl. ${gstAmount} GST`}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className={cn(
+                      'text-[13px] font-semibold tabular-nums',
+                      isCreditNote
+                        ? 'text-sky-600 dark:text-sky-400'
+                        : 'text-surface-700 dark:text-surface-300',
+                    )}>
+                      {isCreditNote ? `−${amount}` : amount}
+                    </span>
+                    <span className={cn('px-2 py-0.5 rounded-full text-[11px] font-semibold capitalize', statusStyle)}>
+                      {inv.status}
+                    </span>
+                    {inv.pdf_url && (
+                      <a
+                        href={inv.pdf_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Download PDF"
+                        className="inline-flex items-center gap-1 text-[12px] font-medium text-primary-500 hover:text-primary-600"
+                      >
+                        <Download size={14} />
+                        Download
+                      </a>
+                    )}
+                    {!inv.pdf_url && inv.invoice_url && (
+                      <a
+                        href={inv.invoice_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="View invoice"
+                        className="text-primary-500 hover:text-primary-600"
+                      >
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className={cn(
-                    'text-[13px] font-semibold',
-                    inv.status === 'paid' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
-                  )}>
-                    {formatCents(inv.amount_cents)}
-                  </span>
-                  {inv.invoice_url && (
-                    <a
-                      href={inv.invoice_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary-500 hover:text-primary-600"
-                    >
-                      <ExternalLink size={14} />
-                    </a>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </motion.div>
       )}

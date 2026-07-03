@@ -1759,3 +1759,108 @@ def send_trial_data_deleted_email(
     except Exception as exc:
         logger.warning("trial_data_deleted_email_failed for %s: %s", _trial_redact(to_email), exc)
         _capture_email_failure(exc, event="trial_data_deleted", email=to_email)
+
+
+def send_downgrade_reauth_email(
+    to_email: str,
+    *,
+    name: str | None,
+    old_plan_name: str,
+    new_plan_name: str,
+    reauth_url: str,
+) -> None:
+    """Tell the customer their scheduled downgrade cutover needs a new mandate.
+
+    Razorpay's Update Subscription API is blocked for UPI, so a scheduled
+    plan change cancels the old mandate at the period end and requires the
+    customer to re-authorize a fresh mandate for the lower plan. Without this
+    email the customer would be silently stranded with no active subscription
+    and no path back (NB-3). ``reauth_url`` is the Razorpay hosted checkout
+    ``short_url`` for the newly created lower-plan subscription.
+    """
+    safe_name = _esc((name or "").split()[0]) if name else "there"
+
+    body_inner = (
+        f'<tr><td class="oc-pad-x" style="padding:32px 40px 0 40px;">'
+        f'<h1 class="oc-h1" style="margin:0 0 18px 0;font-family:{_FONT_STACK};'
+        f'font-size:24px;font-weight:700;color:{_INK_900};line-height:1.25;">'
+        f"One quick step to finish your switch to {html.escape(new_plan_name)}"
+        f"</h1>"
+        f'<p style="margin:0 0 14px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"Hi {safe_name} &mdash; your billing cycle on "
+        f'<strong style="color:{_INK_900};">{html.escape(old_plan_name)}</strong> '
+        f"has ended and your scheduled move to "
+        f'<strong style="color:{_INK_900};">{html.escape(new_plan_name)}</strong> is ready. '
+        f"Because your payments run on a UPI mandate, we can&rsquo;t change the plan on the "
+        f"existing mandate &mdash; you&rsquo;ll need to authorize a new one for the lower plan."
+        f"</p>"
+        f'<p style="margin:0 0 22px 0;font-family:{_FONT_STACK};font-size:15px;'
+        f'color:{_INK_500};line-height:1.55;">'
+        f"It takes under a minute. Until you confirm, your account stays paused "
+        f"on the new plan &mdash; so please complete it soon to keep your bot live."
+        f"</p>"
+        f"{_trial_cta_button(reauth_url, f'Authorize {new_plan_name}')}"
+        f'<p style="margin:24px 0 0 0;font-family:{_FONT_STACK};font-size:13px;'
+        f'color:{_INK_300};line-height:1.55;">'
+        f"Changed your mind, or need a hand? Reply to this email or write to "
+        f'<a href="mailto:{html.escape(SUPPORT_EMAIL)}" '
+        f'style="color:{_BRAND_PRIMARY};text-decoration:none;">{html.escape(SUPPORT_EMAIL)}</a>.'
+        f"</p>"
+        f"</td></tr>"
+    )
+
+    html_body = _html_doc(
+        preheader=(f"Authorize your new {new_plan_name} mandate to finish the switch and keep your bot live."),
+        body_inner=body_inner,
+        visitor=False,
+    )
+    try:
+        send_email_async(
+            to_email,
+            f"Action needed: confirm your switch to {new_plan_name}",
+            html_body,
+        )
+    except Exception as exc:
+        logger.warning("downgrade_reauth_email_failed for %s: %s", to_email, exc)
+        _capture_email_failure(exc, event="downgrade_reauth", email=to_email)
+
+
+def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
+    """Send the customer their finalized invoice/receipt with a download link.
+
+    Called from the PDF-rendering sweep (worker.tasks.task_render_invoice_pdfs)
+    only when INVOICE_EMAILS_ENABLED — shadow mode never emails.
+    """
+    import html as _html
+
+    from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
+
+    doc_label = {"tax_invoice": "Tax invoice", "credit_note": "Credit note"}.get(invoice.invoice_type, "Receipt")
+    # Same Indian-grouped formatting as the PDF so the two documents agree.
+    amount = _fmt_invoice_inr(invoice.amount_cents)
+    rows = [
+        _info_row(f"{doc_label} no.", _html.escape(invoice.invoice_number)),
+        _info_row("Amount", amount),
+    ]
+    is_credit_note = invoice.invoice_type == "credit_note"
+    if invoice.total_tax_minor:
+        rows.append(
+            _info_row("GST reversed" if is_credit_note else "GST included", _fmt_invoice_inr(invoice.total_tax_minor))
+        )
+    seller_name = _html.escape((invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME)
+    lead = (
+        f"<p>Your refund has been processed. The credit note from {seller_name} is ready.</p>"
+        if is_credit_note
+        else f"<p>Thank you for your payment. Your {doc_label.lower()} from {seller_name} is ready.</p>"
+    )
+    content = (
+        lead + _info_table(rows, bg="#f8fafc", border_color="#e2e8f0") + _cta_button(f"Download {doc_label}", pdf_url)
+    )
+    html = _base_template(
+        f"Your {doc_label.lower()} is ready",
+        content,
+        preheader=f"{doc_label} {invoice.invoice_number} — {amount}",
+        category="Billing",
+    )
+    send_email_async(to_email, f"{doc_label} {invoice.invoice_number} from {seller_name}", html)

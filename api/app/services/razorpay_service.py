@@ -2,7 +2,7 @@
 
 Razorpay is the primary billing provider for OyeChats — Indian customers,
 INR pricing, UPI Autopay for recurring mandates. This module mirrors the
-shape of ``billing_service`` (Stripe) so the routes layer can pick a provider
+shape expected by the routes layer
 based on ``Subscription.payment_provider``.
 
 Conventions:
@@ -18,7 +18,7 @@ Conventions:
   rest of the API still boots when keys aren't configured — useful for local
   dev and for the test suite.
 * Idempotency uses ``ProcessedWebhook`` keyed on the ``x-razorpay-event-id``
-  HTTP header. The same table is shared with the Stripe handler.
+  HTTP header.
 
 References (Razorpay docs, validated against this implementation):
 
@@ -52,7 +52,7 @@ from app.config import (
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
-from app.services import credit_service
+from app.services import credit_service, invoice_service
 
 if TYPE_CHECKING:
     import razorpay
@@ -155,9 +155,7 @@ def create_topup_order(
 
     currency = str(pack.get("currency", "INR")).upper()
     if currency != "INR":
-        raise ValueError(
-            f"Razorpay only supports INR top-ups; got '{currency}'. Use the Stripe provider for non-INR packs."
-        )
+        raise ValueError(f"Razorpay only supports INR top-ups; got '{currency}'.")
 
     rzp = _get_razorpay()
     amount_inr = int(pack["amount"])
@@ -176,6 +174,15 @@ def create_topup_order(
         "amount_inr": str(amount_inr),
         "bonus_pct": str(bonus_pct),
     }
+    # The modal advertises USD prices while Razorpay charges INR. Carry the
+    # display price into notes so the invoice line can name the pack the
+    # customer actually chose ("$249 pack") — GST documents must state values
+    # in INR, so the USD figure stays descriptive only.
+    display_amount = pack.get("display_amount")
+    display_currency = str(pack.get("display_currency") or "").upper()
+    if display_amount is not None and display_currency:
+        symbol = "$" if display_currency == "USD" else f"{display_currency} "
+        notes["display_price"] = f"{symbol}{display_amount}"
     # Per-bot top-ups stamp the target bot in notes so the captured-
     # payment handler grants to that bot's isolated ledger rather than
     # the client pool.
@@ -553,6 +560,65 @@ def create_seat_addon_subscription(
     }
 
 
+def edit_seat_addon_quantity(session: Session, sub: Subscription, extra_seats: int) -> None:
+    """Set the operator-seat add-on quantity for ``sub``.
+
+    Creates the add-on subscription on first use, edits its quantity
+    thereafter, and cancels it when ``extra_seats`` drops to 0. The main
+    plan subscription is NEVER touched here (P0-3).
+    """
+    extra_seats = max(int(extra_seats), 0)
+    if extra_seats == 0:
+        if sub.seat_addon_subscription_id:
+            cancel_seat_addon(session, sub)
+        sub.seat_addon_quantity = 0
+        session.flush()
+        return
+
+    rzp = _get_razorpay()
+    if not sub.seat_addon_subscription_id:
+        addon = create_seat_addon_subscription(session, sub.client, extra_seats=extra_seats)
+        sub.seat_addon_subscription_id = addon["subscription_id"]
+    else:
+        try:
+            rzp.subscription.edit(
+                sub.seat_addon_subscription_id,
+                data={"quantity": extra_seats, "schedule_change_at": "now"},
+            )
+        except Exception as exc:
+            logger.exception(
+                "Razorpay seat add-on edit (qty=%d) failed for %s: %s",
+                extra_seats,
+                sub.seat_addon_subscription_id,
+                exc,
+            )
+            raise RazorpayBillingError("Could not update seat add-on with Razorpay.") from exc
+    sub.seat_addon_quantity = extra_seats
+    session.flush()
+
+
+def cancel_seat_addon(session: Session, sub: Subscription) -> None:
+    """Cancel the seat add-on subscription at the gateway and clear the mirror."""
+    if not sub.seat_addon_subscription_id:
+        return
+    rzp = _get_razorpay()
+    try:
+        rzp.subscription.cancel(
+            sub.seat_addon_subscription_id,
+            data={"cancel_at_cycle_end": 0},
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay seat add-on cancel failed for %s: %s",
+            sub.seat_addon_subscription_id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not cancel the seat add-on with Razorpay.") from exc
+    sub.seat_addon_subscription_id = None
+    sub.seat_addon_quantity = 0
+    session.flush()
+
+
 def create_per_bot_subscription(
     session: Session,
     client: Client,
@@ -636,7 +702,7 @@ def cancel_subscription(subscription: Subscription, *, at_period_end: bool = Tru
 
     Razorpay's parameter is ``cancel_at_cycle_end`` (1 = at end, 0 = now).
     Local DB state is updated by the webhook handler — we don't double-write
-    here, mirroring the Stripe flow.
+    here.
     """
     if not subscription.razorpay_subscription_id:
         logger.warning(
@@ -803,7 +869,6 @@ def _record_or_skip_event(session: Session, event_id: str | None) -> bool:
     sent confirmation emails. We now use an atomic
     ``INSERT … ON CONFLICT DO NOTHING`` and key off ``rowcount``: the worker
     whose insert won proceeds, the loser sees ``rowcount == 0`` and bails.
-    Mirrors the Stripe path in ``billing_service._record_or_skip_webhook``.
     Postgres-only — every deployment is Postgres + pgvector.
     """
     if not event_id:
@@ -846,6 +911,24 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
     event_name = event.get("event", "")
     payload = event.get("payload") or {}
 
+    # Seat add-on subscriptions (RAZORPAY_SEAT_PLAN_ID) are billed on their own
+    # Razorpay subscription, stamped ``notes.purpose == "seat_addon"``. Their
+    # lifecycle events (activated/charged/cancelled/...) must be ACKnowledged so
+    # Razorpay stops retrying, but they carry NO plan entitlement — routing them
+    # through the plan handlers would grant monthly plan credits for a seat
+    # charge (P0-3). Record the event (idempotency already ran above) and return
+    # before dispatch.
+    if event_name.startswith("subscription."):
+        sub_entity = _extract_subscription_entity(payload) or {}
+        sub_notes = sub_entity.get("notes") or {}
+        if (sub_notes.get("purpose") or "").lower() == "seat_addon":
+            logger.info(
+                "Seat add-on subscription event %s (%s) acknowledged; no plan credit granted",
+                event_name,
+                sub_entity.get("id"),
+            )
+            return f"Seat add-on event {event_name} acknowledged"
+
     handlers = {
         "subscription.activated": _handle_subscription_activated,
         "subscription.charged": _handle_subscription_charged,
@@ -858,12 +941,14 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
         "payment.captured": _handle_payment_captured,
         "payment.failed": _handle_payment_failed,
         "order.paid": _handle_payment_captured,  # alias path for top-ups
-        # Refunds — both event names land in the same handler. Razorpay
-        # fires ``refund.created`` on initiation and ``refund.processed``
-        # when settlement clears; we treat them identically and rely on
-        # the upstream event-id dedupe so the same id never lands twice.
+        # Refunds — the credit CLAWBACK runs on whichever event arrives first
+        # (``refund.created`` fires at initiation, so the customer can't spend
+        # during settlement), but the Section 34 CREDIT NOTE is only issued on
+        # ``refund.processed`` — a bank refund can still FAIL after creation,
+        # and a legal document for a refund that never happened is a GST audit
+        # defect that cannot be quietly deleted.
         "refund.created": _handle_refund_created,
-        "refund.processed": _handle_refund_created,
+        "refund.processed": _handle_refund_processed,
         "refund.failed": _handle_refund_failed,
         # Disputes / chargebacks. Razorpay withdraws the funds on ``lost`` —
         # that's when we claw the credits back. ``created`` / ``won`` only move
@@ -941,16 +1026,22 @@ def reconcile_subscription_from_razorpay(
     the webhook (or a concurrent verify call) gets there first, this is a
     cheap no-op that just re-queries the local row.
 
+    ORDERING (important): the subscription is fetched and its status checked
+    BEFORE the idempotency key is recorded. A first verify call can race ahead
+    of Razorpay's mandate authorisation and see a non-billable state
+    (``created``/``pending``/``halted``); recording the key there would burn it,
+    and a later verify — once the mandate is ``authenticated``/``active`` —
+    would short-circuit on the already-recorded key and never materialise the
+    row. On localhost (no webhook to fall back on) that permanently strands the
+    customer on their old plan after a successful payment. So we only record the
+    key once we've confirmed a billable state and are about to grant — that
+    keeps the grant-once guarantee while letting an early call retry.
+
     Returns the local ``Subscription`` if reconcile succeeded (now or
     previously), or ``None`` if Razorpay reports the subscription in a
-    non-billable state we shouldn't materialise yet (e.g. ``created``,
-    ``pending``, ``halted``) — let the webhook handle those.
+    non-billable state we shouldn't materialise yet — let a later call (or the
+    webhook) handle those.
     """
-    synthetic_event_id = f"reconcile:{razorpay_subscription_id}"
-    if not _record_or_skip_event(session, synthetic_event_id):
-        # Webhook or another verify call already reconciled — just re-query.
-        return _resolve_local_subscription(session, razorpay_subscription_id)
-
     rzp = _get_razorpay()
     try:
         sub_entity = rzp.subscription.fetch(razorpay_subscription_id)
@@ -963,8 +1054,10 @@ def reconcile_subscription_from_razorpay(
 
     status = (sub_entity.get("status") or "").lower()
     if status not in ("active", "authenticated"):
+        # Non-billable yet. Return WITHOUT recording the idempotency key so a
+        # later verify (once the mandate clears) can retry and materialise.
         logger.info(
-            "Razorpay subscription %s in non-billable state '%s' — deferring local upsert to webhook",
+            "Razorpay subscription %s in non-billable state '%s' — deferring local upsert (key not burned)",
             razorpay_subscription_id,
             status,
         )
@@ -976,6 +1069,7 @@ def reconcile_subscription_from_razorpay(
     # ``notes.oyechats_client_id`` it carries. When the caller's identity is
     # known, refuse to materialise a subscription whose notes name a different
     # client (the webhook path, which has no caller, passes None and is trusted).
+    # Done before recording the key so a mismatched caller can't burn it either.
     if expected_client_id is not None:
         notes = sub_entity.get("notes") or {}
         notes_client_id = _client_id_from_notes(notes)
@@ -987,6 +1081,12 @@ def reconcile_subscription_from_razorpay(
                 notes_client_id,
             )
             raise RazorpayBillingError("Subscription does not belong to the requesting client.")
+
+    # Billable + owned — NOW gate the grant. If the webhook or a concurrent
+    # verify already materialised it, this is a no-op re-query (grant-once).
+    synthetic_event_id = f"reconcile:{razorpay_subscription_id}"
+    if not _record_or_skip_event(session, synthetic_event_id):
+        return _resolve_local_subscription(session, razorpay_subscription_id)
 
     # Synthesize a webhook-shaped payload and reuse the canonical handler so
     # the create-or-update logic stays in one place. ``_handle_subscription_activated``
@@ -1163,32 +1263,14 @@ def _grant_subscription_period(
 ) -> bool:
     """Reset + grant the plan's monthly credits for ``period_end``, once.
 
-    Idempotent per billing period (remediation H4): if the subscription's
-    ``last_granted_period_end`` already equals ``period_end``, this is a no-op
-    and returns ``False``. Otherwise it resets the prior period's unused plan
-    grant, grants the new allowance, advances the marker, and returns ``True``.
-
-    A ``None`` ``period_end`` (event missing ``current_end``) still grants but
-    cannot advance the marker; that is logged so a missing period is visible
-    rather than silently double-granting on a later event.
+    Thin delegate to :func:`credit_service.grant_subscription_period_once` — the
+    shared, per-scope + per-period-idempotent helper also used by the renewal
+    cron (BL-5 / NB-8). Behaviour is unchanged: idempotent on
+    ``last_granted_period_end == period_end`` (remediation H4), reset + grant
+    scoped to ``subscription.bot_id``, marker advanced only when ``period_end``
+    is present.
     """
-    if (
-        period_end is not None
-        and subscription.last_granted_period_end is not None
-        and subscription.last_granted_period_end == period_end
-    ):
-        return False
-
-    credit_service.reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
-    credit_service.grant_for_subscription(session, subscription, reference_id=invoice_id)
-    if period_end is not None:
-        subscription.last_granted_period_end = period_end
-    else:
-        logger.warning(
-            "Granted subscription %s credits without a period end — marker not advanced",
-            subscription.razorpay_subscription_id,
-        )
-    return True
+    return credit_service.grant_subscription_period_once(session, subscription, period_end, invoice_id=invoice_id)
 
 
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:
@@ -1248,8 +1330,56 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
                 .all()
             )
             for old in existing:
+                # Retire the predecessor's UPI mandate AT THE GATEWAY, not just
+                # locally. The re-auth model keeps the old mandate live until the
+                # new one authorizes (so an abandoned checkout doesn't strand the
+                # customer); now that the new sub is active we cancel the old one
+                # immediately so Razorpay stops debiting it (BL-4 double-charge).
+                #
+                # ``existing`` is queried before ``local`` is inserted, so it can
+                # never contain the just-activated row — but we guard defensively
+                # against the razorpay id in case of any future reordering. Each
+                # cancel is wrapped so one gateway failure can't abort the
+                # activation (the local flip below still stops entitlement).
+                gateway_cancel_ok = True
+                if old.razorpay_subscription_id and old.razorpay_subscription_id != razorpay_sub_id:
+                    try:
+                        cancel_subscription(old, at_period_end=False)
+                    except Exception:
+                        # The gateway cancel FAILED, so the old UPI mandate is
+                        # still LIVE at Razorpay and will keep debiting the
+                        # customer (the BL-4 double-charge, relocated to the
+                        # failure path). We cannot leave the old row locally
+                        # ``active``: the partial unique index
+                        # ``ix_subscriptions_client_legacy_active`` allows only
+                        # ONE active/trialing/past_due client-level (bot_id NULL)
+                        # subscription per client, so a second active row would
+                        # make the new sub's INSERT below fail and abort the
+                        # whole activation (losing the resilience property). So
+                        # we still flip it out of the active set, but we do NOT
+                        # pretend it was a clean cancel — we stamp a distinct
+                        # ``cancel_reason`` so the still-live mandate is
+                        # queryable for reconcile/retry, and log at ERROR
+                        # (alert-worthy). This is materially safer than the
+                        # original silent lie: the failure is loud and the row
+                        # is distinguishable from a normal cancel.
+                        gateway_cancel_ok = False
+                        logger.error(
+                            "Gateway-cancel FAILED for superseded subscription %s "
+                            "at activation of %s (client %s) — the old UPI mandate "
+                            "is STILL LIVE at Razorpay and will keep debiting the "
+                            "customer. Marked local row canceled with "
+                            "cancel_reason=gateway_cancel_failed_mandate_live for "
+                            "manual/automated reconciliation.",
+                            old.razorpay_subscription_id,
+                            razorpay_sub_id,
+                            client_id,
+                            exc_info=True,
+                        )
                 old.status = "canceled"
                 old.canceled_at = datetime.now(UTC)
+                if not gateway_cancel_ok:
+                    old.cancel_reason = "gateway_cancel_failed_mandate_live"
 
         # ``notes.prev_razorpay_subscription_id`` is set by the upgrade /
         # scheduled-promotion paths so we can recognise this is a transition
@@ -1305,7 +1435,7 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
         # customer who upgrades to Standard mid-cycle sees their leftover
         # free credits stacked on top of the new grant (e.g. 500 + 10,000
         # → 10,500 / 10,000). Mirrors the same reset → grant ordering used
-        # by the Stripe change-plan path and ``start_trial_subscription``.
+        # by the change-plan path and ``start_trial_subscription``.
         # Sets the period marker so the first subscription.charged for this
         # period is a no-op (H4).
         _grant_subscription_period(session, local, current_period_end)
@@ -1340,6 +1470,94 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
     local.operator_quantity = quantity
     session.flush()
     return f"Subscription {razorpay_sub_id} re-activated"
+
+
+def _ensure_subscription_charge_invoice(
+    session: Session,
+    local: Subscription,
+    *,
+    payment_id: str | None,
+    amount_minor: int | None,
+    currency: str | None,
+    period_start: datetime | None,
+    period_end: datetime | None,
+    razorpay_invoice_id: str | None = None,
+) -> Invoice | None:
+    """Create + finalize the payment-history invoice for a subscription charge.
+
+    Idempotent on ``payment_id`` (unique-indexed) so it is safe to call from
+    BOTH the ``subscription.charged`` webhook and the synchronous verify path
+    that stands in for webhooks the box can't receive (local dev, webhook lag).
+    Whichever runs first creates the row; the other finds it and no-ops — no
+    duplicate invoice. Returns the invoice (new or existing), or ``None`` when
+    there is no payment id.
+    """
+    if not payment_id:
+        return None
+    existing = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+    if existing:
+        return existing
+    invoice = Invoice(
+        client_id=local.client_id,
+        subscription_id=local.id,
+        bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
+        amount_cents=int(amount_minor or 0),
+        currency=str(currency or "INR").lower(),
+        status="paid",
+        razorpay_payment_id=payment_id,
+        # Razorpay's own invoice entity for this cycle — payment evidence
+        # linking our document to theirs, not the tax doc.
+        razorpay_invoice_id=razorpay_invoice_id,
+        period_start=period_start,
+        period_end=period_end,
+        description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
+        paid_at=datetime.now(UTC),
+    )
+    session.add(invoice)
+    session.flush()
+    # Enrich into a numbered GST tax invoice when invoicing v2 is on (no-op
+    # otherwise — leaves the legacy payment-history row). The _safely wrapper
+    # savepoints any finalize failure so shadow-mode invoicing never blocks the
+    # money path.
+    invoice_service.finalize_invoice_safely(session, invoice)
+    return invoice
+
+
+def record_verified_subscription_charge(
+    session: Session, local: Subscription, razorpay_payment_id: str | None
+) -> Invoice | None:
+    """Record a subscription's first-charge invoice from a verified checkout.
+
+    The ``subscription.charged`` webhook is the canonical invoice creator, but
+    it can't reach a local dev box and may lag in prod. The verify endpoint has
+    the captured ``razorpay_payment_id`` in hand, so we fetch the payment and
+    create the invoice synchronously — idempotent on the payment id, so the
+    eventual webhook never duplicates it. Never raises into the caller: a
+    failure here must not fail checkout verification.
+    """
+    if not razorpay_payment_id or local is None or not local.razorpay_subscription_id:
+        return None
+    try:
+        pay = _get_razorpay().payment.fetch(razorpay_payment_id)
+    except Exception:  # noqa: BLE001 — best-effort; the webhook remains the canonical path
+        logger.exception("verify: could not fetch payment %s for first-charge invoice", razorpay_payment_id)
+        return None
+    if str(pay.get("status") or "").lower() != "captured":
+        return None  # authorised-but-not-captured → wait for the charge webhook
+    try:
+        return _ensure_subscription_charge_invoice(
+            session,
+            local,
+            payment_id=razorpay_payment_id,
+            amount_minor=pay.get("amount", 0),
+            currency=pay.get("currency", "INR"),
+            period_start=local.current_period_start,
+            period_end=local.current_period_end,
+            razorpay_invoice_id=pay.get("invoice_id"),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("verify: failed to record first-charge invoice for payment %s", razorpay_payment_id)
+        return None
 
 
 def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> str:
@@ -1380,29 +1598,17 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     # link the period grant for precise refund clawback (C2 / NV5).
     period_invoice_id: int | None = None
     if pay_entity and pay_entity.get("id"):
-        rzp_payment_id = pay_entity["id"]
-        existing = (
-            session.execute(select(Invoice).where(Invoice.razorpay_payment_id == rzp_payment_id)).scalars().first()
+        period_invoice = _ensure_subscription_charge_invoice(
+            session,
+            local,
+            payment_id=pay_entity["id"],
+            amount_minor=pay_entity.get("amount", 0),
+            currency=pay_entity.get("currency", "INR"),
+            period_start=new_period_start,
+            period_end=new_period_end,
+            razorpay_invoice_id=pay_entity.get("invoice_id"),
         )
-        if existing:
-            period_invoice_id = existing.id
-        else:
-            period_invoice = Invoice(
-                client_id=local.client_id,
-                subscription_id=local.id,
-                bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
-                amount_cents=int(pay_entity.get("amount", 0)),
-                currency=str(pay_entity.get("currency", "INR")).lower(),
-                status="paid",
-                razorpay_payment_id=rzp_payment_id,
-                period_start=new_period_start,
-                period_end=new_period_end,
-                description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
-                paid_at=datetime.now(UTC),
-            )
-            session.add(period_invoice)
-            session.flush()
-            period_invoice_id = period_invoice.id
+        period_invoice_id = period_invoice.id if period_invoice else None
 
     # Grant this period's credits at most once, keyed on the period end marker
     # (replaces the old fragile 24h time-window heuristic — H4). The activation
@@ -1421,8 +1627,37 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         local.current_period_end = new_period_end
     local.status = "active"
     session.flush()
-
     return f"Subscription {razorpay_sub_id} charged"
+
+
+def _promote_scheduled_if_pending(session: Session, local: Subscription) -> str | None:
+    """Promote a queued scheduled downgrade if the row carries one.
+
+    Shared by both ``subscription.completed`` and ``subscription.cancelled``
+    so the two cutover paths can't drift. Under a ``cancel_at_cycle_end``
+    mandate (which is how a scheduled paid downgrade is set up) Razorpay fires
+    ``subscription.cancelled`` at the cutover — NOT ``subscription.completed``
+    — so the cancelled handler MUST run this before its terminal cancel or the
+    queued downgrade is lost (BL-1).
+
+    Returns a status message when a promotion happened, or ``None`` when there
+    was nothing to promote (no queued change, or already promoted). Delegates
+    to ``transition_service.promote_scheduled_change``, which is idempotent
+    and also notifies the customer of the re-auth link (NB-3).
+    """
+    if not local.scheduled_plan_id:
+        return None
+
+    from app.services import transition_service
+
+    new_payload = transition_service.promote_scheduled_change(session, local)
+    session.flush()
+    if new_payload is None:
+        # Race or stale state (e.g. scheduled plan vanished) — the promotion
+        # helper already cleared the trio. Let the caller apply its terminal
+        # status.
+        return None
+    return "promoted scheduled change"
 
 
 def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) -> str:
@@ -1432,6 +1667,15 @@ def _handle_subscription_cancelled(session: Session, payload: dict[str, Any]) ->
     local = _resolve_local_subscription(session, sub_entity.get("id", ""))
     if not local:
         return "Subscription not found"
+
+    # A ``cancel_at_cycle_end`` mandate fires this event at the cutover of a
+    # scheduled downgrade. Promote the queued change BEFORE the terminal flip
+    # so the customer transitions into the lower tier instead of dropping to
+    # no-subscription (BL-1). ``promote_scheduled_change`` marks the old row
+    # terminal itself and notifies the customer.
+    if _promote_scheduled_if_pending(session, local) is not None:
+        return f"Subscription {sub_entity.get('id')} cancelled → promoted scheduled change"
+
     local.status = "canceled"
     local.canceled_at = datetime.now(UTC)
     session.flush()
@@ -1456,18 +1700,7 @@ def _handle_subscription_completed(session: Session, payload: dict[str, Any]) ->
     if not local:
         return "Subscription not found"
 
-    if local.scheduled_plan_id:
-        # Promotion path. ``promote_scheduled_change`` flips status to
-        # expired itself so the partial-unique index allows the new row.
-        from app.services import transition_service
-
-        new_payload = transition_service.promote_scheduled_change(session, local)
-        session.flush()
-        if new_payload is None:
-            # Race or stale state — fall through to plain expiry below.
-            local.status = "expired"
-            session.flush()
-            return f"Subscription {sub_entity.get('id')} completed (scheduled change cleared)"
+    if _promote_scheduled_if_pending(session, local) is not None:
         return f"Subscription {sub_entity.get('id')} completed → promoted scheduled change"
 
     local.status = "expired"
@@ -1597,6 +1830,13 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             target_bot_id = None
 
+    # Name the pack the way the customer bought it ($-display when the order
+    # notes carry it, INR otherwise) plus the credits it grants. Legal amounts
+    # on the document remain INR regardless.
+    display_price = str(notes.get("display_price") or "").strip()
+    pack_label = f"{display_price} pack" if display_price else f"₹{amount_inr} pack"
+    topup_description = f"Credits top-up — {pack_label} ({credits:,} credits)"
+
     invoice = Invoice(
         client_id=client_id,
         subscription_id=None,
@@ -1605,17 +1845,22 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         currency=str((pay_entity or {}).get("currency", "INR")).lower(),
         status="paid",
         razorpay_payment_id=rzp_payment_id,
-        description=f"Top-up ₹{amount_inr} pack",
+        description=topup_description,
         paid_at=datetime.now(UTC),
     )
     session.add(invoice)
     session.flush()
+    # Numbered tax invoice for the top-up when invoicing v2 is on (no-op
+    # otherwise). The _safely wrapper savepoints any finalize failure so it can
+    # never block the credit grant below, while a clean finalize commits its
+    # serial atomically with this transaction.
+    invoice_service.finalize_invoice_safely(session, invoice)
 
     credit_service.grant_topup(
         session,
         client_id,
         credits,
-        note=f"Top-up ₹{amount_inr} pack (Razorpay {rzp_order_id or rzp_payment_id})",
+        note=f"{topup_description} (Razorpay {rzp_order_id or rzp_payment_id})",
         bot_id=target_bot_id,
         reference_id=invoice.id,  # link grant → invoice for precise refund clawback (C2)
     )
@@ -1651,7 +1896,7 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
     shape; the ``payment_id`` lets us locate the local ``Invoice`` row we
     wrote at capture time. Each event is uniquely identified by Razorpay's
     own event id (deduped one layer up via ``_record_or_skip_event``), so
-    the cumulative-vs-delta bookkeeping that ``charge.refunded`` on Stripe
+    the cumulative-vs-delta bookkeeping that other gateways'
     needs is not required here: each refund event represents exactly its
     own amount.
 
@@ -1709,8 +1954,11 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         invoice_id=inv.id,  # claw back the grant THIS invoice paid for (C2 / NV5)
     )
 
-    # Razorpay refunds may be partial; mirror Stripe's distinction so the
-    # billing UI can render the right copy.
+    # Razorpay refunds may be partial; keep the full/partial distinction so the
+    # billing UI can render the right copy. The Section 34 credit note is NOT
+    # issued here — refund.created only means "initiated", and a bank refund
+    # can still fail; the note is issued by _handle_refund_processed once the
+    # settlement actually clears.
     inv.status = "refunded" if refund_minor >= charge_minor else "partially_refunded"
     session.flush()
 
@@ -1723,6 +1971,32 @@ def _handle_refund_created(session: Session, payload: dict[str, Any]) -> str:
         entry_id,
     )
     return f"Refund processed: {clawed} credit(s) clawed back from invoice {inv.id}"
+
+
+def _handle_refund_processed(session: Session, payload: dict[str, Any]) -> str:
+    """Refund SETTLED — run the clawback path (a no-op when ``refund.created``
+    already clawed, via the ``refund:{id}`` dedup) and then issue the Section 34
+    credit note. Issuing only on settlement means a bank-failed refund can never
+    leave behind a legal document for money that was never returned (the CN's
+    own idempotency rides on ``provider_ref`` = the refund id).
+    """
+    result = _handle_refund_created(session, payload)
+
+    refund_entity = (payload.get("refund") or {}).get("entity") or {}
+    refund_id = refund_entity.get("id")
+    payment_id = refund_entity.get("payment_id")
+    refund_minor = int(refund_entity.get("amount") or 0)
+    if not refund_id or not payment_id or refund_minor <= 0:
+        return result
+    inv = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+    if inv is None:
+        return result
+    # Savepoint-isolated: a note failure must never undo the clawback — a
+    # missed note surfaces in reconciliation and is re-issuable from admin.
+    note = invoice_service.create_credit_note_safely(session, inv, refund_minor, provider_ref=refund_id)
+    if note is not None:
+        return f"{result}; credit note {note.invoice_number} issued"
+    return result
 
 
 def _handle_refund_failed(session: Session, payload: dict[str, Any]) -> str:
@@ -1818,6 +2092,13 @@ def _handle_dispute_lost(session: Session, payload: dict[str, Any]) -> str:
     )
     inv.status = "dispute_lost"
     session.flush()
+    # Chargeback = funds withdrawn → same Section 34 credit note as a refund.
+    if dispute_id:
+        invoice_service.create_credit_note_safely(session, inv, dispute_minor, provider_ref=dispute_id)
+    else:
+        # No dispute id → no idempotency key → no note. Reconciliation catches
+        # the dispute_lost invoice without a linked credit note.
+        logger.warning("dispute.lost without id on invoice %s — credit note skipped for reconciliation", inv.id)
     return f"Dispute {dispute_id} lost: {clawed} credit(s) clawed from invoice {inv.id}"
 
 

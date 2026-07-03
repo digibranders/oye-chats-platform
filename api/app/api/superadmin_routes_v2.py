@@ -31,6 +31,7 @@ from app.db.models import (
     CreditLedger,
     Document,
     ImpersonationToken,
+    Invoice,
     LeadInfo,
     LLMCallLog,
     Operator,
@@ -41,6 +42,12 @@ from app.db.session import get_session
 from app.services.audit_service import record_audit
 from app.services.email_service import send_password_reset_email
 from app.services.langfuse_service import fetch_summary as fetch_langfuse_summary
+from app.services.seller_profile_service import (
+    SellerProfile,
+    SellerProfileError,
+    get_seller_profile,
+    save_seller_profile,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/superadmin", tags=["superadmin-v2"])
@@ -569,7 +576,11 @@ def list_pricing_config(_admin: Client = Depends(get_superadmin)):
                 "value": r.value,
                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             }
+            # ``billing.*`` documents (e.g. the seller profile) have their own
+            # validated endpoints; keep them out of the raw key/value editor so
+            # they can't be corrupted with an unvalidated write.
             for r in rows
+            if not r.key.startswith("billing.")
         ]
 
 
@@ -585,6 +596,11 @@ def update_pricing_config(
     admin: Client = Depends(get_superadmin),
 ):
     _require_write(admin)
+    if key.startswith("billing."):
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{key}' has a dedicated validated endpoint; use PUT /superadmin/billing/... instead.",
+        )
     with get_session() as session:
         existing = session.get(PricingConfig, key)
         before = existing.value if existing else None
@@ -1178,12 +1194,24 @@ def langfuse_summary(
 @router.get("/system/health/full")
 def system_health_full(_admin: Client = Depends(get_superadmin)):
     """Detailed health snapshot with per-service connectivity."""
-    from app.config import settings
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
+
     from app.core.cache import get_redis
     from app.worker.enqueue import WORKER_ENABLED
     from app.worker.tasks import WORKER_HEARTBEAT_KEY
 
-    health: dict[str, Any] = {"status": "healthy", "version": getattr(settings, "VERSION", "unknown")}
+    # ``app.config`` is a module of constants, not a settings object — a
+    # previous ``from app.config import settings`` would have thrown an
+    # ImportError the first time this endpoint fired. Read the version
+    # from the installed package metadata instead (matches pyproject.toml
+    # ``[project].version``), with a defensive fallback for editable
+    # installs that haven't been ``uv sync``'d.
+    try:
+        _api_version = _pkg_version("oyechats-api")
+    except PackageNotFoundError:
+        _api_version = "unknown"
+    health: dict[str, Any] = {"status": "healthy", "version": _api_version}
 
     try:
         with get_session() as session:
@@ -1222,8 +1250,13 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
         if not worker_alive:
             health["status"] = "degraded"
 
-    health["razorpay"] = "connected" if getattr(settings, "RAZORPAY_ENABLED", False) else "disabled"
-    health["storage"] = "connected" if getattr(settings, "R2_BUCKET_NAME", None) else "unknown"
+    # ``app.config`` is a module of top-level constants, not a settings
+    # object — the previous ``getattr(settings, …)`` lookups would have
+    # thrown ImportError inside the function. Read the constants directly.
+    from app.config import R2_BUCKET_NAME, RAZORPAY_ENABLED
+
+    health["razorpay"] = "connected" if RAZORPAY_ENABLED else "disabled"
+    health["storage"] = "connected" if R2_BUCKET_NAME else "unknown"
     return health
 
 
@@ -1283,3 +1316,373 @@ def _coupon_dict(c: Coupon) -> dict[str, Any]:
         "is_active": c.is_active,
         "created_at": c.created_at.isoformat() if c.created_at else "",
     }
+
+
+# ── billing: seller-of-record profile ───────────────────────────────────────
+
+
+class SellerProfileBody(BaseModel):
+    # All optional for PATCH semantics — omitted fields keep their stored value
+    # (legal_name's required-on-first-save rule is enforced by the service).
+    # ``exclude_unset`` in the handler preserves the omitted-vs-explicit-null
+    # distinction so a field can be intentionally cleared with ``null``.
+    legal_name: str | None = None
+    trade_name: str | None = None
+    gstin: str | None = None
+    address_lines: list[str] | None = None
+    state_code: str | None = None
+    country: str | None = None
+    sac_code: str | None = None
+    tax_rate_bps: int | None = None
+    price_inclusive: bool | None = None
+    lut_active: bool | None = None
+    lut_number: str | None = None
+    invoice_prefix: str | None = None
+    logo_url: str | None = None
+
+
+def _profile_dict(profile: SellerProfile) -> dict[str, Any]:
+    return {
+        "configured": profile.configured,
+        "gst_enabled": profile.gst_enabled,
+        "legal_name": profile.legal_name,
+        "trade_name": profile.trade_name,
+        "gstin": profile.gstin,
+        "address_lines": profile.address_lines,
+        "state_code": profile.state_code,
+        "country": profile.country,
+        "sac_code": profile.sac_code,
+        "tax_rate_bps": profile.tax_rate_bps,
+        "price_inclusive": profile.price_inclusive,
+        "lut_active": profile.lut_active,
+        "lut_number": profile.lut_number,
+        "invoice_prefix": profile.invoice_prefix,
+        "logo_url": profile.logo_url,
+    }
+
+
+@router.get("/billing/seller-profile")
+def read_seller_profile(_admin: Client = Depends(get_superadmin)):
+    """Seller identity printed on tax invoices (invoicing v2 Phase 0)."""
+    with get_session() as session:
+        return _profile_dict(get_seller_profile(session))
+
+
+@router.put("/billing/seller-profile")
+def update_seller_profile(
+    body: SellerProfileBody,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    _require_write(admin)
+    with get_session() as session:
+        before = _profile_dict(get_seller_profile(session))
+        try:
+            profile = save_seller_profile(
+                session,
+                body.model_dump(exclude_unset=True),
+                actor_id=admin.id,
+            )
+        except SellerProfileError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        after = _profile_dict(profile)
+        record_audit(
+            session,
+            actor=admin,
+            action="billing.seller_profile.update",
+            target_type="pricing_config",
+            target_id="billing.seller_profile",
+            before=before,
+            after=after,
+            request=request,
+        )
+        session.commit()
+        return after
+
+
+# ── billing: invoice console (invoicing v2 Phase 6) ─────────────────────────
+
+
+def _send_invoice_email_now(to_email: str, invoice: Invoice, pdf_url: str) -> None:
+    """Indirection point (tests substitute it) around the invoice email."""
+    from app.services.email_service import send_invoice_email
+
+    send_invoice_email(to_email, invoice, pdf_url)
+
+
+def _invoice_row(inv: Invoice, client_name: str | None) -> dict[str, Any]:
+    return {
+        "id": inv.id,
+        "client_id": inv.client_id,
+        "client_name": client_name,
+        "invoice_number": inv.invoice_number,
+        "invoice_type": inv.invoice_type,
+        "status": inv.status,
+        "amount_cents": inv.amount_cents,
+        "currency": inv.currency,
+        "taxable_value_minor": inv.taxable_value_minor,
+        "total_tax_minor": inv.total_tax_minor,
+        "supply_kind": inv.supply_kind,
+        "is_export": inv.is_export,
+        "pdf_url": inv.pdf_url,
+        "credit_note_of_id": inv.credit_note_of_id,
+        "issued_at": inv.issued_at.isoformat() if inv.issued_at else None,
+        "created_at": inv.created_at.isoformat() if inv.created_at else None,
+    }
+
+
+@router.get("/invoices")
+def list_all_invoices(
+    _admin: Client = Depends(get_superadmin),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    invoice_type: str | None = Query(None),
+    client_id: int | None = Query(None),
+    search: str | None = Query(None, max_length=120),
+    include_legacy: bool = Query(False),
+):
+    """All issued documents (tax invoices / credit notes / receipts), newest first.
+
+    Legacy payment-history rows are excluded by default — they are not legal
+    documents; flip ``include_legacy`` for the raw payment mirror.
+    """
+    with get_session() as session:
+        stmt = select(Invoice, Client.name).join(Client, Invoice.client_id == Client.id)
+        if not include_legacy:
+            stmt = stmt.where(Invoice.invoice_number.isnot(None))
+        if invoice_type:
+            stmt = stmt.where(Invoice.invoice_type == invoice_type)
+        if client_id:
+            stmt = stmt.where(Invoice.client_id == client_id)
+        if search:
+            escaped = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            needle = f"%{escaped}%"
+            stmt = stmt.where(
+                Invoice.invoice_number.ilike(needle) | Client.email.ilike(needle) | Client.name.ilike(needle)
+            )
+        total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+        rows = session.execute(stmt.order_by(desc(Invoice.id)).offset((page - 1) * limit).limit(limit)).all()
+        return {
+            "total": int(total),
+            "page": page,
+            "limit": limit,
+            "items": [_invoice_row(inv, client_name) for inv, client_name in rows],
+        }
+
+
+@router.get("/invoices/{invoice_id}")
+def invoice_detail(invoice_id: int, _admin: Client = Depends(get_superadmin)):
+    with get_session() as session:
+        inv = session.get(Invoice, invoice_id)
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        client = session.get(Client, inv.client_id)
+        return {
+            **_invoice_row(inv, client.name if client else None),
+            "razorpay_payment_id": inv.razorpay_payment_id,
+            "razorpay_invoice_id": inv.razorpay_invoice_id,
+            "tax_rate_bps": inv.tax_rate_bps,
+            "cgst_minor": inv.cgst_minor,
+            "sgst_minor": inv.sgst_minor,
+            "igst_minor": inv.igst_minor,
+            "hsn_sac": inv.hsn_sac,
+            "place_of_supply": inv.place_of_supply,
+            "seller_snapshot": inv.seller_snapshot,
+            "buyer_snapshot": inv.buyer_snapshot,
+            "line_items": inv.line_items,
+            "description": inv.description,
+            "period_start": inv.period_start.isoformat() if inv.period_start else None,
+            "period_end": inv.period_end.isoformat() if inv.period_end else None,
+            "invoice_url": inv.invoice_url,
+        }
+
+
+@router.post("/invoices/{invoice_id}/resend-email")
+def resend_invoice_email(invoice_id: int, request: Request, admin: Client = Depends(get_superadmin)):
+    """Re-send the document email to the buyer (e.g. after a lost delivery)."""
+    _require_write(admin)
+    from app import config as app_config
+
+    # The kill switch governs ALL customer-facing delivery — a resend while
+    # it's off would email a document whose serial the customer API is
+    # deliberately hiding.
+    if not app_config.INVOICE_EMAILS_ENABLED:
+        raise HTTPException(status_code=409, detail="Invoice emails are disabled (INVOICE_EMAILS_ENABLED).")
+    with get_session() as session:
+        inv = session.get(Invoice, invoice_id)
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        if not inv.invoice_number or not inv.pdf_url:
+            raise HTTPException(
+                status_code=409,
+                detail="No rendered PDF yet — the sweep renders within ~5 minutes; retry shortly.",
+            )
+        to_email = (inv.buyer_snapshot or {}).get("email")
+        if not to_email:
+            raise HTTPException(status_code=409, detail="Invoice has no buyer email on record.")
+        _send_invoice_email_now(to_email, inv, inv.pdf_url)
+        inv.emailed_at = datetime.now(UTC)
+        record_audit(
+            session,
+            actor=admin,
+            action="billing.invoice.resend_email",
+            target_type="invoice",
+            target_id=inv.id,
+            after={"to": to_email, "invoice_number": inv.invoice_number},
+            request=request,
+        )
+        session.commit()
+        return {"sent_to": to_email, "invoice_number": inv.invoice_number}
+
+
+@router.post("/invoices/{invoice_id}/regenerate-pdf")
+def regenerate_invoice_pdf(invoice_id: int, request: Request, admin: Client = Depends(get_superadmin)):
+    """Queue a fresh PDF render (template fix, corrupted object, …).
+
+    Clears ``pdf_url`` so the 5-minute worker sweep re-renders and re-uploads
+    under a NEW capability URL; the old R2 object simply becomes unreferenced.
+    The document data itself is immutable — only the rendering is redone.
+    """
+    _require_write(admin)
+    with get_session() as session:
+        inv = session.get(Invoice, invoice_id)
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        if not inv.invoice_number:
+            raise HTTPException(status_code=409, detail="Legacy rows have no document to regenerate.")
+        before = {"pdf_url": inv.pdf_url}
+        inv.pdf_url = None
+        inv.invoice_url = None
+        record_audit(
+            session,
+            actor=admin,
+            action="billing.invoice.regenerate_pdf",
+            target_type="invoice",
+            target_id=inv.id,
+            before=before,
+            request=request,
+        )
+        session.commit()
+        return {"invoice_number": inv.invoice_number, "queued": True}
+
+
+# ── billing: GSTR export + reconciliation (invoicing v2 Phase 7) ────────────
+
+
+@router.get("/billing/gstr-export")
+def gstr_export_csv(
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="IST calendar month, e.g. 2026-07"),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Document-level GSTR-1-style CSV for the CA (B2B / B2CS / B2CL / EXP /
+    CDNR / CDNUR sections + per-section summary). Amounts in RUPEES (two
+    decimals) — the filing is rupee-denominated, unlike the API's minor units."""
+    import csv
+    import io
+
+    from fastapi.responses import PlainTextResponse
+
+    from app.services import invoice_reports
+
+    with get_session() as session:
+        try:
+            rows = invoice_reports.gstr_document_rows(session, month)
+            summary = invoice_reports.gstr_summary(session, month)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _r(minor: int | None) -> str:
+        return f"{(minor or 0) / 100:.2f}"
+
+    def _safe(value: str | None) -> str:
+        # Neutralise CSV formula injection — buyer_name is customer-controlled
+        # and the guaranteed consumer opens this in Excel, which executes a
+        # leading =, +, -, @ (or control char) even inside a quoted cell.
+        text = str(value or "")
+        if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+            return "'" + text
+        return text
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "section",
+            "invoice_number",
+            "invoice_date",
+            "buyer_name",
+            "buyer_gstin",
+            "place_of_supply",
+            "hsn_sac",
+            "rate_percent",
+            "gross_value",
+            "taxable_value",
+            "cgst",
+            "sgst",
+            "igst",
+            "total_tax",
+            "against_invoice",
+            "against_invoice_date",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row["section"],
+                _safe(row["invoice_number"]),
+                row["invoice_date"] or "",
+                _safe(row["buyer_name"]),
+                _safe(row["buyer_gstin"]),
+                _safe(row["place_of_supply"]),
+                _safe(row["hsn_sac"]),
+                f"{(row['rate_bps'] or 0) / 100:.2f}",
+                _r(row["gross_minor"]),
+                _r(row["taxable_minor"]),
+                _r(row["cgst_minor"]),
+                _r(row["sgst_minor"]),
+                _r(row["igst_minor"]),
+                _r(row["total_tax_minor"]),
+                _safe(row["against_invoice"]),
+                row["against_invoice_date"] or "",
+            ]
+        )
+    writer.writerow([])
+    writer.writerow(["SUMMARY", "section", "count", "gross_value", "taxable_value", "total_tax"])
+    for name, bucket in sorted(summary["sections"].items()):
+        writer.writerow(
+            [
+                "SUMMARY",
+                name,
+                bucket["count"],
+                _r(bucket["gross_minor"]),
+                _r(bucket["taxable_minor"]),
+                _r(bucket["total_tax_minor"]),
+            ]
+        )
+    grand = summary["grand_total"]
+    writer.writerow(
+        [
+            "SUMMARY",
+            "TOTAL",
+            grand["count"],
+            _r(grand["gross_minor"]),
+            _r(grand["taxable_minor"]),
+            _r(grand["total_tax_minor"]),
+        ]
+    )
+    # UTF-8 BOM so Excel opens Devanagari / non-ASCII legal names correctly.
+    return PlainTextResponse(
+        "﻿" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="gstr-{month}.csv"'},
+    )
+
+
+@router.get("/billing/reconciliation")
+def billing_reconciliation(_admin: Client = Depends(get_superadmin)):
+    """Anomaly report — every list should be empty in a healthy system."""
+    from app.services import invoice_reports
+
+    with get_session() as session:
+        anomalies = invoice_reports.reconciliation_anomalies(session)
+    return {"counts": {k: len(v) for k, v in anomalies.items()}, **anomalies}

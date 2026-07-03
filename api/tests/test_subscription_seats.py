@@ -30,9 +30,12 @@ def _make_sub(plan, operator_quantity):
     return SimpleNamespace(
         id=10,
         client_id=1,
+        client=SimpleNamespace(id=1, name="Test", email="test@example.com"),
         plan=plan,
         operator_quantity=operator_quantity,
         razorpay_subscription_id=None,
+        seat_addon_subscription_id=None,
+        seat_addon_quantity=0,
     )
 
 
@@ -43,15 +46,65 @@ def _run(sub, delta, mock_db_session, mock_get_session):
         patch("app.api.subscription_routes.get_session", mock_get_session),
         patch("app.api.subscription_routes.lock_client_for_billing", MagicMock()),
         patch("app.api.subscription_routes._resolve_target_subscription", return_value=sub),
-        patch("app.services.razorpay_service.update_subscription_quantity") as mock_update_qty,
+        patch("app.services.razorpay_service.edit_seat_addon_quantity") as mock_edit_addon,
     ):
-        # Mirrors the real function's side effect: bump operator_quantity.
-        def _apply(session, sub_arg, new_total):
-            sub_arg.operator_quantity = new_total
-            return new_total
+        # Mirrors the real helper's side effect: record the add-on seat count.
+        def _apply(session, sub_arg, extra_seats):
+            sub_arg.seat_addon_quantity = extra_seats
 
-        mock_update_qty.side_effect = _apply
+        mock_edit_addon.side_effect = _apply
         return change_seat_count(request, client)
+
+
+def _run_addon(sub, delta, mock_get_session):
+    """Run change_seat_count with BOTH seat helpers patched.
+
+    The main-plan quantity edit (``update_subscription_quantity``) is booby-
+    trapped to fail the test if it is ever called; the seat add-on helper is
+    faked to record its invocation. Enforces the P0-3 invariant: seat deltas
+    must route through a SEPARATE add-on subscription, never the main plan.
+    """
+    request = SeatChangeRequest(delta=delta, bot_id=None)
+    client = SimpleNamespace(id=1)
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("update_subscription_quantity must NOT be called for seat changes (P0-3)")
+
+    def _fake_addon(session, sub_arg, extra_seats):
+        sub_arg.seat_addon_subscription_id = "sub_addon_123"
+        sub_arg.seat_addon_quantity = extra_seats
+
+    with (
+        patch("app.api.subscription_routes.get_session", mock_get_session),
+        patch("app.api.subscription_routes.lock_client_for_billing", MagicMock()),
+        patch("app.api.subscription_routes._resolve_target_subscription", return_value=sub),
+        patch("app.services.razorpay_service.update_subscription_quantity") as mock_edit_main,
+        patch("app.services.razorpay_service.edit_seat_addon_quantity") as mock_addon,
+    ):
+        mock_edit_main.side_effect = _explode
+        mock_addon.side_effect = _fake_addon
+        result = change_seat_count(request, client)
+        return result, mock_edit_main, mock_addon
+
+
+class TestSeatAddonRouting:
+    def test_seat_delta_never_edits_main_plan_quantity(self, mock_db_session, mock_get_session):
+        """A +1 seat change must create/extend the add-on subscription and
+        must NEVER touch the main-plan subscription quantity (P0-3)."""
+        plan = _make_plan(operators_ceiling=10, included_operator_seats=1)
+        sub = _make_sub(plan, operator_quantity=1)
+
+        result, mock_edit_main, mock_addon = _run_addon(sub, delta=1, mock_get_session=mock_get_session)
+
+        # Invariant: edit_main == 0, addon >= 1.
+        assert mock_edit_main.call_count == 0
+        assert mock_addon.call_count >= 1
+        # The add-on carries the seats ABOVE the included floor (2 total - 1 floor = 1).
+        _session_arg, sub_arg, extra_seats = mock_addon.call_args.args
+        assert sub_arg is sub
+        assert extra_seats == 1
+        assert result["total_seats"] == 2
+        assert result["extra_seats"] == 1
 
 
 class TestSeatCeiling:

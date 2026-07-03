@@ -294,9 +294,12 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
 
     ``page_count`` is the number of distinct pages/files under the source (for a
     website, one per crawled URL; for an uploaded file, always 1). ``chunk_count``
-    is the total embedded chunks under the source. ``duration_seconds`` is how long
-    the most recent crawl of this source took (None for uploads / pre-timing
-    crawls). The UI shows "N pages" for websites and "N chunks" for documents.
+    is the total embedded chunks under the source. ``doc_page_count`` is the real
+    page count of an uploaded file — read from the ``total_pages`` metadata stamped
+    at extraction (PDF: page count; DOCX/TXT: 1) — and is ``None`` for websites and
+    for legacy rows ingested before that metadata existed. ``duration_seconds`` is
+    how long the most recent crawl of this source took (None for uploads / pre-timing
+    crawls). The UI shows "N pages" for websites and uploaded documents alike.
     """
     root_name_expr = func.coalesce(
         func.replace(func.substring(Document.document_name, r"^(https?://[^/]+)"), "www.", ""), Document.document_name
@@ -310,6 +313,7 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
             func.max(Document.created_at).label("last_ingested_at"),
             func.count(func.distinct(Document.document_name)).label("page_count"),
             func.count().label("chunk_count"),
+            func.max(cast(Document.metadata_info["total_pages"].astext, Float)).label("doc_page_count"),
             started_expr.label("crawl_started_at"),
         )
         .where(_owner_filter(Document, bot_id, client_id))
@@ -333,6 +337,7 @@ def get_ingested_documents(session, client_id: int = None, bot_id: int = None):
             "ingested_at": r.last_ingested_at.isoformat() if r.last_ingested_at else None,
             "page_count": int(r.page_count),
             "chunk_count": int(r.chunk_count),
+            "doc_page_count": int(r.doc_page_count) if r.doc_page_count is not None else None,
             "duration_seconds": _duration(r.last_ingested_at, r.crawl_started_at),
         }
         for r in results
@@ -404,15 +409,68 @@ def get_all_documents_for_bot(session, bot_id: int = None, client_id: int = None
     return list(session.execute(stmt).scalars())
 
 
+def get_bot_media_urls(
+    session,
+    bot_id: int | None = None,
+    client_id: int | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Return the distinct ``media_urls`` JSONB payloads across a bot's KB.
+
+    Powers the bot-wide "AVAILABLE MEDIA" catalog in the RAG pipeline —
+    so the LLM sees every video/file present anywhere in the knowledge
+    base, not just the URLs that happened to ride with the top-K
+    retrieved chunks. Without this, a topical mismatch between the
+    retrieved chunks and the user's question (e.g. retrieval returns
+    shell-less chunks for a busybox question because pypdf grouped them
+    on the same page) starves the model of the right video option and
+    forces it to emit whichever URL is available — a wrong-topic card.
+
+    ``SELECT DISTINCT metadata_info->'media_urls'`` folds every chunk of
+    a given page into one row (all chunks of a page share the same
+    ``media_urls``), keeping the row count proportional to unique pages
+    with media rather than chunks. ``LIMIT`` caps the worst case where
+    a huge KB legitimately has hundreds of distinct-media pages.
+
+    Returns a list of dicts each shaped like
+    ``{"youtube": [{"video_id": "...", ...}], "files": [...]}``. Callers
+    typically feed them to ``_build_media_catalog`` in rag_service.py.
+    """
+    if bot_id is None and client_id is None:
+        return []
+
+    if bot_id is not None:
+        sql = text(
+            "SELECT DISTINCT metadata_info->'media_urls' AS media "
+            "FROM documents "
+            "WHERE bot_id = :bot_id "
+            "  AND metadata_info ? 'media_urls' "
+            "LIMIT :limit"
+        )
+        params: dict[str, int] = {"bot_id": bot_id, "limit": limit}
+    else:
+        sql = text(
+            "SELECT DISTINCT metadata_info->'media_urls' AS media "
+            "FROM documents "
+            "WHERE client_id = :client_id "
+            "  AND metadata_info ? 'media_urls' "
+            "LIMIT :limit"
+        )
+        params = {"client_id": client_id, "limit": limit}
+
+    rows = session.execute(sql, params).fetchall()
+    return [row[0] for row in rows if isinstance(row[0], dict)]
+
+
 def insert_documents(
     session,
-    client_id: int = None,
+    client_id: int | None = None,
     file_name="",
     file_hash="",
     chunks=None,
     embeddings=None,
     metadatas=None,
-    bot_id: int = None,
+    bot_id: int | None = None,
     source: str = "upload",
 ):
     """Batch insert documents. Supports both client_id (legacy) and bot_id (new).
@@ -496,7 +554,9 @@ def delete_chunks_for_url(
     return session.query(Document).filter(*filters).delete(synchronize_session=False)
 
 
-def is_document_processed(session, client_id: int = None, file_hash: str = "", bot_id: int = None) -> bool:
+def is_document_processed(
+    session, client_id: int | None = None, file_hash: str = "", bot_id: int | None = None
+) -> bool:
     """Check if a document with the given hash already exists."""
     stmt = select(Document.id).where(Document.file_hash == file_hash)
     if bot_id:

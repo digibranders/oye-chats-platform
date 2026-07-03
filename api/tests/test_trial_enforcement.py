@@ -10,6 +10,8 @@ deploy.
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -19,6 +21,7 @@ from fastapi import HTTPException
 
 from app.api import auth as auth_module
 from app.api.chat_routes import _DEFAULT_OFFLINE_MESSAGE, _offline_stream, _polite_offline_payload
+from app.db.models import Client, Plan, Subscription
 
 
 def _client(*, client_id: int = 1, is_superadmin: bool = False) -> SimpleNamespace:
@@ -185,3 +188,95 @@ class TestPoliteOffline:
         assert any(chunk.startswith("METADATA:") for chunk in chunks)
         assert "See you soon!" in "".join(chunks)
         assert any(chunk.startswith("\nFINAL_METADATA:") for chunk in chunks)
+
+
+# ── P2-gate: gates select the ACTIVE sub, not the newest row (real Postgres) ──
+#
+# A paying customer can hold an OLDER active subscription alongside a NEWER
+# terminal row (an ``expired`` promoted-old row, or a ``canceled`` sibling from
+# re-checkout). Ordering solely by ``created_at`` picks the terminal row and
+# 403s a customer who is still entitled. The gates must resolve entitlement via
+# ``plan_service.get_client_subscription`` (the active-row resolver), so the
+# active row wins regardless of creation order.
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("DB_URL"),
+    reason="P2-gate real-DB tests need a reachable Postgres at DB_URL",
+)
+
+
+def _seed_older_active_newer_terminal(db, *, terminal_status: str):
+    """Client with an OLDER ``active`` sub and a NEWER terminal sub."""
+    client = Client(name="c", email=f"p2-{terminal_status}@e.com", api_key=f"p2-{terminal_status}", hashed_password="h")
+    db.add(client)
+    db.flush()
+    plan = Plan(name="Standard", slug=f"std-{terminal_status}", monthly_price_cents=399900, credits_per_month=10000)
+    db.add(plan)
+    db.flush()
+
+    now = datetime.now(UTC)
+    active = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        bot_id=None,
+        status="active",
+        payment_provider="razorpay",
+        created_at=now - timedelta(days=2),  # OLDER
+    )
+    terminal = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        bot_id=None,
+        status=terminal_status,
+        payment_provider="razorpay",
+        created_at=now,  # NEWER — the row the buggy gate used to pick
+    )
+    db.add_all([active, terminal])
+    db.commit()
+    return client, plan
+
+
+@contextmanager
+def _session_ctx(db):
+    """Drop-in for ``get_session`` that yields the test session unclosed."""
+    yield db
+
+
+class TestGateSelectsActiveNotNewest:
+    @pytest.mark.parametrize("terminal_status", ["expired", "canceled"])
+    def test_client_gate_admits_when_active_is_older_than_terminal(self, db, terminal_status):
+        client, plan = _seed_older_active_newer_terminal(db, terminal_status=terminal_status)
+        with patch.object(auth_module, "get_session", lambda: _session_ctx(db)):
+            result = auth_module.require_active_subscription(client=SimpleNamespace(id=client.id, is_superadmin=False))
+        # Admitted (no 403) and resolved to the ACTIVE row, not the newer terminal one.
+        assert result is not None
+        assert result.status == "active"
+        assert result.plan_id == plan.id  # attribute readable post-expunge
+
+    @pytest.mark.parametrize("terminal_status", ["expired", "canceled"])
+    def test_workspace_gate_admits_when_active_is_older_than_terminal(self, db, terminal_status):
+        client, plan = _seed_older_active_newer_terminal(db, terminal_status=terminal_status)
+        auth = {
+            "type": "operator",
+            "client_id": client.id,
+            "entity": SimpleNamespace(id=client.id, is_superadmin=False),
+        }
+        with patch.object(auth_module, "get_session", lambda: _session_ctx(db)):
+            result = auth_module.require_active_subscription_for_workspace(auth=auth)
+        assert result is not None
+        assert result.status == "active"
+        assert result.plan_id == plan.id
+
+    def test_client_gate_no_longer_orders_solely_by_created_at(self, db):
+        """Regression guard: had the gate ordered by ``created_at.desc()``, the
+        newer ``expired`` row would win and the call would 403. Admission proves
+        the active-row resolver (not creation order) governs the decision."""
+        client, _plan = _seed_older_active_newer_terminal(db, terminal_status="expired")
+        with patch.object(auth_module, "get_session", lambda: _session_ctx(db)):
+            try:
+                result = auth_module.require_active_subscription(
+                    client=SimpleNamespace(id=client.id, is_superadmin=False)
+                )
+            except HTTPException as exc:  # pragma: no cover - fails the assertion below
+                pytest.fail(f"gate 403'd a still-active customer (status={exc.detail.get('subscription_status')})")
+        assert result.status == "active"

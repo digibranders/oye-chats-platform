@@ -29,6 +29,17 @@ class Client(Base):
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     company_name = Column(String, nullable=True)
+    # ── Buyer tax identity (invoicing v2) — all nullable; captured in account
+    # settings / at checkout. billing_state_code is the GST place-of-supply
+    # input (Circular 242/36/2024 makes state mandatory for online B2C —
+    # enforced at checkout, not at the column level, to keep signup friction
+    # unchanged).
+    legal_name = Column(String, nullable=True)
+    gstin = Column(String(15), nullable=True)
+    billing_address = Column(JSONB, nullable=True)  # {line1, line2, city, postal_code}
+    billing_country = Column(String(2), nullable=True)  # ISO-2, e.g. "IN"
+    billing_state_code = Column(String(2), nullable=True)  # GST state code, e.g. "27"
+    billing_email = Column(String, nullable=True)  # falls back to login email
     # Nullable because OAuth-only signups never set a password. The
     # /auth/google/callback path always creates the Client row first and
     # never assigns a hashed_password; password login for that account
@@ -318,15 +329,17 @@ class Bot(Base):
     # Widget embed origin restriction. When ``domain_check_enabled`` is true the
     # backend rejects ``X-Bot-Key`` requests whose Origin/Referer hostname does not
     # match an entry in ``allowed_domains``. Entries support exact hostnames
-    # (``acme.com``) and wildcard subdomains (``*.acme.com``). Defaults are off +
-    # empty so existing bots are unaffected until the customer opts in.
+    # (``acme.com``) and wildcard subdomains (``*.acme.com``). The flag defaults
+    # ON (secure-by-default) while ``allowed_domains`` defaults empty; enforcement
+    # fails open on an empty allowlist (see ``_enforce_bot_origin``), so a new bot
+    # is only actually locked down once its owner configures domains.
     allowed_domains = Column(
         JSONB,
         nullable=False,
         default=list,
         server_default=sqlalchemy.text("'[]'::jsonb"),
     )
-    domain_check_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    domain_check_enabled = Column(Boolean, default=True, server_default="true", nullable=False)
 
     is_active = Column(sqlalchemy.Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -365,10 +378,12 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # Legacy FK — kept during migration transition
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True)
-    # New FK — primary association
-    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True)
+    # Legacy FK — kept during migration transition. Indexed (ix_documents_client_id)
+    # for the tenant filter in the vector-search query (repository.py).
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True, index=True)
+    # New FK — primary association. Indexed (ix_documents_bot_id) for the tenant
+    # filter in the vector-search query (repository.py).
+    bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True, index=True)
 
     document_name = Column(String, nullable=False)
     # Explicit ingestion source (remediation M7): "upload" for a file the
@@ -379,7 +394,7 @@ class Document(Base):
     file_hash = Column(String, index=True, nullable=False)
     content = Column(Text, nullable=False)
     metadata_info = Column(JSONB, nullable=True)
-    embedding = Column(Vector(768), nullable=True)  # nullable during re-embed; NOT NULL restored after backfill
+    embedding = Column(Vector(768), nullable=False)  # NOT NULL restored after 768-dim re-embed backfill (NB-2)
     search_vector = Column(TSVECTOR)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -387,7 +402,19 @@ class Document(Base):
     client = relationship("Client", back_populates="documents", foreign_keys=[client_id])
     bot = relationship("Bot", back_populates="documents")
 
-    __table_args__ = (Index("ix_documents_search_vector", "search_vector", postgresql_using="gin"),)
+    __table_args__ = (
+        Index("ix_documents_search_vector", "search_vector", postgresql_using="gin"),
+        # HNSW ANN index for vector retrieval. cosine ops match the ``<=>``
+        # operator used by the search query in repository.py (see migration
+        # b7d1c3e5f9a2). bot_id/client_id b-tree indexes are declared via
+        # ``index=True`` on their columns above.
+        Index(
+            "documents_embedding_hnsw_idx",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
 
 class LeadInfo(Base):
@@ -800,20 +827,15 @@ class Plan(Base):
     # Price per additional operator seat above the included number, in cents.
     extra_seat_price_cents = Column(Integer, default=1500, server_default="1500", nullable=False)
 
-    # Stripe integration
-    stripe_product_id = Column(String, nullable=True)
-    stripe_monthly_price_id = Column(String, nullable=True)
-    stripe_annual_price_id = Column(String, nullable=True)
-
     # Razorpay integration
     razorpay_plan_id_monthly = Column(String, nullable=True)
     razorpay_plan_id_annual = Column(String, nullable=True)
 
     # Fixed USD headline pricing (cents). Independent of the INR columns —
-    # set deliberately, NEVER converted live. Shown to non-Indian visitors and
-    # charged by Stripe. NULL → caller falls back to a DISPLAY_USD_TO_INR
-    # conversion for legacy rows that predate these columns. See
-    # ``app.core.pricing.display_price`` and ADR D2/D3 in the billing plan.
+    # set deliberately, NEVER converted live. Shown to non-Indian visitors.
+    # NULL → caller falls back to a DISPLAY_USD_TO_INR conversion for legacy
+    # rows that predate these columns. See ``app.core.pricing.display_price``
+    # and ADR D2/D3 in the billing plan.
     monthly_price_usd_cents = Column(Integer, nullable=True)
     annual_price_usd_cents = Column(Integer, nullable=True)
     extra_seat_price_usd_cents = Column(Integer, nullable=True)
@@ -903,16 +925,12 @@ class Subscription(Base):
 
     # The Razorpay plan actually billed against — a discounted plan when a
     # referral code applied, else identical to the base plan's razorpay id.
-    # Entitlements always follow plan_id (the base plan). NULL for Stripe /
-    # legacy rows that predate the discount engine.
+    # Entitlements always follow plan_id (the base plan). NULL for legacy rows
+    # that predate the discount engine.
     razorpay_billing_plan_id = Column(String, nullable=True)
 
     # Payment provider IDs
-    payment_provider = Column(
-        String, default="stripe", server_default="stripe", nullable=False
-    )  # stripe|razorpay|manual
-    stripe_subscription_id = Column(String, unique=True, index=True, nullable=True)
-    stripe_customer_id = Column(String, index=True, nullable=True)
+    payment_provider = Column(String, default="razorpay", server_default="razorpay", nullable=False)  # razorpay|manual
     razorpay_subscription_id = Column(String, unique=True, index=True, nullable=True)
     razorpay_customer_id = Column(String, index=True, nullable=True)
     # Set when a paid→paid transition replaces an existing Razorpay mandate.
@@ -932,6 +950,12 @@ class Subscription(Base):
     # ``activated`` webhook confirms payment cleared. Zero means no pending
     # credit — never NULL so arithmetic stays simple.
     upgrade_credit_pending_cents = Column(Integer, default=0, server_default="0", nullable=False)
+
+    # Razorpay id of the SEPARATE per-seat add-on subscription. Kept distinct
+    # from razorpay_subscription_id because Razorpay quantity multiplies the
+    # whole plan amount — seats must be their own sub (P0-3).
+    seat_addon_subscription_id = Column(String, nullable=True)
+    seat_addon_quantity = Column(Integer, nullable=False, server_default="0")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -1022,7 +1046,7 @@ class UsageRecord(Base):
 
 
 class Invoice(Base):
-    """Payment history — synced from Stripe/Razorpay via webhooks."""
+    """Payment history — synced from Razorpay via webhooks."""
 
     __tablename__ = "invoices"
 
@@ -1036,11 +1060,10 @@ class Invoice(Base):
 
     # Amount
     amount_cents = Column(Integer, nullable=False)
-    currency = Column(String, default="usd", server_default="usd", nullable=False)
+    currency = Column(String, default="inr", server_default="inr", nullable=False)
     status = Column(String, default="pending", server_default="pending", nullable=False)  # paid|pending|failed|refunded
 
     # Provider references
-    stripe_invoice_id = Column(String, unique=True, index=True, nullable=True)
     razorpay_payment_id = Column(String, unique=True, index=True, nullable=True)
 
     # Links
@@ -1057,12 +1080,69 @@ class Invoice(Base):
     paid_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ── Invoicing v2: legal tax-document fields (nullable — rows created
+    # before v2, or while INVOICING_V2_ENABLED is off, stay 'legacy' and are
+    # excluded from GST exports; never retro-taxed). Finalized documents are
+    # IMMUTABLE — corrections are credit notes, never edits.
+    # 20 chars (> the 16-char Rule 46 minimum) leaves headroom for a longer
+    # prefix or a 7-digit serial without a hard ceiling once numbers are issued.
+    invoice_number = Column(String(20), unique=True, index=True, nullable=True)
+    invoice_type = Column(
+        String, nullable=False, default="legacy", server_default="legacy"
+    )  # tax_invoice|credit_note|receipt|legacy
+    issued_at = Column(DateTime(timezone=True), nullable=True)
+    seller_snapshot = Column(JSONB, nullable=True)  # legal identity at issue time
+    buyer_snapshot = Column(JSONB, nullable=True)
+    place_of_supply = Column(String(2), nullable=True)  # GST state code
+    supply_kind = Column(String, nullable=True)  # intra|inter|export
+    taxable_value_minor = Column(Integer, nullable=True)
+    tax_rate_bps = Column(Integer, nullable=True)
+    cgst_minor = Column(Integer, nullable=True)
+    sgst_minor = Column(Integer, nullable=True)
+    igst_minor = Column(Integer, nullable=True)
+    total_tax_minor = Column(Integer, nullable=True)
+    hsn_sac = Column(String(8), nullable=True)
+    is_export = Column(Boolean, nullable=False, default=False, server_default="false")
+    line_items = Column(JSONB, nullable=True)
+    credit_note_of_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
+    # Razorpay's own invoice entity for this charge (payment.invoice_id from
+    # the subscription.charged payload) — payment evidence, not the tax doc.
+    razorpay_invoice_id = Column(String, index=True, nullable=True)
+    # Last time the document email was sent to the buyer. The PDF sweep only
+    # auto-emails when NULL, so an admin "regenerate PDF" can never re-email
+    # the customer; superadmin resend updates it.
+    emailed_at = Column(DateTime(timezone=True), nullable=True)
+    # E-invoicing (IRP) — unused until the ₹5cr B2B threshold applies.
+    irn = Column(String, nullable=True)
+    signed_qr = Column(Text, nullable=True)
+
     client = relationship("Client")
     subscription = relationship("Subscription", back_populates="invoices")
 
 
+class InvoiceCounter(Base):
+    """Gapless per-FY invoice serial allocator.
+
+    One row per (financial_year, prefix); the finalize service increments
+    ``last_serial`` under ``SELECT … FOR UPDATE`` so concurrent webhooks get
+    consecutive numbers and abandoned payments burn none (serials are only
+    allocated at finalize time — a Rule 46 audit requirement).
+
+    ``updated_at`` uses SQLAlchemy ``onupdate`` (app-side), so the Phase 2
+    allocator must mutate ``last_serial`` through the ORM for the timestamp to
+    stay honest — a raw ``UPDATE`` would not bump it.
+    """
+
+    __tablename__ = "invoice_counters"
+
+    financial_year = Column(String(5), primary_key=True)  # e.g. "25-26"
+    prefix = Column(String(3), primary_key=True)
+    last_serial = Column(Integer, nullable=False, default=0, server_default="0")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class PaymentMethod(Base):
-    """Stored payment methods for a client — synced from Stripe/Razorpay."""
+    """Stored payment methods for a client — synced from Razorpay."""
 
     __tablename__ = "payment_methods"
 
@@ -1070,7 +1150,7 @@ class PaymentMethod(Base):
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # Provider
-    provider = Column(String, nullable=False)  # stripe|razorpay
+    provider = Column(String, nullable=False)  # razorpay
     type = Column(String, nullable=False)  # card|upi|bank
     last4 = Column(String(4), nullable=True)
     brand = Column(String, nullable=True)  # visa|mastercard|amex|etc
@@ -1080,7 +1160,6 @@ class PaymentMethod(Base):
     is_default = Column(Boolean, default=False, server_default="false", nullable=False)
 
     # Provider references
-    stripe_payment_method_id = Column(String, unique=True, index=True, nullable=True)
     razorpay_token_id = Column(String, unique=True, index=True, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -1186,7 +1265,7 @@ class PricingConfig(Base):
 
 
 class ProcessedWebhook(Base):
-    """Idempotency log for Stripe / Razorpay webhook event IDs.
+    """Idempotency log for Razorpay webhook event IDs.
 
     Webhook providers retry on 5xx and may deliver duplicates. We store the
     event ID on first successful processing; subsequent deliveries with the
@@ -1196,14 +1275,14 @@ class ProcessedWebhook(Base):
     __tablename__ = "processed_webhooks"
 
     event_id = Column(Text, primary_key=True)
-    provider = Column(Text, nullable=False, index=True)  # 'stripe' | 'razorpay'
+    provider = Column(Text, nullable=False, index=True)  # 'razorpay'
     processed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class FailedWebhook(Base):
     """Dead-letter store for billing webhooks whose processing failed.
 
-    When a verified Razorpay/Stripe webhook raises during processing, the
+    When a verified Razorpay webhook raises during processing, the
     handler's transaction is rolled back (including the ``processed_webhooks``
     idempotency row), and the raw event is persisted here in a separate
     transaction so it survives that rollback. The provider is then asked to
@@ -1216,7 +1295,7 @@ class FailedWebhook(Base):
     __tablename__ = "failed_webhooks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    provider = Column(Text, nullable=False, index=True)  # 'razorpay' | 'stripe'
+    provider = Column(Text, nullable=False, index=True)  # 'razorpay'
     # Provider event id (``x-razorpay-event-id``); may be absent on some deliveries.
     event_id = Column(Text, nullable=True, index=True)
     event_type = Column(Text, nullable=True)  # e.g. 'payment.captured'

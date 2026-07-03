@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 
 from fastapi import Depends, HTTPException, Query, Request, Security, status
 from fastapi.security.api_key import APIKeyHeader
@@ -8,6 +9,7 @@ from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
 from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Affiliate, Bot, Client, Operator, Subscription
 from app.db.session import get_session
+from app.services import plan_service
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,29 @@ def _resolve_operator_key(
     return operator_key or legacy_agent_key
 
 
+def _ensure_not_suspended(client: Client) -> None:
+    """Reject a suspended client with HTTP 403 ``account_suspended``.
+
+    A superadmin sets ``client.suspended_at`` to a timestamp when suspending a
+    customer (see ``superadmin_routes_v2.py``); a null value means the account
+    is in good standing. Every client-resolving auth dependency funnels through
+    this helper so a suspended customer's API key, bot keys, and operators all
+    stop working uniformly.
+
+    Superadmins are platform staff, never customers, and must never be locked
+    out of the console — so they are exempt even in the defensive case where a
+    ``suspended_at`` timestamp is somehow present on a superadmin row.
+    """
+    if getattr(client, "is_superadmin", False):
+        return
+    if getattr(client, "suspended_at", None) is not None:
+        logger.warning("Suspended client %s attempted authentication.", getattr(client, "id", None))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="account_suspended",
+        )
+
+
 def get_current_client(
     api_key: str = Security(api_key_header),
     operator_key: str = Security(operator_key_header),
@@ -61,7 +86,8 @@ def get_current_client(
             client = session.execute(stmt).scalars().first()
             if client:
                 # Eagerly access attributes before session closes
-                _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
+                _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
+                _ensure_not_suspended(client)
                 session.expunge(client)
                 return client
             logger.warning("Failed authentication attempt with invalid API Key.")
@@ -82,7 +108,8 @@ def get_current_client(
             if operator:
                 client = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
                 if client:
-                    _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
+                    _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
+                    _ensure_not_suspended(client)
                     session.expunge(client)
                     return client
             raise HTTPException(
@@ -180,6 +207,12 @@ def get_current_client_or_operator(
                     operator.operator_api_key,
                     operator.is_online,
                 )
+                # An operator's access is governed by the owning client's
+                # standing — a suspended workspace locks out its operators too.
+                owner = session.execute(select(Client).where(Client.id == operator.client_id)).scalars().first()
+                if owner is not None:
+                    _ = owner.id, owner.is_superadmin, owner.suspended_at
+                    _ensure_not_suspended(owner)
                 session.expunge(operator)
                 return {
                     "type": "operator",
@@ -193,7 +226,8 @@ def get_current_client_or_operator(
         with get_session() as session:
             client = session.execute(select(Client).where(Client.api_key == api_key)).scalars().first()
             if client:
-                _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
+                _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
+                _ensure_not_suspended(client)
                 session.expunge(client)
                 return {"type": "client", "entity": client, "client_id": client.id, "operator_id": None}
 
@@ -227,7 +261,8 @@ def get_current_client_strict(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API Key.",
             )
-        _ = client.id, client.name, client.email, client.api_key, client.is_superadmin
+        _ = client.id, client.name, client.email, client.api_key, client.is_superadmin, client.suspended_at
+        _ensure_not_suspended(client)
         session.expunge(client)
         return client
 
@@ -368,11 +403,13 @@ def _bot_from_cache_dict(data: dict) -> Bot:
 def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
     """Reject widget requests whose Origin/Referer is not in ``bot.allowed_domains``.
 
-    No-op when ``domain_check_enabled`` is false (default). When enabled, the
-    ``Origin`` header is the source of truth; ``Referer`` is used as a fallback
-    for older clients that omit ``Origin`` on same-origin POSTs. Missing both
-    headers is a hard reject so a non-browser client cannot bypass the check
-    by simply omitting the headers.
+    No-op when ``domain_check_enabled`` is false, and also fails open when the
+    flag is true but ``allowed_domains`` is empty -- enforcement only bites once
+    an allowlist is actually configured. When enforcing, the ``Origin`` header
+    is the source of truth; ``Referer`` is used as a fallback for older clients
+    that omit ``Origin`` on same-origin POSTs. Missing both headers is a hard
+    reject so a non-browser client cannot bypass the check by simply omitting
+    the headers.
     """
     if not getattr(bot, "domain_check_enabled", False):
         return
@@ -385,9 +422,16 @@ def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
             detail="origin_not_allowed",
         )
 
+    allowed: list[str] = list(bot.allowed_domains or [])
+    if not allowed:
+        # Fail-open on an empty allowlist: enforcement only bites when an
+        # allowlist is actually configured. This lets us default the flag ON
+        # for new bots (and backfill it for configured ones) without bricking
+        # any bot that has ``domain_check_enabled`` set but no domains listed.
+        return
+
     origin = request.headers.get("origin") or request.headers.get("referer")
     hostname = extract_hostname(origin)
-    allowed: list[str] = list(bot.allowed_domains or [])
     if not is_origin_allowed(hostname, allowed):
         logger.info(
             "Widget request rejected by origin check: bot_id=%s origin=%r hostname=%r",
@@ -399,6 +443,24 @@ def _enforce_bot_origin(bot: Bot, request: Request | None) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="origin_not_allowed",
         )
+
+
+def _ensure_bot_owner_not_suspended(session, client_id: int) -> None:
+    """Reject a widget request whose owning client is suspended (403).
+
+    ``get_current_bot`` runs on the hot chat path, so this adds one narrow
+    ``suspended_at``/``is_superadmin`` lookup keyed by ``client_id`` rather than
+    loading the whole Client row. A missing owner (deleted client) is treated as
+    not-suspended — the surrounding bot lookup already validated the bot exists.
+    """
+    owner = (
+        session.execute(select(Client.is_superadmin, Client.suspended_at).where(Client.id == client_id))
+        .tuples()
+        .first()
+    )
+    if owner is None:
+        return
+    _ensure_not_suspended(SimpleNamespace(id=client_id, is_superadmin=owner[0], suspended_at=owner[1]))
 
 
 def get_current_bot(
@@ -425,6 +487,10 @@ def get_current_bot(
         cached = cache_get(bot_config_key(bot_key))
         if cached:
             bot = _bot_from_cache_dict(cached)
+            # Enforce owner suspension even on cache hits — a suspended customer's
+            # cached bots must stop serving immediately, not only after TTL expiry.
+            with get_session() as session:
+                _ensure_bot_owner_not_suspended(session, bot.client_id)
             _enforce_bot_origin(bot, request)
             return bot
 
@@ -451,6 +517,7 @@ def get_current_bot(
                 # Cache for future requests
                 cache_set(bot_config_key(bot_key), _bot_to_cache_dict(bot), BOT_CONFIG_TTL)
                 session.expunge(bot)
+                _ensure_bot_owner_not_suspended(session, bot.client_id)
                 _enforce_bot_origin(bot, request)
                 return bot
             raise HTTPException(
@@ -463,6 +530,8 @@ def get_current_bot(
             stmt = select(Client).where(Client.api_key == api_key)
             client = session.execute(stmt).scalars().first()
             if client:
+                _ = client.id, client.is_superadmin, client.suspended_at
+                _ensure_not_suspended(client)
                 # Get the client's first (default) bot
                 bot_stmt = (
                     select(Bot).where(Bot.client_id == client.id, Bot.is_active.is_(True)).order_by(Bot.id).limit(1)
@@ -538,16 +607,15 @@ def require_active_subscription(client: Client = Depends(get_current_client)):
         return None
 
     with get_session() as session:
-        sub = (
-            session.execute(
-                select(Subscription)
-                .where(Subscription.client_id == client.id)
-                .order_by(Subscription.created_at.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
+        # Resolve the client's ACTIVE subscription (highest tier among
+        # active/trialing/past_due rows), NOT merely the most-recently-created
+        # row. A paying customer may carry a newer terminal sibling (an
+        # ``expired`` promoted-old row, or a ``canceled`` row from re-checkout)
+        # while an older row is still live; ordering by ``created_at`` alone
+        # would 403 them. ``get_client_subscription`` is the shared active-row
+        # resolver (remediation H2) — reuse it so the gate agrees with the rest
+        # of the billing stack.
+        sub = plan_service.get_client_subscription(session, client.id)
 
         # No subscription at all is treated as "needs to pick a plan" —
         # the same UX as an expired trial. Should never happen for a
@@ -606,16 +674,10 @@ def require_active_subscription_for_workspace(
             return None
 
     with get_session() as session:
-        sub = (
-            session.execute(
-                select(Subscription)
-                .where(Subscription.client_id == client_id)
-                .order_by(Subscription.created_at.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
+        # Same active-row resolution as :func:`require_active_subscription` —
+        # the workspace owner's live subscription, not their newest row (which
+        # may be a terminal sibling). See that function for the rationale.
+        sub = plan_service.get_client_subscription(session, client_id)
         sub_status = sub.status if sub else "missing"
 
         if sub_status in _ACTIVE_SUBSCRIPTION_STATUSES:

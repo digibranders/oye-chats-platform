@@ -226,7 +226,7 @@ export default function PlanModal({
             return;
         }
         if (selected.slug === 'free') {
-            // Free path. With an active sub the backend schedules a Stripe
+            // Free path. With an active sub the backend schedules a
             // cancellation at period end; without one there's literally
             // nothing to do.
             if (hasActiveSubscription) {
@@ -290,7 +290,7 @@ export default function PlanModal({
         try {
             // The /change-plan endpoint returns one of three statuses:
             //   * checkout_required → provider-specific payload (Razorpay
-            //     subscription_id OR Stripe checkout_url)
+            //     subscription_id or checkout_url)
             //   * switched          → silent prorated swap on existing sub
             //   * downgraded        → only happens for Free, handled above
             // First-time checkout flows go through /checkout directly; the

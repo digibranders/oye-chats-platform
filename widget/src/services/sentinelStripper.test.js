@@ -210,3 +210,169 @@ test('stripper releases [CTA: literal when stream ends mid-marker', () => {
     // Mid-marker abort — better to surface the partial than swallow real text.
     assert.equal(s.flush(), '[CTA:tim');
 });
+
+// ── Media card markers (dynamic [YOUTUBE_CARD:id] / [DOWNLOAD_CARD:url|name])
+
+test('stripAllSentinels removes [YOUTUBE_CARD:id]', () => {
+    assert.equal(
+        stripAllSentinels('Here is a video overview. [YOUTUBE_CARD:dQw4w9WgXcQ]'),
+        'Here is a video overview. ',
+    );
+});
+
+test('stripAllSentinels removes [DOWNLOAD_CARD:url|name]', () => {
+    assert.equal(
+        stripAllSentinels(
+            "Here's our brochure. [DOWNLOAD_CARD:https://example.com/brochure.pdf|brochure.pdf]",
+        ),
+        "Here's our brochure. ",
+    );
+});
+
+test('stripAllSentinels removes YOUTUBE_CARD mixed with CTA and MEETING_CARD', () => {
+    assert.equal(
+        stripAllSentinels(
+            'Sure. [YOUTUBE_CARD:abcDEF12345] [CTA:timeline] [MEETING_CARD]',
+        ),
+        'Sure.   ',
+    );
+});
+
+test('stripper removes [YOUTUBE_CARD:id] arriving in one chunk', () => {
+    const s = createSentinelStripper();
+    assert.equal(
+        s.push('Watch this: [YOUTUBE_CARD:abcDEF-_123]'),
+        'Watch this: ',
+    );
+    assert.equal(s.flush(), '');
+});
+
+test('stripper removes [YOUTUBE_CARD:id] split across chunks', () => {
+    const s = createSentinelStripper();
+    const a = s.push('Watch this: [YOUTUBE_CARD:abc');
+    const b = s.push('DEF-_123]');
+    assert.equal(a + b + s.flush(), 'Watch this: ');
+});
+
+test('stripper holds YOUTUBE_CARD prefix until closing bracket arrives', () => {
+    const s = createSentinelStripper();
+    const a = s.push('Video: [YOUTUBE_CARD:');
+    assert.equal(a, 'Video: ');
+    const b = s.push('dQw4w9WgXcQ]');
+    assert.equal(b, '');
+    assert.equal(s.flush(), '');
+});
+
+test('stripper removes [DOWNLOAD_CARD:url|name] arriving in one chunk', () => {
+    const s = createSentinelStripper();
+    assert.equal(
+        s.push('Grab this: [DOWNLOAD_CARD:https://example.com/x.pdf|x.pdf]'),
+        'Grab this: ',
+    );
+    assert.equal(s.flush(), '');
+});
+
+test('stripper removes [DOWNLOAD_CARD:url|name] split across chunks', () => {
+    const s = createSentinelStripper();
+    const a = s.push('Grab this: [DOWNLOAD_CARD:https://example.com/x.p');
+    const b = s.push('df|brochure.pdf]');
+    assert.equal(a + b + s.flush(), 'Grab this: ');
+});
+
+test('stripper does not swallow real text after an aborted YOUTUBE_CARD prefix', () => {
+    const s = createSentinelStripper();
+    // Mid-marker abort — surface the partial so nothing legitimate is lost.
+    s.push('aborted [YOUTUBE_CARD:xyz');
+    assert.equal(s.flush(), '[YOUTUBE_CARD:xyz');
+});
+
+// ── Leaked media-card markers echoed into prose (narrowed rule) ─────────────
+// The visible-text scrub targets ONLY the two card-marker prefixes
+// ([YOUTUBE_CARD:...] / [DOWNLOAD_CARD:...]). PR #234 shipped an over-broad
+// \[[^\]\n]{1,300}\](?!\() sweep that deleted every bracket not followed by
+// "(" — corrupting citations, ranges, code, and key labels. These tests pin
+// the narrowed contract: leaked card markers still go, everything else stays.
+
+test('strips a leaked [YOUTUBE_CARD:id] marker echoed into prose', () => {
+    assert.equal(
+        stripAllSentinels('Watch this. [YOUTUBE_CARD:dQw4w9WgXcQ] Which topic?'),
+        'Watch this.  Which topic?',
+    );
+});
+
+test('strips a leaked [DOWNLOAD_CARD:url|name] marker echoed into prose', () => {
+    assert.equal(
+        stripAllSentinels('Grab it. [DOWNLOAD_CARD:https://x/y.pdf|Report] Anything else?'),
+        'Grab it.  Anything else?',
+    );
+});
+
+test('strips a malformed leaked card marker the strict pattern misses', () => {
+    // Wrong-length id / missing pipe — the strict YOUTUBE_CARD_PATTERN and
+    // DOWNLOAD_CARD_PATTERN reject these, so the leaked-marker sweep must
+    // catch them by prefix or the raw token would reach the bubble.
+    assert.equal(
+        stripAllSentinels('Sure. [YOUTUBE_CARD:some-random-id] Ready?'),
+        'Sure.  Ready?',
+    );
+    assert.equal(
+        stripAllSentinels('Sure. [DOWNLOAD_CARD:https://x/y.pdf] Ready?'),
+        'Sure.  Ready?',
+    );
+});
+
+test('PRESERVES citation markers, ranges, code subscripts, and key labels', () => {
+    // Regression guard for PR #234 — none of these are card markers.
+    for (const text of [
+        'Revenue grew 12% [1] over the prior year [2].',
+        'We are open [9am-5pm] on weekdays.',
+        'Use list[0], a[i], and arr[n] to index the collection.',
+        'Press [Enter] to submit or [Ctrl+C] to cancel.',
+    ]) {
+        assert.equal(stripAllSentinels(text), text);
+    }
+});
+
+test('PRESERVES arbitrary placeholder prose that is not a card marker', () => {
+    for (const text of [
+        'Watch this. [YouTube card below] Which topic?',
+        'See our overview. [Video preview here] More info soon.',
+        'Note. [TBD] End.',
+    ]) {
+        assert.equal(stripAllSentinels(text), text);
+    }
+});
+
+test('PRESERVES markdown links — [label](url) untouched', () => {
+    const md = 'Read [our pricing page](https://example.com/pricing) for details.';
+    assert.equal(stripAllSentinels(md), md);
+});
+
+test('PRESERVES real sentinels are stripped by their own patterns first', () => {
+    // Real sentinels are stripped by their specific patterns EARLIER
+    // in stripAllSentinels; the leaked-marker sweep must not damage them.
+    assert.equal(
+        stripAllSentinels('Ok [YOUTUBE_CARD:dQw4w9WgXcQ]'),
+        'Ok ',
+    );
+    assert.equal(
+        stripAllSentinels('Ok [MEETING_CARD]'),
+        'Ok ',
+    );
+    assert.equal(
+        stripAllSentinels('Ok [CTA:timeline]'),
+        'Ok ',
+    );
+});
+
+test('does not fire on empty brackets', () => {
+    assert.equal(stripAllSentinels('hello [] world'), 'hello [] world');
+});
+
+test('handles mixed leaked card marker + markdown link in one string', () => {
+    const input = 'Watch this. [YOUTUBE_CARD:dQw4w9WgXcQ] See our [pricing](https://x.com) for details.';
+    assert.equal(
+        stripAllSentinels(input),
+        'Watch this.  See our [pricing](https://x.com) for details.',
+    );
+});

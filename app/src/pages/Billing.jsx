@@ -40,7 +40,10 @@ import TopupModal from '../components/credits/TopupModal';
 import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
 import TrialUpgradeBanner from '../components/billing/TrialUpgradeBanner';
+import BillingDetailsCard from '../components/billing/BillingDetailsCard';
+import InvoicesCard from '../components/billing/InvoicesCard';
 import { cn } from '../lib/utils';
+import { formatMoney } from '../lib/currency';
 import { trialDaysLeft } from '../utils/trial';
 
 const fmtNumber = (n) => Number(n || 0).toLocaleString();
@@ -53,20 +56,24 @@ function planPriceCents(plan, cycle = 'monthly') {
     : (plan.monthly_price_usd_cents ?? 0);
 }
 
-function planSeatPriceCents(plan) {
-  if (!plan) return 0;
-  return plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0;
+// Seat price with the currency it is denominated in. The USD headline column
+// wins when present; the fallback `extra_seat_price_cents` column is
+// plan-native minor units (paise for INR plans), so it must NOT be formatted
+// as USD — return the plan's own currency alongside it.
+function planSeatPrice(plan) {
+  if (!plan) return { cents: 0, currency: 'usd' };
+  if (plan.extra_seat_price_usd_cents != null) {
+    return { cents: plan.extra_seat_price_usd_cents, currency: 'usd' };
+  }
+  return { cents: plan.extra_seat_price_cents ?? 0, currency: plan.currency || 'inr' };
 }
 
-function fmtCurrency(amountMinor) {
-  const symbol = '$';
-  const major = Number(amountMinor || 0) / 100;
-  // Hide decimals on round amounts ($19 not $19.00). Sub-dollar fractions show 2dp.
-  const useDecimals = !Number.isInteger(major);
-  return `${symbol}${major.toLocaleString(undefined, {
-    minimumFractionDigits: useDecimals ? 2 : 0,
-    maximumFractionDigits: useDecimals ? 2 : 0,
-  })}`;
+// Delegates to the shared money formatter. Amounts on this page are the
+// USD headline columns (monthly_price_usd_cents / extra_seat_price_usd_cents),
+// so the default currency stays 'usd'; pass an explicit currency for any
+// amount that carries one.
+function fmtCurrency(amountMinor, currency = 'usd') {
+  return formatMoney(amountMinor, currency);
 }
 
 function fmtDate(iso) {
@@ -253,6 +260,10 @@ export default function Billing() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Bumped by every loadAll so the self-loading InvoicesCard refetches in
+  // the same post-payment cycle (a new invoice row exists as soon as the
+  // verify call returns — without this the card stays stale until reload).
+  const [invoicesRefreshKey, setInvoicesRefreshKey] = useState(0);
   const [topupOpen, setTopupOpen] = useState(false);
   // When the Top up button on a per-bot credit card fires, we stash the
   // bot here so the TopupModal knows to scope the purchase to that bot's
@@ -294,6 +305,7 @@ export default function Billing() {
   async function loadAll({ silent = false } = {}) {
     if (!silent) setLoading(true);
     else setRefreshing(true);
+    setInvoicesRefreshKey((k) => k + 1);
     try {
       const [balRes, subRes, histRes] = await Promise.all([
         getCreditBalance(),
@@ -371,7 +383,12 @@ export default function Billing() {
   // Seat-fee fallback for an admin DB that hasn't picked up the new pricing
   // migration yet. Defaults to the current $5 / mo headline so the row reads
   // "+$5/mo" instead of falling back to a stale figure or a blank label.
-  const seatPriceLabel = fmtCurrency(planSeatPriceCents(plan) || 500);
+  // When the price comes from the plan-native column it carries the plan's
+  // own currency (paise for INR plans) and is formatted accordingly.
+  const seatPrice = planSeatPrice(plan);
+  const seatPriceCents = seatPrice.cents || 500;
+  const seatPriceCurrency = seatPrice.cents ? seatPrice.currency : 'usd';
+  const seatPriceLabel = fmtCurrency(seatPriceCents, seatPriceCurrency);
 
   const usage = balance?.usage || {};
   // Merge per-key so a backend payload that hasn't been redeployed since a
@@ -390,7 +407,7 @@ export default function Billing() {
     + (usage?.document_upload?.credits_used || 0);
 
   // Two-step seat change: open the confirmation modal first so the user
-  // sees the price + payment provider (Razorpay/Stripe) BEFORE we touch
+  // sees the price + payment provider (Razorpay) BEFORE we touch
   // their subscription. The actual API call happens in ``confirmSeatChange``,
   // invoked from the modal's confirm button.
   function handleSeatChange(delta) {
@@ -564,7 +581,10 @@ export default function Billing() {
           )}
 
           {activeTab === 'history' && (
-            <HistoryTab history={history} totalRemaining={totalRemaining} />
+            <div className="space-y-6">
+              <InvoicesCard refreshKey={invoicesRefreshKey} />
+              <HistoryTab history={history} totalRemaining={totalRemaining} />
+            </div>
           )}
         </>
       )}
@@ -584,7 +604,8 @@ export default function Billing() {
         open={seatConfirmDelta !== null}
         onClose={() => setSeatConfirmDelta(null)}
         delta={seatConfirmDelta ?? 0}
-        seatPriceCents={plan?.extra_seat_price_usd_cents ?? plan?.extra_seat_price_cents ?? 500}
+        seatPriceCents={seatPriceCents}
+        seatPriceCurrency={seatPriceCurrency}
         paymentProvider={subscription?.payment_provider}
         currentSeatCount={
           subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1
@@ -1314,6 +1335,10 @@ function SeatsTab({
           </div>
         </CardContent>
       </Card>
+
+      {/* Buyer tax identity for invoices (invoicing v2) — self-contained
+          card that loads/saves /subscriptions/billing-details itself. */}
+      <BillingDetailsCard />
     </div>
   );
 }

@@ -210,6 +210,31 @@ Resolved via FastAPI dependencies in `api/app/api/auth.py`: `get_current_bot`, `
 
 ## Development Commands
 
+### Local backend stack — preferred launcher
+```bash
+cd api && ./scripts/dev.sh   # migrations → ngrok webhook tunnel → ARQ worker → API
+```
+
+### ARQ worker rules (local, macOS) — REQUIRED for invoice PDFs
+1. **Start the worker with the pango path directly on the python binary:**
+   ```bash
+   cd api && DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib .venv/bin/python -m arq app.worker.settings.WorkerSettings
+   ```
+   Without it, WeasyPrint can't find homebrew pango and the worker logs
+   "PDF renderer unavailable" — invoice PDFs silently never render (`pdf_url`
+   stays null, no Download button, no invoice email).
+2. **Never put a system binary between the env var and python.** macOS SIP
+   strips `DYLD_*` vars across `nohup`/`env`/other protected binaries:
+   `DYLD_… nohup python …` silently loses the var. This exact trap broke PDF
+   rendering on 2026-07-03.
+3. **Run exactly ONE worker.** Duplicates share the Redis queue and race for
+   render jobs — a pango-less duplicate grabs and skips them, making PDFs
+   appear only when the 5-min cron lands on a healthy worker (flaky, hard to
+   debug).
+4. **Run `alembic upgrade head` on the dev DB (`oyechats`) after pulling
+   billing changes** — a schema-behind DB makes invoice ORM writes fail and
+   silently rolls back credit grants. `dev.sh` does this automatically.
+
 ### API (Backend)
 All backend commands MUST run within the conda `oye` environment **on a developer machine**. (Production uses `oyechats-api.service` / `oyechats-worker.service` on the droplet — no conda there; do not try to `conda activate` over SSH.)
 

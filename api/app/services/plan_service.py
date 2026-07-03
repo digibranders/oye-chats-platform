@@ -400,7 +400,7 @@ def assign_default_plan_to_client(session: Session, client_id: int) -> Subscript
         sub_status = "active"
         # Anniversary billing: a customer signing up on May 30 17:18 IST
         # gets their period_end on June 30 17:18 IST — exactly one month
-        # from signup. Matches Stripe/Razorpay defaults.
+        # from signup. Matches Razorpay defaults.
         period_start = now
         period_end = add_months(now, 1)
 

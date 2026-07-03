@@ -25,7 +25,7 @@ than relying on whether discovery happens to find them again.
 import asyncio
 import logging
 import re
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +279,124 @@ async def discover_website_urls(
             page_urls.insert(0, seed_url)
 
         return page_urls[:max_urls]
+
+
+# Matches the href of an anchor tag. Deliberately permissive on the tag body
+# (attributes in any order) but stops the capture at the first quote, ``#`` or
+# ``>`` so fragments and malformed markup can't leak into the URL.
+_HREF_RE = re.compile(r"""<a\b[^>]*?\bhref\s*=\s*["']([^"'#>]+)""", re.IGNORECASE)
+
+
+def _extract_links(base_url: str, html: str, base_netloc: str) -> list[str]:
+    """Extract same-domain, HTML-page hrefs from a page body.
+
+    Pure and network-free so the link-filtering rules can be unit-tested
+    directly. Resolves relative hrefs against ``base_url``, keeps only
+    ``http(s)`` links on the same registered host as the seed (``base_netloc``),
+    drops non-HTML assets via :func:`_is_html_url`, and de-duplicates on the
+    normalized form while preserving first-seen order.
+    """
+    out: list[str] = []
+    seen_local: set[str] = set()
+    for href in _HREF_RE.findall(html):
+        absolute = urljoin(base_url, href.strip())
+        parsed = urlparse(absolute)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        if _norm_netloc(parsed.netloc) != base_netloc:
+            continue
+        if not _is_html_url(absolute):
+            continue
+        key = normalize_url(absolute)
+        if key in seen_local:
+            continue
+        seen_local.add(key)
+        out.append(absolute)
+    return out
+
+
+async def discover_via_links(
+    seed_url: str,
+    *,
+    max_urls: int = 500,
+    max_depth: int = 2,
+    max_fetch: int = 25,
+    timeout: float = 20.0,
+) -> list[str]:
+    """Discover content pages by scanning same-domain ``<a href>`` links.
+
+    Browser-free fallback used ONLY when a site has no usable sitemap, so the
+    sitemap-less crawl path can run through the provider-agnostic fetch path
+    (honoring the primary/fallback toggle) instead of being hard-wired to
+    Spider's recursive crawl. Never spawns a browser or subprocess.
+
+    Bounded on every axis so it stays a few-seconds operation and cannot hammer
+    the customer's origin: at most ``max_fetch`` pages are fetched to expand the
+    frontier, link-following stops at ``max_depth``, and the returned set is
+    capped at ``max_urls``. Strictly same-registered-host (``www.`` stripped),
+    which — combined with the seed already being SSRF-validated by the caller —
+    keeps the SSRF surface identical to :func:`discover_website_urls`.
+
+    Args:
+        seed_url:  Root URL to scan from (already validated for SSRF).
+        max_urls:  Hard cap on URLs returned (caller passes the plan ceiling).
+        max_depth: How many link hops to follow from the seed (2 = seed + its
+                   links + their links).
+        max_fetch: Cap on pages fetched for link extraction, bounding origin
+                   load and wall-clock time.
+        timeout:   Per-request wall-clock budget (seconds).
+
+    Returns:
+        Deduplicated list of same-domain page URLs, seed first. Returns just
+        ``[seed_url]`` when no crawlable links are found (e.g. a client-rendered
+        SPA), which signals the caller to fall back to Spider's recursive crawl.
+    """
+    import aiohttp
+
+    parsed = urlparse(seed_url)
+    base_netloc = _norm_netloc(parsed.netloc)
+
+    found: list[str] = [seed_url]
+    seen: set[str] = {normalize_url(seed_url)}
+    frontier: list[tuple[str, int]] = [(seed_url, 0)]
+    fetched = 0
+
+    headers = {"User-Agent": _USER_AGENT}
+    client_timeout = aiohttp.ClientTimeout(total=timeout, connect=8, sock_read=12)
+
+    async with aiohttp.ClientSession(headers=headers, timeout=client_timeout) as session:
+        while frontier and fetched < max_fetch and len(found) < max_urls:
+            url, depth = frontier.pop(0)
+            if depth >= max_depth:
+                continue
+            # Count every request against the budget BEFORE issuing it, so a page
+            # that errors or returns non-HTML still spends from ``max_fetch``.
+            # Otherwise a site that answers many html-looking URLs with non-HTML
+            # could drive the loop up to ``max_urls`` GETs instead of ``max_fetch``.
+            fetched += 1
+            try:
+                async with session.get(url, allow_redirects=True, ssl=False) as r:
+                    if r.status != 200:
+                        continue
+                    ctype = r.headers.get("Content-Type", "")
+                    if "html" not in ctype.lower() and ctype:
+                        continue
+                    html = await r.text(errors="replace")
+            except Exception:
+                continue
+
+            for link in _extract_links(url, html, base_netloc):
+                key = normalize_url(link)
+                if key in seen:
+                    continue
+                seen.add(key)
+                found.append(link)
+                if depth + 1 < max_depth:
+                    frontier.append((link, depth + 1))
+                if len(found) >= max_urls:
+                    break
+
+    return found[:max_urls]
 
 
 async def check_urls_alive(

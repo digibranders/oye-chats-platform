@@ -12,7 +12,7 @@ from app.core.rate_limit import key_from_api_key, limiter
 from app.db.models import Bot, Document
 from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
-from app.ingestion.pipeline import run_folder_ingestion
+from app.ingestion.pipeline import delete_archived_copies, run_folder_ingestion
 from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
 from app.services.crawler_service import (
     acquire_crawl_lock,
@@ -69,6 +69,25 @@ def _verify_bot_ownership(bot_id: int | None, client_id: int) -> None:
         bot = session.execute(sa_select(Bot).where(Bot.id == bot_id, Bot.client_id == client_id)).scalar_one_or_none()
         if not bot:
             raise HTTPException(status_code=403, detail="Bot not found or access denied.")
+
+
+def _tenant_documents_dir(client_id: int, bot_id: int | None) -> Path:
+    """Per-tenant upload directory: ``documents/{client_id}/{bot_id}/``.
+
+    Namespacing by tenant is a security boundary, not an optimization:
+    ``run_folder_ingestion`` sweeps whichever folder it is handed, so a
+    shared folder let the first job to run ingest (and archive) every
+    tenant's pending files. A per-tenant path makes that sweep isolated
+    by construction. ``bot_id is None`` (account-level uploads) uses a
+    reserved ``_none`` segment so it can never collide with a real bot id.
+    """
+    base_dir = Path(DOCUMENTS_DIR).resolve()
+    bot_segment = str(bot_id) if bot_id is not None else "_none"
+    tenant_dir = (base_dir / str(client_id) / bot_segment).resolve()
+    if not tenant_dir.is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Invalid storage path.")
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    return tenant_dir
 
 
 @router.get("/documents")
@@ -143,13 +162,18 @@ def delete_document_endpoint(
             if deleted_count == 0:
                 raise HTTPException(status_code=404, detail=f"Source '{document_name}' not found.")
 
-            base_dir = Path(DOCUMENTS_DIR).resolve()
-            file_path = (base_dir / document_name).resolve()
-            if not file_path.is_relative_to(base_dir):
+            tenant_dir = _tenant_documents_dir(client_id, bot_id)
+            file_path = (tenant_dir / document_name).resolve()
+            if not file_path.is_relative_to(tenant_dir):
                 raise HTTPException(status_code=403, detail="Invalid document path.")
             if file_path.exists():
                 file_path.unlink()
                 logger.info(f"Deleted file from disk: {file_path}")
+
+            # Defense-in-depth: also purge the tenant's cold-storage copies made
+            # during ingestion so a delete never leaves orphaned archived data
+            # behind. No-op for crawled URL sources (never archived).
+            delete_archived_copies(client_id, bot_id, document_name)
 
             # Invalidate cached QA responses — knowledge base has changed
             if bot_id:
@@ -327,10 +351,12 @@ def ingest_documents(
                 ) from exc
 
     # ── Phase 2: All files validated + credits secured — write to disk ──
-    base_dir = Path(DOCUMENTS_DIR).resolve()
+    # Write into the caller's OWN namespaced folder so the ingestion sweep
+    # can never see another tenant's files (P0-2).
+    tenant_dir = _tenant_documents_dir(client_id, bot_id)
     for filename, content in file_buffers:
-        file_path = (base_dir / filename).resolve()
-        if not file_path.is_relative_to(base_dir):
+        file_path = (tenant_dir / filename).resolve()
+        if not file_path.is_relative_to(tenant_dir):
             logger.warning(f"Blocked path traversal attempt in upload: {filename}")
             continue
         try:
@@ -384,9 +410,9 @@ def ingest_documents(
     if WORKER_ENABLED:
         from app.worker.enqueue import enqueue_sync
 
-        job_id = enqueue_sync("task_ingest_documents", client_id, DOCUMENTS_DIR, bot_id)
+        job_id = enqueue_sync("task_ingest_documents", client_id, str(tenant_dir), bot_id)
     else:
-        background_tasks.add_task(_run_ingestion_background, client_id, DOCUMENTS_DIR, bot_id)
+        background_tasks.add_task(_run_ingestion_background, client_id, str(tenant_dir), bot_id)
 
     response: dict = {
         "message": "Documents are being processed",
@@ -528,7 +554,7 @@ async def crawl_discover_endpoint(
 
     from app.services import credit_service, plan_service
     from app.services.plan_service import UNLIMITED
-    from app.services.url_discovery import discover_website_urls
+    from app.services.url_discovery import discover_via_links, discover_website_urls
 
     with get_session() as db:
         plan = plan_service.get_client_plan(db, client_id)
@@ -555,10 +581,23 @@ async def crawl_discover_endpoint(
             max_urls=discovery_cap,
             timeout=20.0,
         )
-        total = len(urls)
     except Exception as exc:
         logger.warning("URL discovery failed for %s: %s", discover_request.url, exc)
-        total = 0
+        urls = []
+
+    # No usable sitemap → the real crawl falls back to a same-domain link scan
+    # (see crawl_provider.crawl_website). Mirror that here so the page count and
+    # cost estimate the customer sees match what the crawl will actually bill,
+    # instead of showing "1 page" for every sitemap-less site.
+    if len(urls) <= 1:
+        try:
+            linked = await discover_via_links(discover_request.url, max_urls=discovery_cap, timeout=20.0)
+            if len(linked) > len(urls):
+                urls = linked
+        except Exception as exc:
+            logger.warning("Link discovery preview failed for %s: %s", discover_request.url, exc)
+
+    total = len(urls)
 
     per_page = max(int(cost_per_page), 1)
     max_affordable_pages = int(balance) // per_page

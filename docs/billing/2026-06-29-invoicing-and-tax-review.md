@@ -1,5 +1,7 @@
 # Invoicing & Tax — System Review
 
+> **✅ RESOLVED (2026-07-03):** all findings INV-1…INV-10 are fixed by the implemented invoicing v2 feature — see [2026-07-02-invoicing-implementation-plan-v2.md](2026-07-02-invoicing-implementation-plan-v2.md) §0 for the implementation status and deploy runbook. This review is retained as the historical problem statement.
+
 **Date:** 2026-06-29 · **Reviewers (roles):** Senior Engineer · QA · CTO
 **Scope:** How invoices are modeled, created, displayed, delivered, and managed across OyeChats — plus the complete state of tax/GST handling.
 **Method:** Direct source reads of the `Invoice` model, every creation site, the API + admin UI that surface it, the email service, and the Razorpay integration. Findings marked **Confirmed** were verified in code.

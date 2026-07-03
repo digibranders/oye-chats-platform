@@ -612,10 +612,11 @@ def expire_old_topups(session: Session) -> int:
         unused = grant.delta - consumed - already_expired
         if unused <= 0:
             continue
-        _acquire_client_lock(session, grant.client_id)
+        _acquire_client_lock(session, grant.client_id, grant.bot_id)
         session.add(
             CreditLedger(
                 client_id=grant.client_id,
+                bot_id=grant.bot_id,
                 delta=-unused,
                 reason="expiry",
                 grant_id=grant.id,
@@ -656,6 +657,88 @@ def grant_for_subscription(
         bot_id=subscription.bot_id,
         reference_id=reference_id,
     )
+
+
+def grant_subscription_period_once(
+    session: Session,
+    subscription: Subscription,
+    period_end: datetime | None,
+    *,
+    invoice_id: int | None = None,
+) -> bool:
+    """Reset + grant a subscription's plan credits for ``period_end``, at most once.
+
+    Idempotent per billing period (remediation H4): if the subscription's
+    ``last_granted_period_end`` already equals ``period_end``, this is a no-op
+    and returns ``False``. Otherwise it resets the prior period's unused plan
+    grant, grants the new allowance, advances the marker, and returns ``True``.
+
+    Both the reset and the grant are scoped to ``subscription.bot_id`` so an
+    account-level subscription (``bot_id IS NULL``) touches only the client
+    pool and a per-bot subscription touches only that bot's ledger — the two
+    never cross-contaminate. This is the single source of truth for per-period
+    granting shared by the Razorpay webhook path and the renewal cron (BL-5 /
+    NB-8); keep the two callers behaviourally identical by routing both here.
+
+    A ``None`` ``period_end`` (event missing ``current_end``) still grants but
+    cannot advance the marker; that is logged so a missing period is visible
+    rather than silently double-granting on a later event.
+
+    Concurrency (T5 review): the ``last_granted_period_end`` marker check below
+    is the idempotency decision, and it is shared by two independent callers —
+    the renewal cron and the ``subscription.charged`` webhook — that can run in
+    overlapping transactions for the *same* period. The advisory lock inside
+    ``reset_monthly_plan_credits`` / ``grant_plan_credits`` only serializes the
+    ledger writes, not this read, so without a lock here both callers could read
+    the same stale marker, both decide to grant, and each write a ``plan_grant``
+    (an extra month of credits). ``ProcessedWebhook`` does not cover this because
+    the cron shares no event id with the webhook. We take a ``SELECT ... FOR
+    UPDATE`` row lock on the subscription and re-read it *before* the marker
+    check so the decision runs against committed, locked data: if a concurrent
+    transaction grants and commits for this period first, the loser blocks on the
+    row lock, then observes the advanced marker and no-ops. Every caller passes a
+    persistent, flushed subscription whose own columns are not dirty at this
+    point (the ``current_period_*`` writes happen after this helper returns), so
+    refreshing does not discard pending changes. The lock is re-entrant with the
+    later advisory lock (a different lock space) and cannot deadlock on a row the
+    session already owns.
+
+    We ``flush`` before the refresh because the session is configured with
+    ``autoflush=False``: without it, ``refresh`` would issue its ``SELECT ... FOR
+    UPDATE`` *before* pushing a marker set earlier in the same transaction (e.g.
+    ``subscription.activated`` then ``subscription.charged`` handled in one
+    transaction), reload the pre-set committed value, and clobber our own marker
+    back — reintroducing the double-grant it is meant to prevent. Flushing makes
+    the re-read observe read-your-own-writes; the FOR UPDATE still returns the
+    latest committed row, so a concurrent committed grant is still seen.
+
+    Precondition: because that ``flush`` flushes the *whole* session, callers must
+    not leave other unflushed ``Subscription`` (or any other) column writes pending
+    that are not yet meant to hit the DB when invoking this helper. The intended
+    dirty state is at most the ``last_granted_period_end`` marker set by an earlier
+    same-transaction handler; ``current_period_*`` and similar writes are performed
+    by callers *after* this helper returns (see ``razorpay_service``).
+    """
+    session.flush()
+    session.refresh(subscription, with_for_update=True)
+
+    if (
+        period_end is not None
+        and subscription.last_granted_period_end is not None
+        and subscription.last_granted_period_end == period_end
+    ):
+        return False
+
+    reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
+    grant_for_subscription(session, subscription, reference_id=invoice_id)
+    if period_end is not None:
+        subscription.last_granted_period_end = period_end
+    else:
+        logger.warning(
+            "Granted subscription %s credits without a period end — marker not advanced",
+            subscription.razorpay_subscription_id,
+        )
+    return True
 
 
 def clawback_refund(

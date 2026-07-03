@@ -2,6 +2,7 @@
 
 import contextlib
 import hashlib
+import re
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -208,6 +209,7 @@ class TestIngestDocument:
 class TestRunFolderIngestion:
     def test_processes_supported_extensions(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["doc.pdf", "note.txt", "data.csv"]),
             patch("app.ingestion.pipeline.load_pdf", return_value=[{"text": "pdf text", "metadata": {"page": 1}}]),
             patch("app.ingestion.pipeline.load_txt", return_value=[{"text": "txt text", "metadata": {"page": 1}}]),
@@ -220,6 +222,7 @@ class TestRunFolderIngestion:
 
     def test_skips_unsupported_extensions(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["image.png", "data.csv"]),
         ):
             result = run_folder_ingestion(1, "/tmp/docs")
@@ -228,6 +231,7 @@ class TestRunFolderIngestion:
 
     def test_handles_extraction_error(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["bad.pdf"]),
             patch("app.ingestion.pipeline.load_pdf", side_effect=RuntimeError("corrupt")),
         ):
@@ -237,6 +241,7 @@ class TestRunFolderIngestion:
 
     def test_archives_after_processing(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["doc.txt"]),
             patch("app.ingestion.pipeline.load_txt", return_value=[{"text": "text", "metadata": {"page": 1}}]),
             patch("app.ingestion.pipeline._ingest_document", return_value=3),
@@ -515,33 +520,44 @@ class TestBatchWebIngestion:
 
 
 class TestMoveToArchive:
-    def test_moves_file(self):
-        with (
-            patch("os.path.exists", return_value=False),
-            patch("shutil.move") as mock_move,
-            patch("app.ingestion.pipeline.ARCHIVE_DIR", "/archive"),
-        ):
-            move_to_archive("/tmp/doc.pdf", "doc.pdf")
+    def test_moves_file_into_tenant_dir(self, tmp_path, monkeypatch):
+        # Archive is namespaced per tenant: {ARCHIVE_DIR}/{client_id}/{bot_id}/.
+        monkeypatch.setattr("app.ingestion.pipeline.ARCHIVE_DIR", str(tmp_path))
+        src = tmp_path / "doc.pdf"
+        src.write_bytes(b"data")
 
-        mock_move.assert_called_once_with("/tmp/doc.pdf", "/archive/doc.pdf")
+        move_to_archive(str(src), "doc.pdf", client_id=1, bot_id=10)
 
-    def test_collision_adds_timestamp(self):
-        with (
-            patch("os.path.exists", return_value=True),
-            patch("shutil.move") as mock_move,
-            patch("app.ingestion.pipeline.ARCHIVE_DIR", "/archive"),
-        ):
-            move_to_archive("/tmp/doc.pdf", "doc.pdf")
+        assert (tmp_path / "1" / "10" / "doc.pdf").is_file()
+        assert not src.exists()
 
-        dest = mock_move.call_args[0][1]
-        assert dest.startswith("/archive/doc_")
-        assert dest.endswith(".pdf")
+    def test_account_level_upload_uses_none_segment(self, tmp_path, monkeypatch):
+        # bot_id=None (account-level upload) lands in a reserved "_none" segment
+        # so it can never collide with a real bot id.
+        monkeypatch.setattr("app.ingestion.pipeline.ARCHIVE_DIR", str(tmp_path))
+        src = tmp_path / "doc.pdf"
+        src.write_bytes(b"data")
 
-    def test_handles_move_error(self):
-        with (
-            patch("os.path.exists", return_value=False),
-            patch("shutil.move", side_effect=OSError("permission denied")),
-            patch("app.ingestion.pipeline.ARCHIVE_DIR", "/archive"),
-        ):
+        move_to_archive(str(src), "doc.pdf", client_id=7, bot_id=None)
+
+        assert (tmp_path / "7" / "_none" / "doc.pdf").is_file()
+
+    def test_collision_adds_timestamp(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.ingestion.pipeline.ARCHIVE_DIR", str(tmp_path))
+        dest_dir = tmp_path / "1" / "10"
+        dest_dir.mkdir(parents=True)
+        (dest_dir / "doc.pdf").write_bytes(b"old")
+        src = tmp_path / "doc.pdf"
+        src.write_bytes(b"new")
+
+        move_to_archive(str(src), "doc.pdf", client_id=1, bot_id=10)
+
+        names = sorted(p.name for p in dest_dir.iterdir())
+        assert "doc.pdf" in names
+        assert any(re.fullmatch(r"doc_\d{8}_\d{6}\.pdf", n) for n in names)
+
+    def test_handles_move_error(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.ingestion.pipeline.ARCHIVE_DIR", str(tmp_path))
+        with patch("shutil.move", side_effect=OSError("permission denied")):
             # Should not raise
-            move_to_archive("/tmp/doc.pdf", "doc.pdf")
+            move_to_archive(str(tmp_path / "doc.pdf"), "doc.pdf", client_id=1, bot_id=10)

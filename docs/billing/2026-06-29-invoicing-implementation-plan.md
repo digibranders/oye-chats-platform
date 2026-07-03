@@ -1,6 +1,8 @@
 # Invoicing & Tax — Implementation Plan
 
-**Status:** Proposed · **Date:** 2026-06-29 · **Owner:** Engineering
+> **⚠️ SUPERSEDED (2026-07-02):** see [2026-07-02-invoicing-implementation-plan-v2.md](2026-07-02-invoicing-implementation-plan-v2.md), which folds in fresh Razorpay/GST research, the completed payment remediation, and the recorded product decisions (Digibranders seller-of-record, inclusive pricing, own-issued invoices, full scope).
+
+**Status:** Superseded · **Date:** 2026-06-29 · **Owner:** Engineering
 **Builds on:** [Invoicing & Tax review](2026-06-29-invoicing-and-tax-review.md) (findings INV-1…INV-10)
 **Complements:** [Remediation plan](2026-06-29-remediation-plan.md) (shares R1 reconciliation; credit notes depend on C2/H6 refund+dispute fixes)
 

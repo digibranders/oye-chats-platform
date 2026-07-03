@@ -16,7 +16,17 @@ from app.core.feedback import (
     FEEDBACK_TYPES,
 )
 from app.core.security import get_password_hash
-from app.db.models import Bot, ChatMessage, ChatSession, Client, CreditLedger, Plan, PlatformFeedback, Subscription
+from app.db.models import (
+    Bot,
+    ChatMessage,
+    ChatSession,
+    Client,
+    CreditLedger,
+    Invoice,
+    Plan,
+    PlatformFeedback,
+    Subscription,
+)
 from app.db.session import get_session
 from app.services.audit_service import record_audit
 
@@ -87,6 +97,25 @@ def delete_client(client_id: int, superadmin: Client = Depends(get_superadmin)):
         # Prevent deleting other superadmins
         if client.is_superadmin:
             raise HTTPException(status_code=400, detail="Cannot delete a superadmin account.")
+
+        # Issued tax documents are statutory records (Section 36: 72-month
+        # retention) and their serials are gapless — a CASCADE delete would
+        # leave permanent, unexplainable holes in the FY series and destroy
+        # the substantiation behind filed GSTR returns.
+        has_issued_invoice = (
+            session.execute(
+                select(Invoice.id).where(Invoice.client_id == client_id, Invoice.invoice_number.isnot(None)).limit(1)
+            ).scalar()
+            is not None
+        )
+        if has_issued_invoice:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Client has issued tax invoices, which must be retained for GST compliance. "
+                    "Suspend the account instead of deleting it."
+                ),
+            )
 
         client_name = client.name
         client_email = client.email

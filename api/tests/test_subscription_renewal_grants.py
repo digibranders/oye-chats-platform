@@ -14,8 +14,11 @@ import os
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy import text as sa_text
+from sqlalchemy.orm import Session
 
-from app.db.models import Client, Plan, Subscription
+from app.db.models import Base, Client, CreditLedger, Plan, Subscription
 from app.services import credit_service
 from app.services import razorpay_service as rzp
 
@@ -116,3 +119,238 @@ def test_charged_for_unknown_subscription_raises_for_retry(db):
     permanently loses the period's invoice (prod, 2026-07-02)."""
     with pytest.raises(rzp.WebhookOutOfOrder):
         rzp._handle_subscription_charged(db, _charged("sub_never_linked", E1))
+
+
+# ── Cron renewal, per-scope + per-period (BL-5 / NB-8) ────────────────────────
+#
+# Under per-bot billing a client holds an account-level subscription
+# (``bot_id IS NULL``) plus one subscription per paid bot. The renewal cron
+# (``task_renew_due_subscriptions``) must grant each scope its own credits,
+# keyed on the same per-period marker the webhook uses. The old cron used a
+# same-day client-wide ``plan_grant`` probe: bot A's grant today suppressed
+# bot B's legitimate renewal (permanent one-month credit loss), and a per-bot
+# renewal wiped the account pool because the reset omitted ``bot_id``.
+
+
+def _make_client(db, email, api_key):
+    client = Client(name="c", email=email, api_key=api_key, hashed_password="h")
+    db.add(client)
+    db.flush()
+    return client
+
+
+def _make_plan(db, slug, credits):
+    plan = Plan(name=slug, slug=slug, monthly_price_cents=399900, credits_per_month=credits)
+    db.add(plan)
+    db.flush()
+    return plan
+
+
+def _make_scoped_sub(db, client, plan, *, bot_id, rzp_id, period_end):
+    sub = Subscription(
+        client_id=client.id,
+        plan_id=plan.id,
+        bot_id=bot_id,
+        status="active",
+        payment_provider="razorpay",
+        billing_cycle="monthly",
+        razorpay_subscription_id=rzp_id,
+        current_period_start=S1,
+        current_period_end=period_end,
+        last_granted_period_end=None,
+    )
+    sub.plan = plan
+    db.add(sub)
+    db.flush()
+    return sub
+
+
+def _make_bot(db, client):
+    from app.db.models import Bot
+
+    bot = Bot(client_id=client.id, bot_key=f"bot-{client.id}-cron")
+    db.add(bot)
+    db.flush()
+    return bot
+
+
+def _run_renewal_cron(db, monkeypatch):
+    """Drive ``task_renew_due_subscriptions`` against the test session.
+
+    The task imports ``get_session`` from ``app.db.session`` inside its body and
+    commits through it; we patch that symbol to yield the test session (without
+    closing it) so the cron operates on the same rows the test inspects.
+    """
+    import asyncio
+    from contextlib import contextmanager
+
+    from app.db import session as db_session
+    from app.worker import tasks as worker_tasks
+
+    @contextmanager
+    def _fake_get_session():
+        yield db
+
+    monkeypatch.setattr(db_session, "get_session", _fake_get_session)
+    return asyncio.run(worker_tasks.task_renew_due_subscriptions({}))
+
+
+def test_cron_renews_account_and_bot_scopes_independently(db, monkeypatch):
+    """One client, two due subs (account + per-bot). Both must be granted into
+    their own ledgers; neither suppresses the other (BL-5 / NB-8)."""
+    client = _make_client(db, "cron-scope@e.com", "cron-scope")
+    account_plan = _make_plan(db, "acct-plan", 1000)
+    bot_plan = _make_plan(db, "bot-plan", 500)
+    bot = _make_bot(db, client)
+
+    _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct", period_end=E1)
+    _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot", period_end=E1)
+    db.commit()
+
+    renewed = _run_renewal_cron(db, monkeypatch)
+
+    assert renewed == 2
+    # Each scope receives exactly its own plan's credits, in its own ledger.
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 1000
+    assert credit_service.get_balance(db, client.id, bot_id=bot.id) == 500
+
+
+def test_cron_is_noop_on_second_run(db, monkeypatch):
+    """Running the cron twice must not double-grant — the per-period marker
+    (``last_granted_period_end``) plus the roll-forward makes the second pass a
+    no-op. The period end is one day stale so a single monthly roll-forward
+    lands it in the future and the sub is no longer due."""
+    from datetime import timedelta
+
+    client = _make_client(db, "cron-idem@e.com", "cron-idem")
+    account_plan = _make_plan(db, "acct-idem", 1000)
+    bot_plan = _make_plan(db, "bot-idem", 500)
+    bot = _make_bot(db, client)
+
+    just_due = datetime.now(UTC) - timedelta(days=1)
+    _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct_i", period_end=just_due)
+    _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot_i", period_end=just_due)
+    db.commit()
+
+    first = _run_renewal_cron(db, monkeypatch)
+    assert first == 2
+
+    # Period rolled ~1 month forward past ``now``, so nothing is due; a second
+    # run grants nothing and balances are unchanged.
+    second = _run_renewal_cron(db, monkeypatch)
+    assert second == 0
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 1000
+    assert credit_service.get_balance(db, client.id, bot_id=bot.id) == 500
+
+
+def test_cron_per_bot_renewal_does_not_reset_account_pool(db, monkeypatch):
+    """A per-bot renewal must reset/grant only the bot ledger — it must NOT wipe
+    the account pool. Regression guard for the cross-scope reset mismatch: the
+    old cron reset the account pool while granting into the bot ledger."""
+    client = _make_client(db, "cron-cross@e.com", "cron-cross")
+    account_plan = _make_plan(db, "acct-cross", 1000)
+    bot_plan = _make_plan(db, "bot-cross", 500)
+    bot = _make_bot(db, client)
+
+    # Account sub is NOT due (period ends in the future); only the bot sub is due.
+    future_end = datetime(2999, 1, 1, 12, 0, tzinfo=UTC)
+    account_sub = _make_scoped_sub(db, client, account_plan, bot_id=None, rzp_id="sub_acct_x", period_end=future_end)
+    _make_scoped_sub(db, client, bot_plan, bot_id=bot.id, rzp_id="sub_bot_x", period_end=E1)
+    # Seed a pre-existing account-pool grant so we can prove it survives.
+    credit_service.grant_for_subscription(db, account_sub)
+    db.commit()
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 1000
+
+    renewed = _run_renewal_cron(db, monkeypatch)
+
+    assert renewed == 1
+    # Account pool untouched by the per-bot renewal.
+    assert credit_service.get_balance(db, client.id, bot_id=None) == 1000
+    # Bot ledger got its own grant.
+    assert credit_service.get_balance(db, client.id, bot_id=bot.id) == 500
+
+
+# ── flush-before-refresh regression (T5) ──────────────────────────────────────
+#
+# ``grant_subscription_period_once`` runs ``session.flush()`` immediately before
+# ``session.refresh(subscription, with_for_update=True)``. That flush is load-
+# bearing ONLY because production ``SessionLocal`` is ``autoflush=False``
+# (``app/db/session.py``): the activation→charged webhook pair can be handled in
+# one transaction where ``subscription.activated`` sets
+# ``last_granted_period_end = P`` (dirty, unflushed) and ``subscription.charged``
+# then calls this helper for the SAME period P. Without the flush,
+# ``refresh``'s ``SELECT ... FOR UPDATE`` fires before the dirty marker reaches
+# the DB, reloads the pre-set committed value, clobbers P in memory, and the
+# marker check then mis-decides to grant the period a SECOND time.
+#
+# The shared ``db`` fixture (conftest) is ``autoflush=True``, so ``refresh``'s
+# own SELECT auto-flushes the dirty marker first — the existing tests above pass
+# with or without the flush line and therefore do NOT guard it. This test pins
+# ``autoflush=False`` (mirroring test_credit_deduct_grant_boundary.py, where
+# autoflush-off is likewise a required ingredient of the bug) so that deleting
+# the ``session.flush()`` line makes it fail with a double grant.
+
+
+def _autoflush_off_session(pg_engine) -> Session:
+    """A session bound to the throwaway PG that mirrors production's
+    ``autoflush=False`` — the precondition that makes the flush-before-refresh
+    fix observable."""
+    return Session(pg_engine, autoflush=False)
+
+
+def _truncate_all(session: Session) -> None:
+    names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+    session.execute(sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+    session.commit()
+
+
+def test_flush_before_refresh_preserves_same_txn_marker(pg_engine):
+    """Same-transaction activation→charged for one period grants exactly once,
+    even with ``autoflush=False`` — regression guard for the ``session.flush()``
+    before ``refresh`` in ``grant_subscription_period_once`` (commit 4dae732).
+
+    Fails (returns ``True`` and writes a second ``plan_grant``) if that flush is
+    removed, because the pending ``last_granted_period_end`` marker gets clobbered
+    by the ``FOR UPDATE`` reload before the idempotency check reads it.
+    """
+    session = _autoflush_off_session(pg_engine)
+    try:
+        client = Client(name="c", email="flush-refresh@e.com", api_key="flush-refresh", hashed_password="h")
+        session.add(client)
+        session.flush()
+        plan = Plan(name="Std", slug="std-flush-refresh", monthly_price_cents=399900, credits_per_month=1000)
+        session.add(plan)
+        session.flush()
+        sub = Subscription(
+            client_id=client.id,
+            plan_id=plan.id,
+            bot_id=None,
+            status="active",
+            payment_provider="razorpay",
+            razorpay_subscription_id="sub_flush_refresh",
+            current_period_start=S1,
+            current_period_end=E1,
+            last_granted_period_end=None,
+        )
+        sub.plan = plan
+        session.add(sub)
+        session.commit()
+
+        # Simulate ``subscription.activated`` having granted + marked period E1
+        # earlier in THIS transaction: the marker is set in the identity map but,
+        # under autoflush=False, has NOT reached the database yet.
+        sub.last_granted_period_end = E1
+        assert sub in session.dirty  # precondition: the marker write is pending, unflushed
+
+        # ``subscription.charged`` for the SAME period must observe that pending
+        # marker (thanks to the explicit flush) and no-op.
+        granted = credit_service.grant_subscription_period_once(session, sub, E1)
+        session.commit()
+
+        assert granted is False, "same-period grant must be a no-op"
+        plan_grants = session.execute(select(CreditLedger).where(CreditLedger.reason == "plan_grant")).scalars().all()
+        assert plan_grants == [], "no plan_grant may be written for an already-granted period"
+    finally:
+        session.rollback()
+        _truncate_all(session)
+        session.close()

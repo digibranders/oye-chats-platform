@@ -34,6 +34,23 @@ def test_check_disabled_lets_anything_through():
     _enforce_bot_origin(bot, _request({"origin": "https://evil.com"}))  # no exception
 
 
+def test_enabled_but_empty_allowlist_fails_open(monkeypatch):
+    # Secure-by-default relies on this: enabling the flag on a bot that has no
+    # configured domains must NOT brick it. Enforcement only bites once an
+    # allowlist is actually configured.
+    monkeypatch.setenv("APP_ENV", "production")
+    bot = _bot(enabled=True, domains=[])
+    _enforce_bot_origin(bot, _request({"origin": "https://anywhere.com"}))  # no exception
+
+
+def test_enabled_empty_allowlist_allows_missing_headers(monkeypatch):
+    # Fail-open must short-circuit before the missing-headers hard reject too,
+    # so a bot with no configured domains is never rejected on that path.
+    monkeypatch.setenv("APP_ENV", "production")
+    bot = _bot(enabled=True, domains=[])
+    _enforce_bot_origin(bot, _request({}))  # no exception
+
+
 def test_matching_origin_passes():
     bot = _bot(enabled=True, domains=["acme.com"])
     _enforce_bot_origin(bot, _request({"origin": "https://acme.com"}))

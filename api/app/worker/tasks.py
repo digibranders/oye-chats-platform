@@ -20,6 +20,12 @@ async def task_ingest_documents(ctx: dict, client_id: int, folder_path: str, bot
 
     Calls the existing synchronous ``run_folder_ingestion()`` pipeline.
     Returns the number of files processed.
+
+    ``folder_path`` is a per-tenant scoped path (``documents/{client_id}/
+    {bot_id}/``, ``_none`` when bot_id is None), produced by
+    ``document_routes._tenant_documents_dir``. The scoping is a security
+    boundary (P0-2): the sweep only ever sees this tenant's own files, so a
+    job can never ingest or archive another tenant's pending uploads.
     """
     import asyncio
 
@@ -158,14 +164,14 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
 
     from sqlalchemy import text
 
-    from app.db.database import SessionLocal
+    from app.db.session import get_session
     from app.ingestion.embedder import embed_chunks
 
     logger.info("task_reembed_all_documents: starting (batch_size=%d)", batch_size)
 
     total = succeeded = failed = 0
 
-    with SessionLocal() as session:
+    with get_session() as session:
         # Fetch IDs of all documents with NULL embedding in ascending order.
         id_rows = session.execute(text("SELECT id FROM documents WHERE embedding IS NULL ORDER BY id")).fetchall()
         doc_ids = [r[0] for r in id_rows]
@@ -176,7 +182,7 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
     for batch_start in range(0, total, batch_size):
         batch_ids = doc_ids[batch_start : batch_start + batch_size]
 
-        with SessionLocal() as session:
+        with get_session() as session:
             rows = session.execute(
                 text("SELECT id, content FROM documents WHERE id = ANY(:ids)"),
                 {"ids": batch_ids},
@@ -196,7 +202,7 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
             failed += len(batch_ids)
             continue
 
-        with SessionLocal() as session:
+        with get_session() as session:
             for row, embedding in zip(rows, embeddings, strict=True):
                 emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
                 session.execute(
@@ -236,12 +242,12 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
 
     from sqlalchemy import text
 
-    from app.db.database import SessionLocal
+    from app.db.session import get_session
     from app.ingestion.embedder import embed_chunks
 
     logger.info("task_reembed_document: document_id=%d", document_id)
 
-    with SessionLocal() as session:
+    with get_session() as session:
         row = session.execute(
             text("SELECT content FROM documents WHERE id = :id"),
             {"id": document_id},
@@ -264,7 +270,7 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
         return {"document_id": document_id, "status": "failed", "error": str(exc)}
 
     emb_str = "[" + ",".join(str(v) for v in embeddings[0]) + "]"
-    with SessionLocal() as session:
+    with get_session() as session:
         session.execute(
             text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
             {"emb": emb_str, "id": document_id},
@@ -321,7 +327,7 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     """Cron task: grant the new month's plan credits for subscriptions whose
     current_period_end has been reached, then roll the period forward.
 
-    Stripe's ``invoice.paid`` webhook is the canonical trigger for renewals;
+    Razorpay's ``subscription.charged`` webhook is the canonical trigger for renewals;
     this cron is a safety net that catches missed webhooks (and is the *only*
     trigger for free-tier subs, since no payment ever fires there). The
     webhook handler is idempotent (skips when balance was already renewed in
@@ -347,16 +353,15 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     import asyncio
     from datetime import UTC, datetime
 
-    from sqlalchemy import func, select
+    from sqlalchemy import select
 
     from app.core.dates import add_months
-    from app.db.models import CreditLedger, Subscription
+    from app.db.models import Subscription
     from app.db.session import get_session
     from app.services import credit_service
 
     def _renew() -> int:
         now_utc = datetime.now(UTC)
-        today_utc = now_utc.date()
         renewed = 0
         with get_session() as session:
             subs = (
@@ -378,31 +383,24 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                 # at sub creation; anything else falls through to monthly so
                 # legacy / manual rows don't get stuck.
                 period_months = 12 if (sub.billing_cycle or "").lower() == "annual" else 1
-                # Skip if a plan_grant already exists for today (webhook beat us to it).
-                already_granted = (
-                    session.execute(
-                        select(func.count())
-                        .select_from(CreditLedger)
-                        .where(
-                            CreditLedger.client_id == sub.client_id,
-                            CreditLedger.reason == "plan_grant",
-                            CreditLedger.delta > 0,
-                            func.date(CreditLedger.created_at) == today_utc,
-                        )
-                    ).scalar()
-                    or 0
-                )
-                if already_granted:
-                    # Still need to roll the period forward — without this the
-                    # cron would keep matching the same row every day.
-                    sub.current_period_start = sub.current_period_end
-                    sub.current_period_end = add_months(sub.current_period_end, period_months)
-                    continue
-                credit_service.reset_monthly_plan_credits(session, sub.client_id)
-                credit_service.grant_for_subscription(session, sub)
+                # Grant this period's credits at most once, keyed on the
+                # per-scope + per-period marker the webhook path uses
+                # (``last_granted_period_end``). The old same-day client-wide
+                # ``plan_grant`` probe was scope-blind: under per-bot billing
+                # (an account sub + one sub per paid bot) one scope's grant
+                # today suppressed another scope's legitimate renewal, and any
+                # unrelated same-day grant starved a renewal — a permanent
+                # one-month credit loss (BL-5 / NB-8). ``grant_subscription_
+                # period_once`` resets + grants scoped to ``sub.bot_id`` so the
+                # account pool and each bot ledger renew independently.
+                granted = credit_service.grant_subscription_period_once(session, sub, sub.current_period_end)
+                # Roll the period forward regardless of whether a grant fired —
+                # without this the cron re-matches the same row every day (or,
+                # after the marker no-ops the grant, spins on it forever).
                 sub.current_period_start = sub.current_period_end
                 sub.current_period_end = add_months(sub.current_period_end, period_months)
-                renewed += 1
+                if granted:
+                    renewed += 1
             session.commit()
         return renewed
 
@@ -417,7 +415,7 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
     """Cron: promote subscriptions whose scheduled downgrade cutover has passed.
 
     Razorpay's ``subscription.completed`` webhook is the canonical trigger;
-    this cron is a safety net for webhook outages and for the manual / Stripe
+    this cron is a safety net for webhook outages and for the manual
     legacy paths that don't emit ``completed`` cleanly. Both routes call into
     ``transition_service.promote_scheduled_change``, which is idempotent — if
     the webhook already promoted the row the cron's match-set is empty.
@@ -444,11 +442,19 @@ async def task_promote_scheduled_downgrades(ctx: dict) -> int:
             subs = (
                 session.execute(
                     select(Subscription).where(
+                        # Scope tightly to rows that still carry a queued change.
+                        # This is what lets us safely re-include ``canceled``
+                        # rows below without resurrecting ordinary cancels — a
+                        # promoted row has already had its scheduled trio cleared.
+                        Subscription.scheduled_plan_id.is_not(None),
                         Subscription.scheduled_change_at.is_not(None),
                         Subscription.scheduled_change_at <= now,
-                        # Only promote rows that are still alive — don't
-                        # resurrect a row a human / webhook already finalised.
-                        Subscription.status.in_(("active", "trialing", "past_due")),
+                        # ``canceled`` is included because a ``cancel_at_cycle_end``
+                        # mandate fires ``subscription.cancelled`` (not
+                        # ``completed``) at cutover; if that webhook was dropped
+                        # the row is ``canceled`` but the downgrade is still
+                        # pending. This is the backstop for BL-1.
+                        Subscription.status.in_(("active", "trialing", "past_due", "canceled")),
                     )
                 )
                 .scalars()
@@ -881,7 +887,7 @@ async def task_expire_past_due_subscriptions(ctx: dict) -> int:
     """Cron: flip ``past_due`` subscriptions to ``expired`` once the dunning
     grace window has elapsed.
 
-    Stripe and Razorpay both retry failed payments for ~7 days. Up to that
+    Razorpay retries failed payments for ~7 days. Up to that
     point ``status = 'past_due'`` keeps the customer's full access so a
     rescued card resumes service without interruption. After
     ``PAYMENT_FAILED_GRACE_DAYS`` we stop bleeding LLM / credit cost on a
@@ -1205,6 +1211,189 @@ async def task_send_visitor_message_email(
                     reply_to=reply_to,
                 )
             return True
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)
+
+
+# ── Invoicing v2: PDF rendering sweep (Phase 4) ──────────────────────────────
+#
+# Indirection points (module-level so tests can substitute them): the sweep is
+# a self-healing cron rather than a per-webhook enqueue — any invoice that
+# finalizes gets its PDF within one sweep interval, failures retry for free on
+# the next tick, and nothing threads through the payment transaction.
+
+
+def _invoice_pdf_session():
+    from app.db.session import get_session
+
+    return get_session()
+
+
+def _utcnow():
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC)
+
+
+def _probe_pdf_renderer() -> None:
+    """Raise if WeasyPrint (or its system pango libraries) is unavailable.
+
+    Probed ONCE per sweep so a missing-pango environment produces a single
+    clear error instead of 25 per-invoice stack traces every 5 minutes that
+    read like data bugs.
+    """
+    import weasyprint  # noqa: F401 — import raises OSError when pango is missing
+
+
+def _render_invoice_pdf(invoice) -> bytes:
+    from app.services.invoice_pdf import render_invoice_pdf
+
+    return render_invoice_pdf(invoice)
+
+
+def _upload_invoice_pdf(data: bytes, key: str) -> str:
+    from app.services.r2_service import upload_invoice_pdf
+
+    return upload_invoice_pdf(data, key)
+
+
+def _send_invoice_email(to_email: str, invoice, url: str) -> None:
+    from app.services.email_service import send_invoice_email
+
+    send_invoice_email(to_email, invoice, url)
+
+
+def _invoice_pdf_key(invoice_number: str) -> str:
+    """R2 object key for an invoice PDF.
+
+    Serials are sequential, and the bucket is served from a public CDN — a
+    predictable key would make every customer's invoice enumerable. A random
+    token turns the URL into an unguessable capability (the Stripe
+    hosted-invoice pattern). Slashes in the legal serial are folded to dashes.
+    """
+    import secrets
+
+    safe = invoice_number.replace("/", "-")
+    fy = invoice_number.split("/")[1] if invoice_number.count("/") == 2 else "misc"
+    return f"invoices/{fy}/{safe}-{secrets.token_hex(8)}.pdf"
+
+
+async def task_render_invoice_pdfs(ctx: dict) -> int:
+    """Cron sweep: render + store the PDF for finalized invoices lacking one.
+
+    Picks numbered invoices with ``pdf_url IS NULL``, renders the Rule-46
+    document, uploads to R2 under a capability URL, and stamps
+    ``pdf_url``/``invoice_url``. Emails the customer only when
+    ``INVOICE_EMAILS_ENABLED`` (shadow mode keeps documents admin-only).
+    Per-invoice failures are logged and left for the next sweep; the money
+    path is never involved. Returns the number of PDFs produced.
+    """
+    import asyncio
+
+    from sqlalchemy import select as sa_select
+    from sqlalchemy import update as sa_update
+
+    from app import config
+    from app.db.models import Invoice as InvoiceModel
+
+    if not config.INVOICING_V2_ENABLED:
+        return 0
+
+    try:
+        _probe_pdf_renderer()
+    except Exception:  # noqa: BLE001
+        logger.error(
+            "task_render_invoice_pdfs: PDF renderer unavailable (weasyprint/pango missing?) — "
+            "skipping sweep; install libpango on this host"
+        )
+        return 0
+
+    def _run() -> int:
+        done = 0
+        with _invoice_pdf_session() as session:
+            pending = (
+                session.execute(
+                    sa_select(InvoiceModel)
+                    .where(InvoiceModel.invoice_number.isnot(None), InvoiceModel.pdf_url.is_(None))
+                    .order_by(InvoiceModel.id)
+                    .limit(25)
+                )
+                .scalars()
+                .all()
+            )
+            for invoice in pending:
+                try:
+                    pdf = _render_invoice_pdf(invoice)
+                    url = _upload_invoice_pdf(pdf, _invoice_pdf_key(invoice.invoice_number))
+                    # Guarded UPDATE: a slow sweep can overlap the next cron
+                    # tick (or a second worker) on the same pending set. Only
+                    # the run that wins the NULL→url transition emails — the
+                    # loser rowcount-0s and skips, so the customer never gets
+                    # the document twice.
+                    claimed = session.execute(
+                        sa_update(InvoiceModel)
+                        .where(InvoiceModel.id == invoice.id, InvoiceModel.pdf_url.is_(None))
+                        .values(pdf_url=url, invoice_url=url)
+                    ).rowcount
+                    session.commit()
+                except Exception:  # noqa: BLE001 — one bad invoice must not block the sweep
+                    session.rollback()
+                    logger.exception("task_render_invoice_pdfs: failed for invoice %s; will retry", invoice.id)
+                    continue
+                if not claimed:
+                    logger.info("task_render_invoice_pdfs: invoice %s already rendered by another run", invoice.id)
+                    continue
+                done += 1
+                # Auto-email ONLY on first delivery (emailed_at NULL): an admin
+                # "regenerate PDF" clears pdf_url and re-enters this sweep, and
+                # must never re-email the customer. Best-effort post-commit; a
+                # lost email is re-sendable from the superadmin console.
+                if config.INVOICE_EMAILS_ENABLED and invoice.emailed_at is None:
+                    try:
+                        to_email = (invoice.buyer_snapshot or {}).get("email")
+                        if to_email:
+                            _send_invoice_email(to_email, invoice, url)
+                            invoice.emailed_at = _utcnow()
+                            session.commit()
+                    except Exception:  # noqa: BLE001
+                        session.rollback()
+                        logger.exception("task_render_invoice_pdfs: email failed for invoice %s", invoice.id)
+        return done
+
+    loop = asyncio.get_running_loop()
+    total = await loop.run_in_executor(None, _run)
+    if total:
+        logger.info("task_render_invoice_pdfs: rendered %d invoice PDF(s)", total)
+    return total
+
+
+async def task_invoice_reconciliation_alert(ctx: dict) -> int:
+    """Daily cron: surface invoice anomalies loudly (error-level → Sentry).
+
+    The issuing pipeline deliberately tolerates some failures inline (a
+    savepoint-swallowed credit note, a stuck PDF render) so the money path is
+    never blocked — this sweep is the guarantee those never stay silent.
+    Returns the total anomaly count.
+    """
+    import asyncio
+
+    from app import config
+    from app.services import invoice_reports
+
+    if not config.INVOICING_V2_ENABLED:
+        return 0
+
+    def _run() -> int:
+        with _invoice_pdf_session() as session:
+            anomalies = invoice_reports.reconciliation_anomalies(session)
+        total = sum(len(v) for v in anomalies.values())
+        if total:
+            logger.error(
+                "invoice reconciliation anomalies: %s",
+                {k: [r["invoice_number"] or r["id"] for r in v] for k, v in anomalies.items() if v},
+            )
+        return total
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)

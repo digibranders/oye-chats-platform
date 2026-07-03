@@ -7,12 +7,14 @@ subscription cancellation. Razorpay webhook handling lives in
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app import config as app_config
 from app.api.auth import get_current_client_strict as get_current_client
 from app.config import (
     BILLING_PROVIDER,
@@ -21,10 +23,11 @@ from app.config import (
 )
 from app.core.dates import add_months, trial_days_remaining
 from app.core.geo import resolve_country
+from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
-from app.services import credit_service
+from app.services import credit_service, invoice_service
 from app.services.plan_service import (
     get_active_plans,
     get_client_plan,
@@ -426,6 +429,16 @@ def verify_razorpay_subscription(
                 .scalars()
                 .first()
             )
+
+        # Create the first-charge invoice synchronously too. The
+        # ``subscription.charged`` webhook is the canonical creator, but it
+        # can't reach a local dev box and can lag in prod — without this a
+        # paying customer sees an active plan with no invoice. Idempotent on
+        # the payment id, so the eventual webhook never duplicates it.
+        if sub is not None:
+            razorpay_service.record_verified_subscription_charge(session, sub, payload.razorpay_payment_id)
+            session.commit()
+            invoice_service.request_pdf_render_soon()
         return {
             "status": "verified",
             "subscription_known": sub is not None,
@@ -468,16 +481,159 @@ def list_invoices(client: Client = Depends(get_current_client)):
                 "amount_cents": inv.amount_cents,
                 "currency": inv.currency,
                 "status": inv.status,
-                "description": inv.description,
-                "invoice_url": inv.invoice_url,
-                "pdf_url": inv.pdf_url,
+                # Description on numbered rows can carry serials ("Credit note
+                # against DB/26-27/000001") — gated like the other v2 fields.
+                "description": (
+                    inv.description if (inv.invoice_number is None or app_config.INVOICE_EMAILS_ENABLED) else None
+                ),
+                # v2 documents (numbered rows) follow the same customer-facing
+                # kill switch as the tax fields below — a rendered PDF must
+                # never leak while delivery is disabled. Unnumbered legacy rows
+                # pass their provider URLs through untouched.
+                "invoice_url": (
+                    inv.invoice_url if (inv.invoice_number is None or app_config.INVOICE_EMAILS_ENABLED) else None
+                ),
+                "pdf_url": inv.pdf_url if (inv.invoice_number is None or app_config.INVOICE_EMAILS_ENABLED) else None,
                 "period_start": inv.period_start.isoformat() if inv.period_start else None,
                 "period_end": inv.period_end.isoformat() if inv.period_end else None,
                 "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
                 "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                # Invoicing v2 tax-document fields (null on legacy rows).
+                # Nulled while invoices run in SHADOW mode — customers must not
+                # see (and book against) invoice numbers that are still under
+                # verification. INVOICE_EMAILS_ENABLED is the customer-facing
+                # switch (Phase 4/6); keys stay present so the schema is stable.
+                "invoice_number": inv.invoice_number if app_config.INVOICE_EMAILS_ENABLED else None,
+                "invoice_type": inv.invoice_type if app_config.INVOICE_EMAILS_ENABLED else None,
+                "issued_at": (
+                    inv.issued_at.isoformat() if (inv.issued_at and app_config.INVOICE_EMAILS_ENABLED) else None
+                ),
+                "taxable_value_minor": inv.taxable_value_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "total_tax_minor": inv.total_tax_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "cgst_minor": inv.cgst_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "sgst_minor": inv.sgst_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "igst_minor": inv.igst_minor if app_config.INVOICE_EMAILS_ENABLED else None,
+                "tax_rate_bps": inv.tax_rate_bps if app_config.INVOICE_EMAILS_ENABLED else None,
+                "hsn_sac": inv.hsn_sac if app_config.INVOICE_EMAILS_ENABLED else None,
+                "supply_kind": inv.supply_kind if app_config.INVOICE_EMAILS_ENABLED else None,
+                "is_export": inv.is_export if app_config.INVOICE_EMAILS_ENABLED else None,
             }
             for inv in invoices
         ]
+
+
+# ── Billing details (buyer tax identity for invoicing v2) ─────────────────────
+
+
+class BillingDetailsBody(BaseModel):
+    # All optional — PATCH semantics via exclude_unset: omitted fields keep
+    # their stored value; an explicit null clears the field.
+    legal_name: str | None = None
+    gstin: str | None = None
+    billing_address: dict[str, str] | None = None
+    # ISO-2 country code; length-capped so a free-text value ("India") is a
+    # clean 422 rather than a varchar(2) overflow → 500 at commit.
+    billing_country: str | None = Field(default=None, max_length=2)
+    billing_state_code: str | None = None
+    billing_email: str | None = None
+
+
+def _billing_details_dict(client: Client) -> dict:
+    return {
+        "legal_name": client.legal_name,
+        "company_name": client.company_name,
+        "gstin": client.gstin,
+        "billing_address": client.billing_address,
+        "billing_country": client.billing_country,
+        "billing_state_code": client.billing_state_code,
+        "billing_email": client.billing_email,
+        # Read-only: where invoices actually go when billing_email is unset
+        # (mirrors invoice_service's ``billing_email or email`` recipient).
+        "account_email": client.email,
+    }
+
+
+@router.get("/billing-details")
+def get_billing_details(client: Client = Depends(get_current_client)):
+    """The buyer identity used on tax invoices (invoicing v2 Phase 1)."""
+    return _billing_details_dict(client)
+
+
+@router.put("/billing-details")
+def update_billing_details(body: BillingDetailsBody, client: Client = Depends(get_current_client)):
+    fields = body.model_dump(exclude_unset=True)
+
+    gstin_provided = "gstin" in fields
+    new_gstin = None
+    if gstin_provided and fields["gstin"]:
+        new_gstin = normalize_gstin(fields["gstin"])
+        if not is_valid_gstin(new_gstin):
+            raise HTTPException(status_code=422, detail="GSTIN failed format/checksum validation")
+
+    state_provided = "billing_state_code" in fields
+    raw_state = str(fields.get("billing_state_code") or "").strip()
+    new_state = raw_state.zfill(2) if raw_state else None  # ""/whitespace clears to NULL
+    if new_state and new_state not in VALID_STATE_CODES:
+        raise HTTPException(status_code=422, detail=f"Unknown GST state code: {new_state}")
+
+    country_provided = "billing_country" in fields
+    new_country = (str(fields.get("billing_country") or "")).strip().upper() or None
+    if new_country and not re.fullmatch(r"[A-Z]{2}", new_country):
+        raise HTTPException(status_code=422, detail="billing_country must be a 2-letter ISO code")
+
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        # Cross-field consistency is checked on the EFFECTIVE (stored +
+        # incoming) values so a two-request sequence can't assemble an
+        # incoherent combination a single request would have rejected.
+        eff_gstin = new_gstin if gstin_provided else row.gstin
+        eff_state = new_state if state_provided else row.billing_state_code
+        eff_country = new_country if country_provided else row.billing_country
+        if eff_gstin:
+            # The GSTIN's first two digits are the authoritative place-of-supply
+            # state; a conflicting explicit state is a client error, not a
+            # silent override.
+            if state_provided and eff_state and eff_state != eff_gstin[:2]:
+                raise HTTPException(
+                    status_code=422, detail="billing_state_code does not match the GSTIN's state digits"
+                )
+            eff_state = eff_gstin[:2]
+            # An Indian GST registration cannot belong to a foreign-billed
+            # buyer — that combination would mint an export invoice carrying a
+            # domestic GSTIN (and lets a customer self-declare out of IGST).
+            if eff_country not in (None, "IN"):
+                raise HTTPException(
+                    status_code=422,
+                    detail="billing_country must be IN when a GSTIN is set (clear the GSTIN first)",
+                )
+
+        if "legal_name" in fields:
+            row.legal_name = (fields["legal_name"] or "").strip() or None
+        if gstin_provided:
+            row.gstin = new_gstin
+        if "billing_address" in fields:
+            row.billing_address = fields["billing_address"]
+        if country_provided:
+            row.billing_country = new_country
+        if state_provided or gstin_provided:
+            # Self-healing: whenever a GSTIN is on record the stored state
+            # follows its digits.
+            row.billing_state_code = eff_state if eff_gstin else (new_state if state_provided else eff_state)
+        if "billing_email" in fields:
+            row.billing_email = (fields["billing_email"] or "").strip() or None
+        session.commit()
+        session.refresh(row)
+        # Keep the dependency-injected object in sync for the response.
+        for attr in (
+            "legal_name",
+            "gstin",
+            "billing_address",
+            "billing_country",
+            "billing_state_code",
+            "billing_email",
+        ):
+            setattr(client, attr, getattr(row, attr))
+    return _billing_details_dict(client)
 
 
 # ── Checkout & Billing Portal ──
@@ -628,12 +784,42 @@ def create_checkout(
         if plan.monthly_price_cents == 0 and plan.slug != "enterprise":
             raise HTTPException(status_code=400, detail="Cannot checkout for a free plan.")
 
+        # Already-subscribed guard (BL-4). ``/checkout`` is strictly for a
+        # FIRST purchase. A subscribed customer hitting it again would mint a
+        # SECOND Razorpay subscription + second UPI mandate — Razorpay can't
+        # swap a UPI plan in place, so both mandates would debit the customer
+        # (double-charge). Plan changes must go through ``/change-plan``, which
+        # orchestrates the cancel+recreate+re-authorize re-auth flow. Only an
+        # active/trialing/past_due sub WITH a gateway mandate blocks; a
+        # terminal (canceled/expired) or manual (no razorpay id) sub does not.
+        #
+        # The guard is ACCOUNT-scoped (``bot_id IS NULL``). ``/checkout`` only
+        # ever creates account-level subscriptions, so a per-bot subscription
+        # (bot_id NOT NULL) must not block a legitimate first account purchase.
+        # Deliberately NOT using ``get_client_subscription`` here — that spans
+        # per-bot subs, which would wrongly 409 a per-bot-only client.
+        existing_account_sub = session.execute(
+            select(Subscription)
+            .where(
+                Subscription.client_id == client.id,
+                Subscription.bot_id.is_(None),
+                Subscription.status.in_(("active", "trialing", "past_due")),
+                Subscription.razorpay_subscription_id.is_not(None),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing_account_sub is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="You already have an active subscription. Use change-plan to upgrade or downgrade.",
+            )
+
         from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service
 
         # Only resolve/apply the referral discount on a provider that can realise
         # it (N4). Today only Razorpay is live; gating here means that if the
-        # Stripe path is ever re-enabled before its coupon realiser exists, the
+        # a non-Razorpay path is ever added before its coupon realiser exists, the
         # discount is not silently dropped (customer over-charged) — it's simply
         # not resolved until the provider can honour it.
         provider = _resolve_provider()
@@ -707,7 +893,7 @@ def change_plan(
 
         # ── Branch 1: target is Free ──
         # No payment needed. If the customer has an upstream provider sub
-        # (Stripe OR Razorpay), schedule cancellation at period-end so they
+        # schedule cancellation at period-end so they
         # keep paid features for the rest of the cycle they already paid for,
         # AND cancel the upstream mandate so the provider stops charging the
         # card / UPI. If they have a manual sub (no upstream id), the swap is
@@ -745,6 +931,13 @@ def change_plan(
                             detail="Could not cancel your subscription with the payment provider. Please try again in a moment.",
                         ) from exc
                 sub.cancel_at_period_end = True
+                # Abandon any queued paid→paid downgrade: the customer is now
+                # heading to Free, so a leftover ``scheduled_plan_id`` would let
+                # the cancelled webhook / cron promote a downgrade they walked
+                # away from — an unwanted checkout + re-auth email (Fix C).
+                from app.services import transition_service
+
+                transition_service.cancel_scheduled_change(session, sub)
                 msg = f"Scheduled downgrade to {new_plan.name} at the end of the current billing cycle."
             else:
                 sub.plan_id = new_plan.id
@@ -954,6 +1147,12 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         sub.cancel_at_period_end = True
         sub.canceled_at = datetime.now(UTC)
         sub.cancel_reason = request.reason
+        # Clear any queued paid→paid downgrade — an outright cancel supersedes
+        # it. Left set, the cancelled webhook / cron backstop would promote the
+        # abandoned downgrade into a fresh checkout + re-auth email (Fix C).
+        from app.services import transition_service
+
+        transition_service.cancel_scheduled_change(session, sub)
         session.commit()
 
         logger.info("Client %s canceled subscription %s (reason: %s)", client.id, sub.id, request.reason)
@@ -972,9 +1171,29 @@ def resume_subscription(
 ):
     """Resume a subscription that was scheduled for cancellation.
 
+    ``/cancel`` issues the Razorpay cancel IMMEDIATELY with
+    ``cancel_at_cycle_end=1`` (``razorpay_service.cancel_subscription(sub,
+    at_period_end=True)``) before flipping the local ``cancel_at_period_end``
+    flag. Razorpay has NO un-cancel / resume API for an at-cycle-end-cancelled
+    subscription, so merely clearing the local flags would LIE: the gateway
+    still cancels at period end → involuntary churn while the UI says
+    "resumed" (BL-3).
+
+    So we mirror the honest sibling ``cancel_scheduled_change_endpoint``:
+    because the mandate is dead at the gateway, we re-authorise by minting a
+    FRESH Razorpay subscription for the same plan/cycle (tagging the
+    predecessor via ``prev_razorpay_subscription_id`` so it is retired at the
+    new sub's activation webhook) and return ``mandate_action:
+    "reauthorise_required"`` with the checkout payload. We do NOT clear the
+    local cancel flags or claim success here — the row must not pretend the
+    cancellation was undone until the customer actually re-authorises and the
+    activation webhook lands.
+
     Pass ``bot_id`` to resume a specific bot's subscription (N3); omit to act on
     the account's highest-tier subscription.
     """
+    from app.services import razorpay_service
+
     with get_session() as session:
         lock_client_for_billing(session, client.id)  # serialize billing mutations (H1)
         sub = _resolve_target_subscription(session, client.id, request.bot_id)
@@ -984,14 +1203,44 @@ def resume_subscription(
         if not sub.cancel_at_period_end:
             raise HTTPException(status_code=400, detail="Subscription is not scheduled for cancellation.")
 
-        sub.cancel_at_period_end = False
-        sub.canceled_at = None
-        sub.cancel_reason = None
+        plan = sub.plan
+        if plan is None:
+            raise HTTPException(status_code=500, detail="Subscription has no associated plan.")
+
+        billing_cycle = sub.billing_cycle or "monthly"
+        extra_notes = (
+            {"prev_razorpay_subscription_id": sub.razorpay_subscription_id} if sub.razorpay_subscription_id else None
+        )
+        try:
+            checkout = razorpay_service.create_subscription(
+                session,
+                client,
+                plan,
+                billing_cycle,
+                extra_notes=extra_notes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except razorpay_service.RazorpayBillingError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
         session.commit()
-
-        logger.info(f"Client {client.id} resumed subscription {sub.id}")
-
-        return {"message": "Subscription resumed successfully."}
+        checkout.setdefault("provider", "razorpay")
+        logger.info(
+            "Client %s requested resume for sub=%s → re-authorise required (fresh sub %s)",
+            client.id,
+            sub.id,
+            checkout.get("subscription_id"),
+        )
+        return {
+            "status": "reauthorise_required",
+            "mandate_action": "reauthorise_required",
+            "message": (
+                "The previous mandate was cancelled at the payment provider and "
+                "cannot be un-cancelled. Re-authorise payment to keep your plan."
+            ),
+            "checkout": checkout,
+        }
 
 
 # ── Operator-seat add-on ──
@@ -1006,11 +1255,12 @@ class SeatChangeRequest(BaseModel):
 def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_current_client)):
     """Add or remove operator seats from the active subscription.
 
-    Each seat above ``plan.included_operator_seats`` costs
-    ``extra_seat_price_cents`` per month (default ₹1,199). Both Razorpay
-    (``subscription.edit`` with new quantity, ``schedule_change_at='now'``)
-    and Stripe (subscription item quantity update) handle the upstream
-    proration. The local mirror is updated immediately so live-chat seat
+    Each seat above ``plan.included_operator_seats`` is billed through a
+    SEPARATE Razorpay add-on subscription (``RAZORPAY_SEAT_PLAN_ID``, whose
+    plan amount IS the per-seat price). The main plan subscription is never
+    edited for seats — Razorpay ``quantity`` multiplies the WHOLE plan
+    amount, which would overcharge the customer (P0-3). The local
+    ``operator_quantity`` mirror is updated immediately so live-chat seat
     enforcement sees the new limit without webhook latency.
     """
     if request.delta == 0:
@@ -1046,20 +1296,32 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
                 detail=f"Cannot exceed the {ceiling} seat(s) allowed on your plan. Upgrade for more.",
             )
 
+        # Seats above the plan's included floor are billed via a SEPARATE
+        # add-on subscription — the main plan's quantity is never touched
+        # (P0-3). extra_seats is clamped at 0 inside the helper.
+        extra_seats = new_total - floor
+
         try:
             from app.services import razorpay_service
 
-            razorpay_service.update_subscription_quantity(session, sub, new_total)
+            razorpay_service.edit_seat_addon_quantity(session, sub, extra_seats)
+        except razorpay_service.RazorpayBillingError as exc:
+            logger.exception("Seat add-on update failed for client %s: %s", client.id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("Seat update failed for client %s: %s", client.id, exc)
             raise HTTPException(status_code=502, detail="Could not update seats with payment provider.") from exc
 
+        sub.operator_quantity = new_total
         session.commit()
-        logger.info("Client %s changed seat count → %s", client.id, sub.operator_quantity)
+        logger.info("Client %s changed seat count → %s (extra=%s)", client.id, new_total, extra_seats)
         return {
-            "operator_quantity": sub.operator_quantity,
+            "message": "Seats updated.",
+            "total_seats": new_total,
+            "extra_seats": extra_seats,
+            "operator_quantity": new_total,
             "included_operator_seats": floor,
             "extra_seat_price_cents": int(plan.extra_seat_price_cents or 0),
             "currency": plan.currency,
@@ -1274,7 +1536,7 @@ def _match_topup_pack(packs: list[dict], requested_amount: int) -> dict | None:
     """Find a pack whose configured amount matches ``requested_amount``.
 
     Top-up packs in the new (INR) schema use the ``amount`` key; legacy
-    Stripe-era packs used ``usd``. We accept either so older admin clients
+    Legacy packs used ``usd``. We accept either so older admin clients
     continue to work during cutover.
     """
     for pack in packs:
@@ -1409,6 +1671,7 @@ def verify_topup_payment(
                 expected_client_id=client.id,
             )
             session.commit()
+            invoice_service.request_pdf_render_soon()
         except razorpay_service.RazorpayBillingError:
             # Reconcile failed (e.g. Razorpay fetch blip) — the webhook may still
             # arrive. Don't fail verify; the UI polls /credits/balance.

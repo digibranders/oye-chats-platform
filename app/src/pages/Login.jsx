@@ -12,7 +12,7 @@ const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
   { icon: Zap, title: 'One-Line Embed', desc: 'Add to any website instantly' },
   { icon: BarChart3, title: 'Live Analytics', desc: 'Real-time insights & metrics' },
-  { icon: Shield, title: 'Enterprise Ready', desc: 'SOC 2 compliant & secure' },
+  { icon: Shield, title: 'Enterprise Ready', desc: 'Encrypted & secure by design' },
 ];
 
 export default function Login() {
@@ -223,9 +223,9 @@ export default function Login() {
           className="relative z-10 flex items-center gap-8"
         >
           {[
-            { val: '10K+', label: 'Active bots' },
-            { val: '5M+', label: 'Conversations' },
-            { val: '99.9%', label: 'Uptime' },
+            { val: 'RAG', label: 'Answers from your docs' },
+            { val: 'Live', label: 'Human handoff built in' },
+            { val: 'Secure', label: 'Encrypted in transit' },
           ].map((s) => (
             <div key={s.label}>
               <p className="text-xl font-bold text-white">{s.val}</p>

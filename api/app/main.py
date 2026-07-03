@@ -508,6 +508,11 @@ def read_root():
 _ALLOWED_FILE_PREFIXES = ("logos/", "chat-files/")
 
 # MIME types safe to serve inline (browsers won't execute these as code).
+# Scriptable types (image/svg+xml, text/html, application/xhtml+xml, any
+# */javascript or */xml) must NEVER be listed here: served inline from the app
+# origin they enable stored XSS. Everything not listed is sent as an attachment
+# with nosniff below (defense in depth alongside r2_service content-type
+# neutralization — NB-1).
 _INLINE_SAFE_TYPES = frozenset(
     {
         "image/png",

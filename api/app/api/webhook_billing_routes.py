@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.config import RAZORPAY_WEBHOOK_SECRET, WEBHOOK_RETRY_ON_ERROR
 from app.db.models import FailedWebhook
 from app.db.session import get_session
+from app.services import invoice_service
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,10 @@ async def razorpay_webhook(request: Request):
             result = razorpay_service.handle_webhook_event(session, event, event_id)
             session.commit()
             logger.info("Razorpay webhook processed: %s → %s", event_type, result)
+        # Post-commit: nudge the PDF renderer so invoices/credit notes created
+        # by this event get their Download link in seconds, not at the next
+        # 5-minute sweep. No-op for events that created nothing.
+        invoice_service.request_pdf_render_soon()
     except Exception as exc:
         logger.error("Razorpay webhook processing error for %s: %s", event_type, exc, exc_info=True)
         # The handler's transaction (including the processed_webhooks dedup row)

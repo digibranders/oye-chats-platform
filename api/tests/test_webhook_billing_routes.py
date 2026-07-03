@@ -132,6 +132,75 @@ def test_success_returns_200_and_no_dead_letter():
     assert not any(isinstance(o, FailedWebhook) for o in added)
 
 
+# ── Seat add-on events must be ACKed without granting plan credits (P0-3) ─────
+
+
+def _seat_addon_event(event_name: str) -> dict:
+    """Build a Razorpay subscription webhook event for the seat add-on sub.
+
+    The add-on subscription is stamped ``notes.purpose == "seat_addon"`` by
+    ``create_seat_addon_subscription`` and carries NO ``oyechats_plan_id`` —
+    it must never be mistaken for a plan renewal that grants monthly credits.
+    """
+    return {
+        "event": event_name,
+        "payload": {
+            "subscription": {
+                "entity": {
+                    "id": "sub_addon_123",
+                    "quantity": 2,
+                    "current_start": 1_700_000_000,
+                    "current_end": 1_702_592_000,
+                    "notes": {
+                        "oyechats_client_id": "1",
+                        "purpose": "seat_addon",
+                    },
+                }
+            }
+        },
+    }
+
+
+def test_seat_addon_charged_is_acked_without_plan_credit_grant():
+    """``subscription.charged`` for a seat add-on must be handled (no raise,
+    no dead-letter) and must NOT grant monthly plan credits (P0-3)."""
+    from app.services import razorpay_service
+
+    session = MagicMock()
+    with (
+        patch.object(razorpay_service, "_record_or_skip_event", return_value=True),
+        patch.object(razorpay_service, "_grant_subscription_period") as grant_period,
+        patch("app.services.credit_service.grant_for_subscription") as grant_sub,
+    ):
+        result = razorpay_service.handle_webhook_event(
+            session, _seat_addon_event("subscription.charged"), "evt_seat_charged_1"
+        )
+
+    assert isinstance(result, str)
+    assert grant_period.call_count == 0
+    assert grant_sub.call_count == 0
+
+
+def test_seat_addon_activated_is_acked_without_plan_credit_grant():
+    """``subscription.activated`` for a seat add-on must be handled and must
+    NOT grant plan credits or create a local plan subscription (P0-3)."""
+    from app.services import razorpay_service
+
+    session = MagicMock()
+    with (
+        patch.object(razorpay_service, "_record_or_skip_event", return_value=True),
+        patch.object(razorpay_service, "_grant_subscription_period") as grant_period,
+        patch("app.services.credit_service.grant_for_subscription") as grant_sub,
+    ):
+        result = razorpay_service.handle_webhook_event(
+            session, _seat_addon_event("subscription.activated"), "evt_seat_activated_1"
+        )
+
+    assert isinstance(result, str)
+    assert grant_period.call_count == 0
+    assert grant_sub.call_count == 0
+
+
 # ── Regression: signature + secret guards unchanged ──────────────────────────
 
 
