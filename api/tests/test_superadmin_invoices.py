@@ -128,3 +128,25 @@ def test_readonly_admin_cannot_mutate(db, monkeypatch):
     assert c.get("/superadmin/invoices").status_code == 200  # reads fine
     assert c.post(f"/superadmin/invoices/{inv.id}/resend-email").status_code == 403
     assert c.post(f"/superadmin/invoices/{inv.id}/regenerate-pdf").status_code == 403
+
+
+def test_resend_email_blocked_by_kill_switch(db, monkeypatch):
+    from app import config as app_config
+
+    monkeypatch.setattr(app_config, "INVOICE_EMAILS_ENABLED", False)
+    inv = _mk_invoice(db, "sa-kill@test.example", "DB/26-27/000070", pdf_url="https://cdn.test/x.pdf")
+    c = _client(db, monkeypatch)
+    res = c.post(f"/superadmin/invoices/{inv.id}/resend-email")
+    assert res.status_code == 409
+    assert "disabled" in res.json()["detail"]
+
+
+def test_resend_email_stamps_emailed_at(db, monkeypatch):
+    from app import config as app_config
+
+    monkeypatch.setattr(app_config, "INVOICE_EMAILS_ENABLED", True)
+    monkeypatch.setattr(superadmin_routes_v2, "_send_invoice_email_now", lambda to, inv, url: None)
+    inv = _mk_invoice(db, "sa-stamp@test.example", "DB/26-27/000071", pdf_url="https://cdn.test/x.pdf")
+    c = _client(db, monkeypatch)
+    assert c.post(f"/superadmin/invoices/{inv.id}/resend-email").status_code == 200
+    assert inv.emailed_at is not None

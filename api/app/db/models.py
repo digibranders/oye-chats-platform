@@ -1086,6 +1086,10 @@ class Invoice(Base):
     # Razorpay's own invoice entity for this charge (payment.invoice_id from
     # the subscription.charged payload) — payment evidence, not the tax doc.
     razorpay_invoice_id = Column(String, index=True, nullable=True)
+    # Last time the document email was sent to the buyer. The PDF sweep only
+    # auto-emails when NULL, so an admin "regenerate PDF" can never re-email
+    # the customer; superadmin resend updates it.
+    emailed_at = Column(DateTime(timezone=True), nullable=True)
     # E-invoicing (IRP) — unused until the ₹5cr B2B threshold applies.
     irn = Column(String, nullable=True)
     signed_qr = Column(Text, nullable=True)

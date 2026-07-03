@@ -1438,7 +1438,8 @@ def list_all_invoices(
         if client_id:
             stmt = stmt.where(Invoice.client_id == client_id)
         if search:
-            needle = f"%{search.strip()}%"
+            escaped = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            needle = f"%{escaped}%"
             stmt = stmt.where(
                 Invoice.invoice_number.ilike(needle) | Client.email.ilike(needle) | Client.name.ilike(needle)
             )
@@ -1483,16 +1484,27 @@ def invoice_detail(invoice_id: int, _admin: Client = Depends(get_superadmin)):
 def resend_invoice_email(invoice_id: int, request: Request, admin: Client = Depends(get_superadmin)):
     """Re-send the document email to the buyer (e.g. after a lost delivery)."""
     _require_write(admin)
+    from app import config as app_config
+
+    # The kill switch governs ALL customer-facing delivery — a resend while
+    # it's off would email a document whose serial the customer API is
+    # deliberately hiding.
+    if not app_config.INVOICE_EMAILS_ENABLED:
+        raise HTTPException(status_code=409, detail="Invoice emails are disabled (INVOICE_EMAILS_ENABLED).")
     with get_session() as session:
         inv = session.get(Invoice, invoice_id)
         if inv is None:
             raise HTTPException(status_code=404, detail="Invoice not found")
         if not inv.invoice_number or not inv.pdf_url:
-            raise HTTPException(status_code=409, detail="Invoice has no rendered PDF yet — regenerate first.")
+            raise HTTPException(
+                status_code=409,
+                detail="No rendered PDF yet — the sweep renders within ~5 minutes; retry shortly.",
+            )
         to_email = (inv.buyer_snapshot or {}).get("email")
         if not to_email:
             raise HTTPException(status_code=409, detail="Invoice has no buyer email on record.")
         _send_invoice_email_now(to_email, inv, inv.pdf_url)
+        inv.emailed_at = datetime.now(UTC)
         record_audit(
             session,
             actor=admin,

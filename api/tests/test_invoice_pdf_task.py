@@ -131,3 +131,20 @@ def test_sweep_skips_cleanly_when_renderer_unavailable(db, env, monkeypatch):
     # One clean skip, no per-invoice failures, nothing uploaded.
     assert asyncio.run(worker_tasks.task_render_invoice_pdfs({})) == 0
     assert env["uploads"] == []
+
+
+def test_regenerated_pdf_does_not_reemail(db, env, monkeypatch):
+    # B1: an admin regenerate (pdf_url cleared, emailed_at set from the first
+    # delivery) must re-render WITHOUT re-emailing the customer.
+    monkeypatch.setattr(config, "INVOICE_EMAILS_ENABLED", True)
+    inv = _mk_invoice(db, "pdf-reemail@test.example", "DB/26-27/000011")
+    asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
+    assert env["emails"] == [("billing-pdf-reemail@test.example", "DB/26-27/000011")]
+    assert inv.emailed_at is not None
+
+    inv.pdf_url = None  # what the regenerate endpoint does
+    inv.invoice_url = None
+    db.commit()
+    asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
+    assert inv.pdf_url is not None  # re-rendered
+    assert len(env["emails"]) == 1  # NOT re-emailed

@@ -1224,6 +1224,12 @@ def _invoice_pdf_session():
     return get_session()
 
 
+def _utcnow():
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC)
+
+
 def _probe_pdf_renderer() -> None:
     """Raise if WeasyPrint (or its system pango libraries) is unavailable.
 
@@ -1333,15 +1339,19 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     logger.info("task_render_invoice_pdfs: invoice %s already rendered by another run", invoice.id)
                     continue
                 done += 1
-                if config.INVOICE_EMAILS_ENABLED:
-                    # Best-effort post-commit; a lost email is re-sendable from
-                    # the superadmin console (Phase 6 adds an emailed_at marker
-                    # for retryable delivery).
+                # Auto-email ONLY on first delivery (emailed_at NULL): an admin
+                # "regenerate PDF" clears pdf_url and re-enters this sweep, and
+                # must never re-email the customer. Best-effort post-commit; a
+                # lost email is re-sendable from the superadmin console.
+                if config.INVOICE_EMAILS_ENABLED and invoice.emailed_at is None:
                     try:
                         to_email = (invoice.buyer_snapshot or {}).get("email")
                         if to_email:
                             _send_invoice_email(to_email, invoice, url)
+                            invoice.emailed_at = _utcnow()
+                            session.commit()
                     except Exception:  # noqa: BLE001
+                        session.rollback()
                         logger.exception("task_render_invoice_pdfs: email failed for invoice %s", invoice.id)
         return done
 
