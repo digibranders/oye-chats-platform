@@ -1557,9 +1557,9 @@ def gstr_export_csv(
     month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="IST calendar month, e.g. 2026-07"),
     _admin: Client = Depends(get_superadmin),
 ):
-    """Document-level GSTR-1-style CSV for the CA (B2B / B2CS / EXP / CDNR
-    sections + per-section summary). Amounts in RUPEES (two decimals) — the
-    filing is rupee-denominated, unlike the API's minor units."""
+    """Document-level GSTR-1-style CSV for the CA (B2B / B2CS / B2CL / EXP /
+    CDNR / CDNUR sections + per-section summary). Amounts in RUPEES (two
+    decimals) — the filing is rupee-denominated, unlike the API's minor units."""
     import csv
     import io
 
@@ -1576,6 +1576,15 @@ def gstr_export_csv(
 
     def _r(minor: int | None) -> str:
         return f"{(minor or 0) / 100:.2f}"
+
+    def _safe(value: str | None) -> str:
+        # Neutralise CSV formula injection — buyer_name is customer-controlled
+        # and the guaranteed consumer opens this in Excel, which executes a
+        # leading =, +, -, @ (or control char) even inside a quoted cell.
+        text = str(value or "")
+        if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+            return "'" + text
+        return text
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -1603,12 +1612,12 @@ def gstr_export_csv(
         writer.writerow(
             [
                 row["section"],
-                row["invoice_number"],
-                row["invoice_date"],
-                row["buyer_name"] or "",
-                row["buyer_gstin"] or "",
-                row["place_of_supply"] or "",
-                row["hsn_sac"] or "",
+                _safe(row["invoice_number"]),
+                row["invoice_date"] or "",
+                _safe(row["buyer_name"]),
+                _safe(row["buyer_gstin"]),
+                _safe(row["place_of_supply"]),
+                _safe(row["hsn_sac"]),
                 f"{(row['rate_bps'] or 0) / 100:.2f}",
                 _r(row["gross_minor"]),
                 _r(row["taxable_minor"]),
@@ -1616,7 +1625,7 @@ def gstr_export_csv(
                 _r(row["sgst_minor"]),
                 _r(row["igst_minor"]),
                 _r(row["total_tax_minor"]),
-                row["against_invoice"] or "",
+                _safe(row["against_invoice"]),
                 row["against_invoice_date"] or "",
             ]
         )
@@ -1644,9 +1653,10 @@ def gstr_export_csv(
             _r(grand["total_tax_minor"]),
         ]
     )
+    # UTF-8 BOM so Excel opens Devanagari / non-ASCII legal names correctly.
     return PlainTextResponse(
-        buf.getvalue(),
-        media_type="text/csv",
+        "﻿" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="gstr-{month}.csv"'},
     )
 

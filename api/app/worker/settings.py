@@ -118,7 +118,6 @@ class WorkerSettings:
     functions = [
         task_ingest_documents,
         task_ingest_web_batch,
-        task_invoice_reconciliation_alert,
         task_crawl_and_ingest,
         task_deliver_webhook,
         task_send_email,

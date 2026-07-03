@@ -1,0 +1,62 @@
+<svg width="680" height="564" viewBox="0 0 680 564" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>Money flow for the Starter plan at ₹1,799 GST-inclusive</title>
+  <desc>Customer pays ₹1,799 including ₹274.42 GST. Razorpay deducts its 2% fee of ₹35.98 plus ₹6.48 GST on the fee and settles ₹1,756.54 to Digibranders. Digibranders pays the government ₹274.42 output GST minus ₹6.48 input tax credit, netting ₹267.94. OyeChats keeps ₹1,488.60.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .th { font-size: 14px; font-weight: 500; }
+    .ts { font-size: 12px; font-weight: 400; }
+  </style>
+  <rect x="0" y="0" width="680" height="564" fill="#FFFFFF"/>
+
+  <rect x="140" y="40" width="280" height="56" rx="4" fill="#E1F5EE" stroke="#0F6E56"/>
+  <text class="th" x="280" y="64" text-anchor="middle" fill="#085041">Customer pays ₹1,799</text>
+  <text class="ts" x="280" y="82" text-anchor="middle" fill="#0F6E56">Starter plan · GST-inclusive price</text>
+
+  <rect x="450" y="36" width="190" height="64" rx="4" fill="#FFFFFF" stroke="#D3D1C7"/>
+  <text class="th" x="462" y="58" fill="#2C2C2A">Inside the ₹1,799</text>
+  <text class="ts" x="462" y="76" fill="#5F5E5A">taxable value ₹1,524.58</text>
+  <text class="ts" x="462" y="91" fill="#5F5E5A">+ output GST ₹274.42</text>
+  <line x1="420" y1="68" x2="450" y2="68" stroke="#B4B2A9" stroke-width="0.75" stroke-dasharray="3 3"/>
+
+  <line x1="280" y1="96" x2="280" y2="148" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="ts" x="292" y="127" fill="#5F5E5A">charges ₹1,799</text>
+
+  <rect x="140" y="152" width="280" height="56" rx="4" fill="#F1EFE8" stroke="#5F5E5A"/>
+  <text class="th" x="280" y="176" text-anchor="middle" fill="#444441">Razorpay</text>
+  <text class="ts" x="280" y="194" text-anchor="middle" fill="#5F5E5A">gateway — deducts its cut</text>
+
+  <rect x="450" y="148" width="190" height="64" rx="4" fill="#FFFFFF" stroke="#D3D1C7"/>
+  <text class="th" x="462" y="170" fill="#2C2C2A">Razorpay keeps ₹42.46</text>
+  <text class="ts" x="462" y="188" fill="#5F5E5A">fee 2% = ₹35.98</text>
+  <text class="ts" x="462" y="203" fill="#5F5E5A">+ 18% GST on fee = ₹6.48</text>
+  <line x1="420" y1="180" x2="450" y2="180" stroke="#B4B2A9" stroke-width="0.75" stroke-dasharray="3 3"/>
+
+  <line x1="280" y1="208" x2="280" y2="260" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="ts" x="292" y="239" fill="#5F5E5A">settles ₹1,756.54</text>
+
+  <rect x="140" y="264" width="280" height="56" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+  <text class="th" x="280" y="288" text-anchor="middle" fill="#3C3489">Digibranders (OyeChats)</text>
+  <text class="ts" x="280" y="306" text-anchor="middle" fill="#534AB7">banks the settlement</text>
+
+  <rect x="450" y="260" width="190" height="64" rx="4" fill="#FFFFFF" stroke="#D3D1C7"/>
+  <text class="th" x="462" y="282" fill="#2C2C2A">Input tax credit</text>
+  <text class="ts" x="462" y="300" fill="#5F5E5A">the ₹6.48 GST on fee</text>
+  <text class="ts" x="462" y="315" fill="#5F5E5A">comes back via ITC</text>
+  <line x1="420" y1="292" x2="450" y2="292" stroke="#B4B2A9" stroke-width="0.75" stroke-dasharray="3 3"/>
+
+  <line x1="280" y1="320" x2="280" y2="372" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text class="ts" x="292" y="351" fill="#5F5E5A">₹274.42 − ₹6.48 ITC = ₹267.94</text>
+
+  <rect x="140" y="376" width="280" height="56" rx="4" fill="#F1EFE8" stroke="#5F5E5A"/>
+  <text class="th" x="280" y="400" text-anchor="middle" fill="#444441">Government (GST)</text>
+  <text class="ts" x="280" y="418" text-anchor="middle" fill="#5F5E5A">net GST paid monthly</text>
+
+  <rect x="140" y="468" width="280" height="56" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+  <text class="th" x="280" y="492" text-anchor="middle" fill="#3C3489">OyeChats keeps ₹1,488.60</text>
+  <text class="ts" x="280" y="510" text-anchor="middle" fill="#534AB7">₹1,799 − ₹274.42 GST − ₹35.98 fee</text>
+</svg>

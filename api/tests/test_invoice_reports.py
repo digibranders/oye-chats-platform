@@ -235,3 +235,76 @@ def test_reconciliation_cron_counts_and_logs(db, enabled, monkeypatch, caplog):
         total = asyncio.run(worker_tasks.task_invoice_reconciliation_alert({}))
     assert total >= 1
     assert any("reconciliation anomalies" in r.message for r in caplog.records)
+
+
+def test_b2cl_split_for_large_interstate_b2c(db, enabled):
+    _seller(db)  # seller state 27
+    # Inter-state (29), unregistered, > ₹1,00,000 → B2CL, not B2CS.
+    big = _finalized(db, "rep-b2cl@test.example", state="29", amount=150_000_00)
+    small = _finalized(db, "rep-b2cs@test.example", state="29", amount=4_599_00, pay_ref="pay-small")
+    report = invoice_reports.gstr_document_rows(db, THIS_MONTH)
+    by_num = {r["invoice_number"]: r["section"] for r in report}
+    assert by_num[big.invoice_number] == "B2CL"
+    assert by_num[small.invoice_number] == "B2CS"
+
+
+def test_receipt_credit_note_excluded_from_report(db, enabled):
+    _seller(db, gstin=None)  # receipt mode (no GSTIN)
+    receipt = _finalized(db, "rep-rcpt@test.example")
+    assert receipt.invoice_type == "receipt"
+    note = invoice_service.create_credit_note(db, receipt, 179900, provider_ref="rfnd_rcpt")
+    assert note.invoice_type == "credit_note"
+    assert note.tax_rate_bps is None  # no GST breakup
+    report = invoice_reports.gstr_document_rows(db, THIS_MONTH)
+    # Neither the receipt nor its non-tax reversal belongs in GSTR-1.
+    assert report == []
+
+
+def test_grand_total_is_net_of_credit_notes(db, enabled):
+    _seller(db)
+    inv = _finalized(db, "rep-net@test.example")
+    invoice_service.create_credit_note(db, inv, 179900, provider_ref="rfnd_net")  # full reversal
+    summary = invoice_reports.gstr_summary(db, THIS_MONTH)
+    # Sale (B2CS) minus its credit note (CDNUR) → net zero turnover.
+    assert summary["grand_total"]["taxable_minor"] == 0
+    assert summary["grand_total"]["total_tax_minor"] == 0
+    # But per-section magnitudes stay positive.
+    assert summary["sections"]["B2CS"]["taxable_minor"] == 152458
+    assert summary["sections"]["CDNUR"]["taxable_minor"] == 152458
+
+
+def test_csv_export_neutralizes_formula_injection(db, enabled, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient as HttpClient
+
+    from app.api import superadmin_routes_v2
+    from app.api.auth import get_superadmin
+
+    @contextmanager
+    def _ctx(session):
+        yield session
+
+    _seller(db)
+    # Customer-controlled legal name with an Excel formula payload.
+    c = _client_row(db, "rep-inject@test.example", legal_name='=HYPERLINK("http://evil")', billing_state_code="27")
+    inv = Invoice(client_id=c.id, amount_cents=179900, currency="inr", status="paid", razorpay_payment_id="pay-inject")
+    db.add(inv)
+    db.flush()
+    invoice_service.finalize_invoice(db, inv)
+
+    monkeypatch.setattr(superadmin_routes_v2, "get_session", lambda: _ctx(db))
+    app = FastAPI()
+    app.include_router(superadmin_routes_v2.router)
+    app.dependency_overrides[get_superadmin] = lambda: SimpleNamespace(
+        id=None, name="A", is_superadmin=True, superadmin_role="owner"
+    )
+    body = HttpClient(app).get(f"/superadmin/billing/gstr-export?month={THIS_MONTH}").text
+    assert "'=HYPERLINK" in body  # neutralised with a leading quote
+    # Never appears as a bare cell (right after a delimiter or opening quote) —
+    # only ever behind the neutralising apostrophe.
+    assert ",=HYPERLINK" not in body
+    assert '"=HYPERLINK' not in body
+    assert body.startswith("﻿")  # UTF-8 BOM for Excel

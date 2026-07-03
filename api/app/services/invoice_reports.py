@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.db.models import Invoice
@@ -27,6 +27,14 @@ IST = ZoneInfo("Asia/Kolkata")
 # stored NULL on the document (a foreign buyer has no GST state), resolved
 # here at reporting time.
 EXPORT_POS = "96"
+
+# GSTR-1 Table 5 (B2CL): inter-state supplies to UNREGISTERED recipients above
+# this document value are reported invoice-level; below it they aggregate in
+# B2CS (Table 7). Threshold cut ₹2.5L → ₹1,00,000 by Notification 12/2024-CT.
+B2CL_THRESHOLD_MINOR = 100_000_00
+
+# Credit-note sections net DOWN the period's turnover (sales − reversals).
+_CREDIT_NOTE_SECTIONS = frozenset({"CDNR", "CDNUR"})
 
 # How long a numbered document may lack a PDF before it counts as stuck
 # (the sweep runs every 5 minutes; an hour means ~12 consecutive failures).
@@ -48,14 +56,23 @@ def month_window_utc(month: str) -> tuple[datetime, datetime]:
 def _section_for(inv: Invoice) -> str | None:
     """GSTR-1 section for a document; ``None`` = not GST-reportable."""
     if inv.invoice_type == "credit_note":
-        # CDNR = registered recipient (buyer GSTIN present), CDNUR otherwise.
-        buyer_gstin = (inv.buyer_snapshot or {}).get("gstin")
-        return "CDNR" if buyer_gstin else "CDNUR"
+        # A reversal of a non-GST document (a receipt-era refund) carries no
+        # tax and has no place in GSTR-1 — only tax-bearing credit notes are
+        # reported. CDNR = registered recipient (buyer GSTIN), CDNUR otherwise.
+        if inv.tax_rate_bps is None:
+            return None
+        return "CDNR" if (inv.buyer_snapshot or {}).get("gstin") else "CDNUR"
     if inv.invoice_type != "tax_invoice":
         return None  # receipts carry no GST; legacy rows aren't documents
     if inv.is_export:
         return "EXP"
-    return "B2B" if (inv.buyer_snapshot or {}).get("gstin") else "B2CS"
+    if (inv.buyer_snapshot or {}).get("gstin"):
+        return "B2B"
+    # Unregistered (B2C): inter-state above the threshold is invoice-level B2CL,
+    # everything else aggregates in B2CS.
+    if inv.supply_kind == "inter" and (inv.amount_cents or 0) > B2CL_THRESHOLD_MINOR:
+        return "B2CL"
+    return "B2CS"
 
 
 def _ist_date(dt: datetime | None) -> str | None:
@@ -125,7 +142,12 @@ def gstr_document_rows(session: Session, month: str) -> list[dict[str, Any]]:
 
 
 def gstr_summary(session: Session, month: str) -> dict[str, Any]:
-    """Per-section and grand totals for the month — must tie to the rows."""
+    """Per-section and grand totals for the month.
+
+    Per-section figures are positive magnitudes (a CA reads CDNR as the credit
+    -note total). ``grand_total`` is NET turnover — credit-note sections are
+    subtracted (sales − reversals) so it reconciles with output-tax liability.
+    """
     rows = gstr_document_rows(session, month)
     sections: dict[str, dict[str, int]] = {}
     grand = {"count": 0, "gross_minor": 0, "taxable_minor": 0, "total_tax_minor": 0}
@@ -133,11 +155,15 @@ def gstr_summary(session: Session, month: str) -> dict[str, Any]:
         bucket = sections.setdefault(
             row["section"], {"count": 0, "gross_minor": 0, "taxable_minor": 0, "total_tax_minor": 0}
         )
-        for target in (bucket, grand):
-            target["count"] += 1
-            target["gross_minor"] += row["gross_minor"] or 0
-            target["taxable_minor"] += row["taxable_minor"] or 0
-            target["total_tax_minor"] += row["total_tax_minor"] or 0
+        bucket["count"] += 1
+        bucket["gross_minor"] += row["gross_minor"] or 0
+        bucket["taxable_minor"] += row["taxable_minor"] or 0
+        bucket["total_tax_minor"] += row["total_tax_minor"] or 0
+        sign = -1 if row["section"] in _CREDIT_NOTE_SECTIONS else 1
+        grand["count"] += 1
+        grand["gross_minor"] += sign * (row["gross_minor"] or 0)
+        grand["taxable_minor"] += sign * (row["taxable_minor"] or 0)
+        grand["total_tax_minor"] += sign * (row["total_tax_minor"] or 0)
     return {"month": month, "sections": sections, "grand_total": grand}
 
 
@@ -153,20 +179,39 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
       by construction; presence means manual DB tampering).
     """
     note = aliased(Invoice)
-    refunds_missing_cn = (
+    candidates = (
         session.execute(
-            select(Invoice)
-            .outerjoin(note, note.credit_note_of_id == Invoice.id)
-            .where(
+            select(Invoice).where(
                 Invoice.invoice_number.isnot(None),
                 Invoice.invoice_type != "credit_note",
                 Invoice.status.in_(("refunded", "partially_refunded", "dispute_lost")),
-                note.id.is_(None),
             )
         )
         .scalars()
         .all()
     )
+    # Sum of credit notes already issued per candidate — a single surviving CN
+    # must not mask a second swallowed one, so compare the SUM, not existence.
+    reversed_by_id: dict[int, int] = {}
+    if candidates:
+        reversed_by_id = dict(
+            session.execute(
+                select(note.credit_note_of_id, func.coalesce(func.sum(note.amount_cents), 0))
+                .where(note.credit_note_of_id.in_([c.id for c in candidates]))
+                .group_by(note.credit_note_of_id)
+            ).all()
+        )
+    refunds_missing_cn = []
+    for inv in candidates:
+        reversed_minor = reversed_by_id.get(inv.id, 0)
+        if inv.status in ("refunded", "dispute_lost"):
+            # Full reversal expected; a short sum means a CN was swallowed.
+            if reversed_minor < (inv.amount_cents or 0):
+                refunds_missing_cn.append(inv)
+        # partially_refunded: the refunded amount isn't stored on the invoice,
+        # so only a total absence of any credit note is provably wrong here.
+        elif reversed_minor == 0:
+            refunds_missing_cn.append(inv)
     cutoff = datetime.now(UTC) - PDF_STUCK_AFTER
     pdfs_pending = (
         session.execute(
@@ -179,19 +224,28 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
         .scalars()
         .all()
     )
-    tax_docs = (
+
+    # Reconciliation identities pushed into SQL so this returns only the (near
+    # always zero) offending rows instead of hydrating every document ever
+    # issued — the check stays cheap as the table grows.
+    def _c(col):
+        return func.coalesce(col, 0)
+
+    broken = (
         session.execute(
-            select(Invoice).where(Invoice.invoice_number.isnot(None), Invoice.taxable_value_minor.isnot(None))
+            select(Invoice).where(
+                Invoice.invoice_number.isnot(None),
+                Invoice.taxable_value_minor.isnot(None),
+                or_(
+                    _c(Invoice.taxable_value_minor) + _c(Invoice.total_tax_minor) != _c(Invoice.amount_cents),
+                    _c(Invoice.cgst_minor) + _c(Invoice.sgst_minor) + _c(Invoice.igst_minor)
+                    != _c(Invoice.total_tax_minor),
+                ),
+            )
         )
         .scalars()
         .all()
     )
-    broken = [
-        inv
-        for inv in tax_docs
-        if (inv.taxable_value_minor or 0) + (inv.total_tax_minor or 0) != (inv.amount_cents or 0)
-        or (inv.cgst_minor or 0) + (inv.sgst_minor or 0) + (inv.igst_minor or 0) != (inv.total_tax_minor or 0)
-    ]
 
     def _brief(inv: Invoice) -> dict[str, Any]:
         return {
