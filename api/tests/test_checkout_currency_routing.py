@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -102,3 +103,68 @@ def test_geo_returns_usd_for_foreign_buyer(db, monkeypatch):
     assert res.status_code == 200, res.text
     assert res.json()["display_currency"] == "USD"
     assert res.json()["country"] == "US"
+
+
+# ── Task 2: /checkout/quote currency routing ──────────────────────────────────
+
+
+def test_checkout_quote_inr_for_indian_buyer(db, monkeypatch):
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-in@e.com")
+    plan = _make_plan(db, slug="starter-in", monthly_price_cents=179900, monthly_price_usd_cents=1900)
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "IN")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["country"] == "IN"
+    assert body["currency"] == "INR"
+    assert body["amount_minor"] == 179900
+    assert body["amount_display"] == "₹1,799"
+    assert body["methods"] == ["card", "upi"]
+    assert body["checkout_supported"] is True
+
+
+def test_checkout_quote_usd_pending_for_foreign_buyer(db, monkeypatch):
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-us@e.com")
+    plan = _make_plan(db, slug="starter-us", monthly_price_cents=179900, monthly_price_usd_cents=1900)
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly&billing_country=US")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["currency"] == "USD"
+    assert body["amount_minor"] == 1900
+    assert body["methods"] == []
+    assert body["checkout_supported"] is False
+    assert body["reason"] == "intl_usd_pending"
+
+
+def test_checkout_quote_confirmed_country_overrides_ip(db, monkeypatch):
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="quote-override@e.com")
+    plan = _make_plan(db, slug="starter-ov", monthly_price_cents=179900, monthly_price_usd_cents=1900)
+    db.commit()
+    # IP mis-detects as US, but the buyer confirms IN — INR must win (FEMA-safe).
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+
+    api = _api(db, client)
+    with patch.object(subscription_routes, "get_session", lambda: _session_cm(db)):
+        res = api.get(f"/subscriptions/checkout/quote?plan_id={plan.id}&billing_cycle=monthly&billing_country=IN")
+
+    body = res.json()
+    assert res.status_code == 200, res.text
+    assert body["currency"] == "INR"
+    assert body["checkout_supported"] is True

@@ -671,6 +671,7 @@ def checkout_quote(
     request: Request,
     plan_id: int,
     billing_cycle: str = "monthly",
+    billing_country: str | None = None,
     client: Client = Depends(get_current_client),
 ):
     """Single source of truth for what the checkout button will charge.
@@ -708,18 +709,32 @@ def checkout_quote(
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
 
-        country = resolve_country(request)
-        usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
-        amount_minor = int(usd_minor or 0)
-        currency = "USD"
+        # The confirmed billing_country (from the checkout country-confirmation
+        # step) overrides IP geo so an Indian resident mis-detected abroad is
+        # never routed to USD — and vice-versa (FEMA-safe).
+        detected = resolve_country(request)
+        confirmed = (billing_country or "").strip().upper() or None
+        country = confirmed or detected
+        is_domestic = country == "IN"
+
+        # INR price is the canonical amount — use it as the free-plan test so a
+        # missing USD column on a foreign quote can't misread a paid plan as free.
+        inr_minor = _amount_for_cycle(plan, billing_cycle)
+        if is_domestic:
+            currency = "INR"
+            amount_minor = inr_minor
+        else:
+            currency = "USD"
+            usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
+            amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
 
         # Free plan: render a quote but mark checkout as unsupported.
-        if amount_minor == 0 and plan.slug != "enterprise":
+        if inr_minor == 0 and plan.slug != "enterprise":
             return {
                 "country": country,
                 "currency": currency,
-                "amount_minor": 0,
+                "amount_minor": amount_minor,
                 "amount_display": amount_display,
                 "billing_cycle": billing_cycle,
                 "provider": None,
@@ -744,6 +759,24 @@ def checkout_quote(
                 "reason": "enterprise",
             }
 
+        # Foreign buyer, paid plan: USD prices are shown, but USD charging ships
+        # in Phase 2. Flag intl_usd_pending so the UI renders a Contact-sales CTA
+        # instead of opening a Razorpay modal that can't charge them yet.
+        if not is_domestic:
+            return {
+                "country": country,
+                "currency": currency,
+                "amount_minor": amount_minor,
+                "amount_display": amount_display,
+                "billing_cycle": billing_cycle,
+                "provider": None,
+                "methods": [],
+                "checkout_supported": False,
+                "contact_sales": "developer@oyechats.com",
+                "reason": "intl_usd_pending",
+            }
+
+        # Domestic paid plan: the live INR rail.
         return {
             "country": country,
             "currency": currency,
