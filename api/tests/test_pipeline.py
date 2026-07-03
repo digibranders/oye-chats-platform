@@ -208,6 +208,7 @@ class TestIngestDocument:
 class TestRunFolderIngestion:
     def test_processes_supported_extensions(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["doc.pdf", "note.txt", "data.csv"]),
             patch("app.ingestion.pipeline.load_pdf", return_value=[{"text": "pdf text", "metadata": {"page": 1}}]),
             patch("app.ingestion.pipeline.load_txt", return_value=[{"text": "txt text", "metadata": {"page": 1}}]),
@@ -220,6 +221,7 @@ class TestRunFolderIngestion:
 
     def test_skips_unsupported_extensions(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["image.png", "data.csv"]),
         ):
             result = run_folder_ingestion(1, "/tmp/docs")
@@ -228,6 +230,7 @@ class TestRunFolderIngestion:
 
     def test_handles_extraction_error(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["bad.pdf"]),
             patch("app.ingestion.pipeline.load_pdf", side_effect=RuntimeError("corrupt")),
         ):
@@ -237,6 +240,7 @@ class TestRunFolderIngestion:
 
     def test_archives_after_processing(self):
         with (
+            patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["doc.txt"]),
             patch("app.ingestion.pipeline.load_txt", return_value=[{"text": "text", "metadata": {"page": 1}}]),
             patch("app.ingestion.pipeline._ingest_document", return_value=3),

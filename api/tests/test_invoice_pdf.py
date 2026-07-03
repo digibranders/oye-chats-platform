@@ -178,7 +178,14 @@ def test_unfinalized_invoice_rejected():
 
 
 def test_pdf_renders_and_contains_number():
-    weasyprint = pytest.importorskip("weasyprint", reason="weasyprint not installed")
+    # weasyprint imports its native pango/gobject libs at import time; on a host
+    # without them (e.g. a bare macOS dev box) that raises OSError, not ImportError,
+    # so importorskip alone wouldn't skip. Catch both so the suite degrades to a
+    # skip off-CI while still running fully where the libs are present.
+    try:
+        import weasyprint
+    except (ImportError, OSError):
+        pytest.skip("weasyprint or its system pango libraries unavailable")
     try:
         weasyprint.HTML(string="<p>probe</p>").write_pdf()
     except OSError:
