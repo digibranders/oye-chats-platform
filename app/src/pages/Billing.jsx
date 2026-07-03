@@ -41,6 +41,7 @@ import PlanModal from '../components/billing/PlanModal';
 import AddSeatConfirmModal from '../components/billing/AddSeatConfirmModal';
 import TrialUpgradeBanner from '../components/billing/TrialUpgradeBanner';
 import BillingDetailsCard from '../components/billing/BillingDetailsCard';
+import InvoicesCard from '../components/billing/InvoicesCard';
 import { cn } from '../lib/utils';
 import { formatMoney } from '../lib/currency';
 import { trialDaysLeft } from '../utils/trial';
@@ -55,9 +56,16 @@ function planPriceCents(plan, cycle = 'monthly') {
     : (plan.monthly_price_usd_cents ?? 0);
 }
 
-function planSeatPriceCents(plan) {
-  if (!plan) return 0;
-  return plan.extra_seat_price_usd_cents ?? plan.extra_seat_price_cents ?? 0;
+// Seat price with the currency it is denominated in. The USD headline column
+// wins when present; the fallback `extra_seat_price_cents` column is
+// plan-native minor units (paise for INR plans), so it must NOT be formatted
+// as USD — return the plan's own currency alongside it.
+function planSeatPrice(plan) {
+  if (!plan) return { cents: 0, currency: 'usd' };
+  if (plan.extra_seat_price_usd_cents != null) {
+    return { cents: plan.extra_seat_price_usd_cents, currency: 'usd' };
+  }
+  return { cents: plan.extra_seat_price_cents ?? 0, currency: plan.currency || 'inr' };
 }
 
 // Delegates to the shared money formatter. Amounts on this page are the
@@ -370,7 +378,12 @@ export default function Billing() {
   // Seat-fee fallback for an admin DB that hasn't picked up the new pricing
   // migration yet. Defaults to the current $5 / mo headline so the row reads
   // "+$5/mo" instead of falling back to a stale figure or a blank label.
-  const seatPriceLabel = fmtCurrency(planSeatPriceCents(plan) || 500);
+  // When the price comes from the plan-native column it carries the plan's
+  // own currency (paise for INR plans) and is formatted accordingly.
+  const seatPrice = planSeatPrice(plan);
+  const seatPriceCents = seatPrice.cents || 500;
+  const seatPriceCurrency = seatPrice.cents ? seatPrice.currency : 'usd';
+  const seatPriceLabel = fmtCurrency(seatPriceCents, seatPriceCurrency);
 
   const usage = balance?.usage || {};
   // Merge per-key so a backend payload that hasn't been redeployed since a
@@ -563,7 +576,10 @@ export default function Billing() {
           )}
 
           {activeTab === 'history' && (
-            <HistoryTab history={history} totalRemaining={totalRemaining} />
+            <div className="space-y-6">
+              <InvoicesCard />
+              <HistoryTab history={history} totalRemaining={totalRemaining} />
+            </div>
           )}
         </>
       )}
@@ -583,7 +599,8 @@ export default function Billing() {
         open={seatConfirmDelta !== null}
         onClose={() => setSeatConfirmDelta(null)}
         delta={seatConfirmDelta ?? 0}
-        seatPriceCents={plan?.extra_seat_price_usd_cents ?? plan?.extra_seat_price_cents ?? 500}
+        seatPriceCents={seatPriceCents}
+        seatPriceCurrency={seatPriceCurrency}
         paymentProvider={subscription?.payment_provider}
         currentSeatCount={
           subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1

@@ -116,19 +116,31 @@ function formToPatch(form, details) {
     patch.gstin = gstin || null;
   }
 
+  const ADDRESS_KEYS = ['line1', 'line2', 'city', 'postal_code'];
   const address = {};
-  for (const key of ['line1', 'line2', 'city', 'postal_code']) {
+  for (const key of ADDRESS_KEYS) {
     const v = trim(form[key]);
     if (v) address[key] = v;
   }
   const newAddress = Object.keys(address).length > 0 ? address : null;
   const oldAddress = details?.billing_address || null;
-  if (JSON.stringify(newAddress) !== JSON.stringify(oldAddress)) {
+  // Field-by-field comparison — Postgres JSONB does not preserve key order,
+  // so a JSON.stringify diff would flag an unchanged address on every save.
+  const addressChanged = ADDRESS_KEYS.some(
+    (key) => (address[key] || '') !== ((oldAddress && oldAddress[key]) || ''),
+  );
+  if (addressChanged) {
     patch.billing_address = newAddress;
   }
 
   const country = trim(form.billing_country).toUpperCase();
-  if (country !== stored.billing_country) {
+  // The form seeds 'IN' as a display default when no country is stored yet
+  // (see detailsToForm) — only send that value if the user actually touched
+  // the field, so an untouched default is never persisted on first save.
+  if (
+    country !== stored.billing_country &&
+    (stored.billing_country || form.billing_country_touched)
+  ) {
     patch.billing_country = country || null;
   }
   // State is server-derived from the GSTIN when one is set — only send an
@@ -158,6 +170,9 @@ function detailsToForm(details) {
     billing_state_code: details?.billing_state_code || '',
     billing_country: details?.billing_country || 'IN',
     billing_email: details?.billing_email || '',
+    // Distinguishes a user-entered country from the seeded 'IN' default so
+    // formToPatch never persists a default the user did not choose.
+    billing_country_touched: false,
   };
 }
 
@@ -203,6 +218,7 @@ export default function BillingDetailsCard() {
     setForm((prev) => ({
       ...prev,
       [key]: key === 'gstin' || key === 'billing_country' ? raw.toUpperCase() : raw,
+      ...(key === 'billing_country' ? { billing_country_touched: true } : {}),
     }));
   };
 
