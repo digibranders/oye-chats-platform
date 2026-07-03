@@ -318,3 +318,21 @@ class TestKnowledgeManagementAccess:
         with pytest.raises(HTTPException) as exc_info:
             _require_knowledge_management_access(auth)
         assert exc_info.value.status_code == 403
+
+
+class TestTenantDocumentsDir:
+    def test_scopes_path_by_client_and_bot(self, tmp_path, monkeypatch):
+        from app.api import document_routes
+
+        monkeypatch.setattr(document_routes, "DOCUMENTS_DIR", str(tmp_path))
+        p = document_routes._tenant_documents_dir(client_id=7, bot_id=42)
+        assert p == (tmp_path / "7" / "42").resolve()
+        assert p.is_dir()
+
+    def test_bot_none_uses_sentinel_segment(self, tmp_path, monkeypatch):
+        from app.api import document_routes
+
+        monkeypatch.setattr(document_routes, "DOCUMENTS_DIR", str(tmp_path))
+        p = document_routes._tenant_documents_dir(client_id=7, bot_id=None)
+        assert p == (tmp_path / "7" / "_none").resolve()
+        assert p.is_dir()

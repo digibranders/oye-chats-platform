@@ -71,6 +71,25 @@ def _verify_bot_ownership(bot_id: int | None, client_id: int) -> None:
             raise HTTPException(status_code=403, detail="Bot not found or access denied.")
 
 
+def _tenant_documents_dir(client_id: int, bot_id: int | None) -> Path:
+    """Per-tenant upload directory: ``documents/{client_id}/{bot_id}/``.
+
+    Namespacing by tenant is a security boundary, not an optimization:
+    ``run_folder_ingestion`` sweeps whichever folder it is handed, so a
+    shared folder let the first job to run ingest (and archive) every
+    tenant's pending files. A per-tenant path makes that sweep isolated
+    by construction. ``bot_id is None`` (account-level uploads) uses a
+    reserved ``_none`` segment so it can never collide with a real bot id.
+    """
+    base_dir = Path(DOCUMENTS_DIR).resolve()
+    bot_segment = str(bot_id) if bot_id is not None else "_none"
+    tenant_dir = (base_dir / str(client_id) / bot_segment).resolve()
+    if not tenant_dir.is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Invalid storage path.")
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    return tenant_dir
+
+
 @router.get("/documents")
 def get_documents_endpoint(bot_id: int | None = Query(None), auth: dict = Depends(get_current_client_or_operator)):
     """Retrieve a list of all ingested documents for the authenticated client."""
@@ -143,9 +162,9 @@ def delete_document_endpoint(
             if deleted_count == 0:
                 raise HTTPException(status_code=404, detail=f"Source '{document_name}' not found.")
 
-            base_dir = Path(DOCUMENTS_DIR).resolve()
-            file_path = (base_dir / document_name).resolve()
-            if not file_path.is_relative_to(base_dir):
+            tenant_dir = _tenant_documents_dir(client_id, bot_id)
+            file_path = (tenant_dir / document_name).resolve()
+            if not file_path.is_relative_to(tenant_dir):
                 raise HTTPException(status_code=403, detail="Invalid document path.")
             if file_path.exists():
                 file_path.unlink()
@@ -327,10 +346,12 @@ def ingest_documents(
                 ) from exc
 
     # ── Phase 2: All files validated + credits secured — write to disk ──
-    base_dir = Path(DOCUMENTS_DIR).resolve()
+    # Write into the caller's OWN namespaced folder so the ingestion sweep
+    # can never see another tenant's files (P0-2).
+    tenant_dir = _tenant_documents_dir(client_id, bot_id)
     for filename, content in file_buffers:
-        file_path = (base_dir / filename).resolve()
-        if not file_path.is_relative_to(base_dir):
+        file_path = (tenant_dir / filename).resolve()
+        if not file_path.is_relative_to(tenant_dir):
             logger.warning(f"Blocked path traversal attempt in upload: {filename}")
             continue
         try:
@@ -384,9 +405,9 @@ def ingest_documents(
     if WORKER_ENABLED:
         from app.worker.enqueue import enqueue_sync
 
-        job_id = enqueue_sync("task_ingest_documents", client_id, DOCUMENTS_DIR, bot_id)
+        job_id = enqueue_sync("task_ingest_documents", client_id, str(tenant_dir), bot_id)
     else:
-        background_tasks.add_task(_run_ingestion_background, client_id, DOCUMENTS_DIR, bot_id)
+        background_tasks.add_task(_run_ingestion_background, client_id, str(tenant_dir), bot_id)
 
     response: dict = {
         "message": "Documents are being processed",

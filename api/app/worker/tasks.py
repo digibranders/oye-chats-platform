@@ -20,6 +20,12 @@ async def task_ingest_documents(ctx: dict, client_id: int, folder_path: str, bot
 
     Calls the existing synchronous ``run_folder_ingestion()`` pipeline.
     Returns the number of files processed.
+
+    ``folder_path`` is a per-tenant scoped path (``documents/{client_id}/
+    {bot_id}/``, ``_none`` when bot_id is None), produced by
+    ``document_routes._tenant_documents_dir``. The scoping is a security
+    boundary (P0-2): the sweep only ever sees this tenant's own files, so a
+    job can never ingest or archive another tenant's pending uploads.
     """
     import asyncio
 

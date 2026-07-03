@@ -226,6 +226,9 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
     scanned-only PDF, etc.) would be reprocessed on every run and block all
     subsequent files behind it indefinitely.
     """
+    if not os.path.isdir(folder_path):
+        logger.info("run_folder_ingestion: folder %s does not exist — nothing to ingest", folder_path)
+        return 0
     supported_extensions = [".pdf", ".docx", ".txt", ".md"]
     files = [f for f in os.listdir(folder_path) if any(f.lower().endswith(ext) for ext in supported_extensions)]
 
