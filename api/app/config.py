@@ -371,14 +371,17 @@ PRORATED_UPGRADES_ENABLED = _env_flag("PRORATED_UPGRADES_ENABLED", default=False
 
 # ── Invoicing v2 feature flags (docs/billing/2026-07-02-invoicing-implementation-plan-v2.md) ──
 #
-# INVOICING_V2_ENABLED (default OFF): gates the own-issued GST invoicing track.
-# While off, webhook handlers keep writing legacy payment-history rows only.
-INVOICING_V2_ENABLED = _env_flag("INVOICING_V2_ENABLED", default=False)
-
-# INVOICE_EMAILS_ENABLED (default OFF): customer-facing invoice emails. Kept
-# separate from INVOICING_V2_ENABLED so invoices can run in shadow mode
-# (generated + stored, admin-visible, not emailed) during verification.
-INVOICE_EMAILS_ENABLED = _env_flag("INVOICE_EMAILS_ENABLED", default=False)
+# Both default ON — invoicing is a launch feature, not a gradual rollout. The
+# real activation gate is the SELLER PROFILE: until the super-admin saves the
+# company's legal identity (billing.seller_profile), charges stay plain
+# payment records; once saved, every new charge gets a numbered document.
+# These flags exist only as emergency kill switches.
+#
+# INVOICING_V2_ENABLED: gates finalization (numbering + tax + snapshots) and
+# the PDF sweep. INVOICE_EMAILS_ENABLED: gates customer-facing delivery
+# (emails + the tax fields/urls on the customer API).
+INVOICING_V2_ENABLED = _env_flag("INVOICING_V2_ENABLED", default=True)
+INVOICE_EMAILS_ENABLED = _env_flag("INVOICE_EMAILS_ENABLED", default=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Directories & Crawler

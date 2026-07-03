@@ -200,6 +200,12 @@ jobs:
               "VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}" \
               > api/.env
 
+            # System libs for WeasyPrint (invoice PDF rendering) — idempotent.
+            # Without pango the worker's invoice-PDF sweep logs one clear
+            # error per tick and skips; installing here makes it functional.
+            apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 || \
+              echo "WARN: pango install failed — invoice PDFs will be skipped until installed"
+
             # Sync dependencies
             cd api
             /root/.local/bin/uv sync
@@ -213,6 +219,14 @@ jobs:
             # (broken) tree is ever restarted onto.
             echo "🔎 Verifying litellm imported with its completion API..."
             /root/.local/bin/uv run python -c "import litellm; assert litellm.completion, 'litellm.completion missing — partial/namespace install; aborting deploy'"
+
+            # WeasyPrint end-to-end probe (import + a real render exercises the
+            # pango system libs). Non-fatal: invoicing PDFs degrade to a clean
+            # per-sweep skip, and the money path is unaffected — but surface it
+            # loudly in the deploy log.
+            echo "🔎 Verifying WeasyPrint can render (pango present)..."
+            /root/.local/bin/uv run python -c "import weasyprint; weasyprint.HTML(string='<p>probe</p>').write_pdf()" \
+              || echo "WARN: WeasyPrint render probe failed — invoice PDF sweep will skip until pango is installed"
 
             # NOTE: No headless browser or local embedding model runs on this
             # box. Crawling runs on Spider.cloud (Jina Reader fallback), and

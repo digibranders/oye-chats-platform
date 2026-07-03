@@ -163,13 +163,15 @@ def test_non_inr_currency_is_skipped(db, enabled):
     assert inv.invoice_type == "legacy"
 
 
-def test_unconfigured_seller_yields_receipt(db, enabled):
-    # No seller profile persisted at all → defaults (gst_enabled False) → receipt.
+def test_unconfigured_seller_stays_legacy(db, enabled):
+    # ACTIVATION GATE: flags default ON, so an unconfigured seller profile must
+    # mean "not activated yet" — no document (a receipt with an empty legal
+    # name would be worse than none).
     c = _client(db, "fin-noseller@test.example", billing_state_code="27")
     inv = _invoice(db, c.id)
-    assert invoice_service.finalize_invoice(db, inv) is True
-    assert inv.invoice_type == "receipt"
-    assert inv.invoice_number.startswith("RCT/")  # reserved receipt series
+    assert invoice_service.finalize_invoice(db, inv) is False
+    assert inv.invoice_type == "legacy"
+    assert inv.invoice_number is None
 
 
 def test_finalized_tax_fields_survive_status_flip(db, enabled):

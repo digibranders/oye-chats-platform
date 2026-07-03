@@ -1224,6 +1224,16 @@ def _invoice_pdf_session():
     return get_session()
 
 
+def _probe_pdf_renderer() -> None:
+    """Raise if WeasyPrint (or its system pango libraries) is unavailable.
+
+    Probed ONCE per sweep so a missing-pango environment produces a single
+    clear error instead of 25 per-invoice stack traces every 5 minutes that
+    read like data bugs.
+    """
+    import weasyprint  # noqa: F401 — import raises OSError when pango is missing
+
+
 def _render_invoice_pdf(invoice) -> bytes:
     from app.services.invoice_pdf import render_invoice_pdf
 
@@ -1270,11 +1280,21 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     import asyncio
 
     from sqlalchemy import select as sa_select
+    from sqlalchemy import update as sa_update
 
     from app import config
     from app.db.models import Invoice as InvoiceModel
 
     if not config.INVOICING_V2_ENABLED:
+        return 0
+
+    try:
+        _probe_pdf_renderer()
+    except Exception:  # noqa: BLE001
+        logger.error(
+            "task_render_invoice_pdfs: PDF renderer unavailable (weasyprint/pango missing?) — "
+            "skipping sweep; install libpango on this host"
+        )
         return 0
 
     def _run() -> int:
@@ -1294,24 +1314,35 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                 try:
                     pdf = _render_invoice_pdf(invoice)
                     url = _upload_invoice_pdf(pdf, _invoice_pdf_key(invoice.invoice_number))
-                    invoice.pdf_url = url
-                    invoice.invoice_url = url
+                    # Guarded UPDATE: a slow sweep can overlap the next cron
+                    # tick (or a second worker) on the same pending set. Only
+                    # the run that wins the NULL→url transition emails — the
+                    # loser rowcount-0s and skips, so the customer never gets
+                    # the document twice.
+                    claimed = session.execute(
+                        sa_update(InvoiceModel)
+                        .where(InvoiceModel.id == invoice.id, InvoiceModel.pdf_url.is_(None))
+                        .values(pdf_url=url, invoice_url=url)
+                    ).rowcount
                     session.commit()
-                    done += 1
                 except Exception:  # noqa: BLE001 — one bad invoice must not block the sweep
                     session.rollback()
                     logger.exception("task_render_invoice_pdfs: failed for invoice %s; will retry", invoice.id)
                     continue
+                if not claimed:
+                    logger.info("task_render_invoice_pdfs: invoice %s already rendered by another run", invoice.id)
+                    continue
+                done += 1
                 if config.INVOICE_EMAILS_ENABLED:
                     # Best-effort post-commit; a lost email is re-sendable from
                     # the superadmin console (Phase 6 adds an emailed_at marker
                     # for retryable delivery).
-                    to_email = (invoice.buyer_snapshot or {}).get("email")
-                    if to_email:
-                        try:
+                    try:
+                        to_email = (invoice.buyer_snapshot or {}).get("email")
+                        if to_email:
                             _send_invoice_email(to_email, invoice, url)
-                        except Exception:  # noqa: BLE001
-                            logger.exception("task_render_invoice_pdfs: email failed for invoice %s", invoice.id)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("task_render_invoice_pdfs: email failed for invoice %s", invoice.id)
         return done
 
     loop = asyncio.get_running_loop()

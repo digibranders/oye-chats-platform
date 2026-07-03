@@ -27,6 +27,7 @@ def env(db, monkeypatch):
 
     monkeypatch.setattr(config, "INVOICING_V2_ENABLED", True)
     monkeypatch.setattr(config, "INVOICE_EMAILS_ENABLED", False)
+    monkeypatch.setattr(worker_tasks, "_probe_pdf_renderer", lambda: None)
     monkeypatch.setattr(worker_tasks, "_invoice_pdf_session", _ctx)
     monkeypatch.setattr(worker_tasks, "_render_invoice_pdf", lambda inv: b"%PDF-fake-" + inv.invoice_number.encode())
     monkeypatch.setattr(
@@ -93,6 +94,10 @@ def test_noop_when_flag_disabled(db, env, monkeypatch):
 def test_one_failure_does_not_block_others(db, env, monkeypatch):
     bad = _mk_invoice(db, "pdf-5@test.example", "DB/26-27/000004")
     good = _mk_invoice(db, "pdf-6@test.example", "DB/26-27/000005")
+    # In production the pending rows were committed by the webhook txn long
+    # before the sweep; commit here so the sweep's per-invoice rollback only
+    # discards its own writes (as it does live), not the test fixtures.
+    db.commit()
 
     def _render(inv):
         if inv.id == bad.id:
@@ -115,3 +120,14 @@ def test_email_sent_only_when_enabled(db, env, monkeypatch):
     _mk_invoice(db, "pdf-8@test.example", "DB/26-27/000007")
     asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
     assert env["emails"] == [("billing-pdf-8@test.example", "DB/26-27/000007")]
+
+
+def test_sweep_skips_cleanly_when_renderer_unavailable(db, env, monkeypatch):
+    def _no_pango():
+        raise OSError("cannot load library 'libgobject-2.0-0'")
+
+    monkeypatch.setattr(worker_tasks, "_probe_pdf_renderer", _no_pango)
+    _mk_invoice(db, "pdf-probe@test.example", "DB/26-27/000009")
+    # One clean skip, no per-invoice failures, nothing uploaded.
+    assert asyncio.run(worker_tasks.task_render_invoice_pdfs({})) == 0
+    assert env["uploads"] == []

@@ -472,8 +472,14 @@ def list_invoices(client: Client = Depends(get_current_client)):
                 "currency": inv.currency,
                 "status": inv.status,
                 "description": inv.description,
-                "invoice_url": inv.invoice_url,
-                "pdf_url": inv.pdf_url,
+                # v2 documents (numbered rows) follow the same customer-facing
+                # kill switch as the tax fields below — a rendered PDF must
+                # never leak while delivery is disabled. Unnumbered legacy rows
+                # pass their provider URLs through untouched.
+                "invoice_url": (
+                    inv.invoice_url if (inv.invoice_number is None or app_config.INVOICE_EMAILS_ENABLED) else None
+                ),
+                "pdf_url": inv.pdf_url if (inv.invoice_number is None or app_config.INVOICE_EMAILS_ENABLED) else None,
                 "period_start": inv.period_start.isoformat() if inv.period_start else None,
                 "period_end": inv.period_end.isoformat() if inv.period_end else None,
                 "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,

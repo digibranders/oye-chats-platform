@@ -86,6 +86,8 @@ def _rupees_in_words(n: int) -> str:
 
 def amount_in_words_inr(minor: int) -> str:
     """``179900`` (paise) → ``"Rupees One Thousand Seven Hundred Ninety Nine Only"``."""
+    if minor < 0:
+        raise ValueError("amount_in_words_inr expects a non-negative amount (credit notes pass magnitudes)")
     rupees, paise = divmod(int(minor), 100)
     words = f"Rupees {_rupees_in_words(rupees) if rupees else 'Zero'}"
     if paise:
@@ -97,6 +99,8 @@ def _fmt_inr(minor: int | None) -> str:
     """Paise → ``₹1,52,458.00``-style Indian-grouped display."""
     if minor is None:
         return ""
+    if minor < 0:
+        raise ValueError("_fmt_inr expects a non-negative amount (credit notes pass magnitudes)")
     rupees, paise = divmod(int(minor), 100)
     s = str(rupees)
     if len(s) > 3:
@@ -257,7 +261,12 @@ def render_invoice_html(invoice: Invoice) -> str:
 
     period = ""
     if invoice.period_start and invoice.period_end:
-        period = f"{invoice.period_start.astimezone(IST):%d %b %Y} – {invoice.period_end.astimezone(IST):%d %b %Y}"
+        p_start, p_end = invoice.period_start, invoice.period_end
+        if p_start.tzinfo is None:
+            p_start = p_start.replace(tzinfo=UTC)
+        if p_end.tzinfo is None:
+            p_end = p_end.replace(tzinfo=UTC)
+        period = f"{p_start.astimezone(IST):%d %b %Y} – {p_end.astimezone(IST):%d %b %Y}"
 
     lines = [
         {"description": item.get("description") or "Service", "amount": _fmt_inr(item.get("amount_minor"))}

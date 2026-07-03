@@ -172,6 +172,8 @@ def test_list_invoices_hides_tax_fields_in_shadow_mode(db, monkeypatch):
             invoice_type="tax_invoice",
             invoice_number="DB/25-26/000042",
             total_tax_minor=27442,
+            pdf_url="https://cdn.test/invoices/25-26/secret.pdf",
+            invoice_url="https://cdn.test/invoices/25-26/secret.pdf",
         )
     )
     db.flush()
@@ -186,3 +188,8 @@ def test_list_invoices_hides_tax_fields_in_shadow_mode(db, monkeypatch):
     assert row["amount_cents"] == 179900
     assert row["invoice_number"] is None
     assert row["total_tax_minor"] is None
+    # The rendered document itself must hide too — pdf_url/invoice_url on a
+    # NUMBERED row follow the same kill switch (P0: a capability URL here
+    # would leak the full Rule-46 document while delivery is disabled).
+    assert row["pdf_url"] is None
+    assert row["invoice_url"] is None

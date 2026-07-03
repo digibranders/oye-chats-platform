@@ -131,6 +131,13 @@ def finalize_invoice(session: Session, invoice: Invoice) -> bool:
         return False
 
     seller = get_seller_profile(session)
+    # ACTIVATION GATE: the flags default ON, so the seller profile is what
+    # actually turns invoicing on. Until the super-admin saves the company's
+    # legal identity, no document is issued — a receipt/invoice bearing an
+    # empty legal name would be worse than no document.
+    if not seller.configured:
+        return False
+
     buyer = session.get(Client, invoice.client_id)
     buyer_state = buyer.billing_state_code if buyer else None
     buyer_country = buyer.billing_country if buyer else None

@@ -73,21 +73,22 @@ def test_prorated_upgrades_can_be_enabled(monkeypatch):
 # customer-facing rollout.
 
 
-def test_invoicing_v2_defaults_false(monkeypatch):
+def test_invoicing_v2_defaults_true(monkeypatch):
+    # Launch feature: ON by default; the seller profile is the activation gate.
     config = _reloaded_config(monkeypatch, INVOICING_V2_ENABLED=None)
-    assert config.INVOICING_V2_ENABLED is False
-
-
-def test_invoicing_v2_can_be_enabled(monkeypatch):
-    config = _reloaded_config(monkeypatch, INVOICING_V2_ENABLED="true")
     assert config.INVOICING_V2_ENABLED is True
 
 
-def test_invoice_emails_defaults_false(monkeypatch):
+def test_invoicing_v2_kill_switch(monkeypatch):
+    config = _reloaded_config(monkeypatch, INVOICING_V2_ENABLED="false")
+    assert config.INVOICING_V2_ENABLED is False
+
+
+def test_invoice_emails_default_true(monkeypatch):
     config = _reloaded_config(monkeypatch, INVOICE_EMAILS_ENABLED=None)
-    assert config.INVOICE_EMAILS_ENABLED is False
-
-
-def test_invoice_emails_can_be_enabled(monkeypatch):
-    config = _reloaded_config(monkeypatch, INVOICE_EMAILS_ENABLED="true")
     assert config.INVOICE_EMAILS_ENABLED is True
+
+
+def test_invoice_emails_kill_switch(monkeypatch):
+    config = _reloaded_config(monkeypatch, INVOICE_EMAILS_ENABLED="false")
+    assert config.INVOICE_EMAILS_ENABLED is False

@@ -1767,15 +1767,20 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
     Called from the PDF-rendering sweep (worker.tasks.task_render_invoice_pdfs)
     only when INVOICE_EMAILS_ENABLED — shadow mode never emails.
     """
+    import html as _html
+
+    from app.services.invoice_pdf import _fmt_inr as _fmt_invoice_inr
+
     doc_label = "Tax invoice" if invoice.invoice_type == "tax_invoice" else "Receipt"
-    amount = f"₹{invoice.amount_cents / 100:,.2f}"
+    # Same Indian-grouped formatting as the PDF so the two documents agree.
+    amount = _fmt_invoice_inr(invoice.amount_cents)
     rows = [
-        _info_row(f"{doc_label} no.", invoice.invoice_number),
+        _info_row(f"{doc_label} no.", _html.escape(invoice.invoice_number)),
         _info_row("Amount", amount),
     ]
     if invoice.total_tax_minor:
-        rows.append(_info_row("GST included", f"₹{invoice.total_tax_minor / 100:,.2f}"))
-    seller_name = (invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME
+        rows.append(_info_row("GST included", _fmt_invoice_inr(invoice.total_tax_minor)))
+    seller_name = _html.escape((invoice.seller_snapshot or {}).get("legal_name") or EMAIL_FROM_NAME)
     content = (
         f"<p>Thank you for your payment. Your {doc_label.lower()} from {seller_name} is ready.</p>"
         + _info_table(rows, bg="#f8fafc", border_color="#e2e8f0")
