@@ -794,6 +794,49 @@ def checkout_quote(
         }
 
 
+@router.get("/admin/plan-price-check")
+def plan_price_check(client: Client = Depends(get_current_client)):
+    """Super-admin diagnostic: local plan price vs the live Razorpay plan amount.
+
+    The checkout disclosure quotes ``plan.monthly_price_cents``; if it drifts
+    from the amount configured on the live Razorpay plan, the UI quotes a rupee
+    figure the mandate will not debit. This surfaces drift per plan/cycle. A
+    Razorpay error on any plan yields ``in_sync: null`` + an error string — a
+    diagnostic must never 500.
+    """
+    if not client.is_superadmin:
+        raise HTTPException(status_code=403, detail="Super admin only.")
+
+    from app.services.plan_service import get_active_plans
+    from app.services.razorpay_service import _get_razorpay
+
+    rzp = _get_razorpay()
+    out = []
+    with get_session() as session:
+        for plan in get_active_plans(session):
+            row = {"plan_id": plan.id, "slug": plan.slug}
+            for cycle, local_minor, rzp_id in (
+                ("monthly", plan.monthly_price_cents, plan.razorpay_plan_id_monthly),
+                ("annual", plan.annual_price_cents, plan.razorpay_plan_id_annual),
+            ):
+                entry = {
+                    "local_minor": int(local_minor or 0),
+                    "razorpay_minor": None,
+                    "in_sync": None,
+                    "error": None,
+                }
+                if rzp_id:
+                    try:
+                        item = (rzp.plan.fetch(rzp_id) or {}).get("item", {})
+                        entry["razorpay_minor"] = int(item.get("amount") or 0)
+                        entry["in_sync"] = entry["razorpay_minor"] == entry["local_minor"]
+                    except Exception as exc:  # diagnostic must not 500
+                        entry["error"] = str(exc)
+                row[cycle] = entry
+            out.append(row)
+    return {"plans": out}
+
+
 @router.post("/checkout")
 def create_checkout(
     request: CheckoutRequest,
