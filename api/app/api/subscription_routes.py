@@ -931,6 +931,13 @@ def change_plan(
                             detail="Could not cancel your subscription with the payment provider. Please try again in a moment.",
                         ) from exc
                 sub.cancel_at_period_end = True
+                # Abandon any queued paid→paid downgrade: the customer is now
+                # heading to Free, so a leftover ``scheduled_plan_id`` would let
+                # the cancelled webhook / cron promote a downgrade they walked
+                # away from — an unwanted checkout + re-auth email (Fix C).
+                from app.services import transition_service
+
+                transition_service.cancel_scheduled_change(session, sub)
                 msg = f"Scheduled downgrade to {new_plan.name} at the end of the current billing cycle."
             else:
                 sub.plan_id = new_plan.id
@@ -1140,6 +1147,12 @@ def cancel_subscription(request: CancelSubscriptionRequest, client: Client = Dep
         sub.cancel_at_period_end = True
         sub.canceled_at = datetime.now(UTC)
         sub.cancel_reason = request.reason
+        # Clear any queued paid→paid downgrade — an outright cancel supersedes
+        # it. Left set, the cancelled webhook / cron backstop would promote the
+        # abandoned downgrade into a fresh checkout + re-auth email (Fix C).
+        from app.services import transition_service
+
+        transition_service.cancel_scheduled_change(session, sub)
         session.commit()
 
         logger.info("Client %s canceled subscription %s (reason: %s)", client.id, sub.id, request.reason)

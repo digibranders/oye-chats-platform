@@ -260,7 +260,29 @@ def promote_scheduled_change(session: Session, sub: Subscription) -> dict[str, A
     mandate — this function emails them that re-auth link itself (via
     ``short_url``) so the cutover never silently strands them (NB-3).
     """
-    from app.services import razorpay_service
+    from app.services import plan_service, razorpay_service
+
+    # Serialize the promotion decision so a webhook (subscription.cancelled /
+    # subscription.completed) and the cron backstop can't both read a non-null
+    # ``scheduled_plan_id`` before either clears it and each spin up a duplicate
+    # Razorpay subscription + re-auth email for one cutover (Fix A). We take the
+    # same per-client advisory lock every customer billing route contends on,
+    # then re-read the row under a row lock so we observe any concurrent commit
+    # that already promoted it. ``pg_advisory_xact_lock`` is a no-op on
+    # non-PostgreSQL binds (mocked unit sessions); the row refresh below is the
+    # portable half of the guard.
+    plan_service.lock_client_for_billing(session, sub.client_id)
+
+    # Flush before refresh so ``refresh(..., with_for_update=True)`` sees our own
+    # pending writes (autoflush is off), then reloads the latest committed row
+    # under ``SELECT ... FOR UPDATE`` — the T5 pattern from
+    # ``credit_service.grant_subscription_period_once``. A racing caller that
+    # already cleared the scheduled trio and committed will now be visible here,
+    # so the re-check below no-ops instead of double-provisioning.
+    bind = session.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        session.flush()
+        session.refresh(sub, with_for_update=True)
 
     if not sub.scheduled_plan_id:
         return None
