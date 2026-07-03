@@ -37,6 +37,35 @@ export const STREAM_SENTINELS = Object.freeze([
 const CTA_PREFIX = '[CTA:';
 const CTA_PATTERN = /\[CTA:[a-zA-Z0-9_]+\]/g;
 
+// Media card sentinels — same pattern as CTA but with a different body
+// grammar. [YOUTUBE_CARD:VIDEO_ID] where VIDEO_ID is the 11-char URL-safe
+// alphabet; [DOWNLOAD_CARD:URL|FILENAME] where URL is a bracket/pipe/
+// whitespace-free segment and FILENAME is anything up to a closing bracket.
+// The visitor never sees a card sentinel — the widget renders the card via
+// FINAL_METADATA instead — so in-flight stripping keeps the raw token from
+// briefly typing into the bubble as the stream arrives token by token.
+const YOUTUBE_CARD_PREFIX = '[YOUTUBE_CARD:';
+const YOUTUBE_CARD_PATTERN = /\[YOUTUBE_CARD:[A-Za-z0-9_-]{11}\]/g;
+const DOWNLOAD_CARD_PREFIX = '[DOWNLOAD_CARD:';
+const DOWNLOAD_CARD_PATTERN = /\[DOWNLOAD_CARD:[^\s|\]]{1,500}\|[^\]\n]{1,200}\]/g;
+
+// LLM keeps inventing new square-bracket placeholder phrasings —
+// "[YouTube card below]", "[Video preview here]", "[Card: video]",
+// "[See attached]", "[TBD]", etc. A keyword blocklist loses that game.
+//
+// General rule: by the time this pattern runs in stripAllSentinels, we
+// have ALREADY stripped every valid sentinel this codebase emits (the
+// four passes above: STREAM_SENTINELS, CTA, YOUTUBE_CARD, DOWNLOAD_CARD).
+// So anything left inside [...] is either:
+//   (a) a markdown link label — [Learn more](https://...) — where "("
+//       immediately follows the closing bracket. MUST be preserved.
+//   (b) LLM-invented placeholder prose. MUST be stripped.
+//
+// The negative lookahead (?!\() distinguishes the two. No keyword list
+// to maintain — every new placeholder the LLM invents falls under the
+// same rule automatically.
+const LLM_LEAKED_BRACKET_PATTERN = /\[[^\]\n]{1,300}\](?!\()/g;
+
 const MAX_SENTINEL_LEN = STREAM_SENTINELS.reduce((m, s) => Math.max(m, s.length), 0);
 
 /**
@@ -55,6 +84,41 @@ const couldBeCtaPrefix = (tail) => {
 };
 
 /**
+ * Return true if `tail` could still grow into a complete [YOUTUBE_CARD:id]
+ * marker. Mirrors couldBeCtaPrefix: prefix build-up OR open body with a
+ * legal (partial) 11-char video ID and no closing bracket yet.
+ */
+const couldBeYoutubeCardPrefix = (tail) => {
+    if (!tail.startsWith('[')) return false;
+    if (YOUTUBE_CARD_PREFIX.startsWith(tail)) return true;
+    if (!tail.startsWith(YOUTUBE_CARD_PREFIX)) return false;
+    const body = tail.slice(YOUTUBE_CARD_PREFIX.length);
+    // Video ID chars only, up to 11; no ']' yet.
+    return /^[A-Za-z0-9_-]{0,11}$/.test(body);
+};
+
+/**
+ * Return true if `tail` could still grow into a complete
+ * [DOWNLOAD_CARD:URL|NAME] marker. URL segment cannot contain whitespace,
+ * pipe, or closing bracket; once a pipe appears, the filename segment may
+ * contain anything except newline / closing bracket.
+ */
+const couldBeDownloadCardPrefix = (tail) => {
+    if (!tail.startsWith('[')) return false;
+    if (DOWNLOAD_CARD_PREFIX.startsWith(tail)) return true;
+    if (!tail.startsWith(DOWNLOAD_CARD_PREFIX)) return false;
+    const body = tail.slice(DOWNLOAD_CARD_PREFIX.length);
+    const pipeIdx = body.indexOf('|');
+    if (pipeIdx === -1) {
+        // URL segment still building.
+        return /^[^\s|\]]*$/.test(body);
+    }
+    const namePart = body.slice(pipeIdx + 1);
+    // Name segment still building — anything except newline / closing bracket.
+    return !/[\]\n]/.test(namePart);
+};
+
+/**
  * Remove every complete occurrence of any sentinel from `text`.
  * @param {string} text
  * @returns {string}
@@ -66,6 +130,13 @@ export const stripAllSentinels = (text) => {
         if (out.includes(s)) out = out.split(s).join('');
     }
     if (out.includes(CTA_PREFIX)) out = out.replace(CTA_PATTERN, '');
+    if (out.includes(YOUTUBE_CARD_PREFIX)) out = out.replace(YOUTUBE_CARD_PATTERN, '');
+    if (out.includes(DOWNLOAD_CARD_PREFIX)) out = out.replace(DOWNLOAD_CARD_PATTERN, '');
+    // General bracket sweep — any [...] not followed by ( is either a
+    // valid sentinel we've already stripped above, or an LLM-invented
+    // placeholder we should strip. The ``includes('[')`` guard skips
+    // the regex entirely for normal text (hot path).
+    if (out.includes('[')) out = out.replace(LLM_LEAKED_BRACKET_PATTERN, '');
     return out;
 };
 
@@ -101,12 +172,12 @@ export const createSentinelStripper = () => {
             // A '[' is present in the tail. Identify the longest trailing
             // substring that could still be the prefix of a known sentinel —
             // hold only that much back until more chunks arrive. The hold
-            // window must also cover an in-progress [CTA:dimension] body,
-            // whose length is bounded only by the dimension name; clamp at
-            // 64 chars (well above any real dimension key) to avoid pinning
-            // unbounded text in `pending`.
+            // window must cover the longest possible dynamic sentinel body:
+            // [DOWNLOAD_CARD:URL|NAME] can be up to ~700 chars (500 URL + 200
+            // name + wrapper). Clamp at 720 so a malformed unterminated token
+            // can't pin arbitrary trailing text in `pending` forever.
             const maxHold = Math.min(
-                Math.max(MAX_SENTINEL_LEN - 1, 64),
+                Math.max(MAX_SENTINEL_LEN - 1, 720),
                 pending.length - lastBracket,
             );
             let holdFrom = pending.length;
@@ -117,7 +188,10 @@ export const createSentinelStripper = () => {
                 // to end near but after a '['.
                 if (
                     tail.startsWith('[') &&
-                    (STREAM_SENTINELS.some((s) => s.startsWith(tail)) || couldBeCtaPrefix(tail))
+                    (STREAM_SENTINELS.some((s) => s.startsWith(tail)) ||
+                        couldBeCtaPrefix(tail) ||
+                        couldBeYoutubeCardPrefix(tail) ||
+                        couldBeDownloadCardPrefix(tail))
                 ) {
                     holdFrom = pending.length - k;
                     break;

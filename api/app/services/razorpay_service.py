@@ -1627,7 +1627,6 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
         local.current_period_end = new_period_end
     local.status = "active"
     session.flush()
-
     return f"Subscription {razorpay_sub_id} charged"
 
 

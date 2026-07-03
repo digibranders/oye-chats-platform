@@ -1194,12 +1194,24 @@ def langfuse_summary(
 @router.get("/system/health/full")
 def system_health_full(_admin: Client = Depends(get_superadmin)):
     """Detailed health snapshot with per-service connectivity."""
-    from app.config import settings
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
+
     from app.core.cache import get_redis
     from app.worker.enqueue import WORKER_ENABLED
     from app.worker.tasks import WORKER_HEARTBEAT_KEY
 
-    health: dict[str, Any] = {"status": "healthy", "version": getattr(settings, "VERSION", "unknown")}
+    # ``app.config`` is a module of constants, not a settings object — a
+    # previous ``from app.config import settings`` would have thrown an
+    # ImportError the first time this endpoint fired. Read the version
+    # from the installed package metadata instead (matches pyproject.toml
+    # ``[project].version``), with a defensive fallback for editable
+    # installs that haven't been ``uv sync``'d.
+    try:
+        _api_version = _pkg_version("oyechats-api")
+    except PackageNotFoundError:
+        _api_version = "unknown"
+    health: dict[str, Any] = {"status": "healthy", "version": _api_version}
 
     try:
         with get_session() as session:
@@ -1238,8 +1250,13 @@ def system_health_full(_admin: Client = Depends(get_superadmin)):
         if not worker_alive:
             health["status"] = "degraded"
 
-    health["razorpay"] = "connected" if getattr(settings, "RAZORPAY_ENABLED", False) else "disabled"
-    health["storage"] = "connected" if getattr(settings, "R2_BUCKET_NAME", None) else "unknown"
+    # ``app.config`` is a module of top-level constants, not a settings
+    # object — the previous ``getattr(settings, …)`` lookups would have
+    # thrown ImportError inside the function. Read the constants directly.
+    from app.config import R2_BUCKET_NAME, RAZORPAY_ENABLED
+
+    health["razorpay"] = "connected" if RAZORPAY_ENABLED else "disabled"
+    health["storage"] = "connected" if R2_BUCKET_NAME else "unknown"
     return health
 
 

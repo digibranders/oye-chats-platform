@@ -53,6 +53,14 @@ def get_qualification_funnel(
                 ChatSession.bot_id == bot_id
             )
 
+            # Compute the "start of window" cutoff once so it's in scope for
+            # the meeting-booking count below as well — previously ``since``
+            # only existed inside the base_stmt narrowing block, and reading
+            # it under the second ``if period != "all"`` triggered an
+            # unbound-name diagnostic (safe at runtime because both blocks
+            # gate on the same condition, but the type-checker can't see
+            # that).
+            since: datetime | None = None
             if period != "all":
                 days = {"7d": 7, "30d": 30, "90d": 90}[period]
                 since = datetime.now(UTC) - timedelta(days=days)
@@ -81,7 +89,7 @@ def get_qualification_funnel(
             sql = sum(1 for row in sessions if (row.bant_tier or "unqualified") == "sql")
 
             meeting_stmt = select(func.count(MeetingBooking.id)).where(MeetingBooking.bot_id == bot_id)
-            if period != "all":
+            if period != "all" and since is not None:
                 meeting_stmt = meeting_stmt.where(MeetingBooking.created_at >= since)
             meetings_booked = int(session.execute(meeting_stmt).scalar_one() or 0)
 

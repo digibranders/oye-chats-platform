@@ -12,10 +12,14 @@ from app.core.cache import cache_delete_prefix, gate_prefix_for_bot, qa_prefix_f
 from app.db.repository import delete_chunks_for_url, insert_documents, is_document_processed
 from app.db.session import get_session
 from app.ingestion.chunking import chunk_text
-from app.ingestion.cleaner import clean_text
+from app.ingestion.cleaner import clean_text, extract_media_urls
 from app.ingestion.embedder import embed_chunks
 from app.ingestion.enrichment import CHUNK_ENRICHMENT_ENABLED, enrich_chunks_batch
 from app.ingestion.extraction import ExtractionError, load_docx, load_pdf, load_txt
+from app.ingestion.youtube_metadata import (
+    enrich_media_urls_with_channel_videos,
+    enrich_media_urls_with_durations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +145,35 @@ def _ingest_document(
     #    templated landing pages that only differed in their nav/footer
     #    boilerplate could collide on hash and be silently skipped, even
     #    though their actual unique-content chunks differed.
-    cleaned_pages_data = [{"text": clean_text(p["text"]), "metadata": p.get("metadata", {})} for p in pages_data]
-    cleaned_full_text = " ".join(p["text"] for p in cleaned_pages_data)
+    #    Media URL extraction runs on the *raw* page text (pre-clean) because
+    #    the cleaner strips ``[label](url)`` markdown link wrappers — capture
+    #    YouTube/downloadable URLs first, attach them to page metadata, and
+    #    let chunking propagate that metadata to every chunk of the page.
+    cleaned_pages_data: list[dict[str, Any]] = []
+    cleaned_texts: list[str] = []
+    for p in pages_data:
+        page_meta = dict(p.get("metadata", {}))
+        media = extract_media_urls(p["text"])
+        if media:
+            # Layer 1.5 auto-discover: when a channel URL was captured on
+            # this page (e.g. "Follow us on YouTube: youtube.com/@brand"),
+            # expand it into every video on that channel BEFORE the
+            # metadata scrape below so the newly-discovered videos also
+            # get title+duration filled in. In-process cached so a
+            # channel URL appearing on many pages only fetches once.
+            enrich_media_urls_with_channel_videos(media)
+            # Fetch YouTube durations + titles once per video at ingest
+            # time so the widget can render a duration pill and the LLM
+            # can match by title. Cached in-process; failures are silent.
+            enrich_media_urls_with_durations(media)
+            page_meta["media_urls"] = media
+        cleaned_text = clean_text(p["text"])
+        cleaned_texts.append(cleaned_text)
+        cleaned_pages_data.append({"text": cleaned_text, "metadata": page_meta})
+    # Parallel ``list[str]`` of the text values so ``str.join`` type-checks —
+    # ``cleaned_pages_data`` has mixed value types (str + dict), so a bare
+    # ``p["text"] for p in cleaned_pages_data`` widens to ``str | dict``.
+    cleaned_full_text = " ".join(cleaned_texts)
     # Hash the boilerplate-normalised form so harmless footer-date drift
     # between re-crawls doesn't trigger re-ingest + re-billing. See
     # ``_normalize_for_dedup_hash`` for the patterns being stripped.
@@ -408,6 +439,15 @@ def batch_web_ingestion(
                 # Stamp the crawl start on every chunk so the source's total time
                 # taken = max(created_at) - crawl_started_at can be read back later.
                 page_meta["crawl_started_at"] = crawl_started_at
+            # Media URL extraction MUST run on the raw ``content`` (pre-clean)
+            # because ``clean_text`` strips ``[label](url)`` markdown link
+            # wrappers, which is how most crawled pages format video and file
+            # references. Capture here, enrich YouTube entries with duration
+            # (one-time per video, cached), propagate via chunk metadata.
+            media = extract_media_urls(content)
+            if media:
+                enrich_media_urls_with_durations(media)
+                page_meta["media_urls"] = media
             pages_data = [{"text": cleaned, "metadata": page_meta}]
             chunks = chunk_text(pages_data, document_name=url)
 

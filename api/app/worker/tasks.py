@@ -164,14 +164,14 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
 
     from sqlalchemy import text
 
-    from app.db.database import SessionLocal
+    from app.db.session import get_session
     from app.ingestion.embedder import embed_chunks
 
     logger.info("task_reembed_all_documents: starting (batch_size=%d)", batch_size)
 
     total = succeeded = failed = 0
 
-    with SessionLocal() as session:
+    with get_session() as session:
         # Fetch IDs of all documents with NULL embedding in ascending order.
         id_rows = session.execute(text("SELECT id FROM documents WHERE embedding IS NULL ORDER BY id")).fetchall()
         doc_ids = [r[0] for r in id_rows]
@@ -182,7 +182,7 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
     for batch_start in range(0, total, batch_size):
         batch_ids = doc_ids[batch_start : batch_start + batch_size]
 
-        with SessionLocal() as session:
+        with get_session() as session:
             rows = session.execute(
                 text("SELECT id, content FROM documents WHERE id = ANY(:ids)"),
                 {"ids": batch_ids},
@@ -202,7 +202,7 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
             failed += len(batch_ids)
             continue
 
-        with SessionLocal() as session:
+        with get_session() as session:
             for row, embedding in zip(rows, embeddings, strict=True):
                 emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
                 session.execute(
@@ -242,12 +242,12 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
 
     from sqlalchemy import text
 
-    from app.db.database import SessionLocal
+    from app.db.session import get_session
     from app.ingestion.embedder import embed_chunks
 
     logger.info("task_reembed_document: document_id=%d", document_id)
 
-    with SessionLocal() as session:
+    with get_session() as session:
         row = session.execute(
             text("SELECT content FROM documents WHERE id = :id"),
             {"id": document_id},
@@ -270,7 +270,7 @@ async def task_reembed_document(ctx: dict, document_id: int) -> dict:
         return {"document_id": document_id, "status": "failed", "error": str(exc)}
 
     emb_str = "[" + ",".join(str(v) for v in embeddings[0]) + "]"
-    with SessionLocal() as session:
+    with get_session() as session:
         session.execute(
             text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
             {"emb": emb_str, "id": document_id},
