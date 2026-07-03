@@ -1,6 +1,7 @@
 """Email notification service using Brevo (formerly Sendinblue) transactional API."""
 
 import asyncio
+import base64
 import contextlib
 import html
 import json
@@ -129,6 +130,7 @@ def _send_brevo_email(
     *,
     reply_to: str | None = None,
     sender_name: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> bool:
     """Send an email via Brevo transactional API using raw HTML. Returns True on success.
 
@@ -154,6 +156,9 @@ def _send_brevo_email(
     }
     if reply_to:
         email_payload["replyTo"] = {"email": reply_to}
+    if attachments:
+        # Brevo transactional attachment format: [{"content": <base64>, "name": <filename>}].
+        email_payload["attachment"] = attachments
 
     payload = json.dumps(email_payload).encode("utf-8")
 
@@ -255,22 +260,28 @@ def send_email_async(
     *,
     reply_to: str | None = None,
     sender_name: str | None = None,
+    attachments: list[dict] | None = None,
 ):
     """Fire-and-forget raw HTML email. Non-blocking.
 
     When WORKER_ENABLED=true, enqueues to ARQ (durable, retryable).
     Otherwise uses thread pool / threading fallback (fire-and-forget).
+
+    ``attachments`` uses the Brevo format [{"content": <base64>, "name": ...}];
+    it is JSON-serializable so it rides through the ARQ job args unchanged.
     """
     from app.worker.enqueue import WORKER_ENABLED
 
     if WORKER_ENABLED:
         from app.worker.enqueue import enqueue_sync
 
-        enqueue_sync("task_send_email", to_email, subject, html_body, reply_to, sender_name)
+        enqueue_sync("task_send_email", to_email, subject, html_body, reply_to, sender_name, attachments)
         return
 
     def _send():
-        _send_brevo_email(to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name)
+        _send_brevo_email(
+            to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+        )
 
     try:
         loop = asyncio.get_event_loop()
@@ -1826,11 +1837,13 @@ def send_downgrade_reauth_email(
         _capture_email_failure(exc, event="downgrade_reauth", email=to_email)
 
 
-def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
-    """Send the customer their finalized invoice/receipt with a download link.
+def send_invoice_email(to_email: str, invoice, pdf_url: str, pdf_bytes: bytes | None = None) -> None:
+    """Send the customer their finalized invoice/receipt with the PDF attached.
 
     Called from the PDF-rendering sweep (worker.tasks.task_render_invoice_pdfs)
-    only when INVOICE_EMAILS_ENABLED — shadow mode never emails.
+    only when INVOICE_EMAILS_ENABLED — shadow mode never emails. ``pdf_bytes``
+    (the freshly rendered PDF) is attached to the email; the download link is
+    kept as a fallback for clients that strip attachments.
     """
     import html as _html
 
@@ -1863,4 +1876,22 @@ def send_invoice_email(to_email: str, invoice, pdf_url: str) -> None:
         preheader=f"{doc_label} {invoice.invoice_number} — {amount}",
         category="Billing",
     )
-    send_email_async(to_email, f"{doc_label} {invoice.invoice_number} from {seller_name}", html)
+
+    attachments: list[dict] | None = None
+    if pdf_bytes:
+        # Invoice numbers contain slashes (e.g. "DB/26-27/000001") which are
+        # invalid in a filename — flatten to a safe attachment name.
+        safe_number = str(invoice.invoice_number or invoice.id).replace("/", "-")
+        attachments = [
+            {
+                "content": base64.b64encode(pdf_bytes).decode("ascii"),
+                "name": f"{safe_number}.pdf",
+            }
+        ]
+
+    send_email_async(
+        to_email,
+        f"{doc_label} {invoice.invoice_number} from {seller_name}",
+        html,
+        attachments=attachments,
+    )

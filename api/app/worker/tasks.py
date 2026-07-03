@@ -543,6 +543,7 @@ async def task_send_email(
     html_body: str,
     reply_to: str | None = None,
     sender_name: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> bool:
     """Send a raw HTML email via Brevo. Returns True on success."""
     import asyncio
@@ -554,7 +555,9 @@ async def task_send_email(
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: _send_brevo_email(to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name),
+        lambda: _send_brevo_email(
+            to_email, subject, html_body, reply_to=reply_to, sender_name=sender_name, attachments=attachments
+        ),
     )
 
     if not result:
@@ -1258,10 +1261,10 @@ def _upload_invoice_pdf(data: bytes, key: str) -> str:
     return upload_invoice_pdf(data, key)
 
 
-def _send_invoice_email(to_email: str, invoice, url: str) -> None:
+def _send_invoice_email(to_email: str, invoice, url: str, pdf_bytes: bytes | None = None) -> None:
     from app.services.email_service import send_invoice_email
 
-    send_invoice_email(to_email, invoice, url)
+    send_invoice_email(to_email, invoice, url, pdf_bytes=pdf_bytes)
 
 
 def _invoice_pdf_key(invoice_number: str) -> str:
@@ -1353,7 +1356,9 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     try:
                         to_email = (invoice.buyer_snapshot or {}).get("email")
                         if to_email:
-                            _send_invoice_email(to_email, invoice, url)
+                            # ``pdf`` was just rendered above in this iteration —
+                            # attach those exact bytes to the email.
+                            _send_invoice_email(to_email, invoice, url, pdf_bytes=pdf)
                             invoice.emailed_at = _utcnow()
                             session.commit()
                     except Exception:  # noqa: BLE001
