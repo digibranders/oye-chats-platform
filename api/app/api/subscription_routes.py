@@ -338,9 +338,13 @@ def get_billing_geo(request: Request, _client: Client = Depends(get_current_clie
     from app.config import RAZORPAY_KEY_ID
 
     country = resolve_country(request)
+    # Geo-split model: Indians see and pay INR; everyone else sees (and — once
+    # the Phase-2 USD rail is live — pays) USD. Display currency == charge
+    # currency by design, so there is no currency mismatch to disclose.
+    display_currency = "INR" if country == "IN" else "USD"
     return {
         "country": country,
-        "display_currency": "USD",
+        "display_currency": display_currency,
         "display_rate": DISPLAY_USD_TO_INR,
         "razorpay_enabled": RAZORPAY_ENABLED,
         "razorpay_key_id": RAZORPAY_KEY_ID if RAZORPAY_ENABLED else None,
