@@ -8,6 +8,7 @@ from app.core.cache import BOT_CONFIG_TTL, bot_config_key, cache_get, cache_set
 from app.core.origin_check import extract_hostname, is_origin_allowed
 from app.db.models import Affiliate, Bot, Client, Operator, Subscription
 from app.db.session import get_session
+from app.services import plan_service
 
 logger = logging.getLogger(__name__)
 
@@ -538,16 +539,15 @@ def require_active_subscription(client: Client = Depends(get_current_client)):
         return None
 
     with get_session() as session:
-        sub = (
-            session.execute(
-                select(Subscription)
-                .where(Subscription.client_id == client.id)
-                .order_by(Subscription.created_at.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
+        # Resolve the client's ACTIVE subscription (highest tier among
+        # active/trialing/past_due rows), NOT merely the most-recently-created
+        # row. A paying customer may carry a newer terminal sibling (an
+        # ``expired`` promoted-old row, or a ``canceled`` row from re-checkout)
+        # while an older row is still live; ordering by ``created_at`` alone
+        # would 403 them. ``get_client_subscription`` is the shared active-row
+        # resolver (remediation H2) — reuse it so the gate agrees with the rest
+        # of the billing stack.
+        sub = plan_service.get_client_subscription(session, client.id)
 
         # No subscription at all is treated as "needs to pick a plan" —
         # the same UX as an expired trial. Should never happen for a
@@ -606,16 +606,10 @@ def require_active_subscription_for_workspace(
             return None
 
     with get_session() as session:
-        sub = (
-            session.execute(
-                select(Subscription)
-                .where(Subscription.client_id == client_id)
-                .order_by(Subscription.created_at.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
+        # Same active-row resolution as :func:`require_active_subscription` —
+        # the workspace owner's live subscription, not their newest row (which
+        # may be a terminal sibling). See that function for the rationale.
+        sub = plan_service.get_client_subscription(session, client_id)
         sub_status = sub.status if sub else "missing"
 
         if sub_status in _ACTIVE_SUBSCRIPTION_STATUSES:
