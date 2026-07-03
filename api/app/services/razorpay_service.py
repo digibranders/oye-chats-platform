@@ -1263,32 +1263,14 @@ def _grant_subscription_period(
 ) -> bool:
     """Reset + grant the plan's monthly credits for ``period_end``, once.
 
-    Idempotent per billing period (remediation H4): if the subscription's
-    ``last_granted_period_end`` already equals ``period_end``, this is a no-op
-    and returns ``False``. Otherwise it resets the prior period's unused plan
-    grant, grants the new allowance, advances the marker, and returns ``True``.
-
-    A ``None`` ``period_end`` (event missing ``current_end``) still grants but
-    cannot advance the marker; that is logged so a missing period is visible
-    rather than silently double-granting on a later event.
+    Thin delegate to :func:`credit_service.grant_subscription_period_once` — the
+    shared, per-scope + per-period-idempotent helper also used by the renewal
+    cron (BL-5 / NB-8). Behaviour is unchanged: idempotent on
+    ``last_granted_period_end == period_end`` (remediation H4), reset + grant
+    scoped to ``subscription.bot_id``, marker advanced only when ``period_end``
+    is present.
     """
-    if (
-        period_end is not None
-        and subscription.last_granted_period_end is not None
-        and subscription.last_granted_period_end == period_end
-    ):
-        return False
-
-    credit_service.reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
-    credit_service.grant_for_subscription(session, subscription, reference_id=invoice_id)
-    if period_end is not None:
-        subscription.last_granted_period_end = period_end
-    else:
-        logger.warning(
-            "Granted subscription %s credits without a period end — marker not advanced",
-            subscription.razorpay_subscription_id,
-        )
-    return True
+    return credit_service.grant_subscription_period_once(session, subscription, period_end, invoice_id=invoice_id)
 
 
 def _handle_subscription_activated(session: Session, payload: dict[str, Any]) -> str:

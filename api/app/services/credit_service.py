@@ -659,6 +659,50 @@ def grant_for_subscription(
     )
 
 
+def grant_subscription_period_once(
+    session: Session,
+    subscription: Subscription,
+    period_end: datetime | None,
+    *,
+    invoice_id: int | None = None,
+) -> bool:
+    """Reset + grant a subscription's plan credits for ``period_end``, at most once.
+
+    Idempotent per billing period (remediation H4): if the subscription's
+    ``last_granted_period_end`` already equals ``period_end``, this is a no-op
+    and returns ``False``. Otherwise it resets the prior period's unused plan
+    grant, grants the new allowance, advances the marker, and returns ``True``.
+
+    Both the reset and the grant are scoped to ``subscription.bot_id`` so an
+    account-level subscription (``bot_id IS NULL``) touches only the client
+    pool and a per-bot subscription touches only that bot's ledger — the two
+    never cross-contaminate. This is the single source of truth for per-period
+    granting shared by the Razorpay webhook path and the renewal cron (BL-5 /
+    NB-8); keep the two callers behaviourally identical by routing both here.
+
+    A ``None`` ``period_end`` (event missing ``current_end``) still grants but
+    cannot advance the marker; that is logged so a missing period is visible
+    rather than silently double-granting on a later event.
+    """
+    if (
+        period_end is not None
+        and subscription.last_granted_period_end is not None
+        and subscription.last_granted_period_end == period_end
+    ):
+        return False
+
+    reset_monthly_plan_credits(session, subscription.client_id, bot_id=subscription.bot_id)
+    grant_for_subscription(session, subscription, reference_id=invoice_id)
+    if period_end is not None:
+        subscription.last_granted_period_end = period_end
+    else:
+        logger.warning(
+            "Granted subscription %s credits without a period end — marker not advanced",
+            subscription.razorpay_subscription_id,
+        )
+    return True
+
+
 def clawback_refund(
     session: Session,
     *,

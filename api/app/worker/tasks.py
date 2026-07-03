@@ -353,16 +353,15 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
     import asyncio
     from datetime import UTC, datetime
 
-    from sqlalchemy import func, select
+    from sqlalchemy import select
 
     from app.core.dates import add_months
-    from app.db.models import CreditLedger, Subscription
+    from app.db.models import Subscription
     from app.db.session import get_session
     from app.services import credit_service
 
     def _renew() -> int:
         now_utc = datetime.now(UTC)
-        today_utc = now_utc.date()
         renewed = 0
         with get_session() as session:
             subs = (
@@ -384,31 +383,24 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                 # at sub creation; anything else falls through to monthly so
                 # legacy / manual rows don't get stuck.
                 period_months = 12 if (sub.billing_cycle or "").lower() == "annual" else 1
-                # Skip if a plan_grant already exists for today (webhook beat us to it).
-                already_granted = (
-                    session.execute(
-                        select(func.count())
-                        .select_from(CreditLedger)
-                        .where(
-                            CreditLedger.client_id == sub.client_id,
-                            CreditLedger.reason == "plan_grant",
-                            CreditLedger.delta > 0,
-                            func.date(CreditLedger.created_at) == today_utc,
-                        )
-                    ).scalar()
-                    or 0
-                )
-                if already_granted:
-                    # Still need to roll the period forward — without this the
-                    # cron would keep matching the same row every day.
-                    sub.current_period_start = sub.current_period_end
-                    sub.current_period_end = add_months(sub.current_period_end, period_months)
-                    continue
-                credit_service.reset_monthly_plan_credits(session, sub.client_id)
-                credit_service.grant_for_subscription(session, sub)
+                # Grant this period's credits at most once, keyed on the
+                # per-scope + per-period marker the webhook path uses
+                # (``last_granted_period_end``). The old same-day client-wide
+                # ``plan_grant`` probe was scope-blind: under per-bot billing
+                # (an account sub + one sub per paid bot) one scope's grant
+                # today suppressed another scope's legitimate renewal, and any
+                # unrelated same-day grant starved a renewal — a permanent
+                # one-month credit loss (BL-5 / NB-8). ``grant_subscription_
+                # period_once`` resets + grants scoped to ``sub.bot_id`` so the
+                # account pool and each bot ledger renew independently.
+                granted = credit_service.grant_subscription_period_once(session, sub, sub.current_period_end)
+                # Roll the period forward regardless of whether a grant fired —
+                # without this the cron re-matches the same row every day (or,
+                # after the marker no-ops the grant, spins on it forever).
                 sub.current_period_start = sub.current_period_end
                 sub.current_period_end = add_months(sub.current_period_end, period_months)
-                renewed += 1
+                if granted:
+                    renewed += 1
             session.commit()
         return renewed
 
