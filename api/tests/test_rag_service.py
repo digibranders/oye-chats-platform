@@ -388,6 +388,223 @@ class TestStripCtaMarker:
         assert "[CTA" not in text
 
 
+# ── Media card sentinel extraction ──────────────────────────────────────────
+
+
+class TestExtractMediaCard:
+    """`_extract_media_card` peels the LLM's ``[YOUTUBE_CARD:id]`` /
+    ``[DOWNLOAD_CARD:url|name]`` tokens out of the answer text and returns
+    a single card payload — enforcing the "at most one per response" rule
+    server-side even when the LLM ignores it."""
+
+    def test_no_sentinel_returns_none(self):
+        from app.services.rag_service import _extract_media_card
+
+        text, card = _extract_media_card("Plain answer with no sentinel.")
+        assert text == "Plain answer with no sentinel."
+        assert card is None
+
+    def test_empty_input_returns_none(self):
+        from app.services.rag_service import _extract_media_card
+
+        text, card = _extract_media_card("")
+        assert text == ""
+        assert card is None
+
+    def test_extracts_youtube_card(self):
+        from app.services.rag_service import _extract_media_card
+
+        text, card = _extract_media_card("Here's an overview.\n[YOUTUBE_CARD:dQw4w9WgXcQ]")
+        assert card == {"type": "youtube", "video_id": "dQw4w9WgXcQ"}
+        assert "[YOUTUBE_CARD" not in text
+        assert text == "Here's an overview."
+
+    def test_extracts_download_card(self):
+        from app.services.rag_service import _extract_media_card
+
+        raw = "Here's the brochure.\n[DOWNLOAD_CARD:https://example.com/brochure.pdf|brochure.pdf]"
+        text, card = _extract_media_card(raw)
+        assert card == {
+            "type": "download",
+            "url": "https://example.com/brochure.pdf",
+            "name": "brochure.pdf",
+        }
+        assert "[DOWNLOAD_CARD" not in text
+        assert text == "Here's the brochure."
+
+    def test_first_sentinel_wins_when_multiple_youtube(self):
+        # Enforces the "at most one card per response" rule server-side
+        # even when the LLM ignores the system prompt and emits two.
+        from app.services.rag_service import _extract_media_card
+
+        raw = "A [YOUTUBE_CARD:aaaaaaaaaaa] B [YOUTUBE_CARD:bbbbbbbbbbb] C"
+        text, card = _extract_media_card(raw)
+        assert card == {"type": "youtube", "video_id": "aaaaaaaaaaa"}
+        # Both sentinels stripped from the persisted text.
+        assert "[YOUTUBE_CARD" not in text
+
+    def test_first_sentinel_wins_across_card_types(self):
+        from app.services.rag_service import _extract_media_card
+
+        raw = "Watch [YOUTUBE_CARD:dQw4w9WgXcQ] or grab [DOWNLOAD_CARD:https://x.com/a.pdf|a.pdf]"
+        text, card = _extract_media_card(raw)
+        assert card == {"type": "youtube", "video_id": "dQw4w9WgXcQ"}
+        assert "[YOUTUBE_CARD" not in text
+        assert "[DOWNLOAD_CARD" not in text
+
+    def test_download_wins_when_earlier_than_youtube(self):
+        from app.services.rag_service import _extract_media_card
+
+        raw = "First [DOWNLOAD_CARD:https://x.com/a.pdf|a.pdf] later [YOUTUBE_CARD:dQw4w9WgXcQ]"
+        text, card = _extract_media_card(raw)
+        assert card == {"type": "download", "url": "https://x.com/a.pdf", "name": "a.pdf"}
+        assert "[YOUTUBE_CARD" not in text
+        assert "[DOWNLOAD_CARD" not in text
+
+    def test_ignores_malformed_youtube_id(self):
+        # Video IDs are strictly 11 chars; a shorter body must NOT match.
+        # If the LLM hallucinates ``[YOUTUBE_CARD:xyz]`` (3 chars), we treat
+        # it as literal text — no card, no strip.
+        from app.services.rag_service import _extract_media_card
+
+        text, card = _extract_media_card("Broken [YOUTUBE_CARD:xyz] token")
+        assert card is None
+        assert text == "Broken [YOUTUBE_CARD:xyz] token"
+
+    def test_ignores_malformed_download_missing_pipe(self):
+        from app.services.rag_service import _extract_media_card
+
+        text, card = _extract_media_card("Broken [DOWNLOAD_CARD:https://x.com/a.pdf] token")
+        assert card is None
+        assert "[DOWNLOAD_CARD" in text
+
+
+class TestStripLlmCardProse:
+    """General bracket-prose stripper — strips ANY ``[...]`` that isn't a
+    markdown link. No keyword blocklist; the ``(?!\\()`` guard is what
+    generalises the rule across every placeholder the LLM might invent."""
+
+    def test_strips_youtube_card_prose(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        cleaned = _strip_llm_card_prose("Watch this. [YouTube card below] Which topic?")
+        assert "[YouTube card" not in cleaned
+        assert "Watch this" in cleaned and "Which topic" in cleaned
+
+    def test_strips_video_preview_placeholder(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        cleaned = _strip_llm_card_prose("Overview text. [Video preview here] More info.")
+        assert "[Video preview" not in cleaned
+
+    def test_strips_novel_placeholder_no_keyword_list_would_predict(self):
+        # The whole point of the general rule — it catches phrasings the
+        # LLM invents that no keyword list would anticipate.
+        from app.services.rag_service import _strip_llm_card_prose
+
+        for placeholder in (
+            "[See attached PDF]",
+            "[TBD]",
+            "[card: episode video]",
+            "[NOTE: video below]",
+            "[i just made this up]",
+            "[Media follows]",
+            "[Attached: overview]",
+        ):
+            text = f"Sure. {placeholder} Ready to help."
+            cleaned = _strip_llm_card_prose(text)
+            assert placeholder not in cleaned, f"missed: {placeholder} -> {cleaned!r}"
+
+    def test_preserves_markdown_links(self):
+        # The general rule MUST NOT touch real markdown links — that's
+        # the whole reason the ``(?!\\()`` lookahead is there.
+        from app.services.rag_service import _strip_llm_card_prose
+
+        text = "Read [our pricing page](https://example.com/pricing) for details."
+        assert _strip_llm_card_prose(text) == text
+
+    def test_preserves_markdown_link_next_to_placeholder(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        text = "Watch here. [YouTube card below] See [pricing](https://x.com) for details."
+        cleaned = _strip_llm_card_prose(text)
+        assert "[YouTube card" not in cleaned
+        assert "[pricing](https://x.com)" in cleaned
+
+    def test_empty_bracket_is_not_matched(self):
+        # 1-300 char content required inside the brackets.
+        from app.services.rag_service import _strip_llm_card_prose
+
+        assert _strip_llm_card_prose("hi [] there") == "hi [] there"
+
+    def test_empty_input_returns_empty(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        assert _strip_llm_card_prose("") == ""
+        assert _strip_llm_card_prose(None) is None
+
+    def test_collapses_extra_whitespace_left_behind(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        # Two spaces around the bracket → collapsed to one after strip.
+        text = "before  [YouTube card]  after"
+        cleaned = _strip_llm_card_prose(text)
+        # Only single spaces should remain
+        assert "  " not in cleaned
+
+    def test_does_not_strip_across_newlines(self):
+        # Bracket regex uses [^\]\n], so a bracket that spans a newline
+        # is left alone (unlikely from LLM but a safety guard).
+        from app.services.rag_service import _strip_llm_card_prose
+
+        text = "line one [not a\nplaceholder] line two"
+        cleaned = _strip_llm_card_prose(text)
+        assert "line one" in cleaned and "line two" in cleaned
+
+
+class TestStreamSanitizerMediaCards:
+    """The streaming path yields each LLM chunk to the widget the instant it
+    arrives, so ``_StreamCtaSanitizer`` — not the post-stream
+    ``_extract_media_card`` — is what keeps a raw media sentinel out of the
+    visitor's bubble. These tests feed the sentinel one character at a time
+    (the worst case for a token buffer) to prove it never leaks mid-stream."""
+
+    @staticmethod
+    def _stream(text: str) -> str:
+        """Run ``text`` through the sanitizer one char at a time, as it streams."""
+        from app.services.rag_service import _StreamCtaSanitizer
+
+        san = _StreamCtaSanitizer()
+        out = "".join(san.feed(ch) for ch in text)
+        return out + san.flush()
+
+    def test_youtube_sentinel_never_leaks_mid_stream(self):
+        visible = self._stream("Here's an overview.\n\n[YOUTUBE_CARD:dQw4w9WgXcQ]")
+        assert "[YOUTUBE_CARD" not in visible
+        assert "dQw4w9WgXcQ" not in visible
+        assert "Here's an overview." in visible
+
+    def test_download_sentinel_never_leaks_mid_stream(self):
+        visible = self._stream("Grab the brochure.\n\n[DOWNLOAD_CARD:https://example.com/brochure.pdf|brochure.pdf]")
+        assert "[DOWNLOAD_CARD" not in visible
+        assert "brochure.pdf" not in visible
+        assert "Grab the brochure." in visible
+
+    def test_long_download_url_still_fully_scrubbed(self):
+        # A URL longer than the old 250-char cap must not trip the give-up
+        # path and spill a half-swallowed token into the stream.
+        long_url = "https://cdn.example.com/" + ("a" * 400) + ".pdf"
+        visible = self._stream(f"See attached.\n\n[DOWNLOAD_CARD:{long_url}|report.pdf]")
+        assert "[DOWNLOAD_CARD" not in visible
+        assert "aaaa" not in visible
+        assert "See attached." in visible
+
+    def test_markdown_link_still_passes_through(self):
+        # A real markdown link is not a sentinel and must survive untouched.
+        visible = self._stream("See [our pricing](https://x.com/pricing) for details.")
+        assert visible == "See [our pricing](https://x.com/pricing) for details."
+
+
 # ── CTA fallback inference (safety net) ─────────────────────────────────────
 
 

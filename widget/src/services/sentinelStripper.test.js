@@ -210,3 +210,158 @@ test('stripper releases [CTA: literal when stream ends mid-marker', () => {
     // Mid-marker abort — better to surface the partial than swallow real text.
     assert.equal(s.flush(), '[CTA:tim');
 });
+
+// ── Media card markers (dynamic [YOUTUBE_CARD:id] / [DOWNLOAD_CARD:url|name])
+
+test('stripAllSentinels removes [YOUTUBE_CARD:id]', () => {
+    assert.equal(
+        stripAllSentinels('Here is a video overview. [YOUTUBE_CARD:dQw4w9WgXcQ]'),
+        'Here is a video overview. ',
+    );
+});
+
+test('stripAllSentinels removes [DOWNLOAD_CARD:url|name]', () => {
+    assert.equal(
+        stripAllSentinels(
+            "Here's our brochure. [DOWNLOAD_CARD:https://example.com/brochure.pdf|brochure.pdf]",
+        ),
+        "Here's our brochure. ",
+    );
+});
+
+test('stripAllSentinels removes YOUTUBE_CARD mixed with CTA and MEETING_CARD', () => {
+    assert.equal(
+        stripAllSentinels(
+            'Sure. [YOUTUBE_CARD:abcDEF12345] [CTA:timeline] [MEETING_CARD]',
+        ),
+        'Sure.   ',
+    );
+});
+
+test('stripper removes [YOUTUBE_CARD:id] arriving in one chunk', () => {
+    const s = createSentinelStripper();
+    assert.equal(
+        s.push('Watch this: [YOUTUBE_CARD:abcDEF-_123]'),
+        'Watch this: ',
+    );
+    assert.equal(s.flush(), '');
+});
+
+test('stripper removes [YOUTUBE_CARD:id] split across chunks', () => {
+    const s = createSentinelStripper();
+    const a = s.push('Watch this: [YOUTUBE_CARD:abc');
+    const b = s.push('DEF-_123]');
+    assert.equal(a + b + s.flush(), 'Watch this: ');
+});
+
+test('stripper holds YOUTUBE_CARD prefix until closing bracket arrives', () => {
+    const s = createSentinelStripper();
+    const a = s.push('Video: [YOUTUBE_CARD:');
+    assert.equal(a, 'Video: ');
+    const b = s.push('dQw4w9WgXcQ]');
+    assert.equal(b, '');
+    assert.equal(s.flush(), '');
+});
+
+test('stripper removes [DOWNLOAD_CARD:url|name] arriving in one chunk', () => {
+    const s = createSentinelStripper();
+    assert.equal(
+        s.push('Grab this: [DOWNLOAD_CARD:https://example.com/x.pdf|x.pdf]'),
+        'Grab this: ',
+    );
+    assert.equal(s.flush(), '');
+});
+
+test('stripper removes [DOWNLOAD_CARD:url|name] split across chunks', () => {
+    const s = createSentinelStripper();
+    const a = s.push('Grab this: [DOWNLOAD_CARD:https://example.com/x.p');
+    const b = s.push('df|brochure.pdf]');
+    assert.equal(a + b + s.flush(), 'Grab this: ');
+});
+
+test('stripper does not swallow real text after an aborted YOUTUBE_CARD prefix', () => {
+    const s = createSentinelStripper();
+    // Mid-marker abort — surface the partial so nothing legitimate is lost.
+    s.push('aborted [YOUTUBE_CARD:xyz');
+    assert.equal(s.flush(), '[YOUTUBE_CARD:xyz');
+});
+
+// ── LLM-invented placeholder brackets — general rule, no keyword blocklist
+
+test('strips [YouTube card below] placeholder', () => {
+    assert.equal(
+        stripAllSentinels('Watch this. [YouTube card below] Which topic?'),
+        'Watch this.  Which topic?',
+    );
+});
+
+test('strips [Video preview here] placeholder', () => {
+    assert.equal(
+        stripAllSentinels('See our overview. [Video preview here] More info soon.'),
+        'See our overview.  More info soon.',
+    );
+});
+
+test('strips [Card: ...] placeholder', () => {
+    assert.equal(
+        stripAllSentinels('Overview text. [Card: episode video] Continue.'),
+        'Overview text.  Continue.',
+    );
+});
+
+test('strips novel placeholder that no keyword list would predict', () => {
+    // Proves the rule is general: any [...] not followed by ( is stripped,
+    // regardless of what phrasing the LLM invents tomorrow.
+    assert.equal(
+        stripAllSentinels('Sure. [See attached PDF below] Anything else?'),
+        'Sure.  Anything else?',
+    );
+    assert.equal(
+        stripAllSentinels('Note. [TBD] End.'),
+        'Note.  End.',
+    );
+    assert.equal(
+        stripAllSentinels('Note. [i just made this up] End.'),
+        'Note.  End.',
+    );
+});
+
+test('PRESERVES markdown links — [label](url) untouched', () => {
+    // The general rule MUST keep real markdown links intact — the
+    // negative lookahead (?!\() is the whole reason this works.
+    const md = 'Read [our pricing page](https://example.com/pricing) for details.';
+    assert.equal(stripAllSentinels(md), md);
+});
+
+test('PRESERVES real sentinels — they are stripped by their own patterns first', () => {
+    // Real sentinels are stripped by their specific patterns EARLIER
+    // in stripAllSentinels; by the time the general bracket sweep
+    // runs, they're already gone. The general sweep must not
+    // reintroduce a regression that damages a valid sentinel input.
+    assert.equal(
+        stripAllSentinels('Ok [YOUTUBE_CARD:dQw4w9WgXcQ]'),
+        'Ok ',
+    );
+    assert.equal(
+        stripAllSentinels('Ok [MEETING_CARD]'),
+        'Ok ',
+    );
+    assert.equal(
+        stripAllSentinels('Ok [CTA:timeline]'),
+        'Ok ',
+    );
+});
+
+test('does not fire on empty brackets', () => {
+    // Regex requires 1-300 chars inside the brackets; empty [] is left
+    // alone (unlikely from an LLM but cheap to guard against).
+    assert.equal(stripAllSentinels('hello [] world'), 'hello [] world');
+});
+
+test('handles mixed placeholder + markdown link in one string', () => {
+    const input = 'Watch this. [YouTube card below] See our [pricing](https://x.com) for details.';
+    assert.equal(
+        stripAllSentinels(input),
+        'Watch this.  See our [pricing](https://x.com) for details.',
+    );
+});

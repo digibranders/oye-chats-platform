@@ -277,7 +277,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
-    const recentMessageTimestamps = useRef([]);
     const consecutiveFallbacks = useRef(0);
     const handoffTriggeredRef = useRef(false);
     // Stable handle on the latest handleSend so the controller.onSend
@@ -961,8 +960,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         setIsTyping(true);
 
-        if (detectFrustration()) setShowProminentHandoff(true);
-
         try {
             let placeholderId = null;
             chunkBufferRef.current = '';
@@ -1050,6 +1047,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     ) {
                         leaveMessageCardShownRef.current = true;
                         setShowLeaveMessageCard(true);
+                    }
+                    // Media card (YouTube video / downloadable file) — the
+                    // backend guarantees at most one per response and only
+                    // when a matching URL sits in the retrieved context.
+                    // Attach it to the specific bot message so MessageBubble
+                    // can render the inline card beneath the answer text.
+                    if (finalMeta.media_card && (finalMeta.message_id || placeholderId !== null)) {
+                        const targetId = finalMeta.message_id ?? placeholderId;
+                        setMessages(prev => prev.map(msg =>
+                            msg.id === targetId ? { ...msg, media_card: finalMeta.media_card } : msg
+                        ));
                     }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
                         handoffTriggeredRef.current = true;
@@ -1758,13 +1766,6 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     }, []);
 
     // ── Smart handoff helpers ────────────────────────────────────────────────────
-    const detectFrustration = useCallback(() => {
-        const now = Date.now();
-        recentMessageTimestamps.current = recentMessageTimestamps.current.filter(t => now - t < 30000);
-        recentMessageTimestamps.current.push(now);
-        return recentMessageTimestamps.current.length >= 3;
-    }, []);
-
     const checkBotFallback = useCallback((botText) => {
         const fallbackPatterns = /don't have.*specific information|I'm not sure about that|couldn't find.*specific information|not contained in/i;
         return fallbackPatterns.test(botText);

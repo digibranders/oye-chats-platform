@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react';
 import BotAvatar from './BotAvatar';
+import MediaCard from './MediaCard';
 import { sanitizeColor } from '../services/sanitize';
 
 // Link rendering modes:
@@ -15,64 +16,56 @@ import { sanitizeColor } from '../services/sanitize';
 
 const _CTA_PHRASES = /^(explore (all )?services|view (all )?services|see (all )?services|browse services)\b/i;
 
-// Follow-up offer openers the LLM tends to tack onto the end of an answer
-// ("If you want, I can share..."). Without a paragraph break the offer reads
-// as part of the previous sentence; with one it visually separates the answer
-// from the optional next step.
-const _FOLLOW_UP_OPENERS = [
-    "If you want",
-    "If you'd like",
-    "If you're interested",
-    "Would you like",
-    "Would you",
-    "Want me to",
-    "Want to",
-    "Want a",
-    "Want",
-    "Should I",
-    "Do you",
-    "Can I",
-    "Is there",
-    "Are you",
-    "What would",
-    "What best",
-    "What are",
-    "What's",
-    "Which",
-    "Let me know if",
-    "Just let me know",
-    "Happy to",
-    "I can also",
-    "I can share",
-    "I can help",
-];
-
-const _FOLLOW_UP_OPENERS_RE = _FOLLOW_UP_OPENERS
-    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('|');
-
-// Fires when the opener follows sentence-ending punctuation.
+// Follow-up questions (any capitalised sentence ending in "?") should render
+// on their own paragraph, not glued to the previous sentence. Generic by
+// design — matches ``_ensure_followup_spacing`` in rag_service.py so widget
+// + backend share one rule. No opener whitelist to maintain as LLM phrasing
+// drifts (Who / How / When / Where / Why / novel bridges all get handled).
 //
-// Whitespace gap is ``\s+`` (not ``[ \t]+``) so we also catch the
-// single-newline case the LLM hits constantly:
-//   "...Support305.\nWhich part of technical SEO…"
-// Markdown collapses a single newline between two sentences into a
-// space — so without the newline-aware match the follow-up question
-// rendered glued onto the previous sentence on the same visual line.
-// The replacement ``$1\n\n`` always emits exactly one paragraph break,
-// so re-running on already-formatted text is a no-op (idempotent).
-const _FOLLOW_UP_REGEX = new RegExp(
-    `([.!?])\\s+(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
-    'g',
-);
+// Sentence-boundary form: fires when a "?" sentence follows earlier
+// punctuation and any whitespace (including a lone "\n" that markdown would
+// otherwise collapse into a space).
+const _FOLLOW_UP_REGEX = /([.!?])[ \t\n]+(?=[A-Z][^.!?\n]{2,200}\?)/g;
 
-// Fires when the opener is glued directly after a word (no punctuation gap) —
-// e.g. the LLM emits "add-onDo you need…" with no newline or space.
-// Same whitespace widening rationale as ``_FOLLOW_UP_REGEX``.
-const _FOLLOW_UP_INLINE_REGEX = new RegExp(
-    `([a-z])\\s*(?=(?:${_FOLLOW_UP_OPENERS_RE})\\b)`,
-    'g',
-);
+// Glued form: LLM emits "...add-onDo you need help?" with no gap.
+//
+// Correctly splitting the glued case without shredding CamelCase brand names
+// (CleanSight, PayPalId, iPhone, eBay) requires knowing whether the capital
+// letter after the lowercase actually starts a NEW sentence, or just a
+// second part of a compound word. There's no purely-structural way to tell
+// "CleanSight" from "onDo" — both are lowercase→uppercase with no space —
+// so the regex uses the ONE signal that distinguishes them reliably in
+// English: real follow-up questions almost always open with a small set of
+// syntactically-required words (Wh-words + auxiliaries + a couple of
+// pronouns). Compound brand names never open with those words.
+//
+// Guard clauses layered on top:
+//   1. Question-opener whitelist (the ``(?:Would|Do|...)`` group) — the
+//      capital MUST start a word from the whitelist. "Sight product…?"
+//      doesn't match; "Do you need help?" does. Also catches the tricky
+//      edge case "CleanSightWould you like a demo?" by splitting at the
+//      correct t→W boundary instead of the wrong n→S one.
+//   2. ``\b`` after the opener — stops "Would" from matching inside
+//      "Wouldst" or "Wouldnt" (they'd be typos, but we don't want to
+//      split inside them either).
+//   3. ``[^.!?\n]{0,200}\?`` — bounds the tail so a stray "?" hundreds of
+//      chars away doesn't drag an unrelated split into place.
+//   4. Negative lookbehind for "://" within ~300 chars: skips matches that
+//      land inside a URL. LLMs sometimes write YouTube markdown links
+//      inline (video IDs like "92d9bzMUoI4" contain lowercase→uppercase
+//      transitions); without this guard the URL gets shredded across
+//      paragraphs and the link stops working.
+//
+// Novel opener drift is the deliberate trade-off: the previous whitelist-
+// free version caught phrasings like "Anything else you need?" but at the
+// cost of splitting every CamelCase brand name. The compound-word bug
+// showed up in customer messages; a missed opener at worst leaves a
+// follow-up question glued to the prior sentence, which is a cosmetic
+// regression rather than a broken word. ``Any\w*`` covers the whole
+// "Anything / Anyone / Anywhere / Anybody" family so we retain the most
+// common novel opener anyway.
+const _FOLLOW_UP_INLINE_REGEX =
+    /(?<!:\/\/[^\s]{0,300})([a-z])(?=(?:Would|Could|Should|Do|Does|Did|Can|Will|Are|Is|Was|Were|Am|Have|Has|Had|May|Might|Must|Shall|What|Which|When|Where|Why|Who|How|Any\w*)\b[^.!?\n]{0,200}\?)/g;
 
 // Markdown bullet/numbered list line.
 const _LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])\s+\S/;
@@ -369,6 +362,14 @@ const MessageBubble = ({
                                 <span className="inline-block animate-pulse text-gray-400">▌</span>
                             )}
                         </div>
+                        {/* Inline media card (YouTube video / downloadable file).
+                            ``msg.media_card`` is populated by ChatWindow when the
+                            stream's FINAL_METADATA carries a media_card object,
+                            so it only renders on completed replies — never
+                            mid-stream — and never on user turns. */}
+                        {msg.media_card && !isStreaming && (
+                            <MediaCard card={msg.media_card} />
+                        )}
                     </div>
                     {showActions && (
                         <div
