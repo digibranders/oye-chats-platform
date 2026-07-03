@@ -286,58 +286,71 @@ test('stripper does not swallow real text after an aborted YOUTUBE_CARD prefix',
     assert.equal(s.flush(), '[YOUTUBE_CARD:xyz');
 });
 
-// ── LLM-invented placeholder brackets — general rule, no keyword blocklist
+// ── Leaked media-card markers echoed into prose (narrowed rule) ─────────────
+// The visible-text scrub targets ONLY the two card-marker prefixes
+// ([YOUTUBE_CARD:...] / [DOWNLOAD_CARD:...]). PR #234 shipped an over-broad
+// \[[^\]\n]{1,300}\](?!\() sweep that deleted every bracket not followed by
+// "(" — corrupting citations, ranges, code, and key labels. These tests pin
+// the narrowed contract: leaked card markers still go, everything else stays.
 
-test('strips [YouTube card below] placeholder', () => {
+test('strips a leaked [YOUTUBE_CARD:id] marker echoed into prose', () => {
     assert.equal(
-        stripAllSentinels('Watch this. [YouTube card below] Which topic?'),
+        stripAllSentinels('Watch this. [YOUTUBE_CARD:dQw4w9WgXcQ] Which topic?'),
         'Watch this.  Which topic?',
     );
 });
 
-test('strips [Video preview here] placeholder', () => {
+test('strips a leaked [DOWNLOAD_CARD:url|name] marker echoed into prose', () => {
     assert.equal(
-        stripAllSentinels('See our overview. [Video preview here] More info soon.'),
-        'See our overview.  More info soon.',
+        stripAllSentinels('Grab it. [DOWNLOAD_CARD:https://x/y.pdf|Report] Anything else?'),
+        'Grab it.  Anything else?',
     );
 });
 
-test('strips [Card: ...] placeholder', () => {
+test('strips a malformed leaked card marker the strict pattern misses', () => {
+    // Wrong-length id / missing pipe — the strict YOUTUBE_CARD_PATTERN and
+    // DOWNLOAD_CARD_PATTERN reject these, so the leaked-marker sweep must
+    // catch them by prefix or the raw token would reach the bubble.
     assert.equal(
-        stripAllSentinels('Overview text. [Card: episode video] Continue.'),
-        'Overview text.  Continue.',
+        stripAllSentinels('Sure. [YOUTUBE_CARD:some-random-id] Ready?'),
+        'Sure.  Ready?',
+    );
+    assert.equal(
+        stripAllSentinels('Sure. [DOWNLOAD_CARD:https://x/y.pdf] Ready?'),
+        'Sure.  Ready?',
     );
 });
 
-test('strips novel placeholder that no keyword list would predict', () => {
-    // Proves the rule is general: any [...] not followed by ( is stripped,
-    // regardless of what phrasing the LLM invents tomorrow.
-    assert.equal(
-        stripAllSentinels('Sure. [See attached PDF below] Anything else?'),
-        'Sure.  Anything else?',
-    );
-    assert.equal(
-        stripAllSentinels('Note. [TBD] End.'),
-        'Note.  End.',
-    );
-    assert.equal(
-        stripAllSentinels('Note. [i just made this up] End.'),
-        'Note.  End.',
-    );
+test('PRESERVES citation markers, ranges, code subscripts, and key labels', () => {
+    // Regression guard for PR #234 — none of these are card markers.
+    for (const text of [
+        'Revenue grew 12% [1] over the prior year [2].',
+        'We are open [9am-5pm] on weekdays.',
+        'Use list[0], a[i], and arr[n] to index the collection.',
+        'Press [Enter] to submit or [Ctrl+C] to cancel.',
+    ]) {
+        assert.equal(stripAllSentinels(text), text);
+    }
+});
+
+test('PRESERVES arbitrary placeholder prose that is not a card marker', () => {
+    for (const text of [
+        'Watch this. [YouTube card below] Which topic?',
+        'See our overview. [Video preview here] More info soon.',
+        'Note. [TBD] End.',
+    ]) {
+        assert.equal(stripAllSentinels(text), text);
+    }
 });
 
 test('PRESERVES markdown links — [label](url) untouched', () => {
-    // The general rule MUST keep real markdown links intact — the
-    // negative lookahead (?!\() is the whole reason this works.
     const md = 'Read [our pricing page](https://example.com/pricing) for details.';
     assert.equal(stripAllSentinels(md), md);
 });
 
-test('PRESERVES real sentinels — they are stripped by their own patterns first', () => {
+test('PRESERVES real sentinels are stripped by their own patterns first', () => {
     // Real sentinels are stripped by their specific patterns EARLIER
-    // in stripAllSentinels; by the time the general bracket sweep
-    // runs, they're already gone. The general sweep must not
-    // reintroduce a regression that damages a valid sentinel input.
+    // in stripAllSentinels; the leaked-marker sweep must not damage them.
     assert.equal(
         stripAllSentinels('Ok [YOUTUBE_CARD:dQw4w9WgXcQ]'),
         'Ok ',
@@ -353,13 +366,11 @@ test('PRESERVES real sentinels — they are stripped by their own patterns first
 });
 
 test('does not fire on empty brackets', () => {
-    // Regex requires 1-300 chars inside the brackets; empty [] is left
-    // alone (unlikely from an LLM but cheap to guard against).
     assert.equal(stripAllSentinels('hello [] world'), 'hello [] world');
 });
 
-test('handles mixed placeholder + markdown link in one string', () => {
-    const input = 'Watch this. [YouTube card below] See our [pricing](https://x.com) for details.';
+test('handles mixed leaked card marker + markdown link in one string', () => {
+    const input = 'Watch this. [YOUTUBE_CARD:dQw4w9WgXcQ] See our [pricing](https://x.com) for details.';
     assert.equal(
         stripAllSentinels(input),
         'Watch this.  See our [pricing](https://x.com) for details.',

@@ -72,46 +72,38 @@ _youtube_card_re = re.compile(r"\[YOUTUBE_CARD:([A-Za-z0-9_-]{11})\]")
 _download_card_re = re.compile(r"\[DOWNLOAD_CARD:([^\s\|\]]{1,500})\|([^\]\n]{1,200})\]")
 
 
-# LLM keeps inventing new square-bracket placeholder patterns
-# (``[YouTube card below]``, ``[Video preview here]``, ``[Card: video]``,
-# ``[See media below]``, ``[Attached PDF]``, ``[Note: episode video]``,
-# and countless variants). A keyword-based blocklist is a losing game —
-# the LLM will always find a new phrasing we didn't anticipate.
+# ``_extract_media_card`` peels VALID media-card sentinels out of the answer
+# (a strict ``[YOUTUBE_CARD:<11-char id>]`` / ``[DOWNLOAD_CARD:<url>|<name>]``).
+# But the LLM sometimes ECHOES a media-card marker into prose in a shape the
+# strict parser rejects — a wrong-length video id, a stray ``[YOUTUBE_CARD:
+# video below]``, a ``[DOWNLOAD_CARD:...]`` missing its pipe, etc. Those leaked
+# markers would otherwise reach the visitor's bubble as raw tokens.
 #
-# The general rule: by the time this runs, every VALID sentinel this
-# codebase emits has already been stripped from the answer:
+# This regex targets EXACTLY those two card-marker prefixes and nothing else.
+# It is deliberately NARROW: any other bracketed content is legitimate and
+# MUST be preserved verbatim — citation markers (``[1]``), ranges
+# (``[9am-5pm]``), code subscripts (``list[0]``, ``a[i]``), key labels
+# (``[Enter]``, ``[Ctrl+C]``), and markdown link labels (``[label](url)``).
 #
-#   * ``_strip_cta_marker``       → removes ``[CTA:...]`` / ``[CTA_Q:...]``
-#   * ``_meeting_card_re.sub``    → removes ``[MEETING_CARD]``
-#   * ``_leave_message_card_re``  → removes ``[LEAVE_MESSAGE_CARD]``
-#   * ``_extract_media_card``     → removes ``[YOUTUBE_CARD:...]`` /
-#                                    ``[DOWNLOAD_CARD:...]``
-#
-# So anything left inside ``[...]`` is either:
-#   (a) a markdown link label — ``[Learn more](https://...)`` — where
-#       ``(url)`` follows the closing bracket. MUST be preserved.
-#   (b) LLM-invented placeholder prose. MUST be stripped.
-#
-# The negative lookahead ``(?!\()`` distinguishes the two cases. Case-
-# insensitive isn't needed (bracket characters aren't cased). No word
-# whitelist needed — the ``(?!\()`` guard is the ONE rule that
-# generalises across every placeholder shape the LLM could dream up.
-_LEAKED_BRACKET_RE = re.compile(r"\[[^\]\n]{1,300}\](?!\()")
+# History: PR #234 used a keyword-free ``\[[^\]\n]{1,300}\](?!\()`` sweep that
+# stripped every bracket not followed by ``(``, corrupting all of the above on
+# every answer for every bot. Anchoring on the card prefixes is the fix.
+_LEAKED_BRACKET_RE = re.compile(r"\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,700}\]")
 
 
 def _strip_llm_card_prose(text: str) -> str:
-    """Strip LLM-invented square-bracket placeholders from the answer.
+    """Strip leaked media-card markers the LLM echoed into prose.
 
-    Runs AFTER every valid sentinel has been peeled out of ``text``
-    (see the module-level comment on ``_LEAKED_BRACKET_RE`` for the
-    ordering). Every ``[...]`` still remaining is either a markdown
-    link label (preserved by the ``(?!\\()`` guard) or an LLM-invented
-    placeholder (stripped).
+    ``_extract_media_card`` runs first and removes every WELL-FORMED
+    ``[YOUTUBE_CARD:...]`` / ``[DOWNLOAD_CARD:...]`` sentinel (and captures
+    the card payload). This is the follow-up scrub for MALFORMED echoes of
+    those same markers — the strict parser leaves them behind, so without
+    this pass a raw ``[YOUTUBE_CARD:...]`` token could reach the visitor.
 
-    This is the general fix — it doesn't care what NEW placeholder
-    phrasing the LLM invents tomorrow. ``[YouTube card below]``,
-    ``[Video preview]``, ``[See attached]``, ``[TBD]``, ``[Card:...]``,
-    ``[note: episode video below]`` — all caught by the same rule.
+    It matches ONLY the two card-marker prefixes. Every other bracketed
+    span is legitimate content and is left untouched: citation markers
+    (``[1]``), ranges (``[9am-5pm]``), code subscripts (``list[0]``), key
+    labels (``[Enter]``), and markdown links (``[label](url)``).
     """
     if not text:
         return text

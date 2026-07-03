@@ -49,22 +49,21 @@ const YOUTUBE_CARD_PATTERN = /\[YOUTUBE_CARD:[A-Za-z0-9_-]{11}\]/g;
 const DOWNLOAD_CARD_PREFIX = '[DOWNLOAD_CARD:';
 const DOWNLOAD_CARD_PATTERN = /\[DOWNLOAD_CARD:[^\s|\]]{1,500}\|[^\]\n]{1,200}\]/g;
 
-// LLM keeps inventing new square-bracket placeholder phrasings —
-// "[YouTube card below]", "[Video preview here]", "[Card: video]",
-// "[See attached]", "[TBD]", etc. A keyword blocklist loses that game.
+// The strict YOUTUBE_CARD_PATTERN / DOWNLOAD_CARD_PATTERN passes above strip
+// only WELL-FORMED card sentinels. The LLM sometimes echoes a card marker into
+// prose in a shape those patterns reject — a wrong-length video id, a stray
+// "[YOUTUBE_CARD: video below]", a "[DOWNLOAD_CARD:...]" missing its pipe. This
+// sweep catches those leaked markers by their prefix so the raw token never
+// reaches the bubble.
 //
-// General rule: by the time this pattern runs in stripAllSentinels, we
-// have ALREADY stripped every valid sentinel this codebase emits (the
-// four passes above: STREAM_SENTINELS, CTA, YOUTUBE_CARD, DOWNLOAD_CARD).
-// So anything left inside [...] is either:
-//   (a) a markdown link label — [Learn more](https://...) — where "("
-//       immediately follows the closing bracket. MUST be preserved.
-//   (b) LLM-invented placeholder prose. MUST be stripped.
+// It is deliberately NARROW: it matches ONLY the two card-marker prefixes.
+// Every other bracketed span is legitimate and MUST be preserved verbatim —
+// citation markers ([1]), ranges ([9am-5pm]), code subscripts (list[0], a[i]),
+// key labels ([Enter], [Ctrl+C]), and markdown link labels ([label](url)).
 //
-// The negative lookahead (?!\() distinguishes the two. No keyword list
-// to maintain — every new placeholder the LLM invents falls under the
-// same rule automatically.
-const LLM_LEAKED_BRACKET_PATTERN = /\[[^\]\n]{1,300}\](?!\()/g;
+// History: PR #234 used a keyword-free /\[[^\]\n]{1,300}\](?!\()/g sweep that
+// deleted every bracket not followed by "(", corrupting all of the above.
+const LLM_LEAKED_BRACKET_PATTERN = /\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,700}\]/g;
 
 const MAX_SENTINEL_LEN = STREAM_SENTINELS.reduce((m, s) => Math.max(m, s.length), 0);
 

@@ -480,62 +480,100 @@ class TestExtractMediaCard:
 
 
 class TestStripLlmCardProse:
-    """General bracket-prose stripper — strips ANY ``[...]`` that isn't a
-    markdown link. No keyword blocklist; the ``(?!\\()`` guard is what
-    generalises the rule across every placeholder the LLM might invent."""
+    """Leaked-card-placeholder stripper — removes ONLY the actual media-card
+    markers this codebase emits (``[YOUTUBE_CARD:...]`` / ``[DOWNLOAD_CARD:...]``)
+    when the LLM echoes them into prose instead of emitting them cleanly.
 
-    def test_strips_youtube_card_prose(self):
+    It MUST NOT touch any other bracketed content: citation markers, ranges,
+    code subscripts, key labels, or markdown links. PR #234 shipped an
+    over-broad regex that stripped every ``[...]`` not followed by ``(`` —
+    corrupting all of the above. These tests pin the narrowed contract."""
+
+    # ── still-strips: leaked real card markers echoed into prose ────────────
+
+    def test_strips_leaked_youtube_card_marker(self):
         from app.services.rag_service import _strip_llm_card_prose
 
-        cleaned = _strip_llm_card_prose("Watch this. [YouTube card below] Which topic?")
-        assert "[YouTube card" not in cleaned
+        cleaned = _strip_llm_card_prose("Watch this. [YOUTUBE_CARD:dQw4w9WgXcQ] Which topic?")
+        assert "[YOUTUBE_CARD" not in cleaned
+        assert "dQw4w9WgXcQ" not in cleaned
         assert "Watch this" in cleaned and "Which topic" in cleaned
 
-    def test_strips_video_preview_placeholder(self):
+    def test_strips_leaked_download_card_marker(self):
         from app.services.rag_service import _strip_llm_card_prose
 
-        cleaned = _strip_llm_card_prose("Overview text. [Video preview here] More info.")
-        assert "[Video preview" not in cleaned
+        cleaned = _strip_llm_card_prose("Grab it. [DOWNLOAD_CARD:https://x/y.pdf|Report] Anything else?")
+        assert "[DOWNLOAD_CARD" not in cleaned
+        assert "Report]" not in cleaned
+        assert "Grab it" in cleaned and "Anything else" in cleaned
 
-    def test_strips_novel_placeholder_no_keyword_list_would_predict(self):
-        # The whole point of the general rule — it catches phrasings the
-        # LLM invents that no keyword list would anticipate.
+    def test_strips_leaked_card_marker_with_stray_body(self):
+        # The LLM may echo a malformed/verbose card token. As long as the
+        # bracket opens with the card prefix, it is a leaked placeholder and
+        # must be stripped so the raw token never reaches the visitor.
         from app.services.rag_service import _strip_llm_card_prose
 
-        for placeholder in (
-            "[See attached PDF]",
-            "[TBD]",
-            "[card: episode video]",
-            "[NOTE: video below]",
-            "[i just made this up]",
-            "[Media follows]",
-            "[Attached: overview]",
+        for marker in (
+            "[YOUTUBE_CARD:some-random-id]",
+            "[YOUTUBE_CARD: video below]",
+            "[DOWNLOAD_CARD: attached PDF]",
+            "[DOWNLOAD_CARD:https://x/y.pdf]",
         ):
-            text = f"Sure. {placeholder} Ready to help."
+            text = f"Sure. {marker} Ready to help."
             cleaned = _strip_llm_card_prose(text)
-            assert placeholder not in cleaned, f"missed: {placeholder} -> {cleaned!r}"
+            assert marker not in cleaned, f"missed: {marker} -> {cleaned!r}"
+
+    # ── preserves: legitimate bracketed content (PR #234 regression) ────────
+
+    def test_preserves_citation_markers(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        text = "Revenue grew 12% [1] over the prior year [2]."
+        assert _strip_llm_card_prose(text) == text
+
+    def test_preserves_ranges(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        text = "We are open [9am-5pm] on weekdays."
+        assert _strip_llm_card_prose(text) == text
+
+    def test_preserves_code_subscripts(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        text = "Use list[0], a[i], and arr[n] to index the collection."
+        assert _strip_llm_card_prose(text) == text
+
+    def test_preserves_key_labels(self):
+        from app.services.rag_service import _strip_llm_card_prose
+
+        text = "Press [Enter] to submit or [Ctrl+C] to cancel."
+        assert _strip_llm_card_prose(text) == text
+
+    def test_preserves_arbitrary_placeholder_prose(self):
+        # Narrowed rule: brackets that are NOT the card prefixes are left
+        # verbatim — no more keyword-free carpet-bombing of every ``[...]``.
+        from app.services.rag_service import _strip_llm_card_prose
+
+        for text in (
+            "Sure. [See attached PDF] Ready to help.",
+            "Note. [TBD] End.",
+            "Watch this. [YouTube card below] Which topic?",
+        ):
+            assert _strip_llm_card_prose(text) == text
 
     def test_preserves_markdown_links(self):
-        # The general rule MUST NOT touch real markdown links — that's
-        # the whole reason the ``(?!\\()`` lookahead is there.
         from app.services.rag_service import _strip_llm_card_prose
 
         text = "Read [our pricing page](https://example.com/pricing) for details."
         assert _strip_llm_card_prose(text) == text
 
-    def test_preserves_markdown_link_next_to_placeholder(self):
+    def test_preserves_markdown_link_next_to_leaked_card(self):
         from app.services.rag_service import _strip_llm_card_prose
 
-        text = "Watch here. [YouTube card below] See [pricing](https://x.com) for details."
+        text = "Watch here. [YOUTUBE_CARD:dQw4w9WgXcQ] See [pricing](https://x.com) for details."
         cleaned = _strip_llm_card_prose(text)
-        assert "[YouTube card" not in cleaned
+        assert "[YOUTUBE_CARD" not in cleaned
         assert "[pricing](https://x.com)" in cleaned
-
-    def test_empty_bracket_is_not_matched(self):
-        # 1-300 char content required inside the brackets.
-        from app.services.rag_service import _strip_llm_card_prose
-
-        assert _strip_llm_card_prose("hi [] there") == "hi [] there"
 
     def test_empty_input_returns_empty(self):
         from app.services.rag_service import _strip_llm_card_prose
@@ -546,20 +584,10 @@ class TestStripLlmCardProse:
     def test_collapses_extra_whitespace_left_behind(self):
         from app.services.rag_service import _strip_llm_card_prose
 
-        # Two spaces around the bracket → collapsed to one after strip.
-        text = "before  [YouTube card]  after"
+        # Two spaces around a stripped card marker → collapsed to one.
+        text = "before  [YOUTUBE_CARD:dQw4w9WgXcQ]  after"
         cleaned = _strip_llm_card_prose(text)
-        # Only single spaces should remain
         assert "  " not in cleaned
-
-    def test_does_not_strip_across_newlines(self):
-        # Bracket regex uses [^\]\n], so a bracket that spans a newline
-        # is left alone (unlikely from LLM but a safety guard).
-        from app.services.rag_service import _strip_llm_card_prose
-
-        text = "line one [not a\nplaceholder] line two"
-        cleaned = _strip_llm_card_prose(text)
-        assert "line one" in cleaned and "line two" in cleaned
 
 
 class TestStreamSanitizerMediaCards:
