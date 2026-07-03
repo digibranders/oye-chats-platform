@@ -647,6 +647,10 @@ class CheckoutRequest(BaseModel):
     plan_id: int
     billing_cycle: str = "monthly"  # monthly|annual
     coupon_code: str | None = None
+    # Confirmed at checkout (country-confirmation step). None → fall back to the
+    # client's stored country, else domestic (IN). Optional for backward compat:
+    # legacy callers that omit it stay on the existing INR path.
+    billing_country: str | None = None
 
 
 # ── Checkout quote (currency + payment-method preview) ────────────────────────
@@ -803,6 +807,21 @@ def create_checkout(
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
 
+    # Confirmed billing country routes currency/plan/invoice. Phase 1 charges
+    # INR (IN) only; a confirmed non-IN buyer is directed to sales until the
+    # Phase-2 USD rail is live. Unknown (no confirm + no stored country) defaults
+    # to domestic; a country already on the client is honoured as the fallback.
+    confirmed_country = (request.billing_country or client.billing_country or "IN").strip().upper()
+    if confirmed_country != "IN":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "intl_usd_pending",
+                "message": "USD billing for international customers is coming soon. Please contact sales.",
+                "contact_sales": "developer@oyechats.com",
+            },
+        )
+
     _assert_no_stacking(client, request.coupon_code)
 
     with get_session() as session:
@@ -850,6 +869,16 @@ def create_checkout(
                 status_code=409,
                 detail="You already have an active subscription. Use change-plan to upgrade or downgrade.",
             )
+
+        # Persist the confirmed billing country for invoice place-of-supply. A
+        # GSTIN pins the country to IN, so never let checkout flip it. Only write
+        # when the caller explicitly confirmed a country (don't overwrite a
+        # stored value with the IN default of an omitted field).
+        if request.billing_country:
+            row = session.get(Client, client.id)
+            if row is not None and not row.gstin:
+                row.billing_country = confirmed_country
+                client.billing_country = confirmed_country
 
         from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service
