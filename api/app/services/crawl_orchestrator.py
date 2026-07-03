@@ -370,34 +370,69 @@ async def run_full_crawl(
         # wants — skip it in that case.
         if replace_source and total_chunks > 0 and not ordered_urls:
             newly_crawled_urls = [p["url"] for p in valid_pages]
-            with get_session() as del_session:
-                from sqlalchemy import func as sa_func
+            from sqlalchemy import func as sa_func
 
-                domain_expr = sa_func.coalesce(
-                    sa_func.replace(
-                        sa_func.substring(Document.document_name, r"^(https?://[^/]+)"),
-                        "www.",
-                        "",
-                    ),
-                    Document.document_name,
-                )
-                owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
-                deleted = (
-                    del_session.query(Document)
+            domain_expr = sa_func.coalesce(
+                sa_func.replace(
+                    sa_func.substring(Document.document_name, r"^(https?://[^/]+)"),
+                    "www.",
+                    "",
+                ),
+                Document.document_name,
+            )
+            owner_filter = Document.bot_id == bot_id if bot_id else Document.client_id == client_id
+
+            # Candidate stale pages: stored under this source but absent from the
+            # current crawl. "Absent from this crawl" is NOT the same as "removed
+            # from the site" — a transient discovery shortfall (e.g. the sitemap
+            # was briefly unreachable and we fell back to a shallower link/
+            # recursive crawl) would otherwise mass-delete pages that still
+            # exist. So we confirm each candidate is actually gone before
+            # deleting; check_urls_alive is conservative (only a confirmed
+            # 404/410 counts as dead — timeouts, 5xx, and blocks are kept).
+            with get_session() as del_session:
+                candidate_urls = [
+                    row[0]
+                    for row in del_session.query(Document.document_name)
                     .filter(
                         domain_expr == replace_source,
                         owner_filter,
                         Document.document_name.notin_(newly_crawled_urls),
                     )
-                    .delete(synchronize_session=False)
-                )
-                del_session.commit()
-                logger.info(
-                    "Orphan sweep: removed %d stale chunks for '%s' (%d fresh chunks retained)",
-                    deleted,
-                    replace_source,
-                    total_chunks,
-                )
+                    .distinct()
+                    .all()
+                ]
+
+            dead_urls: list[str] = []
+            if candidate_urls:
+                from app.services.url_discovery import check_urls_alive
+
+                async with crawl_heartbeat(client_id):
+                    liveness = await check_urls_alive(candidate_urls)
+                dead_urls = [u for u, alive in liveness.items() if not alive]
+
+            deleted = 0
+            if dead_urls:
+                with get_session() as del_session:
+                    deleted = (
+                        del_session.query(Document)
+                        .filter(
+                            domain_expr == replace_source,
+                            owner_filter,
+                            Document.document_name.in_(dead_urls),
+                        )
+                        .delete(synchronize_session=False)
+                    )
+                    del_session.commit()
+            logger.info(
+                "Orphan sweep for '%s': %d pages missing from this crawl, %d confirmed gone "
+                "(%d chunks removed), %d retained as still-live",
+                replace_source,
+                len(candidate_urls),
+                len(dead_urls),
+                deleted,
+                len(candidate_urls) - len(dead_urls),
+            )
 
         # Brand tone + company context (best-effort, non-fatal on error).
         brand_tone = None

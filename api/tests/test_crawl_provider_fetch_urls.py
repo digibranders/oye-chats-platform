@@ -46,6 +46,69 @@ async def test_fetch_urls_falls_back_to_jina(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_urls_partial_primary_retries_only_missing_on_fallback(monkeypatch):
+    """A primary that drops some pages must retry ONLY the missing URLs on the
+    fallback and merge, preserving input order — not re-fetch the whole list and
+    not silently lose the dropped pages."""
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", True)
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("spider", "jina"))
+    urls = ["https://a.test/1", "https://a.test/2", "https://a.test/3"]
+    seen = {}
+
+    async def partial_spider(u, **kw):
+        # Drops the middle URL.
+        return {
+            "results": [{"url": u[0], "content": "spider"}, {"url": u[2], "content": "spider"}],
+            "recommended_colors": [],
+            "discovered_total": len(u),
+            "queue_remaining": 0,
+        }
+
+    async def fake_jina(u, **kw):
+        seen["retried"] = u
+        return {
+            "results": [{"url": x, "content": "jina"} for x in u],
+            "recommended_colors": [],
+            "discovered_total": len(u),
+            "queue_remaining": 0,
+        }
+
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", partial_spider)
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", fake_jina)
+
+    data = await crawl_provider.fetch_urls(urls, use_js=False, client_id=1)
+    assert seen["retried"] == ["https://a.test/2"]  # only the dropped URL is retried
+    assert [p["url"] for p in data["results"]] == urls  # input order preserved
+    assert [p["content"] for p in data["results"]] == ["spider", "jina", "spider"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_urls_partial_primary_kept_when_jina_fallback_disabled(monkeypatch):
+    """With the Jina fallback disabled, a partial Spider result is returned as-is
+    rather than discarded."""
+    monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", False)
+    monkeypatch.setattr(crawl_provider, "_provider_order", lambda: ("spider", "jina"))
+    urls = ["https://a.test/1", "https://a.test/2"]
+
+    async def partial_spider(u, **kw):
+        return {
+            "results": [{"url": u[0], "content": "spider"}],
+            "recommended_colors": [],
+            "discovered_total": len(u),
+            "queue_remaining": 0,
+        }
+
+    async def boom_jina(u, **kw):  # pragma: no cover - must NOT run
+        raise AssertionError("Jina fallback is disabled and must not run")
+
+    monkeypatch.setattr(crawl_provider, "_spider_fetch_urls", partial_spider)
+    monkeypatch.setattr(crawl_provider, "_jina_fetch_urls", boom_jina)
+
+    data = await crawl_provider.fetch_urls(urls, use_js=False, client_id=1)
+    assert [p["url"] for p in data["results"]] == ["https://a.test/1"]
+
+
+@pytest.mark.asyncio
 async def test_fetch_urls_reraises_without_fallback(monkeypatch):
     monkeypatch.setattr(crawl_provider, "JINA_FALLBACK_ENABLED", False)
 

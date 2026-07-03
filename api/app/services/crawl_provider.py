@@ -147,32 +147,63 @@ async def fetch_urls(urls: list[str], **kwargs) -> dict:
     failover to the other one.
 
     The provider order is a runtime setting (``crawl.provider_primary``).
-    Failover fires when the primary raises ``CrawlerError`` or comes back with
-    zero pages for a non-empty list — the latter is how Jina fails (it drops
-    pages instead of raising). Both providers replay the exact list in order,
-    so order and coverage are preserved across a failover.
+    Failover fires when the primary raises ``CrawlerError`` or drops pages —
+    zero results replays the whole list, a *partial* result retries only the
+    URLs the primary missed. Dropping pages (rather than raising) is how Jina
+    fails. Results are merged and returned in the original input order, so a
+    flaky primary no longer silently shrinks coverage and successfully-scraped
+    pages are never re-fetched on the fallback.
 
     ``JINA_FALLBACK_ENABLED=false`` disables Jina *as a fallback* only; an
     explicit jina-primary configuration still runs Jina first.
     """
     primary, fallback = _provider_order()
+    primary_data: dict | None = None
     primary_error: CrawlerError | None = None
     try:
-        data = await _fetcher(primary)(urls, **kwargs)
-        if data.get("results") or not urls:
-            return data
-        logger.warning("%s fetch_urls returned 0/%d pages — treating as failure", primary, len(urls))
+        primary_data = await _fetcher(primary)(urls, **kwargs)
     except CrawlerError as exc:
         primary_error = exc
+
+    if primary_data is not None:
+        got = {p["url"] for p in primary_data.get("results", [])}
+        missing = [u for u in urls if u not in got]
+        if not missing:
+            return primary_data  # full success (also the empty-input case)
+        logger.warning("%s fetch_urls returned %d/%d pages — retrying the rest", primary, len(got), len(urls))
+    else:
+        missing = list(urls)
+
     if fallback == "jina" and not JINA_FALLBACK_ENABLED:
+        # Jina fallback is off: keep whatever the primary delivered rather than
+        # discard a partial result; only a hard primary failure surfaces.
+        if primary_data is not None:
+            return primary_data
         if primary_error is not None:
             raise primary_error
         raise CrawlerError(f"{primary} returned no pages and the Jina fallback is disabled")
+
     logger.warning(
-        "%s fetch_urls failed (%d urls) — falling back to %s",
+        "%s fetch_urls failed (%d/%d urls) — falling back to %s",
         primary,
+        len(missing),
         len(urls),
         fallback,
         exc_info=primary_error is not None,
     )
-    return await _fetcher(fallback)(urls, **kwargs)
+    fallback_data = await _fetcher(fallback)(missing, **kwargs)
+
+    # Merge primary successes with the fallback retry, de-duplicated by URL and
+    # emitted in the original input order (fallback wins for any overlap).
+    merged: dict[str, dict] = {}
+    if primary_data is not None:
+        for page in primary_data.get("results", []):
+            merged[page["url"]] = page
+    for page in fallback_data.get("results", []):
+        merged[page["url"]] = page
+    return {
+        "results": [merged[u] for u in urls if u in merged],
+        "recommended_colors": primary_data.get("recommended_colors", []) if primary_data else [],
+        "discovered_total": len(urls),
+        "queue_remaining": 0,
+    }

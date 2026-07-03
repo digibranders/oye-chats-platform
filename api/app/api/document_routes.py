@@ -554,7 +554,7 @@ async def crawl_discover_endpoint(
 
     from app.services import credit_service, plan_service
     from app.services.plan_service import UNLIMITED
-    from app.services.url_discovery import discover_website_urls
+    from app.services.url_discovery import discover_via_links, discover_website_urls
 
     with get_session() as db:
         plan = plan_service.get_client_plan(db, client_id)
@@ -581,10 +581,23 @@ async def crawl_discover_endpoint(
             max_urls=discovery_cap,
             timeout=20.0,
         )
-        total = len(urls)
     except Exception as exc:
         logger.warning("URL discovery failed for %s: %s", discover_request.url, exc)
-        total = 0
+        urls = []
+
+    # No usable sitemap → the real crawl falls back to a same-domain link scan
+    # (see crawl_provider.crawl_website). Mirror that here so the page count and
+    # cost estimate the customer sees match what the crawl will actually bill,
+    # instead of showing "1 page" for every sitemap-less site.
+    if len(urls) <= 1:
+        try:
+            linked = await discover_via_links(discover_request.url, max_urls=discovery_cap, timeout=20.0)
+            if len(linked) > len(urls):
+                urls = linked
+        except Exception as exc:
+            logger.warning("Link discovery preview failed for %s: %s", discover_request.url, exc)
+
+    total = len(urls)
 
     per_page = max(int(cost_per_page), 1)
     max_affordable_pages = int(balance) // per_page

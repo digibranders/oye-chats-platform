@@ -369,6 +369,11 @@ async def discover_via_links(
             url, depth = frontier.pop(0)
             if depth >= max_depth:
                 continue
+            # Count every request against the budget BEFORE issuing it, so a page
+            # that errors or returns non-HTML still spends from ``max_fetch``.
+            # Otherwise a site that answers many html-looking URLs with non-HTML
+            # could drive the loop up to ``max_urls`` GETs instead of ``max_fetch``.
+            fetched += 1
             try:
                 async with session.get(url, allow_redirects=True, ssl=False) as r:
                     if r.status != 200:
@@ -379,7 +384,6 @@ async def discover_via_links(
                     html = await r.text(errors="replace")
             except Exception:
                 continue
-            fetched += 1
 
             for link in _extract_links(url, html, base_netloc):
                 key = normalize_url(link)
