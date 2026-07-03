@@ -19,6 +19,10 @@ import os
 # pub/sub (Phase 3). After that, set WEB_CONCURRENCY=2-4.
 workers = int(os.getenv("WEB_CONCURRENCY", "1"))
 worker_class = "uvicorn.workers.UvicornWorker"
+# Only trust proxy headers (X-Forwarded-For / -Proto) from nginx on loopback.
+# Without this, uvicorn would honor a spoofed X-Forwarded-For from any source
+# that reached the port directly (P0-1 / NB-9).
+forwarded_allow_ips = os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
 
 # ── Binding ─────────────────────────────────────────────────────────────────
 # Behind Nginx, bind to loopback only. Without Nginx, use 0.0.0.0.
