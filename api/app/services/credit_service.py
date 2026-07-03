@@ -711,6 +711,13 @@ def grant_subscription_period_once(
     back — reintroducing the double-grant it is meant to prevent. Flushing makes
     the re-read observe read-your-own-writes; the FOR UPDATE still returns the
     latest committed row, so a concurrent committed grant is still seen.
+
+    Precondition: because that ``flush`` flushes the *whole* session, callers must
+    not leave other unflushed ``Subscription`` (or any other) column writes pending
+    that are not yet meant to hit the DB when invoking this helper. The intended
+    dirty state is at most the ``last_granted_period_end`` marker set by an earlier
+    same-transaction handler; ``current_period_*`` and similar writes are performed
+    by callers *after* this helper returns (see ``razorpay_service``).
     """
     session.flush()
     session.refresh(subscription, with_for_update=True)

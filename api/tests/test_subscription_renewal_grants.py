@@ -14,8 +14,11 @@ import os
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy import text as sa_text
+from sqlalchemy.orm import Session
 
-from app.db.models import Client, Plan, Subscription
+from app.db.models import Base, Client, CreditLedger, Plan, Subscription
 from app.services import credit_service
 from app.services import razorpay_service as rzp
 
@@ -265,3 +268,89 @@ def test_cron_per_bot_renewal_does_not_reset_account_pool(db, monkeypatch):
     assert credit_service.get_balance(db, client.id, bot_id=None) == 1000
     # Bot ledger got its own grant.
     assert credit_service.get_balance(db, client.id, bot_id=bot.id) == 500
+
+
+# ── flush-before-refresh regression (T5) ──────────────────────────────────────
+#
+# ``grant_subscription_period_once`` runs ``session.flush()`` immediately before
+# ``session.refresh(subscription, with_for_update=True)``. That flush is load-
+# bearing ONLY because production ``SessionLocal`` is ``autoflush=False``
+# (``app/db/session.py``): the activation→charged webhook pair can be handled in
+# one transaction where ``subscription.activated`` sets
+# ``last_granted_period_end = P`` (dirty, unflushed) and ``subscription.charged``
+# then calls this helper for the SAME period P. Without the flush,
+# ``refresh``'s ``SELECT ... FOR UPDATE`` fires before the dirty marker reaches
+# the DB, reloads the pre-set committed value, clobbers P in memory, and the
+# marker check then mis-decides to grant the period a SECOND time.
+#
+# The shared ``db`` fixture (conftest) is ``autoflush=True``, so ``refresh``'s
+# own SELECT auto-flushes the dirty marker first — the existing tests above pass
+# with or without the flush line and therefore do NOT guard it. This test pins
+# ``autoflush=False`` (mirroring test_credit_deduct_grant_boundary.py, where
+# autoflush-off is likewise a required ingredient of the bug) so that deleting
+# the ``session.flush()`` line makes it fail with a double grant.
+
+
+def _autoflush_off_session(pg_engine) -> Session:
+    """A session bound to the throwaway PG that mirrors production's
+    ``autoflush=False`` — the precondition that makes the flush-before-refresh
+    fix observable."""
+    return Session(pg_engine, autoflush=False)
+
+
+def _truncate_all(session: Session) -> None:
+    names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+    session.execute(sa_text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+    session.commit()
+
+
+def test_flush_before_refresh_preserves_same_txn_marker(pg_engine):
+    """Same-transaction activation→charged for one period grants exactly once,
+    even with ``autoflush=False`` — regression guard for the ``session.flush()``
+    before ``refresh`` in ``grant_subscription_period_once`` (commit 4dae732).
+
+    Fails (returns ``True`` and writes a second ``plan_grant``) if that flush is
+    removed, because the pending ``last_granted_period_end`` marker gets clobbered
+    by the ``FOR UPDATE`` reload before the idempotency check reads it.
+    """
+    session = _autoflush_off_session(pg_engine)
+    try:
+        client = Client(name="c", email="flush-refresh@e.com", api_key="flush-refresh", hashed_password="h")
+        session.add(client)
+        session.flush()
+        plan = Plan(name="Std", slug="std-flush-refresh", monthly_price_cents=399900, credits_per_month=1000)
+        session.add(plan)
+        session.flush()
+        sub = Subscription(
+            client_id=client.id,
+            plan_id=plan.id,
+            bot_id=None,
+            status="active",
+            payment_provider="razorpay",
+            razorpay_subscription_id="sub_flush_refresh",
+            current_period_start=S1,
+            current_period_end=E1,
+            last_granted_period_end=None,
+        )
+        sub.plan = plan
+        session.add(sub)
+        session.commit()
+
+        # Simulate ``subscription.activated`` having granted + marked period E1
+        # earlier in THIS transaction: the marker is set in the identity map but,
+        # under autoflush=False, has NOT reached the database yet.
+        sub.last_granted_period_end = E1
+        assert sub in session.dirty  # precondition: the marker write is pending, unflushed
+
+        # ``subscription.charged`` for the SAME period must observe that pending
+        # marker (thanks to the explicit flush) and no-op.
+        granted = credit_service.grant_subscription_period_once(session, sub, E1)
+        session.commit()
+
+        assert granted is False, "same-period grant must be a no-op"
+        plan_grants = session.execute(select(CreditLedger).where(CreditLedger.reason == "plan_grant")).scalars().all()
+        assert plan_grants == [], "no plan_grant may be written for an already-granted period"
+    finally:
+        session.rollback()
+        _truncate_all(session)
+        session.close()
