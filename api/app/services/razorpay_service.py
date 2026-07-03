@@ -940,16 +940,22 @@ def reconcile_subscription_from_razorpay(
     the webhook (or a concurrent verify call) gets there first, this is a
     cheap no-op that just re-queries the local row.
 
+    ORDERING (important): the subscription is fetched and its status checked
+    BEFORE the idempotency key is recorded. A first verify call can race ahead
+    of Razorpay's mandate authorisation and see a non-billable state
+    (``created``/``pending``/``halted``); recording the key there would burn it,
+    and a later verify — once the mandate is ``authenticated``/``active`` —
+    would short-circuit on the already-recorded key and never materialise the
+    row. On localhost (no webhook to fall back on) that permanently strands the
+    customer on their old plan after a successful payment. So we only record the
+    key once we've confirmed a billable state and are about to grant — that
+    keeps the grant-once guarantee while letting an early call retry.
+
     Returns the local ``Subscription`` if reconcile succeeded (now or
     previously), or ``None`` if Razorpay reports the subscription in a
-    non-billable state we shouldn't materialise yet (e.g. ``created``,
-    ``pending``, ``halted``) — let the webhook handle those.
+    non-billable state we shouldn't materialise yet — let a later call (or the
+    webhook) handle those.
     """
-    synthetic_event_id = f"reconcile:{razorpay_subscription_id}"
-    if not _record_or_skip_event(session, synthetic_event_id):
-        # Webhook or another verify call already reconciled — just re-query.
-        return _resolve_local_subscription(session, razorpay_subscription_id)
-
     rzp = _get_razorpay()
     try:
         sub_entity = rzp.subscription.fetch(razorpay_subscription_id)
@@ -962,8 +968,10 @@ def reconcile_subscription_from_razorpay(
 
     status = (sub_entity.get("status") or "").lower()
     if status not in ("active", "authenticated"):
+        # Non-billable yet. Return WITHOUT recording the idempotency key so a
+        # later verify (once the mandate clears) can retry and materialise.
         logger.info(
-            "Razorpay subscription %s in non-billable state '%s' — deferring local upsert to webhook",
+            "Razorpay subscription %s in non-billable state '%s' — deferring local upsert (key not burned)",
             razorpay_subscription_id,
             status,
         )
@@ -975,6 +983,7 @@ def reconcile_subscription_from_razorpay(
     # ``notes.oyechats_client_id`` it carries. When the caller's identity is
     # known, refuse to materialise a subscription whose notes name a different
     # client (the webhook path, which has no caller, passes None and is trusted).
+    # Done before recording the key so a mismatched caller can't burn it either.
     if expected_client_id is not None:
         notes = sub_entity.get("notes") or {}
         notes_client_id = _client_id_from_notes(notes)
@@ -986,6 +995,12 @@ def reconcile_subscription_from_razorpay(
                 notes_client_id,
             )
             raise RazorpayBillingError("Subscription does not belong to the requesting client.")
+
+    # Billable + owned — NOW gate the grant. If the webhook or a concurrent
+    # verify already materialised it, this is a no-op re-query (grant-once).
+    synthetic_event_id = f"reconcile:{razorpay_subscription_id}"
+    if not _record_or_skip_event(session, synthetic_event_id):
+        return _resolve_local_subscription(session, razorpay_subscription_id)
 
     # Synthesize a webhook-shaped payload and reuse the canonical handler so
     # the create-or-update logic stays in one place. ``_handle_subscription_activated``
