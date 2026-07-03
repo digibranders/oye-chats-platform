@@ -52,7 +52,7 @@ from app.config import (
     RAZORPAY_WEBHOOK_SECRET,
 )
 from app.db.models import Client, DiscountedPlanCache, Invoice, Plan, ProcessedWebhook, Subscription
-from app.services import credit_service
+from app.services import credit_service, invoice_service
 
 if TYPE_CHECKING:
     import razorpay
@@ -1403,6 +1403,11 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
             session.add(period_invoice)
             session.flush()
             period_invoice_id = period_invoice.id
+            # Enrich into a numbered GST tax invoice when invoicing v2 is on
+            # (no-op otherwise — leaves the legacy payment-history row). Never
+            # fails the webhook: shadow-mode enrichment only touches the row we
+            # just created.
+            invoice_service.finalize_invoice(session, period_invoice)
 
     # Grant this period's credits at most once, keyed on the period end marker
     # (replaces the old fragile 24h time-window heuristic — H4). The activation
@@ -1610,6 +1615,10 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
     )
     session.add(invoice)
     session.flush()
+    # Numbered tax invoice for the top-up when invoicing v2 is on (no-op
+    # otherwise). Runs before the grant so the invoice is finalized within the
+    # same transaction as the credit it pays for.
+    invoice_service.finalize_invoice(session, invoice)
 
     credit_service.grant_topup(
         session,
