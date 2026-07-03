@@ -34,7 +34,11 @@ def test_get_returns_empty_details(db, monkeypatch):
     c, _ = _mk(db, monkeypatch)
     res = c.get("/subscriptions/billing-details")
     assert res.status_code == 200, res.text
-    assert res.json()["gstin"] is None
+    body = res.json()
+    assert body["gstin"] is None
+    # The invoice-recipient default (billing_email or account email) is
+    # surfaced read-only so the UI can show where invoices actually go.
+    assert body["account_email"] == "billing-details@test.example"
 
 
 def test_put_persists_and_derives_state_from_gstin(db, monkeypatch):

@@ -121,72 +121,97 @@ _TEMPLATE = """\
 <head>
 <meta charset="utf-8">
 <style>
-  @page { size: A4; margin: 18mm 16mm; }
-  body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #1a1a1a; }
-  h1 { font-size: 14pt; letter-spacing: 2px; margin: 0 0 2mm; }
-  .muted { color: #555; }
-  .row { display: flex; justify-content: space-between; margin-bottom: 6mm; }
-  .block { max-width: 48%; }
-  .block h3 { font-size: 9pt; text-transform: uppercase; letter-spacing: 1px; color: #666; margin: 0 0 1mm; }
-  table { width: 100%; border-collapse: collapse; margin: 4mm 0; }
-  th, td { border: 0.5pt solid #999; padding: 2mm 2.5mm; text-align: left; font-size: 9.5pt; }
-  th { background: #f2f2f2; }
-  td.num, th.num { text-align: right; }
-  .totals td { border: none; padding: 1mm 2.5mm; }
-  .totals tr.grand td { border-top: 1pt solid #333; font-weight: bold; }
-  .legend { margin: 3mm 0; font-style: italic; }
-  .foot { margin-top: 10mm; display: flex; justify-content: space-between; }
+  @page { size: A4; margin: 16mm 15mm 18mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt; color: #0f172a; line-height: 1.45; }
+  .muted { color: #64748b; }
+  .small { font-size: 8.5pt; }
+  .row { display: flex; justify-content: space-between; }
+  .brand { font-size: 19pt; font-weight: bold; color: #4f46e5; letter-spacing: -0.5px; }
+  .brand img { height: 10mm; }
+  .doc-title { font-size: 15pt; font-weight: bold; letter-spacing: 2.5px; margin: 0 0 1.5mm; }
+  .header { margin-bottom: 5mm; padding-bottom: 4mm; border-bottom: 1.2pt solid #4f46e5; }
+  .header .right { text-align: right; }
+  .badge { display: inline-block; font-size: 8pt; font-weight: bold; letter-spacing: 1.5px;
+           padding: 1mm 3.5mm; border-radius: 2mm; margin-top: 1.5mm;
+           background: #dcfce7; color: #15803d; }
+  .parties { margin-bottom: 5mm; }
+  .block { max-width: 47%; }
+  .block h3 { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 1.5px; color: #64748b; margin: 0 0 1.5mm; }
+  .block .name { font-weight: bold; font-size: 10.5pt; }
+  .meta { background: #f8fafc; border: 0.5pt solid #e2e8f0; border-radius: 1.5mm;
+          padding: 2.5mm 4mm; font-size: 8.5pt; color: #475569; margin-bottom: 5mm; }
+  .meta span.item { margin-right: 7mm; }
+  table.items { width: 100%; border-collapse: collapse; margin: 0; }
+  table.items th { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 1.2px; color: #64748b;
+                   text-align: left; padding: 0 2mm 2mm 0; border-bottom: 1pt solid #0f172a; }
+  table.items td { padding: 2.8mm 2mm 2.8mm 0; border-bottom: 0.5pt solid #e2e8f0; }
+  td.num, th.num { text-align: right; padding-right: 0; }
+  table.totals { width: 47%; margin-left: 53%; border-collapse: collapse; margin-top: 2.5mm; }
+  table.totals td { padding: 1.6mm 0; }
+  table.totals td.label { color: #475569; }
+  table.totals tr.grand td { border-top: 1.2pt solid #4f46e5; background: #eef2ff; color: #312e81;
+                             font-weight: bold; font-size: 11pt; padding: 2.6mm 2.5mm; }
+  .words { margin-top: 4.5mm; }
+  .legend { margin: 3mm 0; font-style: italic; color: #475569; }
+  .foot { margin-top: 12mm; padding-top: 3.5mm; border-top: 0.6pt solid #e2e8f0;
+          display: flex; justify-content: space-between; font-size: 8.5pt; }
   .sign { text-align: right; }
 </style>
 </head>
 <body>
-  <div class="row">
-    <div class="block">
-      <h1>{{ title }}</h1>
-      <div class="muted">No: <strong>{{ inv.invoice_number }}</strong></div>
-      <div class="muted">Date: {{ issue_date }}</div>
-      {% if against -%}
-      <div class="muted">Against invoice: <strong>{{ against }}</strong>{% if against_date %} dated {{ against_date }}{% endif %}</div>
+  <div class="row header">
+    <div>
+      {% if seller.logo_url -%}
+      <div class="brand"><img src="{{ seller.logo_url }}" alt="{{ brand_name }}"></div>
+      {%- else -%}
+      <div class="brand">{{ brand_name }}</div>
       {%- endif %}
-      {% if inv.period_start and inv.period_end -%}
-      <div class="muted">Service period: {{ period }}</div>
+      {% if seller.trade_name and seller.trade_name != seller.legal_name -%}
+      <div class="muted small">by {{ seller.legal_name }}</div>
       {%- endif %}
     </div>
-    <div class="block" style="text-align:right">
-      <strong>{{ seller.legal_name }}</strong>
-      {% if seller.trade_name and seller.trade_name != seller.legal_name -%}
-      <div class="muted">({{ seller.trade_name }})</div>
+    <div class="right">
+      <div class="doc-title">{{ title }}</div>
+      <div class="muted">No: <strong style="color:#0f172a">{{ inv.invoice_number }}</strong></div>
+      <div class="muted">Date: {{ issue_date }}</div>
+      {% if against -%}
+      <div class="muted">Against invoice: {{ against }}{% if against_date %} dated {{ against_date }}{% endif %}</div>
       {%- endif %}
-      {% for line in seller.address_lines -%}
-      <div class="muted">{{ line }}</div>
-      {%- endfor %}
-      {% if seller.gstin -%}
-      <div>GSTIN: {{ seller.gstin }}</div>
+      {% if badge -%}
+      <div class="badge">{{ badge }}</div>
       {%- endif %}
     </div>
   </div>
 
-  <div class="row">
+  <div class="row parties">
     <div class="block">
+      <h3>From</h3>
+      <div class="name">{{ seller.legal_name }}</div>
+      {% for line in seller.address_lines -%}
+      <div class="muted">{{ line }}</div>
+      {%- endfor %}
+      {% if seller.gstin %}<div>GSTIN: {{ seller.gstin }}</div>{% endif %}
+    </div>
+    <div class="block" style="text-align:right">
       <h3>Bill to</h3>
-      <strong>{{ buyer.legal_name or buyer.name or "Customer" }}</strong>
+      <div class="name">{{ buyer.legal_name or buyer.name or "Customer" }}</div>
       {% if buyer.billing_address -%}
-        {% for key in ("line1", "line2", "city", "postal_code") -%}
+        {% for key in ("line1", "line2", "city", "state", "postal_code") -%}
           {% if buyer.billing_address.get(key) %}<div class="muted">{{ buyer.billing_address[key] }}</div>{% endif %}
         {%- endfor %}
       {%- endif %}
       {% if buyer.email %}<div class="muted">{{ buyer.email }}</div>{% endif %}
       {% if buyer.gstin %}<div>GSTIN: {{ buyer.gstin }}</div>{% endif %}
     </div>
-    <div class="block" style="text-align:right">
-      {% if is_tax_invoice -%}
-      {% if inv.place_of_supply %}<div>Place of supply: {{ inv.place_of_supply }}</div>{% endif %}
-      <div>Reverse charge: No</div>
-      {%- endif %}
-    </div>
   </div>
 
-  <table>
+  {% if meta_items -%}
+  <div class="meta">
+    {% for item in meta_items %}<span class="item">{{ item }}</span>{% endfor %}
+  </div>
+  {%- endif %}
+
+  <table class="items">
     <tr>
       <th>Description</th>
       {% if is_tax_invoice %}<th>SAC</th>{% endif %}
@@ -201,25 +226,28 @@ _TEMPLATE = """\
     {%- endfor %}
   </table>
 
-  <table class="totals" style="width: 45%; margin-left: 55%;">
+  <table class="totals">
     {% if is_tax_invoice -%}
-    <tr><td>Taxable value</td><td class="num">{{ taxable }}</td></tr>
+    <tr><td class="label">Taxable value</td><td class="num">{{ taxable }}</td></tr>
     {% for tax in tax_rows -%}
-    <tr><td>{{ tax.label }}</td><td class="num">{{ tax.amount }}</td></tr>
+    <tr><td class="label">{{ tax.label }}</td><td class="num">{{ tax.amount }}</td></tr>
     {%- endfor %}
-    <tr><td>Total tax</td><td class="num">{{ total_tax }}</td></tr>
+    <tr><td class="label">Total tax</td><td class="num">{{ total_tax }}</td></tr>
     {%- endif %}
     <tr class="grand"><td>Total</td><td class="num">{{ total }}</td></tr>
   </table>
 
-  <div><strong>Amount in words:</strong> {{ in_words }}</div>
+  <div class="words"><strong>Amount in words:</strong> {{ in_words }}</div>
 
   {% if export_legend -%}
   <div class="legend">{{ export_legend }}</div>
   {%- endif %}
 
   <div class="foot">
-    <div class="muted">This is a computer-generated document.</div>
+    <div class="muted">
+      <div>Questions about this document? developer@oyechats.com</div>
+      <div>This is a computer-generated document.</div>
+    </div>
     <div class="sign">
       <div>For {{ seller.legal_name }}</div>
       <div style="margin-top: 12mm;" class="muted">Authorised signatory</div>
@@ -294,6 +322,18 @@ def render_invoice_html(invoice: Invoice) -> str:
         for item in (invoice.line_items or [{"description": invoice.description, "amount_minor": invoice.amount_cents}])
     ]
 
+    # Compliance/reference strip. Plain "Label: value" strings (no inner
+    # markup) — GSTR reviewers and tests both match the literal phrases.
+    meta_items = []
+    if is_tax_invoice:
+        if invoice.place_of_supply:
+            meta_items.append(f"Place of supply: {invoice.place_of_supply}")
+        meta_items.append("Reverse charge: No")
+    if period:
+        meta_items.append(f"Service period: {period}")
+    if invoice.razorpay_payment_id:
+        meta_items.append(f"Payment ref: {invoice.razorpay_payment_id}")
+
     return _template.render(
         inv=invoice,
         title=titles.get(invoice.invoice_type, "RECEIPT"),
@@ -303,6 +343,9 @@ def render_invoice_html(invoice: Invoice) -> str:
         period=period,
         seller=seller,
         buyer=buyer,
+        brand_name=seller.get("trade_name") or seller.get("legal_name") or "OyeChats",
+        badge="PAID" if invoice.status == "paid" and invoice.invoice_type != "credit_note" else None,
+        meta_items=meta_items,
         is_tax_invoice=is_tax_invoice,
         lines=lines,
         taxable=_fmt_inr(invoice.taxable_value_minor),

@@ -546,6 +546,9 @@ def _billing_details_dict(client: Client) -> dict:
         "billing_country": client.billing_country,
         "billing_state_code": client.billing_state_code,
         "billing_email": client.billing_email,
+        # Read-only: where invoices actually go when billing_email is unset
+        # (mirrors invoice_service's ``billing_email or email`` recipient).
+        "account_email": client.email,
     }
 
 

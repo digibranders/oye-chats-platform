@@ -14,7 +14,9 @@ import { getBillingDetails, updateBillingDetails } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/Card';
 import { Button } from '../ui/Button';
+import Select from '../ui/Select';
 import { cn } from '../../lib/utils';
+import { COUNTRY_OPTIONS, countryLabel } from '../../lib/countries';
 
 // GST state codes 01–38 + 97 (Other Territory) — mirrors the backend's
 // VALID_STATE_CODES set in api/app/core/gstin.py.
@@ -61,6 +63,19 @@ const GST_STATES = [
 ];
 
 const STATE_NAME_BY_CODE = Object.fromEntries(GST_STATES);
+
+const STATE_OPTIONS = GST_STATES.map(([code, name]) => ({
+  value: code,
+  label: `${code} — ${name}`,
+}));
+
+/** Non-Indian buyers have no GSTIN or GST state — their supplies are
+ *  zero-rated exports. Only a complete 2-letter code counts as foreign so a
+ *  half-typed country doesn't hide fields mid-keystroke. */
+function isForeignCountry(raw) {
+  const country = (raw || '').trim().toUpperCase();
+  return country.length === 2 && country !== 'IN';
+}
 
 const INPUT_CLASSES = cn(
   'w-full px-3 py-2 rounded-xl border border-surface-200 dark:border-surface-600 text-sm',
@@ -111,12 +126,15 @@ function formToPatch(form, details) {
   if (trim(form.legal_name) !== stored.legal_name) {
     patch.legal_name = trim(form.legal_name) || null;
   }
-  const gstin = trim(form.gstin).toUpperCase();
+  // A foreign country makes GSTIN/GST-state meaningless (and the backend
+  // 422s a GSTIN with a non-IN country) — clear both instead of sending them.
+  const foreign = isForeignCountry(form.billing_country);
+  const gstin = foreign ? '' : trim(form.gstin).toUpperCase();
   if (gstin !== stored.gstin) {
     patch.gstin = gstin || null;
   }
 
-  const ADDRESS_KEYS = ['line1', 'line2', 'city', 'postal_code'];
+  const ADDRESS_KEYS = ['line1', 'line2', 'city', 'state', 'postal_code'];
   const address = {};
   for (const key of ADDRESS_KEYS) {
     const v = trim(form[key]);
@@ -146,7 +164,9 @@ function formToPatch(form, details) {
   // State is server-derived from the GSTIN when one is set — only send an
   // explicit state when the form has no GSTIN, otherwise a stale select
   // value could 422 against the GSTIN's own state digits.
-  if (!gstin) {
+  if (foreign) {
+    if (stored.billing_state_code) patch.billing_state_code = null;
+  } else if (!gstin) {
     const state = trim(form.billing_state_code);
     if (state !== stored.billing_state_code) {
       patch.billing_state_code = state || null;
@@ -166,6 +186,7 @@ function detailsToForm(details) {
     line1: address.line1 || '',
     line2: address.line2 || '',
     city: address.city || '',
+    state: address.state || '',
     postal_code: address.postal_code || '',
     billing_state_code: details?.billing_state_code || '',
     billing_country: details?.billing_country || 'IN',
@@ -217,8 +238,7 @@ export default function BillingDetailsCard() {
     const raw = e.target.value;
     setForm((prev) => ({
       ...prev,
-      [key]: key === 'gstin' || key === 'billing_country' ? raw.toUpperCase() : raw,
-      ...(key === 'billing_country' ? { billing_country_touched: true } : {}),
+      [key]: key === 'gstin' ? raw.toUpperCase() : raw,
     }));
   };
 
@@ -249,14 +269,17 @@ export default function BillingDetailsCard() {
   }
 
   const gstinSet = editing ? !!form.gstin.trim() : !!details?.gstin;
+  const foreign = isForeignCountry(editing ? form.billing_country : details?.billing_country);
   const address = details?.billing_address || null;
   const addressLine = address
-    ? [address.line1, address.line2, address.city, address.postal_code].filter(Boolean).join(', ')
+    ? [address.line1, address.line2, address.city, address.state, address.postal_code]
+        .filter(Boolean)
+        .join(', ')
     : '';
   const stateCode = details?.billing_state_code || '';
   const stateLabel = stateCode
     ? `${STATE_NAME_BY_CODE[stateCode] || 'Unknown state'} (${stateCode})`
-    : '';
+    : address?.state || '';
 
   return (
     <Card>
@@ -307,23 +330,25 @@ export default function BillingDetailsCard() {
                   className={INPUT_CLASSES}
                 />
               </div>
-              <div>
-                <FieldLabel htmlFor="bd-gstin">GSTIN</FieldLabel>
-                <input
-                  id="bd-gstin"
-                  type="text"
-                  value={form.gstin}
-                  onChange={setField('gstin')}
-                  placeholder="e.g. 27ABCDE1234F1Z5"
-                  maxLength={15}
-                  autoCapitalize="characters"
-                  spellCheck={false}
-                  className={cn(INPUT_CLASSES, 'font-mono uppercase tracking-wide')}
-                />
-                <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
-                  15-character GSTIN — adds GST breakup to your invoices for input tax credit
-                </p>
-              </div>
+              {!foreign && (
+                <div>
+                  <FieldLabel htmlFor="bd-gstin">GSTIN</FieldLabel>
+                  <input
+                    id="bd-gstin"
+                    type="text"
+                    value={form.gstin}
+                    onChange={setField('gstin')}
+                    placeholder="e.g. 27ABCDE1234F1Z5"
+                    maxLength={15}
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                    className={cn(INPUT_CLASSES, 'font-mono uppercase tracking-wide')}
+                  />
+                  <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
+                    15-character GSTIN — adds GST breakup to your invoices for input tax credit
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -374,46 +399,62 @@ export default function BillingDetailsCard() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <FieldLabel htmlFor="bd-state">State (GST)</FieldLabel>
-                <select
-                  id="bd-state"
-                  value={gstinSet ? form.gstin.trim().slice(0, 2) : form.billing_state_code}
-                  onChange={setField('billing_state_code')}
-                  disabled={gstinSet}
-                  className={INPUT_CLASSES}
-                >
-                  <option value="">Select a state…</option>
-                  {GST_STATES.map(([code, name]) => (
-                    <option key={code} value={code}>
-                      {code} — {name}
-                    </option>
-                  ))}
-                </select>
-                {gstinSet && (
-                  <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
-                    Derived from the first 2 digits of your GSTIN.
-                  </p>
-                )}
-              </div>
+              {foreign ? (
+                <div>
+                  <FieldLabel htmlFor="bd-region">State / region</FieldLabel>
+                  <input
+                    id="bd-region"
+                    type="text"
+                    value={form.state}
+                    onChange={setField('state')}
+                    placeholder="e.g. California (optional)"
+                    className={INPUT_CLASSES}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <FieldLabel htmlFor="bd-state">State (GST)</FieldLabel>
+                  <Select
+                    id="bd-state"
+                    value={gstinSet ? form.gstin.trim().slice(0, 2) : form.billing_state_code}
+                    onChange={(v) => setForm((prev) => ({ ...prev, billing_state_code: v }))}
+                    options={STATE_OPTIONS}
+                    placeholder="Select a state…"
+                    disabled={gstinSet}
+                  />
+                  {gstinSet && (
+                    <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
+                      Derived from the first 2 digits of your GSTIN.
+                    </p>
+                  )}
+                </div>
+              )}
               <div>
                 <FieldLabel htmlFor="bd-country">Country</FieldLabel>
-                <input
+                <Select
                   id="bd-country"
-                  type="text"
                   value={form.billing_country}
-                  onChange={setField('billing_country')}
-                  placeholder="IN"
-                  maxLength={2}
-                  autoCapitalize="characters"
-                  spellCheck={false}
-                  className={cn(INPUT_CLASSES, 'uppercase')}
+                  onChange={(v) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      billing_country: v,
+                      billing_country_touched: true,
+                    }))
+                  }
+                  options={COUNTRY_OPTIONS}
+                  placeholder="Select a country…"
+                  searchable
                 />
-                <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
-                  2-letter ISO code, e.g. IN.
-                </p>
               </div>
             </div>
+
+            {foreign && (
+              <p className="text-[11px] text-surface-500 dark:text-surface-400 -mt-1">
+                Outside India, GST fields don't apply — your invoices are issued as zero-rated
+                exports with place of supply "Outside India". Any GSTIN or GST state on file is
+                cleared when you save.
+              </p>
+            )}
 
             <div>
               <FieldLabel htmlFor="bd-email">Billing email</FieldLabel>
@@ -422,11 +463,13 @@ export default function BillingDetailsCard() {
                 type="email"
                 value={form.billing_email}
                 onChange={setField('billing_email')}
-                placeholder="accounts@yourcompany.com"
+                placeholder={details?.account_email || 'accounts@yourcompany.com'}
                 className={INPUT_CLASSES}
               />
               <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
-                Optional — invoices go to your account email unless set.
+                {details?.account_email
+                  ? `Defaults to your account email (${details.account_email}) — set only to send invoices somewhere else.`
+                  : 'Optional — invoices go to your account email unless set.'}
               </p>
             </div>
 
@@ -457,8 +500,15 @@ export default function BillingDetailsCard() {
             <ReadonlyRow icon={FileText} label="GSTIN" value={details?.gstin} />
             <ReadonlyRow icon={MapPin} label="Address" value={addressLine} />
             <ReadonlyRow icon={MapPin} label="State" value={stateLabel} />
-            <ReadonlyRow icon={MapPin} label="Country" value={details?.billing_country} />
-            <ReadonlyRow icon={Mail} label="Billing email" value={details?.billing_email} />
+            <ReadonlyRow icon={MapPin} label="Country" value={countryLabel(details?.billing_country)} />
+            <ReadonlyRow
+              icon={Mail}
+              label="Billing email"
+              value={
+                details?.billing_email ||
+                (details?.account_email ? `${details.account_email} (account email)` : '')
+              }
+            />
           </div>
         )}
       </CardContent>

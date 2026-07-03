@@ -1,3 +1,5 @@
 
 # Local .env backups (may contain secrets)
 .env.bak*
+.ngrok.log
+.cloudflared.log

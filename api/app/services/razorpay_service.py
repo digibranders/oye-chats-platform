@@ -174,6 +174,15 @@ def create_topup_order(
         "amount_inr": str(amount_inr),
         "bonus_pct": str(bonus_pct),
     }
+    # The modal advertises USD prices while Razorpay charges INR. Carry the
+    # display price into notes so the invoice line can name the pack the
+    # customer actually chose ("$249 pack") — GST documents must state values
+    # in INR, so the USD figure stays descriptive only.
+    display_amount = pack.get("display_amount")
+    display_currency = str(pack.get("display_currency") or "").upper()
+    if display_amount is not None and display_currency:
+        symbol = "$" if display_currency == "USD" else f"{display_currency} "
+        notes["display_price"] = f"{symbol}{display_amount}"
     # Per-bot top-ups stamp the target bot in notes so the captured-
     # payment handler grants to that bot's isolated ledger rather than
     # the client pool.
@@ -1687,6 +1696,13 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             target_bot_id = None
 
+    # Name the pack the way the customer bought it ($-display when the order
+    # notes carry it, INR otherwise) plus the credits it grants. Legal amounts
+    # on the document remain INR regardless.
+    display_price = str(notes.get("display_price") or "").strip()
+    pack_label = f"{display_price} pack" if display_price else f"₹{amount_inr} pack"
+    topup_description = f"Credits top-up — {pack_label} ({credits:,} credits)"
+
     invoice = Invoice(
         client_id=client_id,
         subscription_id=None,
@@ -1695,7 +1711,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         currency=str((pay_entity or {}).get("currency", "INR")).lower(),
         status="paid",
         razorpay_payment_id=rzp_payment_id,
-        description=f"Top-up ₹{amount_inr} pack",
+        description=topup_description,
         paid_at=datetime.now(UTC),
     )
     session.add(invoice)
@@ -1710,7 +1726,7 @@ def _handle_payment_captured(session: Session, payload: dict[str, Any]) -> str:
         session,
         client_id,
         credits,
-        note=f"Top-up ₹{amount_inr} pack (Razorpay {rzp_order_id or rzp_payment_id})",
+        note=f"{topup_description} (Razorpay {rzp_order_id or rzp_payment_id})",
         bot_id=target_bot_id,
         reference_id=invoice.id,  # link grant → invoice for precise refund clawback (C2)
     )
