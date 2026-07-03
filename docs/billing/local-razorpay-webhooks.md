@@ -81,5 +81,12 @@ interactive setup; then it's static like ngrok's domain.
   2026-07-03 — the DB was one migration behind on `emailed_at`).
 - The worker must run for invoice PDFs to render (`pdf_url` stays null otherwise;
   the invoice row + tax breakup still show in the UI).
+- **Run exactly ONE worker, started with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`
+  directly on the python binary.** Two traps seen 2026-07-03: (a) macOS SIP strips
+  `DYLD_*` vars when the command goes through a system binary — `DYLD_… nohup python …`
+  silently loses the var and the worker logs "PDF renderer unavailable"; put the env
+  var immediately before `python` (as `dev.sh` does). (b) Multiple workers on the same
+  Redis queue race for render jobs — a pango-less duplicate grabs the job, skips it,
+  and PDFs only appear when the 5-min cron lands on the healthy worker.
 - With the tunnel up, the `/verify` fallbacks and the webhook both run — they're
   idempotent (keyed on payment id / a reconcile marker), so no double-grant.

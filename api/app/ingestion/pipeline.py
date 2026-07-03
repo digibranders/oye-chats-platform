@@ -39,13 +39,12 @@ def _extract_title_from_markdown(content: str) -> str | None:
     return None
 
 
-os.makedirs(ARCHIVE_DIR, exist_ok=True)
-
-# Failed uploads land here so they leave the input folder and don't get
-# reprocessed on every run (the "poison pill" pattern). Subfolder of
-# ARCHIVE_DIR keeps the configuration surface unchanged.
-QUARANTINE_DIR = os.path.join(ARCHIVE_DIR, "_quarantine")
-os.makedirs(QUARANTINE_DIR, exist_ok=True)
+# Failed uploads are quarantined (rather than archived) so they leave the
+# input folder and don't get reprocessed on every run (the "poison pill"
+# pattern). Both archive and quarantine are namespaced per tenant — see
+# ``_tenant_archive_dir`` / ``_tenant_quarantine_dir`` — so one tenant's cold
+# storage can never mix with another's, mirroring the per-tenant upload dir.
+_QUARANTINE_SUBDIR = "_quarantine"
 
 
 def calculate_hash(text: str) -> str:
@@ -279,9 +278,9 @@ def run_folder_ingestion(client_id: int, folder_path: str, bot_id: int | None = 
             # quarantine so the next run isn't blocked by the same poison pill.
             try:
                 if failed:
-                    move_to_quarantine(file_path, file_name)
+                    move_to_quarantine(file_path, file_name, client_id=client_id, bot_id=bot_id)
                 else:
-                    move_to_archive(file_path, file_name)
+                    move_to_archive(file_path, file_name, client_id=client_id, bot_id=bot_id)
             except Exception as mv_err:
                 logger.error(f"Could not move {file_name} out of upload folder: {mv_err}")
 
@@ -551,17 +550,57 @@ def batch_web_ingestion(
     }
 
 
-def move_to_archive(file_path: str, filename: str):
-    """
-    Move a file to the archive directory.
-    If a file with the same name exists, append a timestamp to avoid collision.
-    """
-    dest_path = os.path.join(ARCHIVE_DIR, filename)
+def _tenant_storage_dir(client_id: int, bot_id: int | None, *segments: str, create: bool = True) -> str:
+    """Resolve a per-tenant cold-storage directory rooted at ``ARCHIVE_DIR``.
 
+    Layout mirrors the per-tenant upload dir (``documents/{client_id}/{bot_id}/``):
+    archive/quarantine live at ``{ARCHIVE_DIR}/{client_id}/{bot_id}/[...]`` so one
+    tenant's processed/failed files can never mix with another's. ``bot_id is
+    None`` (account-level uploads) uses a reserved ``_none`` segment that can
+    never collide with a real bot id.
+
+    Path components are integers (or the literal ``_quarantine``), so this can't
+    be traversed; the ``is_relative_to`` guard is defense-in-depth to guarantee
+    the result stays inside the archive root even if that ever changes.
+    """
+    base_dir = os.path.realpath(ARCHIVE_DIR)
+    bot_segment = str(bot_id) if bot_id is not None else "_none"
+    tenant_dir = os.path.realpath(os.path.join(base_dir, str(client_id), bot_segment, *segments))
+    if os.path.commonpath([tenant_dir, base_dir]) != base_dir:
+        raise ValueError(f"Refusing storage path outside archive root: {tenant_dir}")
+    if create:
+        os.makedirs(tenant_dir, exist_ok=True)
+    return tenant_dir
+
+
+def _tenant_archive_dir(client_id: int, bot_id: int | None, *, create: bool = True) -> str:
+    """Per-tenant archive directory: ``{ARCHIVE_DIR}/{client_id}/{bot_id}/``."""
+    return _tenant_storage_dir(client_id, bot_id, create=create)
+
+
+def _tenant_quarantine_dir(client_id: int, bot_id: int | None, *, create: bool = True) -> str:
+    """Per-tenant quarantine directory (a subfolder of the tenant archive dir)."""
+    return _tenant_storage_dir(client_id, bot_id, _QUARANTINE_SUBDIR, create=create)
+
+
+def _dest_with_collision_suffix(dest_dir: str, filename: str) -> str:
+    """Return a destination path in ``dest_dir``, appending a timestamp only if
+    ``filename`` already exists there (keeps both copies instead of clobbering).
+    """
+    dest_path = os.path.join(dest_dir, filename)
     if os.path.exists(dest_path):
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         name, ext = os.path.splitext(filename)
-        dest_path = os.path.join(ARCHIVE_DIR, f"{name}_{timestamp}{ext}")
+        dest_path = os.path.join(dest_dir, f"{name}_{timestamp}{ext}")
+    return dest_path
+
+
+def move_to_archive(file_path: str, filename: str, *, client_id: int, bot_id: int | None):
+    """
+    Move a processed file to the tenant's archive directory.
+    If a file with the same name exists, append a timestamp to avoid collision.
+    """
+    dest_path = _dest_with_collision_suffix(_tenant_archive_dir(client_id, bot_id), filename)
 
     try:
         shutil.move(file_path, dest_path)
@@ -570,22 +609,64 @@ def move_to_archive(file_path: str, filename: str):
         logger.error(f"Failed to archive {filename}: {e}")
 
 
-def move_to_quarantine(file_path: str, filename: str):
-    """Move a file that failed ingestion to the quarantine folder.
+def move_to_quarantine(file_path: str, filename: str, *, client_id: int, bot_id: int | None):
+    """Move a file that failed ingestion to the tenant's quarantine folder.
 
     Same collision-avoidance pattern as ``move_to_archive``. Quarantining
     (rather than deleting) preserves the original for forensic review while
     ensuring the next ingestion run isn't blocked by the same poison pill.
     """
-    dest_path = os.path.join(QUARANTINE_DIR, filename)
-
-    if os.path.exists(dest_path):
-        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        name, ext = os.path.splitext(filename)
-        dest_path = os.path.join(QUARANTINE_DIR, f"{name}_{timestamp}{ext}")
+    dest_path = _dest_with_collision_suffix(_tenant_quarantine_dir(client_id, bot_id), filename)
 
     try:
         shutil.move(file_path, dest_path)
         logger.warning(f"Quarantined failed file: {dest_path}")
     except Exception as e:
         logger.error(f"Failed to quarantine {filename}: {e}")
+
+
+def delete_archived_copies(client_id: int, bot_id: int | None, filename: str) -> int:
+    """Remove a tenant's archived and quarantined copies of ``filename``.
+
+    Called from the document-delete path so deleting a document also purges its
+    cold-storage copies instead of leaving orphaned tenant data behind. Matches
+    both the verbatim archived name and any ``{stem}_{timestamp}{ext}`` copies
+    produced by the collision-avoidance suffix. Best-effort: logs and continues
+    on individual failures, and is a harmless no-op for sources that were never
+    archived (e.g. crawled URLs). Returns the number of files removed.
+    """
+    base_name = os.path.basename(filename)
+    if not base_name:
+        return 0
+
+    stem, ext = os.path.splitext(base_name)
+    # Precisely matches the collision-renamed variants (see
+    # ``_dest_with_collision_suffix``) so we never delete an unrelated file the
+    # same tenant happens to have named ``{stem}_something{ext}``.
+    collision_pattern = re.compile(rf"^{re.escape(stem)}_\d{{8}}_\d{{6}}{re.escape(ext)}$")
+
+    removed = 0
+    for directory in (
+        _tenant_archive_dir(client_id, bot_id, create=False),
+        _tenant_quarantine_dir(client_id, bot_id, create=False),
+    ):
+        if not os.path.isdir(directory):
+            continue
+        try:
+            entries = os.listdir(directory)
+        except OSError as e:
+            logger.error(f"Could not scan archive dir {directory}: {e}")
+            continue
+        for name in entries:
+            if name != base_name and not collision_pattern.fullmatch(name):
+                continue
+            target = os.path.join(directory, name)
+            if not os.path.isfile(target):
+                continue
+            try:
+                os.remove(target)
+                removed += 1
+                logger.info(f"Removed archived copy: {target}")
+            except OSError as e:
+                logger.error(f"Failed to remove archived copy {target}: {e}")
+    return removed

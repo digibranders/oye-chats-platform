@@ -12,7 +12,7 @@ from app.core.rate_limit import key_from_api_key, limiter
 from app.db.models import Bot, Document
 from app.db.repository import get_ingested_documents, get_pages_for_source
 from app.db.session import get_session
-from app.ingestion.pipeline import run_folder_ingestion
+from app.ingestion.pipeline import delete_archived_copies, run_folder_ingestion
 from app.schemas.client import CrawlDiffRequest, CrawlDiscoverRequest, CrawlRequest, DocumentPagesResponse
 from app.services.crawler_service import (
     acquire_crawl_lock,
@@ -169,6 +169,11 @@ def delete_document_endpoint(
             if file_path.exists():
                 file_path.unlink()
                 logger.info(f"Deleted file from disk: {file_path}")
+
+            # Defense-in-depth: also purge the tenant's cold-storage copies made
+            # during ingestion so a delete never leaves orphaned archived data
+            # behind. No-op for crawled URL sources (never archived).
+            delete_archived_copies(client_id, bot_id, document_name)
 
             # Invalidate cached QA responses — knowledge base has changed
             if bot_id:

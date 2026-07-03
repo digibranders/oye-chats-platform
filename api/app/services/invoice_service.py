@@ -34,6 +34,26 @@ IST = ZoneInfo("Asia/Kolkata")
 RECEIPT_SERIES_PREFIX = "RCT"
 
 
+def request_pdf_render_soon() -> None:
+    """Nudge the worker to render freshly finalized invoice PDFs now.
+
+    Call AFTER the transaction that finalized an invoice has committed. The
+    job is deferred a few seconds so it can't race the caller's commit, and
+    it's the same idempotent sweep the 5-minute cron runs — the cron remains
+    the safety net, this just makes the Download button appear within seconds
+    of payment instead of minutes. Never raises: a Redis blip must not fail
+    a payment response.
+    """
+    from app.worker.enqueue import WORKER_ENABLED, enqueue_sync
+
+    if not WORKER_ENABLED or not config.INVOICING_V2_ENABLED:
+        return
+    try:
+        enqueue_sync("task_render_invoice_pdfs", _defer_by=3)
+    except Exception:
+        logger.warning("Failed to enqueue invoice PDF render nudge", exc_info=True)
+
+
 def financial_year_label(dt: datetime) -> str:
     """Indian financial year label for ``dt`` — FY runs 1 Apr – 31 Mar **IST**.
 

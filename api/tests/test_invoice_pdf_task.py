@@ -148,3 +148,49 @@ def test_regenerated_pdf_does_not_reemail(db, env, monkeypatch):
     asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
     assert inv.pdf_url is not None  # re-rendered
     assert len(env["emails"]) == 1  # NOT re-emailed
+
+
+# ── request_pdf_render_soon (post-payment nudge) ─────────────────────────────
+
+
+def test_request_pdf_render_soon_enqueues_deferred_sweep(monkeypatch):
+    """The post-commit nudge enqueues the same idempotent sweep the cron runs,
+    deferred so it can't race the caller's transaction."""
+    import app.worker.enqueue as enqueue_mod
+    from app.services import invoice_service
+
+    calls = []
+    monkeypatch.setattr(enqueue_mod, "WORKER_ENABLED", True)
+    monkeypatch.setattr(enqueue_mod, "enqueue_sync", lambda name, **kw: calls.append((name, kw)))
+
+    invoice_service.request_pdf_render_soon()
+
+    assert calls == [("task_render_invoice_pdfs", {"_defer_by": 3})]
+
+
+def test_request_pdf_render_soon_noop_when_worker_disabled(monkeypatch):
+    import app.worker.enqueue as enqueue_mod
+    from app.services import invoice_service
+
+    calls = []
+    monkeypatch.setattr(enqueue_mod, "WORKER_ENABLED", False)
+    monkeypatch.setattr(enqueue_mod, "enqueue_sync", lambda name, **kw: calls.append((name, kw)))
+
+    invoice_service.request_pdf_render_soon()
+
+    assert calls == []
+
+
+def test_request_pdf_render_soon_swallows_enqueue_errors(monkeypatch):
+    """A Redis blip must never fail the payment response the nudge rides on."""
+    import app.worker.enqueue as enqueue_mod
+    from app.services import invoice_service
+
+    monkeypatch.setattr(enqueue_mod, "WORKER_ENABLED", True)
+
+    def boom(name, **kw):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(enqueue_mod, "enqueue_sync", boom)
+
+    invoice_service.request_pdf_render_soon()  # must not raise

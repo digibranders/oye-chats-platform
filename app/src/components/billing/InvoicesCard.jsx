@@ -23,10 +23,32 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export default function InvoicesCard({ limit = 25 }) {
+// A numbered invoice this recent without a PDF is still being rendered by
+// the worker (enqueued seconds after payment; 5-min sweep as backstop) —
+// poll until the Download link can appear. Older ones without a PDF are
+// stuck for some other reason; polling won't fix those.
+const PDF_PENDING_WINDOW_MS = 15 * 60 * 1000;
+const PDF_POLL_INTERVAL_MS = 8000;
+
+function hasPendingPdf(invoices) {
+  const now = Date.now();
+  return invoices.some(
+    inv =>
+      inv.invoice_number &&
+      !inv.pdf_url &&
+      inv.created_at &&
+      now - new Date(inv.created_at).getTime() < PDF_PENDING_WINDOW_MS,
+  );
+}
+
+export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pollTick, setPollTick] = useState(0);
 
+  // Refetches whenever the parent bumps refreshKey (post-payment refresh
+  // cycle, manual Refresh button) or the PDF poll fires. Only the first
+  // load shows the skeleton — refreshes swap the rows in place.
   useEffect(() => {
     let cancelled = false;
     getInvoices()
@@ -34,7 +56,14 @@ export default function InvoicesCard({ limit = 25 }) {
       .catch(() => { if (!cancelled) setInvoices([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshKey, pollTick]);
+
+  // Self-terminating: stops the moment no invoice is pending a PDF.
+  useEffect(() => {
+    if (!hasPendingPdf(invoices)) return undefined;
+    const timer = setTimeout(() => setPollTick(t => t + 1), PDF_POLL_INTERVAL_MS);
+    return () => clearTimeout(timer);
+  }, [invoices]);
 
   if (loading) {
     return (

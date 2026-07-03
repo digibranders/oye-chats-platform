@@ -260,6 +260,10 @@ export default function Billing() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Bumped by every loadAll so the self-loading InvoicesCard refetches in
+  // the same post-payment cycle (a new invoice row exists as soon as the
+  // verify call returns — without this the card stays stale until reload).
+  const [invoicesRefreshKey, setInvoicesRefreshKey] = useState(0);
   const [topupOpen, setTopupOpen] = useState(false);
   // When the Top up button on a per-bot credit card fires, we stash the
   // bot here so the TopupModal knows to scope the purchase to that bot's
@@ -301,6 +305,7 @@ export default function Billing() {
   async function loadAll({ silent = false } = {}) {
     if (!silent) setLoading(true);
     else setRefreshing(true);
+    setInvoicesRefreshKey((k) => k + 1);
     try {
       const [balRes, subRes, histRes] = await Promise.all([
         getCreditBalance(),
@@ -577,7 +582,7 @@ export default function Billing() {
 
           {activeTab === 'history' && (
             <div className="space-y-6">
-              <InvoicesCard />
+              <InvoicesCard refreshKey={invoicesRefreshKey} />
               <HistoryTab history={history} totalRemaining={totalRemaining} />
             </div>
           )}

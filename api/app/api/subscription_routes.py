@@ -27,7 +27,7 @@ from app.core.gstin import VALID_STATE_CODES, is_valid_gstin, normalize_gstin
 from app.core.pricing import format_amount
 from app.db.models import Client, CreditLedger, Invoice, Plan, Subscription
 from app.db.session import get_session
-from app.services import credit_service
+from app.services import credit_service, invoice_service
 from app.services.plan_service import (
     get_active_plans,
     get_client_plan,
@@ -438,6 +438,7 @@ def verify_razorpay_subscription(
         if sub is not None:
             razorpay_service.record_verified_subscription_charge(session, sub, payload.razorpay_payment_id)
             session.commit()
+            invoice_service.request_pdf_render_soon()
         return {
             "status": "verified",
             "subscription_known": sub is not None,
@@ -1594,6 +1595,7 @@ def verify_topup_payment(
                 expected_client_id=client.id,
             )
             session.commit()
+            invoice_service.request_pdf_render_soon()
         except razorpay_service.RazorpayBillingError:
             # Reconcile failed (e.g. Razorpay fetch blip) — the webhook may still
             # arrive. Don't fail verify; the UI polls /credits/balance.
