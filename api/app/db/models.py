@@ -935,6 +935,12 @@ class Subscription(Base):
     # credit — never NULL so arithmetic stays simple.
     upgrade_credit_pending_cents = Column(Integer, default=0, server_default="0", nullable=False)
 
+    # Razorpay id of the SEPARATE per-seat add-on subscription. Kept distinct
+    # from razorpay_subscription_id because Razorpay quantity multiplies the
+    # whole plan amount — seats must be their own sub (P0-3).
+    seat_addon_subscription_id = Column(String, nullable=True)
+    seat_addon_quantity = Column(Integer, nullable=False, server_default="0")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -1161,11 +1161,12 @@ class SeatChangeRequest(BaseModel):
 def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_current_client)):
     """Add or remove operator seats from the active subscription.
 
-    Each seat above ``plan.included_operator_seats`` costs
-    ``extra_seat_price_cents`` per month (default ₹1,199). Both Razorpay
-    (``subscription.edit`` with new quantity, ``schedule_change_at='now'``)
-    handles the upstream
-    proration. The local mirror is updated immediately so live-chat seat
+    Each seat above ``plan.included_operator_seats`` is billed through a
+    SEPARATE Razorpay add-on subscription (``RAZORPAY_SEAT_PLAN_ID``, whose
+    plan amount IS the per-seat price). The main plan subscription is never
+    edited for seats — Razorpay ``quantity`` multiplies the WHOLE plan
+    amount, which would overcharge the customer (P0-3). The local
+    ``operator_quantity`` mirror is updated immediately so live-chat seat
     enforcement sees the new limit without webhook latency.
     """
     if request.delta == 0:
@@ -1201,20 +1202,32 @@ def change_seat_count(request: SeatChangeRequest, client: Client = Depends(get_c
                 detail=f"Cannot exceed the {ceiling} seat(s) allowed on your plan. Upgrade for more.",
             )
 
+        # Seats above the plan's included floor are billed via a SEPARATE
+        # add-on subscription — the main plan's quantity is never touched
+        # (P0-3). extra_seats is clamped at 0 inside the helper.
+        extra_seats = new_total - floor
+
         try:
             from app.services import razorpay_service
 
-            razorpay_service.update_subscription_quantity(session, sub, new_total)
+            razorpay_service.edit_seat_addon_quantity(session, sub, extra_seats)
+        except razorpay_service.RazorpayBillingError as exc:
+            logger.exception("Seat add-on update failed for client %s: %s", client.id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("Seat update failed for client %s: %s", client.id, exc)
             raise HTTPException(status_code=502, detail="Could not update seats with payment provider.") from exc
 
+        sub.operator_quantity = new_total
         session.commit()
-        logger.info("Client %s changed seat count → %s", client.id, sub.operator_quantity)
+        logger.info("Client %s changed seat count → %s (extra=%s)", client.id, new_total, extra_seats)
         return {
-            "operator_quantity": sub.operator_quantity,
+            "message": "Seats updated.",
+            "total_seats": new_total,
+            "extra_seats": extra_seats,
+            "operator_quantity": new_total,
             "included_operator_seats": floor,
             "extra_seat_price_cents": int(plan.extra_seat_price_cents or 0),
             "currency": plan.currency,

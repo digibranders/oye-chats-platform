@@ -560,6 +560,65 @@ def create_seat_addon_subscription(
     }
 
 
+def edit_seat_addon_quantity(session: Session, sub: Subscription, extra_seats: int) -> None:
+    """Set the operator-seat add-on quantity for ``sub``.
+
+    Creates the add-on subscription on first use, edits its quantity
+    thereafter, and cancels it when ``extra_seats`` drops to 0. The main
+    plan subscription is NEVER touched here (P0-3).
+    """
+    extra_seats = max(int(extra_seats), 0)
+    if extra_seats == 0:
+        if sub.seat_addon_subscription_id:
+            cancel_seat_addon(session, sub)
+        sub.seat_addon_quantity = 0
+        session.flush()
+        return
+
+    rzp = _get_razorpay()
+    if not sub.seat_addon_subscription_id:
+        addon = create_seat_addon_subscription(session, sub.client, extra_seats=extra_seats)
+        sub.seat_addon_subscription_id = addon["subscription_id"]
+    else:
+        try:
+            rzp.subscription.edit(
+                sub.seat_addon_subscription_id,
+                data={"quantity": extra_seats, "schedule_change_at": "now"},
+            )
+        except Exception as exc:
+            logger.exception(
+                "Razorpay seat add-on edit (qty=%d) failed for %s: %s",
+                extra_seats,
+                sub.seat_addon_subscription_id,
+                exc,
+            )
+            raise RazorpayBillingError("Could not update seat add-on with Razorpay.") from exc
+    sub.seat_addon_quantity = extra_seats
+    session.flush()
+
+
+def cancel_seat_addon(session: Session, sub: Subscription) -> None:
+    """Cancel the seat add-on subscription at the gateway and clear the mirror."""
+    if not sub.seat_addon_subscription_id:
+        return
+    rzp = _get_razorpay()
+    try:
+        rzp.subscription.cancel(
+            sub.seat_addon_subscription_id,
+            data={"cancel_at_cycle_end": 0},
+        )
+    except Exception as exc:
+        logger.exception(
+            "Razorpay seat add-on cancel failed for %s: %s",
+            sub.seat_addon_subscription_id,
+            exc,
+        )
+        raise RazorpayBillingError("Could not cancel the seat add-on with Razorpay.") from exc
+    sub.seat_addon_subscription_id = None
+    sub.seat_addon_quantity = 0
+    session.flush()
+
+
 def create_per_bot_subscription(
     session: Session,
     client: Client,
@@ -851,6 +910,24 @@ def handle_webhook_event(session: Session, event: dict[str, Any], event_id: str 
 
     event_name = event.get("event", "")
     payload = event.get("payload") or {}
+
+    # Seat add-on subscriptions (RAZORPAY_SEAT_PLAN_ID) are billed on their own
+    # Razorpay subscription, stamped ``notes.purpose == "seat_addon"``. Their
+    # lifecycle events (activated/charged/cancelled/...) must be ACKnowledged so
+    # Razorpay stops retrying, but they carry NO plan entitlement — routing them
+    # through the plan handlers would grant monthly plan credits for a seat
+    # charge (P0-3). Record the event (idempotency already ran above) and return
+    # before dispatch.
+    if event_name.startswith("subscription."):
+        sub_entity = _extract_subscription_entity(payload) or {}
+        sub_notes = sub_entity.get("notes") or {}
+        if (sub_notes.get("purpose") or "").lower() == "seat_addon":
+            logger.info(
+                "Seat add-on subscription event %s (%s) acknowledged; no plan credit granted",
+                event_name,
+                sub_entity.get("id"),
+            )
+            return f"Seat add-on event {event_name} acknowledged"
 
     handlers = {
         "subscription.activated": _handle_subscription_activated,
