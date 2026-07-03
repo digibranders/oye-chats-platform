@@ -162,6 +162,7 @@ def test_checkout_allowed_for_first_purchase(db):
     with (
         patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
         patch.object(subscription_routes, "lock_client_for_billing", lambda *a, **k: None),
+        patch.object(subscription_routes, "RAZORPAY_ENABLED", True),
         patch(
             "app.services.razorpay_service.create_subscription",
             return_value={"provider": "razorpay", "subscription_id": "sub_new_first"},
@@ -191,6 +192,7 @@ def test_checkout_not_blocked_by_terminal_sub(db):
     with (
         patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
         patch.object(subscription_routes, "lock_client_for_billing", lambda *a, **k: None),
+        patch.object(subscription_routes, "RAZORPAY_ENABLED", True),
         patch(
             "app.services.razorpay_service.create_subscription",
             return_value={"provider": "razorpay", "subscription_id": "sub_new_term"},
@@ -373,6 +375,7 @@ def test_checkout_allowed_when_only_per_bot_sub(db):
     with (
         patch.object(subscription_routes, "get_session", lambda: _session_cm(db)),
         patch.object(subscription_routes, "lock_client_for_billing", lambda *a, **k: None),
+        patch.object(subscription_routes, "RAZORPAY_ENABLED", True),
         patch(
             "app.services.razorpay_service.create_subscription",
             return_value={"provider": "razorpay", "subscription_id": "sub_acct_new"},

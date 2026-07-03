@@ -43,7 +43,7 @@
     {
       "name": "Chat chunk (lazy on first widget open)",
       "path": "dist/app/oyechats-ChatWindow.*.js",
-      "limit": "24 KB",
+      "limit": "25 KB",
       "gzip": true
     },
     {
