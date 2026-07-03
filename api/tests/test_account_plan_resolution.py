@@ -105,6 +105,7 @@ def test_documents_counted_by_source_not_name_heuristic(db):
             source="upload",
             file_hash="h1",
             content="x",
+            embedding=[0.0] * 768,
         )
     )
     # A crawled page (must NOT count toward the documents quota).
@@ -115,6 +116,7 @@ def test_documents_counted_by_source_not_name_heuristic(db):
             source="crawl",
             file_hash="h2",
             content="y",
+            embedding=[0.0] * 768,
         )
     )
     db.commit()
