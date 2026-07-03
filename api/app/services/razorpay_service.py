@@ -1341,6 +1341,94 @@ def _handle_subscription_activated(session: Session, payload: dict[str, Any]) ->
     return f"Subscription {razorpay_sub_id} re-activated"
 
 
+def _ensure_subscription_charge_invoice(
+    session: Session,
+    local: Subscription,
+    *,
+    payment_id: str | None,
+    amount_minor: int | None,
+    currency: str | None,
+    period_start: datetime | None,
+    period_end: datetime | None,
+    razorpay_invoice_id: str | None = None,
+) -> Invoice | None:
+    """Create + finalize the payment-history invoice for a subscription charge.
+
+    Idempotent on ``payment_id`` (unique-indexed) so it is safe to call from
+    BOTH the ``subscription.charged`` webhook and the synchronous verify path
+    that stands in for webhooks the box can't receive (local dev, webhook lag).
+    Whichever runs first creates the row; the other finds it and no-ops — no
+    duplicate invoice. Returns the invoice (new or existing), or ``None`` when
+    there is no payment id.
+    """
+    if not payment_id:
+        return None
+    existing = session.execute(select(Invoice).where(Invoice.razorpay_payment_id == payment_id)).scalars().first()
+    if existing:
+        return existing
+    invoice = Invoice(
+        client_id=local.client_id,
+        subscription_id=local.id,
+        bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
+        amount_cents=int(amount_minor or 0),
+        currency=str(currency or "INR").lower(),
+        status="paid",
+        razorpay_payment_id=payment_id,
+        # Razorpay's own invoice entity for this cycle — payment evidence
+        # linking our document to theirs, not the tax doc.
+        razorpay_invoice_id=razorpay_invoice_id,
+        period_start=period_start,
+        period_end=period_end,
+        description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
+        paid_at=datetime.now(UTC),
+    )
+    session.add(invoice)
+    session.flush()
+    # Enrich into a numbered GST tax invoice when invoicing v2 is on (no-op
+    # otherwise — leaves the legacy payment-history row). The _safely wrapper
+    # savepoints any finalize failure so shadow-mode invoicing never blocks the
+    # money path.
+    invoice_service.finalize_invoice_safely(session, invoice)
+    return invoice
+
+
+def record_verified_subscription_charge(
+    session: Session, local: Subscription, razorpay_payment_id: str | None
+) -> Invoice | None:
+    """Record a subscription's first-charge invoice from a verified checkout.
+
+    The ``subscription.charged`` webhook is the canonical invoice creator, but
+    it can't reach a local dev box and may lag in prod. The verify endpoint has
+    the captured ``razorpay_payment_id`` in hand, so we fetch the payment and
+    create the invoice synchronously — idempotent on the payment id, so the
+    eventual webhook never duplicates it. Never raises into the caller: a
+    failure here must not fail checkout verification.
+    """
+    if not razorpay_payment_id or local is None or not local.razorpay_subscription_id:
+        return None
+    try:
+        pay = _get_razorpay().payment.fetch(razorpay_payment_id)
+    except Exception:  # noqa: BLE001 — best-effort; the webhook remains the canonical path
+        logger.exception("verify: could not fetch payment %s for first-charge invoice", razorpay_payment_id)
+        return None
+    if str(pay.get("status") or "").lower() != "captured":
+        return None  # authorised-but-not-captured → wait for the charge webhook
+    try:
+        return _ensure_subscription_charge_invoice(
+            session,
+            local,
+            payment_id=razorpay_payment_id,
+            amount_minor=pay.get("amount", 0),
+            currency=pay.get("currency", "INR"),
+            period_start=local.current_period_start,
+            period_end=local.current_period_end,
+            razorpay_invoice_id=pay.get("invoice_id"),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("verify: failed to record first-charge invoice for payment %s", razorpay_payment_id)
+        return None
+
+
 def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> str:
     """Recurring payment captured. Reset + grant the new month's credits.
 
@@ -1379,37 +1467,17 @@ def _handle_subscription_charged(session: Session, payload: dict[str, Any]) -> s
     # link the period grant for precise refund clawback (C2 / NV5).
     period_invoice_id: int | None = None
     if pay_entity and pay_entity.get("id"):
-        rzp_payment_id = pay_entity["id"]
-        existing = (
-            session.execute(select(Invoice).where(Invoice.razorpay_payment_id == rzp_payment_id)).scalars().first()
+        period_invoice = _ensure_subscription_charge_invoice(
+            session,
+            local,
+            payment_id=pay_entity["id"],
+            amount_minor=pay_entity.get("amount", 0),
+            currency=pay_entity.get("currency", "INR"),
+            period_start=new_period_start,
+            period_end=new_period_end,
+            razorpay_invoice_id=pay_entity.get("invoice_id"),
         )
-        if existing:
-            period_invoice_id = existing.id
-        else:
-            period_invoice = Invoice(
-                client_id=local.client_id,
-                subscription_id=local.id,
-                bot_id=local.bot_id,  # records ledger scope for refund clawback (C2)
-                amount_cents=int(pay_entity.get("amount", 0)),
-                currency=str(pay_entity.get("currency", "INR")).lower(),
-                status="paid",
-                razorpay_payment_id=rzp_payment_id,
-                # Razorpay's own invoice entity for this cycle — payment
-                # evidence linking our document to theirs, not the tax doc.
-                razorpay_invoice_id=pay_entity.get("invoice_id"),
-                period_start=new_period_start,
-                period_end=new_period_end,
-                description=(f"{local.plan.name if local.plan else 'Plan'} — {local.billing_cycle}"),
-                paid_at=datetime.now(UTC),
-            )
-            session.add(period_invoice)
-            session.flush()
-            period_invoice_id = period_invoice.id
-            # Enrich into a numbered GST tax invoice when invoicing v2 is on
-            # (no-op otherwise — leaves the legacy payment-history row). The
-            # _safely wrapper isolates any finalize failure in a savepoint so
-            # shadow-mode invoicing can never block the credit grant below.
-            invoice_service.finalize_invoice_safely(session, period_invoice)
+        period_invoice_id = period_invoice.id if period_invoice else None
 
     # Grant this period's credits at most once, keyed on the period end marker
     # (replaces the old fragile 24h time-window heuristic — H4). The activation

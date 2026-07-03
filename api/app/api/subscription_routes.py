@@ -429,6 +429,15 @@ def verify_razorpay_subscription(
                 .scalars()
                 .first()
             )
+
+        # Create the first-charge invoice synchronously too. The
+        # ``subscription.charged`` webhook is the canonical creator, but it
+        # can't reach a local dev box and can lag in prod — without this a
+        # paying customer sees an active plan with no invoice. Idempotent on
+        # the payment id, so the eventual webhook never duplicates it.
+        if sub is not None:
+            razorpay_service.record_verified_subscription_charge(session, sub, payload.razorpay_payment_id)
+            session.commit()
         return {
             "status": "verified",
             "subscription_known": sub is not None,
