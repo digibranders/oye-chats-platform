@@ -1108,7 +1108,7 @@ function BotCreditCard({ bot, onTopup }) {
         </div>
         {bot.topup > 0 && (
           <div className="mt-2 text-[11px] text-surface-500 dark:text-surface-400">
-            + {fmtNumber(bot.topup)} top-up credits (USD)
+            + {fmtNumber(bot.topup)} top-up credits
           </div>
         )}
 
@@ -1204,7 +1204,7 @@ function TopupsTab({ onTopup, recentTopups }) {
         </CardContent>
       </Card>
       <p className="text-[11px] text-surface-500 dark:text-surface-400 text-center">
-        USD. We accept UPI, cards, and NetBanking via Razorpay.
+        We accept UPI, cards, and NetBanking via Razorpay.
       </p>
     </div>
   );

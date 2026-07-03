@@ -36,7 +36,9 @@ def env(db, monkeypatch):
         lambda data, key: (uploads.append((data, key)), f"https://cdn.test/{key}")[1],
     )
     monkeypatch.setattr(
-        worker_tasks, "_send_invoice_email", lambda to, invoice, url: emails.append((to, invoice.invoice_number))
+        worker_tasks,
+        "_send_invoice_email",
+        lambda to, invoice, url, pdf_bytes=None: emails.append((to, invoice.invoice_number)),
     )
     return {"uploads": uploads, "emails": emails}
 

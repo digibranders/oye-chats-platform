@@ -299,7 +299,7 @@ export default function PlanModal({
             // payment-method capture per existing sub state.
             const res = hasActiveSubscription
                 ? await changePlan(selected.id, billingCycle)
-                : await createCheckoutSession(selected.id, billingCycle);
+                : await createCheckoutSession(selected.id, billingCycle, geo?.country);
 
             const provider = String(res?.provider || '').toLowerCase();
             const status = String(res?.status || '').toLowerCase();
@@ -376,7 +376,20 @@ export default function PlanModal({
 
             throw new Error(res?.message || 'Unexpected response from server.');
         } catch (err) {
-            const detail = err?.response?.data?.detail;
+            // buildApiError attaches the structured payload on err.detail; the
+            // change-plan axios path exposes it under err.response.data.detail.
+            const detail = err?.response?.data?.detail ?? err?.detail;
+
+            // International (USD) billing isn't live yet — the backend returns a
+            // structured intl_usd_pending. Show a friendly contact-sales notice
+            // rather than a red error.
+            if (detail && typeof detail === 'object' && detail.reason === 'intl_usd_pending') {
+                setSubmitNotice(
+                    detail.message
+                        || 'USD billing for international customers is coming soon. Please contact sales.',
+                );
+                return;
+            }
             // Seat-overflow on a downgrade — the customer has more active
             // operators than the target plan allows. The backend's payload
             // includes ``active_seats`` / ``allowed_seats`` / ``excess`` so

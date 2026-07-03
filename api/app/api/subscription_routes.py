@@ -338,9 +338,13 @@ def get_billing_geo(request: Request, _client: Client = Depends(get_current_clie
     from app.config import RAZORPAY_KEY_ID
 
     country = resolve_country(request)
+    # Geo-split model: Indians see and pay INR; everyone else sees (and — once
+    # the Phase-2 USD rail is live — pays) USD. Display currency == charge
+    # currency by design, so there is no currency mismatch to disclose.
+    display_currency = "INR" if country == "IN" else "USD"
     return {
         "country": country,
-        "display_currency": "USD",
+        "display_currency": display_currency,
         "display_rate": DISPLAY_USD_TO_INR,
         "razorpay_enabled": RAZORPAY_ENABLED,
         "razorpay_key_id": RAZORPAY_KEY_ID if RAZORPAY_ENABLED else None,
@@ -643,6 +647,10 @@ class CheckoutRequest(BaseModel):
     plan_id: int
     billing_cycle: str = "monthly"  # monthly|annual
     coupon_code: str | None = None
+    # Confirmed at checkout (country-confirmation step). None → fall back to the
+    # client's stored country, else domestic (IN). Optional for backward compat:
+    # legacy callers that omit it stay on the existing INR path.
+    billing_country: str | None = None
 
 
 # ── Checkout quote (currency + payment-method preview) ────────────────────────
@@ -667,6 +675,7 @@ def checkout_quote(
     request: Request,
     plan_id: int,
     billing_cycle: str = "monthly",
+    billing_country: str | None = None,
     client: Client = Depends(get_current_client),
 ):
     """Single source of truth for what the checkout button will charge.
@@ -704,18 +713,32 @@ def checkout_quote(
         if not plan.is_active:
             raise HTTPException(status_code=400, detail="This plan is not available.")
 
-        country = resolve_country(request)
-        usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
-        amount_minor = int(usd_minor or 0)
-        currency = "USD"
+        # The confirmed billing_country (from the checkout country-confirmation
+        # step) overrides IP geo so an Indian resident mis-detected abroad is
+        # never routed to USD — and vice-versa (FEMA-safe).
+        detected = resolve_country(request)
+        confirmed = (billing_country or "").strip().upper() or None
+        country = confirmed or detected
+        is_domestic = country == "IN"
+
+        # INR price is the canonical amount — use it as the free-plan test so a
+        # missing USD column on a foreign quote can't misread a paid plan as free.
+        inr_minor = _amount_for_cycle(plan, billing_cycle)
+        if is_domestic:
+            currency = "INR"
+            amount_minor = inr_minor
+        else:
+            currency = "USD"
+            usd_minor = plan.annual_price_usd_cents if billing_cycle == "annual" else plan.monthly_price_usd_cents
+            amount_minor = int(usd_minor or 0)
         amount_display = format_amount(amount_minor, currency)
 
         # Free plan: render a quote but mark checkout as unsupported.
-        if amount_minor == 0 and plan.slug != "enterprise":
+        if inr_minor == 0 and plan.slug != "enterprise":
             return {
                 "country": country,
                 "currency": currency,
-                "amount_minor": 0,
+                "amount_minor": amount_minor,
                 "amount_display": amount_display,
                 "billing_cycle": billing_cycle,
                 "provider": None,
@@ -740,6 +763,24 @@ def checkout_quote(
                 "reason": "enterprise",
             }
 
+        # Foreign buyer, paid plan: USD prices are shown, but USD charging ships
+        # in Phase 2. Flag intl_usd_pending so the UI renders a Contact-sales CTA
+        # instead of opening a Razorpay modal that can't charge them yet.
+        if not is_domestic:
+            return {
+                "country": country,
+                "currency": currency,
+                "amount_minor": amount_minor,
+                "amount_display": amount_display,
+                "billing_cycle": billing_cycle,
+                "provider": None,
+                "methods": [],
+                "checkout_supported": False,
+                "contact_sales": "developer@oyechats.com",
+                "reason": "intl_usd_pending",
+            }
+
+        # Domestic paid plan: the live INR rail.
         return {
             "country": country,
             "currency": currency,
@@ -751,6 +792,49 @@ def checkout_quote(
             "checkout_supported": True,
             "contact_sales": None,
         }
+
+
+@router.get("/admin/plan-price-check")
+def plan_price_check(client: Client = Depends(get_current_client)):
+    """Super-admin diagnostic: local plan price vs the live Razorpay plan amount.
+
+    The checkout disclosure quotes ``plan.monthly_price_cents``; if it drifts
+    from the amount configured on the live Razorpay plan, the UI quotes a rupee
+    figure the mandate will not debit. This surfaces drift per plan/cycle. A
+    Razorpay error on any plan yields ``in_sync: null`` + an error string — a
+    diagnostic must never 500.
+    """
+    if not client.is_superadmin:
+        raise HTTPException(status_code=403, detail="Super admin only.")
+
+    from app.services.plan_service import get_active_plans
+    from app.services.razorpay_service import _get_razorpay
+
+    rzp = _get_razorpay()
+    out = []
+    with get_session() as session:
+        for plan in get_active_plans(session):
+            row = {"plan_id": plan.id, "slug": plan.slug}
+            for cycle, local_minor, rzp_id in (
+                ("monthly", plan.monthly_price_cents, plan.razorpay_plan_id_monthly),
+                ("annual", plan.annual_price_cents, plan.razorpay_plan_id_annual),
+            ):
+                entry = {
+                    "local_minor": int(local_minor or 0),
+                    "razorpay_minor": None,
+                    "in_sync": None,
+                    "error": None,
+                }
+                if rzp_id:
+                    try:
+                        item = (rzp.plan.fetch(rzp_id) or {}).get("item", {})
+                        entry["razorpay_minor"] = int(item.get("amount") or 0)
+                        entry["in_sync"] = entry["razorpay_minor"] == entry["local_minor"]
+                    except Exception as exc:  # diagnostic must not 500
+                        entry["error"] = str(exc)
+                row[cycle] = entry
+            out.append(row)
+    return {"plans": out}
 
 
 @router.post("/checkout")
@@ -765,6 +849,21 @@ def create_checkout(
     """
     if request.billing_cycle not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing_cycle must be 'monthly' or 'annual'.")
+
+    # Confirmed billing country routes currency/plan/invoice. Phase 1 charges
+    # INR (IN) only; a confirmed non-IN buyer is directed to sales until the
+    # Phase-2 USD rail is live. Unknown (no confirm + no stored country) defaults
+    # to domestic; a country already on the client is honoured as the fallback.
+    confirmed_country = (request.billing_country or client.billing_country or "IN").strip().upper()
+    if confirmed_country != "IN":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "intl_usd_pending",
+                "message": "USD billing for international customers is coming soon. Please contact sales.",
+                "contact_sales": "developer@oyechats.com",
+            },
+        )
 
     _assert_no_stacking(client, request.coupon_code)
 
@@ -813,6 +912,16 @@ def create_checkout(
                 status_code=409,
                 detail="You already have an active subscription. Use change-plan to upgrade or downgrade.",
             )
+
+        # Persist the confirmed billing country for invoice place-of-supply. A
+        # GSTIN pins the country to IN, so never let checkout flip it. Only write
+        # when the caller explicitly confirmed a country (don't overwrite a
+        # stored value with the IN default of an omitted field).
+        if request.billing_country:
+            row = session.get(Client, client.id)
+            if row is not None and not row.gstin:
+                row.billing_country = confirmed_country
+                client.billing_country = confirmed_country
 
         from app.db.models import ReferralConversion
         from app.services import discount_service, razorpay_service

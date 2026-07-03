@@ -1569,11 +1569,15 @@ export const updateBillingDetails = async (patch) => {
     }
 };
 
-export const createCheckoutSession = async (planId, billingCycle = 'monthly') => {
+export const createCheckoutSession = async (planId, billingCycle = 'monthly', billingCountry = null) => {
     try {
         const response = await api.post('/subscriptions/checkout', {
             plan_id: planId,
             billing_cycle: billingCycle,
+            // Confirmed billing country routes currency/plan/invoice. Omitted
+            // (null) → the backend falls back to the client's stored country,
+            // else domestic (IN).
+            ...(billingCountry ? { billing_country: billingCountry } : {}),
         });
         return response.data;
     } catch (error) {
