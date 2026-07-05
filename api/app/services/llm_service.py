@@ -32,21 +32,13 @@ logger = logging.getLogger(__name__)
 # ── Canned generation-failure messages ──────────────────────────────────────
 # ``generate_response`` never raises — on a config gap, an empty completion, or
 # an LLM/API error (both primary and fallback exhausted) it returns one of these
-# fixed strings so the widget always renders *something*. Callers that charge a
-# credit per answer use ``is_generation_failure()`` to detect "billed but no real
-# answer produced" and refund it.
+# fixed strings so the widget always renders *something*. The credit-charged
+# chat path detects failure structurally via ``generate_response_checked`` (the
+# ``failed`` flag), NOT by matching these strings, so a bot cannot force a refund
+# by echoing one of them.
 LLM_CONFIG_ERROR_MESSAGE = "Configuration error: AI service is not configured. Please contact the administrator."
 LLM_EMPTY_RESPONSE_MESSAGE = "I'm sorry, I couldn't generate a response. Please try again."
 LLM_API_ERROR_MESSAGE = "I encountered an error generating the response. Please try again."
-
-_GENERATION_FAILURE_MESSAGES = frozenset({LLM_CONFIG_ERROR_MESSAGE, LLM_EMPTY_RESPONSE_MESSAGE, LLM_API_ERROR_MESSAGE})
-
-
-def is_generation_failure(text: str | None) -> bool:
-    """True when ``text`` is one of the canned ``generate_response`` failure
-    replies — i.e. no real answer was produced, so any credit charged for it
-    should be refunded."""
-    return (text or "").strip() in _GENERATION_FAILURE_MESSAGES
 
 
 def _bare_model(model: str) -> str:
@@ -81,17 +73,25 @@ def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
         kwargs.setdefault("reasoning_effort", "minimal")
 
 
-def generate_response(
+def _generate_response(
     prompt: str,
     *,
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
-) -> str:
-    """Generate a non-streaming response via LiteLLM."""
+) -> tuple[str, bool]:
+    """Core non-streaming LLM call. Returns ``(text, failed)``.
+
+    ``failed`` is True when no real answer was produced — missing key, empty
+    completion, or an API error with both primary and fallback exhausted. This
+    is a **structural** signal derived from the call outcome, NOT from matching
+    the returned text, so a caller that refunds a per-answer credit cannot be
+    tricked by a bot whose system prompt is crafted to echo a canned failure
+    string.
+    """
     if not PRIMARY_MODEL_KEY_SET:
         logger.error(f"Cannot generate response: API key for primary model '{_primary_model()}' is not set.")
-        return LLM_CONFIG_ERROR_MESSAGE
+        return LLM_CONFIG_ERROR_MESSAGE, True
     try:
         logger.info(f"Generating LLM response | model={_primary_model()} | prompt_length={len(prompt)}")
         kwargs: dict = {
@@ -121,13 +121,38 @@ def generate_response(
 
         if content:
             logger.info(f"LLM response received | length={len(content)}")
-            return content
+            return content, False
         else:
             logger.warning("LLM returned empty response.")
-            return LLM_EMPTY_RESPONSE_MESSAGE
+            return LLM_EMPTY_RESPONSE_MESSAGE, True
     except Exception as e:
         logger.error(f"LLM API Error ({type(e).__name__}): {e}", exc_info=True)
-        return LLM_API_ERROR_MESSAGE
+        return LLM_API_ERROR_MESSAGE, True
+
+
+def generate_response(
+    prompt: str,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    metadata: dict | None = None,
+) -> str:
+    """Generate a non-streaming response via LiteLLM (text only)."""
+    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata)[0]
+
+
+def generate_response_checked(
+    prompt: str,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    metadata: dict | None = None,
+) -> tuple[str, bool]:
+    """Like :func:`generate_response` but also returns a structural ``failed``
+    flag (True when generation produced only a canned error, i.e. no real
+    answer). Use this on the credit-charged chat path so a failed reply can be
+    refunded without relying on forgeable answer-text matching."""
+    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata)
 
 
 def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:

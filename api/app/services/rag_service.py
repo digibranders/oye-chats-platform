@@ -33,7 +33,7 @@ from app.ingestion.embedder import embed_chunks, embed_chunks_async
 from app.services.email_service import send_qualified_lead_email
 from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
-from app.services.llm_service import generate_response, generate_response_stream, is_generation_failure
+from app.services.llm_service import generate_response, generate_response_checked, generate_response_stream
 from app.services.qualification_service import get_framework_config, get_tier
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
@@ -3519,16 +3519,17 @@ def rag_pipeline(
             # sentence rule (with headroom for occasional list responses)
             # and prevents the model from running off into 1000-token
             # essays when the context is rich.
-            answer = generate_response(
+            # Structural failure signal (text, failed) — the caller refunds the
+            # ai_chat credit when generation produced only a canned error (both
+            # LLMs exhausted). Derived from the call outcome, not the answer
+            # text, so a bot whose system prompt echoes a canned error string
+            # cannot trick the refund into firing on a real answer.
+            answer, _generation_failed = generate_response_checked(
                 prompt,
                 temperature=0.3,
                 max_tokens=600,
                 metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
             )
-            # Capture the failure signal on the RAW reply before any CTA/card
-            # stripping — the caller refunds the ai_chat credit when generation
-            # produced only a canned error message (both LLMs exhausted).
-            _generation_failed = is_generation_failure(answer)
 
             # ── Output-side leakage guard ────────────────────────────────
             # If the LLM was coaxed into echoing the system prompt, replace
@@ -4569,10 +4570,14 @@ async def rag_pipeline_stream(
                 with contextlib.suppress(Exception):
                     session.rollback()
             finally:
-                # Surface generation failure so the route can refund the credit:
-                # zero chunks (both LLMs exhausted) or a mid-stream error means we
-                # charged for a reply the visitor never really received.
-                final_meta["generation_failed"] = chunk_count == 0 or _stream_error
+                # Surface generation failure so the route can refund the credit.
+                # Keyed strictly on ``chunk_count == 0`` — the LLM produced no
+                # answer tokens at all (both models exhausted, or an error before
+                # the first token). A mid-stream error AFTER real tokens already
+                # reached the visitor (``chunk_count > 0``) is NOT flagged: the
+                # visitor received partial content, so refunding would over-refund
+                # a (partially) delivered answer.
+                final_meta["generation_failed"] = chunk_count == 0
                 yield f"\nFINAL_METADATA:{json.dumps(final_meta)}\n"
 
             logger.info(f"Hybrid RAG stream finished for session: {session_id}")

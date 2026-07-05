@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -66,3 +67,50 @@ class TestHandoffTenantIsolation:
         assert victim_session.bot_id == 999
         assert not getattr(victim_session, "status", None)
         session.commit.assert_not_called()
+
+    def test_owned_session_passes_the_guard(self, monkeypatch):
+        """Positive lock: a session owned by THIS bot must get past the guard and
+        reach the availability state machine. Guarded by a sentinel exception so
+        an over-aggressive guard (that 404'd a legit session) would fail here."""
+        from app.api import operator_routes
+        from app.services import live_chat_availability_service as availsvc
+
+        bot = SimpleNamespace(id=1, client_id=1, bot_key="bot-owner")
+        owned = SimpleNamespace(id="s1", bot_id=1, client_id=1)
+
+        session = MagicMock()
+        session.execute.return_value = _ScalarOneResult(owned)
+        monkeypatch.setattr(operator_routes, "get_session", lambda: _session_context(session))
+
+        class _Reached(Exception):
+            pass
+
+        monkeypatch.setattr(availsvc, "resolve_live_chat_state", lambda *a, **k: (_ for _ in ()).throw(_Reached()))
+
+        client = TestClient(_app_with_bot(bot))
+        # Reaches resolve_live_chat_state ONLY if the ownership guard passed.
+        with pytest.raises(_Reached):
+            client.post("/operators/handoff", json={"session_id": "s1"})
+
+    def test_absent_session_create_path_passes_the_guard(self, monkeypatch):
+        """The create-path (session doesn't exist yet) must also proceed — the
+        new ChatSession is stamped with bot_id=bot.id, so it's owned."""
+        from app.api import operator_routes
+        from app.services import live_chat_availability_service as availsvc
+
+        bot = SimpleNamespace(id=1, client_id=1, bot_key="bot-owner")
+        created_bot = SimpleNamespace(id=1, client_id=1)
+
+        session = MagicMock()
+        # 1st execute: session lookup -> None (absent); 2nd: db_bot re-fetch.
+        session.execute.side_effect = [_ScalarOneResult(None), _ScalarOneResult(created_bot)]
+        monkeypatch.setattr(operator_routes, "get_session", lambda: _session_context(session))
+
+        class _Reached(Exception):
+            pass
+
+        monkeypatch.setattr(availsvc, "resolve_live_chat_state", lambda *a, **k: (_ for _ in ()).throw(_Reached()))
+
+        client = TestClient(_app_with_bot(bot))
+        with pytest.raises(_Reached):
+            client.post("/operators/handoff", json={"session_id": "brand-new"})

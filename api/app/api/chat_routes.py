@@ -284,19 +284,26 @@ def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
         logger.exception("Failed to refund ai_chat credit for bot %s", getattr(bot, "id", "?"))
 
 
-def _final_metadata_marks_failure(chunk: str) -> bool:
-    """Return True when an SSE chunk is a ``FINAL_METADATA`` frame whose payload
-    flags ``generation_failed``. The pipeline emits exactly one FINAL_METADATA
-    frame per response as a single yield, so this parses cleanly."""
+def _final_metadata_failure_flag(chunk: str) -> bool | None:
+    """If ``chunk`` IS a terminal ``FINAL_METADATA`` frame, return its
+    ``generation_failed`` flag (bool); otherwise return None.
+
+    The pipeline yields the terminal frame as its own ``\\nFINAL_METADATA:{...}``
+    yield, so a genuine frame is exactly the marker (ignoring surrounding
+    whitespace) followed by JSON. Answer text that merely *contains* the marker
+    mid-sentence is NOT treated as a frame — that's why we require the stripped
+    chunk to *start* with the marker rather than searching for it anywhere.
+    Combined with the caller taking the LAST frame's flag (the genuine terminal
+    frame is always emitted last), a forged mid-stream frame cannot cause a
+    spurious refund."""
+    stripped = chunk.strip()
     marker = "FINAL_METADATA:"
-    idx = chunk.find(marker)
-    if idx == -1:
-        return False
-    payload = chunk[idx + len(marker) :].strip()
+    if not stripped.startswith(marker):
+        return None
     try:
-        return bool(json.loads(payload).get("generation_failed"))
+        return bool(json.loads(stripped[len(marker) :].strip()).get("generation_failed"))
     except (ValueError, TypeError, AttributeError):
-        return False
+        return None
 
 
 @router.post("/chat")
@@ -497,8 +504,12 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
             device=formatted_device,
             bot_id=bot.id,
         ):
-            if isinstance(chunk, str) and _final_metadata_marks_failure(chunk):
-                generation_failed = True
+            if isinstance(chunk, str):
+                flag = _final_metadata_failure_flag(chunk)
+                if flag is not None:
+                    # Last genuine terminal frame wins; the real one is emitted
+                    # last, so it overrides any earlier (even forged) frame.
+                    generation_failed = flag
             yield chunk
         if generation_failed:
             _refund_ai_chat_credit(bot, cost)

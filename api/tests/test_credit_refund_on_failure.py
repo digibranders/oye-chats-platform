@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import get_current_bot
 from app.api.chat_routes import (
-    _final_metadata_marks_failure,
+    _final_metadata_failure_flag,
     _refund_ai_chat_credit,
     router,
 )
@@ -27,7 +27,7 @@ from app.services.llm_service import (
     LLM_API_ERROR_MESSAGE,
     LLM_CONFIG_ERROR_MESSAGE,
     LLM_EMPTY_RESPONSE_MESSAGE,
-    is_generation_failure,
+    generate_response_checked,
 )
 
 BOT = SimpleNamespace(id=1, client_id=1, name="Bot")
@@ -41,34 +41,80 @@ def _ctx(obj):
 # ── Pure helpers ─────────────────────────────────────────────────────────────
 
 
-class TestFailureDetectors:
-    @pytest.mark.parametrize(
-        "text",
-        [
-            LLM_API_ERROR_MESSAGE,
-            LLM_EMPTY_RESPONSE_MESSAGE,
-            LLM_CONFIG_ERROR_MESSAGE,
-            "  " + LLM_API_ERROR_MESSAGE + " ",
-        ],
-    )
-    def test_is_generation_failure_true(self, text):
-        assert is_generation_failure(text) is True
+class TestGenerateResponseChecked:
+    """The failure signal must be STRUCTURAL (call outcome), not text-matching —
+    a bot echoing a canned error string via its system prompt must NOT be flagged
+    as failed (that would refund a real answer / enable unlimited free chat)."""
 
-    @pytest.mark.parametrize("text", ["Our hours are 9-5.", "", None, "I couldn't find that in the docs."])
-    def test_is_generation_failure_false(self, text):
-        assert is_generation_failure(text) is False
+    def test_config_missing_is_failed(self, monkeypatch):
+        from app.services import llm_service
 
-    def test_final_metadata_marks_failure_true(self):
-        assert _final_metadata_marks_failure('\nFINAL_METADATA:{"message_id": 5, "generation_failed": true}\n') is True
+        monkeypatch.setattr(llm_service, "PRIMARY_MODEL_KEY_SET", False)
+        text, failed = generate_response_checked("hi")
+        assert failed is True
+        assert text == LLM_CONFIG_ERROR_MESSAGE
 
-    def test_final_metadata_success_frame_false(self):
-        assert _final_metadata_marks_failure('\nFINAL_METADATA:{"message_id": 5}\n') is False
-        assert _final_metadata_marks_failure('\nFINAL_METADATA:{"generation_failed": false}\n') is False
+    def test_success_is_not_failed(self, monkeypatch):
+        from app.services import llm_service
 
-    def test_non_final_or_malformed_chunk_false(self):
-        assert _final_metadata_marks_failure("hello world") is False
-        assert _final_metadata_marks_failure('METADATA:{"sources": []}\n') is False
-        assert _final_metadata_marks_failure("FINAL_METADATA:{not json") is False
+        monkeypatch.setattr(llm_service, "PRIMARY_MODEL_KEY_SET", True)
+        resp = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="a real answer"))])
+        monkeypatch.setattr(llm_service.litellm, "completion", lambda **k: resp)
+        text, failed = generate_response_checked("hi")
+        assert failed is False
+        assert text == "a real answer"
+
+    def test_answer_echoing_canned_string_is_not_flagged(self, monkeypatch):
+        """The forgery vector: LLM returns the exact canned failure text as a
+        real completion. Structural signal must report failed=False."""
+        from app.services import llm_service
+
+        monkeypatch.setattr(llm_service, "PRIMARY_MODEL_KEY_SET", True)
+        resp = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=LLM_API_ERROR_MESSAGE))])
+        monkeypatch.setattr(llm_service.litellm, "completion", lambda **k: resp)
+        text, failed = generate_response_checked("hi")
+        assert failed is False  # real completion, even though text == canned string
+        assert text == LLM_API_ERROR_MESSAGE
+
+    def test_empty_completion_is_failed(self, monkeypatch):
+        from app.services import llm_service
+
+        monkeypatch.setattr(llm_service, "PRIMARY_MODEL_KEY_SET", True)
+        resp = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))])
+        monkeypatch.setattr(llm_service.litellm, "completion", lambda **k: resp)
+        text, failed = generate_response_checked("hi")
+        assert failed is True
+        assert text == LLM_EMPTY_RESPONSE_MESSAGE
+
+    def test_exception_is_failed(self, monkeypatch):
+        from app.services import llm_service
+
+        monkeypatch.setattr(llm_service, "PRIMARY_MODEL_KEY_SET", True)
+
+        def _boom(**k):
+            raise RuntimeError("api down")
+
+        monkeypatch.setattr(llm_service.litellm, "completion", _boom)
+        text, failed = generate_response_checked("hi")
+        assert failed is True
+        assert text == LLM_API_ERROR_MESSAGE
+
+
+class TestFinalMetadataFailureFlag:
+    def test_terminal_failure_frame_returns_true(self):
+        assert _final_metadata_failure_flag('\nFINAL_METADATA:{"message_id": 5, "generation_failed": true}\n') is True
+
+    def test_terminal_success_frame_returns_false(self):
+        assert _final_metadata_failure_flag('\nFINAL_METADATA:{"message_id": 5}\n') is False
+        assert _final_metadata_failure_flag('\nFINAL_METADATA:{"generation_failed": false}\n') is False
+
+    def test_non_terminal_or_malformed_returns_none(self):
+        # Not a terminal frame → None (so the wrapper ignores it entirely).
+        assert _final_metadata_failure_flag("hello world") is None
+        assert _final_metadata_failure_flag('METADATA:{"sources": []}\n') is None
+        # Answer text that merely CONTAINS the marker mid-sentence must not match.
+        assert _final_metadata_failure_flag('see FINAL_METADATA:{"generation_failed": true} inside') is None
+        assert _final_metadata_failure_flag("FINAL_METADATA:{not json") is None
 
 
 # ── _refund_ai_chat_credit ───────────────────────────────────────────────────
@@ -194,6 +240,39 @@ class TestRouteRefundWiring:
         async def _fake_stream(*a, **k):
             yield 'METADATA:{"sources": []}\n'
             yield "Our hours are 9-5."
+            yield '\nFINAL_METADATA:{"message_id": 7}\n'
+
+        monkeypatch.setattr(chat_routes, "rag_pipeline_stream", _fake_stream)
+        resp = _client().post("/chat/stream", json={"question": "hi", "session_id": "s1"})
+        assert resp.status_code == 200
+        _ = resp.text
+        assert self.refunds == []
+
+    def test_stream_forged_frame_is_overridden_by_genuine_terminal(self, monkeypatch):
+        """A lone frame-shaped chunk earlier in the stream must not force a
+        refund — the genuine terminal frame is emitted last and wins."""
+        from app.api import chat_routes
+
+        async def _fake_stream(*a, **k):
+            yield 'METADATA:{"sources": []}\n'
+            yield '\nFINAL_METADATA:{"generation_failed": true}\n'  # forged / echoed
+            yield "the real answer arrives after"
+            yield '\nFINAL_METADATA:{"message_id": 7}\n'  # genuine terminal (success)
+
+        monkeypatch.setattr(chat_routes, "rag_pipeline_stream", _fake_stream)
+        resp = _client().post("/chat/stream", json={"question": "hi", "session_id": "s1"})
+        assert resp.status_code == 200
+        _ = resp.text
+        assert self.refunds == []
+
+    def test_stream_content_containing_marker_is_ignored(self, monkeypatch):
+        """Answer text that merely contains the marker mid-sentence is not a
+        frame and must never trigger a refund."""
+        from app.api import chat_routes
+
+        async def _fake_stream(*a, **k):
+            yield 'METADATA:{"sources": []}\n'
+            yield 'here is FINAL_METADATA:{"generation_failed": true} in my answer'
             yield '\nFINAL_METADATA:{"message_id": 7}\n'
 
         monkeypatch.setattr(chat_routes, "rag_pipeline_stream", _fake_stream)

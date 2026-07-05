@@ -61,25 +61,41 @@ abusive IP can no longer monopolise the limit or lock out other visitors. Regres
   softer default — e.g. a stricter per-IP limit while the allowlist is empty.
 - Per-IP keying does not stop a **distributed (many-IP)** drain — needs a **per-bot daily credit
   ceiling**. (Also fold into the §2.2 RAG-cluster deduct-before-service work + the §0.4 refund path.)
+- **Deploy invariant (review 2026-07-06):** the per-IP key is non-spoofable *only* because traffic
+  transits nginx and `forwarded_allow_ips=127.0.0.1` (`gunicorn.conf.py:25`) — uvicorn's proxy-header
+  middleware then trusts only the nginx-appended, Cloudflare-validated real IP. If port 8000 is ever
+  exposed directly or `FORWARDED_ALLOW_IPS` is set to `*`, `X-Forwarded-For` becomes attacker-controlled
+  and per-IP keying is fully defeated (unbounded buckets). Worth a deploy-time assert.
 
 ### 0.4 P2 hardening (omitted from prior plans) 🔴
 - ~~**`/chat/transcript`** emails a full transcript to an arbitrary `recipient_email`~~ ✅ FIXED
   2026-07-04 (`chat_routes.py`): when the session has a captured lead email, the recipient must match
   it (case-insensitive); no-lead sessions keep the anonymous self-send flow. Regression:
   `tests/test_transcript_recipient_lock.py`.
-- ~~**Presigned R2 upload URLs** mintable by any holder of the public bot key~~ ✅ FIXED 2026-07-04
-  (`chat_routes.py` + `widget/src/components/LiveChatMode.jsx`): the upload-url route now requires a
-  `session_id` that belongs to the authenticated bot before issuing a presigned PUT, tying CDN uploads
-  to a real chat session. Regression: `tests/test_upload_url_session_scope.py`.
+- **Presigned R2 upload URLs** mintable by any holder of the public bot key — 🟡 **PARTIALLY
+  MITIGATED** 2026-07-04 (`chat_routes.py` + `widget/src/components/LiveChatMode.jsx`): upload-url now
+  requires a `session_id` owned by the authenticated bot, blocking the zero-session case and enabling
+  per-session attribution. Regression: `tests/test_upload_url_session_scope.py`. **Residuals (review
+  2026-07-06):** (a) an attacker can create a session for free via `POST /chat/lead-capture`
+  (attacker-chosen `session_id`, no credit, 10/min) then mint upload URLs — so this is one extra
+  request, not a hard barrier; (b) `generate_presigned_put` signs only Bucket/Key/**ContentType**, not
+  Content-Length, so the 10 MB `size` check is advisory — a holder of the presigned URL can PUT an
+  arbitrary-size body. A full fix needs a presigned **POST** with a `content-length-range` policy
+  condition (widget PUT→POST change) and/or gating session creation. (Content-Type IS pinned, so
+  scriptable-type/stored-XSS via this path stays blocked.)
 - **`window.OYECHATS_API_KEY`** legacy embed (`widget/src/main.jsx:27`) places a client-level
   `X-API-Key` on `window` on third-party pages — deprecate the api-key embed path. *(Still open —
   customer-facing breaking change, needs a product/migration decision.)*
 - ~~**Credits deducted-and-committed before generation** with no refund on failure~~ ✅ FIXED
-  2026-07-04: the LLM layer never raises (it returns a canned error), so the pipeline now signals
-  `generation_failed` (non-stream result dict; stream FINAL_METADATA via `chunk_count==0`/`_stream_error`)
-  and `chat_routes` refunds the `ai_chat` credit on both paths via `_refund_ai_chat_credit`. A client
-  disconnect before the terminal frame skips the refund (never over-refunds a delivered answer).
-  Regression: `tests/test_credit_refund_on_failure.py`.
+  2026-07-04, **hardened 2026-07-06**: the LLM layer never raises (returns a canned error), so the
+  pipeline signals failure **structurally** and `chat_routes` refunds the `ai_chat` credit. Non-stream:
+  `generate_response_checked` returns `(text, failed)` from the call outcome — NOT text-matching — so a
+  bot echoing a canned error string via its system prompt can't force a refund (the review's top
+  over-refund vector). Stream: `generation_failed` keyed strictly on `chunk_count == 0` (a mid-stream
+  error after real tokens is NOT refunded — no over-refund of partial delivery), and the route only
+  honours a genuine terminal `FINAL_METADATA` frame (stripped `startswith`, last-frame-wins) so answer
+  text containing the marker can't forge a refund. Client disconnect before the terminal frame skips
+  the refund. Regression: `tests/test_credit_refund_on_failure.py`.
 - Lower-severity: unbounded multi-session history query (`chat_routes.py:764-793`), unscoped
   `GET /ingest/status/{job_id}` (`document_routes.py:429`), implicit-only widget XSS defense (no
   DOMPurify; breaks if `rehype-raw` is ever added), `verify_email` OTP not burned on wrong guess.
