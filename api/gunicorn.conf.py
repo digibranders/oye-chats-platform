@@ -22,7 +22,23 @@ worker_class = "uvicorn.workers.UvicornWorker"
 # Only trust proxy headers (X-Forwarded-For / -Proto) from nginx on loopback.
 # Without this, uvicorn would honor a spoofed X-Forwarded-For from any source
 # that reached the port directly (P0-1 / NB-9).
+#
+# This is also the load-bearing invariant behind the per-IP rate-limit key
+# (roadmap §0.3): keying on the client IP is only non-spoofable because uvicorn
+# trusts X-Forwarded-For *only* from nginx on loopback. If this is opened to
+# ``*`` / ``0.0.0.0`` a visitor could forge X-Forwarded-For and mint unlimited
+# rate-limit buckets, defeating the anti-drain protection — so refuse it in
+# production rather than fail open silently.
 forwarded_allow_ips = os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+if os.getenv("APP_ENV", "development") == "production":
+    _open_forwarded = {"*", "0.0.0.0", "0.0.0.0/0"}
+    _configured = {ip.strip() for ip in forwarded_allow_ips.split(",")}
+    if _configured & _open_forwarded:
+        raise RuntimeError(
+            "FORWARDED_ALLOW_IPS must not be open (* / 0.0.0.0) in production: it lets clients "
+            "spoof X-Forwarded-For and defeat the per-IP rate limit. Set it to the trusted proxy "
+            "IP(s) (default 127.0.0.1 for nginx-on-loopback)."
+        )
 
 # ── Binding ─────────────────────────────────────────────────────────────────
 # Behind Nginx, bind to loopback only. Without Nginx, use 0.0.0.0.

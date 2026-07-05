@@ -76,23 +76,27 @@ class TestUploadUrlSessionScope:
         resp = _client().post("/chat/upload-url", json=_body("someone-elses-session"))
         assert resp.status_code == 404
 
-    def test_owned_session_gets_presigned_url(self, monkeypatch):
+    def test_owned_session_gets_presigned_post(self, monkeypatch):
         pytest.importorskip("boto3", reason="r2_service requires boto3 to import")
         from app.services import r2_service
 
         self._patch_session(monkeypatch, owned_id="s1")
         issued: list = []
 
-        def _fake_presign(key, content_type, *a, **k):
-            issued.append(key)
-            return f"https://r2.example/put/{key}"
+        def _fake_presign_post(key, content_type, max_bytes, *a, **k):
+            # The size ceiling must be threaded through to the policy.
+            issued.append((key, max_bytes))
+            return {"url": f"https://r2.example/post/{key}", "fields": {"key": key, "Content-Type": content_type}}
 
-        monkeypatch.setattr(r2_service, "generate_presigned_put", _fake_presign)
+        monkeypatch.setattr(r2_service, "generate_presigned_post", _fake_presign_post)
         monkeypatch.setattr(r2_service, "_build_public_url", lambda key: f"https://cdn.oyechats.com/{key}")
 
         resp = _client().post("/chat/upload-url", json=_body("s1"))
         assert resp.status_code == 200
         data = resp.json()
-        assert data["upload_url"].startswith("https://r2.example/put/")
+        assert data["upload_url"].startswith("https://r2.example/post/")
+        assert data["fields"]["Content-Type"] == "image/png"
         assert data["file_url"].startswith("https://cdn.oyechats.com/")
         assert len(issued) == 1
+        # 10 MB ceiling is enforced server-side via the policy, not the client size.
+        assert issued[0][1] == 10 * 1024 * 1024

@@ -72,17 +72,18 @@ abusive IP can no longer monopolise the limit or lock out other visitors. Regres
   2026-07-04 (`chat_routes.py`): when the session has a captured lead email, the recipient must match
   it (case-insensitive); no-lead sessions keep the anonymous self-send flow. Regression:
   `tests/test_transcript_recipient_lock.py`.
-- **Presigned R2 upload URLs** mintable by any holder of the public bot key — 🟡 **PARTIALLY
-  MITIGATED** 2026-07-04 (`chat_routes.py` + `widget/src/components/LiveChatMode.jsx`): upload-url now
-  requires a `session_id` owned by the authenticated bot, blocking the zero-session case and enabling
-  per-session attribution. Regression: `tests/test_upload_url_session_scope.py`. **Residuals (review
-  2026-07-06):** (a) an attacker can create a session for free via `POST /chat/lead-capture`
-  (attacker-chosen `session_id`, no credit, 10/min) then mint upload URLs — so this is one extra
-  request, not a hard barrier; (b) `generate_presigned_put` signs only Bucket/Key/**ContentType**, not
-  Content-Length, so the 10 MB `size` check is advisory — a holder of the presigned URL can PUT an
-  arbitrary-size body. A full fix needs a presigned **POST** with a `content-length-range` policy
-  condition (widget PUT→POST change) and/or gating session creation. (Content-Type IS pinned, so
-  scriptable-type/stored-XSS via this path stays blocked.)
+- **Presigned R2 upload URLs** mintable by any holder of the public bot key — 🟡 **HARDENED**
+  (`chat_routes.py`, `r2_service.py`, `widget/src/components/LiveChatMode.jsx`): upload-url requires a
+  `session_id` owned by the authenticated bot, and (2026-07-06) issues a presigned **POST** with a
+  `content-length-range` policy so R2 **enforces the 10 MB ceiling server-side** — the request-body
+  `size` is no longer merely advisory, closing the arbitrary-size CDN-upload vector. Content-Type is
+  pinned by the policy (scriptable-type/stored-XSS stays blocked). Regression:
+  `tests/test_upload_url_session_scope.py`. ⚠️ *End-to-end R2 presigned-POST + content-length-range
+  enforcement should be validated in staging before merge (can't be exercised in CI without R2 creds).*
+  **Residual (accepted):** the public bot key can still create a session for free via
+  `POST /chat/lead-capture` then mint an upload URL — one extra request, not a hard barrier; upload is
+  now bounded by ownership + 10 MB policy + per-IP rate limit, so this is attribution-only. Fully
+  closing it needs gating session creation / per-owner upload accounting (deferred, low value).
 - **`window.OYECHATS_API_KEY`** legacy embed (`widget/src/main.jsx:27`) places a client-level
   `X-API-Key` on `window` on third-party pages — deprecate the api-key embed path. *(Still open —
   customer-facing breaking change, needs a product/migration decision.)*

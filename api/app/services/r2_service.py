@@ -172,6 +172,10 @@ def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> s
 
     The caller uploads via PUT to the returned URL (no auth headers needed).
     expires: seconds until the URL expires (default 5 minutes).
+
+    NOTE: a presigned PUT signs only the Content-Type header — it cannot bound
+    the uploaded body size. Prefer :func:`generate_presigned_post` for
+    untrusted/browser uploads where a size ceiling must be enforced.
     """
     try:
         return s3_client.generate_presigned_url(
@@ -181,6 +185,35 @@ def generate_presigned_put(key: str, content_type: str, expires: int = 300) -> s
         )
     except Exception as e:
         logger.error(f"Failed to generate presigned PUT URL for {key}: {e}")
+        raise
+
+
+def generate_presigned_post(key: str, content_type: str, max_bytes: int, expires: int = 300) -> dict:
+    """Generate a presigned POST for a direct browser upload with a
+    **server-enforced size ceiling**.
+
+    Unlike a presigned PUT (which cannot bound the body size), a presigned POST
+    carries a policy with a ``content-length-range`` condition that R2 enforces
+    at upload time, so a holder of the URL cannot store an arbitrarily large
+    object. The Content-Type is likewise pinned by the policy.
+
+    Returns ``{"url": ..., "fields": {...}}``; the browser POSTs a multipart form
+    with those fields followed by the ``file`` field (which must be appended
+    last per the S3 POST spec). ``expires`` is in seconds (default 5 minutes).
+    """
+    try:
+        return s3_client.generate_presigned_post(
+            Bucket=R2_BUCKET_NAME,
+            Key=key,
+            Fields={"Content-Type": content_type},
+            Conditions=[
+                {"Content-Type": content_type},
+                ["content-length-range", 1, int(max_bytes)],
+            ],
+            ExpiresIn=expires,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate presigned POST for {key}: {e}")
         raise
 
 

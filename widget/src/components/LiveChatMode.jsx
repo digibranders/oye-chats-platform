@@ -543,14 +543,17 @@ const LiveChatMode = ({
                 const detail = await res.text().catch(() => '');
                 throw new Error(`Upload URL failed (${res.status}): ${detail}`);
             }
-            const { upload_url, file_url } = await res.json();
+            const { upload_url, fields, file_url } = await res.json();
 
-            const putRes = await fetch(upload_url, {
-                method: 'PUT',
-                headers: { 'Content-Type': file.type },
-                body: file,
-            });
-            if (!putRes.ok) throw new Error(`File upload failed (${putRes.status})`);
+            // Presigned POST: send the policy fields first, then the file LAST
+            // (required by the S3/R2 POST spec). R2 enforces the size ceiling
+            // from the policy's content-length-range. Let the browser set the
+            // multipart Content-Type (with boundary) — don't set it manually.
+            const formData = new FormData();
+            Object.entries(fields || {}).forEach(([k, v]) => formData.append(k, v));
+            formData.append('file', file);
+            const postRes = await fetch(upload_url, { method: 'POST', body: formData });
+            if (!postRes.ok) throw new Error(`File upload failed (${postRes.status})`);
             setUploadProgress(100);
 
             if (ws && ws.readyState === WebSocket.OPEN) {

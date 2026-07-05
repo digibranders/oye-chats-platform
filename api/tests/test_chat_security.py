@@ -133,7 +133,10 @@ class TestUploadValidation:
         tc = TestClient(app)
 
         with (
-            patch("app.services.r2_service.generate_presigned_put", return_value="https://presigned-url"),
+            patch(
+                "app.services.r2_service.generate_presigned_post",
+                return_value={"url": "https://presigned-url", "fields": {"key": "chat-files/x.jpg"}},
+            ),
             patch("app.services.r2_service._build_public_url", return_value="https://public-url"),
             # A MagicMock session yields a truthy scalar_one_or_none(), so the
             # bot-ownership check on session_id passes.
@@ -151,4 +154,6 @@ class TestUploadValidation:
             )
 
         assert response.status_code == 200
-        assert "upload_url" in response.json()
+        body = response.json()
+        assert "upload_url" in body
+        assert "fields" in body  # presigned POST carries the policy fields
