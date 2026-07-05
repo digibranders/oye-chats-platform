@@ -22,9 +22,9 @@ def test_get_superadmin_uses_strict_auth():
     """The dependency wired into get_superadmin must be strict (X-API-Key only)."""
     dep = inspect.signature(get_superadmin).parameters["client"].default
     assert isinstance(dep, DependsParam)
-    assert (
-        dep.dependency is get_current_client_strict
-    ), "get_superadmin must depend on get_current_client_strict so operator keys cannot escalate to superadmin"
+    assert dep.dependency is get_current_client_strict, (
+        "get_superadmin must depend on get_current_client_strict so operator keys cannot escalate to superadmin"
+    )
 
 
 def test_strict_auth_rejects_operator_only_request():
