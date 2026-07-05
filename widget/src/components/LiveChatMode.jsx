@@ -532,7 +532,12 @@ const LiveChatMode = ({
             const res = await fetch(`${API_URL}/chat/upload-url`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Bot-Key': settings.bot_key || '' },
-                body: JSON.stringify({ filename: file.name, content_type: file.type, size: file.size }),
+                body: JSON.stringify({
+                    filename: file.name,
+                    content_type: file.type,
+                    size: file.size,
+                    session_id: sessionId,
+                }),
             });
             if (!res.ok) {
                 const detail = await res.text().catch(() => '');

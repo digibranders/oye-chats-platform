@@ -537,6 +537,28 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             select(ChatSession).where(ChatSession.id == request.session_id)
         ).scalar_one_or_none()
 
+        # Tenant-isolation guard: an existing session must belong to THIS bot.
+        # ``bot`` is resolved from the public X-Bot-Key (embedded in every embed
+        # script), so without this check a caller could pass another tenant's
+        # session_id and mutate it (flip status→waiting, overwrite
+        # handoff_reason/department_id, fire the victim's audit/webhook/push). We
+        # cannot fold ``bot_id == bot.id`` into the query above because a genuine
+        # miss must fall through to the create-path below; a foreign-but-existing
+        # id would then look absent and trigger a primary-key-colliding insert.
+        # Return 404 (not 403) so session existence isn't leaked — matching the
+        # cancel_handoff / session-status siblings.
+        if chat_session is not None and chat_session.bot_id != bot.id:
+            logger.warning(
+                "Cross-tenant handoff attempt blocked: bot=%s session=%s owner_bot=%s",
+                bot.id,
+                request.session_id,
+                chat_session.bot_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found.",
+            )
+
         # Create the session if the visitor hasn't chatted yet (direct handoff)
         if not chat_session:
             chat_session = ChatSession(

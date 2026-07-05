@@ -267,9 +267,15 @@ def get_current_client_strict(
         return client
 
 
-def get_superadmin(client: Client = Depends(get_current_client)):
+def get_superadmin(client: Client = Depends(get_current_client_strict)):
     """
     Dependency: Ensure authenticated Client is a Superadmin.
+
+    Uses ``get_current_client_strict`` (X-API-Key only) — NOT ``get_current_client``.
+    The latter also resolves an ``X-Operator-Key`` to its workspace's owning Client,
+    which would let any operator of a super-admin's workspace authenticate *as* that
+    super-admin and reach ``/superadmin/*``. The super-admin console authenticates
+    with X-API-Key, so strict auth is the correct (and only legitimate) path here.
     """
     if getattr(client, "is_superadmin", False) is not True:
         logger.warning(f"Client {client.id} attempted to access a superadmin route without permission.")

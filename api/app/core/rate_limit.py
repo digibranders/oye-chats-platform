@@ -34,8 +34,22 @@ else:
 
 
 def key_from_bot_key(request: Request) -> str:
-    """Rate-limit key derived from X-Bot-Key header (widget traffic)."""
-    return request.headers.get("x-bot-key", get_remote_address(request))
+    """Rate-limit key for widget traffic — composite ``<bot-key>:<client-ip>``.
+
+    The X-Bot-Key is public (embedded in every embed script), so keying the
+    limit on it *alone* puts every visitor of a bot into one shared bucket:
+    anyone who copies the key can exhaust that bucket and starve the legitimate
+    widget (and, since each chat request deducts the owner's credits, help drain
+    the balance). Folding the caller's IP in gives each source its own bucket, so
+    a single abusive origin can no longer monopolise the limit or lock out other
+    visitors. Falls back to IP-only when the header is absent.
+
+    Note: this bounds abuse per source IP; a distributed (many-IP) credit drain
+    still needs a per-bot daily budget ceiling — tracked as a §0.3 follow-up.
+    """
+    ip = get_remote_address(request)
+    bot_key = request.headers.get("x-bot-key")
+    return f"{bot_key}:{ip}" if bot_key else ip
 
 
 def key_from_api_key(request: Request) -> str:

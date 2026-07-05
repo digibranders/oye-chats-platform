@@ -29,6 +29,26 @@ def _llm_fallbacks() -> list[dict[str, list[str]]] | None:
 logger = logging.getLogger(__name__)
 
 
+# ── Canned generation-failure messages ──────────────────────────────────────
+# ``generate_response`` never raises — on a config gap, an empty completion, or
+# an LLM/API error (both primary and fallback exhausted) it returns one of these
+# fixed strings so the widget always renders *something*. Callers that charge a
+# credit per answer use ``is_generation_failure()`` to detect "billed but no real
+# answer produced" and refund it.
+LLM_CONFIG_ERROR_MESSAGE = "Configuration error: AI service is not configured. Please contact the administrator."
+LLM_EMPTY_RESPONSE_MESSAGE = "I'm sorry, I couldn't generate a response. Please try again."
+LLM_API_ERROR_MESSAGE = "I encountered an error generating the response. Please try again."
+
+_GENERATION_FAILURE_MESSAGES = frozenset({LLM_CONFIG_ERROR_MESSAGE, LLM_EMPTY_RESPONSE_MESSAGE, LLM_API_ERROR_MESSAGE})
+
+
+def is_generation_failure(text: str | None) -> bool:
+    """True when ``text`` is one of the canned ``generate_response`` failure
+    replies — i.e. no real answer was produced, so any credit charged for it
+    should be refunded."""
+    return (text or "").strip() in _GENERATION_FAILURE_MESSAGES
+
+
 def _bare_model(model: str) -> str:
     """Strip a LiteLLM provider prefix (``openai/``, ``azure/`` …) from a model id."""
     return model.split("/", 1)[1] if "/" in model else model
@@ -71,7 +91,7 @@ def generate_response(
     """Generate a non-streaming response via LiteLLM."""
     if not PRIMARY_MODEL_KEY_SET:
         logger.error(f"Cannot generate response: API key for primary model '{_primary_model()}' is not set.")
-        return "Configuration error: AI service is not configured. Please contact the administrator."
+        return LLM_CONFIG_ERROR_MESSAGE
     try:
         logger.info(f"Generating LLM response | model={_primary_model()} | prompt_length={len(prompt)}")
         kwargs: dict = {
@@ -104,10 +124,10 @@ def generate_response(
             return content
         else:
             logger.warning("LLM returned empty response.")
-            return "I'm sorry, I couldn't generate a response. Please try again."
+            return LLM_EMPTY_RESPONSE_MESSAGE
     except Exception as e:
         logger.error(f"LLM API Error ({type(e).__name__}): {e}", exc_info=True)
-        return "I encountered an error generating the response. Please try again."
+        return LLM_API_ERROR_MESSAGE
 
 
 def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:

@@ -1,6 +1,11 @@
 # OyeChats — Consolidated Outstanding-Work Roadmap
 
-> **Created:** 2026-07-04 · **Owner:** platform eng
+> **Created:** 2026-07-04 · **Verified against code:** 2026-07-04 · **Owner:** platform eng
+>
+> **2026-07-04 audit note:** Every claim below was checked against the actual code (incl. the sibling
+> `oyechats-admin` repo). §1/§2/§4/§5 verified accurate (line refs literal); §3 was ~80% stale and has
+> been rewritten to the 5 real backend gaps; §0 (Security) was added from an independent review — these
+> items appeared in no prior plan doc.
 > **Purpose:** Single source of truth for *unfinished* work. This document aggregates every
 > genuinely-outstanding item from the previously-scattered plan docs (per-bot billing,
 > superadmin remediation, multi-currency billing Phase 2, the production-readiness master
@@ -17,12 +22,77 @@
 
 ---
 
+## 0. Security — must-fix
+*Surfaced by the 2026-07-04 independent code review; **not present in any of the source plan docs.**
+The codebase is otherwise well-built (webhook idempotency, credit-ledger advisory locks, and tenant
+scoping across documents/leads/invoices/subscriptions/operators are all solid). These are the real
+gaps. The two cross-tenant/escalation bugs are small, high-value fixes — do them before net-new work.*
+
+### 0.1 Operator handoff — cross-tenant write (IDOR) ✅ FIXED 2026-07-04
+`POST /operators/handoff` (`operator_routes.py`) loaded the session by `ChatSession.id` with no
+`bot_id` filter — unlike siblings (`cancel_handoff` etc.). Authenticated only by the public
+`X-Bot-Key`, a known-but-foreign `session_id` let an attacker flip another tenant's session to
+`waiting` and overwrite `handoff_reason`/`department_id`. **Fix:** explicit ownership guard after the
+load — an existing session whose `bot_id != bot.id` now returns 404 (the create-path already sets
+`bot_id = bot.id`, so a genuine miss still works). Regression: `tests/test_handoff_tenant_isolation.py`.
+
+### 0.2 Operator key can escalate to super-admin ✅ FIXED 2026-07-04
+`get_superadmin` (`auth.py`) depended on `get_current_client`, which accepts `X-Operator-Key` and
+resolves it to the owning Client — so an operator in a super-admin's workspace could reach
+`/superadmin/*`. **Fix:** `get_superadmin` now depends on `get_current_client_strict` (X-API-Key only;
+the super-admin console already authenticates that way). Covers all `/superadmin/*` routes (they all
+funnel through this dep). Regression: `tests/test_superadmin_auth_strict.py`.
+
+### 0.3 Anonymous credit-drain is default-open 🟡 P1 — partially fixed 2026-07-04
+*(Sharper restatement of the §2.2 "visitor-driven credit drain" note.)* `/chat` + `/chat/stream`
+deduct the **bot owner's** credits per request, authenticated only by the cleartext-embedded
+`X-Bot-Key`. The widget rate limit was keyed on the bot key **alone** (`key_from_bot_key`), so all
+visitors shared one `30/min` bucket — a copied key could exhaust it, starve the legitimate widget, and
+help drain credits.
+
+**Fixed:** `key_from_bot_key` now buckets per `<bot-key>:<client-ip>` (`rate_limit.py`), so a single
+abusive IP can no longer monopolise the limit or lock out other visitors. Regression:
+`tests/test_rate_limit_keys.py`.
+
+**Still open (follow-ups):**
+- The origin defense **fails open** by design: `domain_check_enabled` defaults `true` but
+  `allowed_domains` defaults **empty**, and `_enforce_bot_origin` (`auth.py:~432`) no-ops on an empty
+  allowlist (kept intentionally so the default-on flag doesn't brick unconfigured bots). Consider a
+  softer default — e.g. a stricter per-IP limit while the allowlist is empty.
+- Per-IP keying does not stop a **distributed (many-IP)** drain — needs a **per-bot daily credit
+  ceiling**. (Also fold into the §2.2 RAG-cluster deduct-before-service work + the §0.4 refund path.)
+
+### 0.4 P2 hardening (omitted from prior plans) 🔴
+- ~~**`/chat/transcript`** emails a full transcript to an arbitrary `recipient_email`~~ ✅ FIXED
+  2026-07-04 (`chat_routes.py`): when the session has a captured lead email, the recipient must match
+  it (case-insensitive); no-lead sessions keep the anonymous self-send flow. Regression:
+  `tests/test_transcript_recipient_lock.py`.
+- ~~**Presigned R2 upload URLs** mintable by any holder of the public bot key~~ ✅ FIXED 2026-07-04
+  (`chat_routes.py` + `widget/src/components/LiveChatMode.jsx`): the upload-url route now requires a
+  `session_id` that belongs to the authenticated bot before issuing a presigned PUT, tying CDN uploads
+  to a real chat session. Regression: `tests/test_upload_url_session_scope.py`.
+- **`window.OYECHATS_API_KEY`** legacy embed (`widget/src/main.jsx:27`) places a client-level
+  `X-API-Key` on `window` on third-party pages — deprecate the api-key embed path. *(Still open —
+  customer-facing breaking change, needs a product/migration decision.)*
+- ~~**Credits deducted-and-committed before generation** with no refund on failure~~ ✅ FIXED
+  2026-07-04: the LLM layer never raises (it returns a canned error), so the pipeline now signals
+  `generation_failed` (non-stream result dict; stream FINAL_METADATA via `chunk_count==0`/`_stream_error`)
+  and `chat_routes` refunds the `ai_chat` credit on both paths via `_refund_ai_chat_credit`. A client
+  disconnect before the terminal frame skips the refund (never over-refunds a delivered answer).
+  Regression: `tests/test_credit_refund_on_failure.py`.
+- Lower-severity: unbounded multi-session history query (`chat_routes.py:764-793`), unscoped
+  `GET /ingest/status/{job_id}` (`document_routes.py:429`), implicit-only widget XSS defense (no
+  DOMPurify; breaks if `rehype-raw` is ever added), `verify_email` OTP not burned on wrong guess.
+
+---
+
 ## 1. Billing & Payments
 
 ### 1.1 Multi-currency Phase 2 — international USD rail 🔴
 *Source: `superpowers/plans/2026-07-03-multi-currency-billing.md`. Phase 1 (Indian INR
 coherence + confirm-country gate) is shipped; a confirmed non-IN buyer today hits the
-`intl_usd_pending` "contact sales" branch. Ships behind `MULTICURRENCY_V2_ENABLED` (default off).*
+`intl_usd_pending` "contact sales" branch. Intended to ship behind a `MULTICURRENCY_V2_ENABLED` flag
+that **does not exist in the code yet** (0 hits) — creating it is part of P2-T6.*
 
 - **P2-T1 — Dual Razorpay plans + independent USD pricing.** Alembic migration adding
   `razorpay_plan_id_monthly_usd` / `razorpay_plan_id_annual_usd` to `Plan`; super-admin Plans
@@ -75,11 +145,13 @@ paywall gate, entitlements). These follow-ups remain.*
   follow-up migration after the 60-day window.
 - Repurpose/remove **`Client.max_bots`** → `max_free_bots` (always 1); fix stale formula comment at
   `models.py:56` referencing `max_bots_cap`.
-- **Landing-page pricing copy** (`../oyechats-website/src/lib/pricing.ts`, separate repo): "Up to 3
-  chatbots (+$5/mo each extra)" → "1 chatbot included…"; drop the "Extra chatbots" feature-table row;
-  add a multi-bot FAQ.
-- **Admin Billing UI** (`app/`): per-bot "Bots & Subscriptions" section, `AddBotPaywallModal`,
-  legacy-bot badges; remove `BotSeatsCard` / `AddSeatConfirmModal`.
+- ~~**Landing-page pricing copy** (`pricing.ts`)~~ ✅ **DONE** (audit 2026-07-04): already reads
+  "1 chatbot included (subscribe again to add more)", the feature-table row is "Chatbots included",
+  and the multi-bot FAQ exists. (The remaining "+$5/mo each extra" refers to operator **seats**, not
+  bots.)
+- **Admin Billing UI** (`app/`): add a per-bot "Bots & Subscriptions" section, `AddBotPaywallModal`,
+  and legacy-bot badges; remove `AddSeatConfirmModal`. *(`BotSeatsCard` is already gone — audit
+  2026-07-04.)*
 - **Open product decisions (§9):** per-bot pricing (flat vs multi-bot discount); legacy-bot churn
   handling on downgrade (auto-pause / delete / migrate); mint new per-bot payment products vs reuse
   plan price IDs; Free-bot trial behavior.
@@ -117,8 +189,9 @@ written — this section replaces them.*
 - **RAG-LOOP / serving concurrency** — still `workers=1` (`gunicorn.conf.py:20`) and the DB session is
   held across the LLM stream (event-loop blocking / pool-pinning). Needs the Redis pub/sub +
   `WEB_CONCURRENCY` refactor.
-- **EMAIL-LIVE** — surface ARQ worker liveness in `/health/full`; email-send failures are still
-  fire-and-forget (no dead-letter / liveness alert).
+- **EMAIL-LIVE** — *worker-liveness in `/health/full` is already shipped* (`main.py:276-303`:
+  `worker.status` alive/missing/disabled + `fully_ok` 503). **Remaining:** email-send failures are
+  still fire-and-forget — no dead-letter queue / retry / send-failure alert.
 - **OFFLINE-RL** — no cooldown/limit on offline-message routes / `submit_offline_form` WS path
   (email-bomb risk).
 - **WIDGET-EB** — add a React error boundary; guard `ChatWindow.jsx` localStorage writes (Safari
@@ -143,7 +216,9 @@ written — this section replaces them.*
 
 ### 2.3 Phase 4 — Infra & hardening 🔴
 - **TLS-1** — nginx 443 block is still commented out (`oyechats-api.conf:35`); no HSTS.
-- **DOCS-1** — Swagger `/docs` still exposed in prod (`main.py:505`); set `docs_url=None` (+ redoc/openapi).
+- **DOCS-1** — Swagger `/docs` still exposed in prod. Set `docs_url=None` (+ `redoc_url`/`openapi_url`)
+  on the `FastAPI(...)` init at **`main.py:116`** (the earlier `main.py:505` ref was wrong — that line
+  is just the root route's JSON message field, not where docs are enabled).
 - **ROLLBACK-1** — no deploy rollback / prior-SHA restore in `deploy-api.yml`.
 - **SYSTEMD-1** — no `TimeoutStopSec` on either unit (voids the 1650s graceful drain); services run as
   root with no systemd hardening.
@@ -153,40 +228,46 @@ written — this section replaces them.*
 - **DEP-1** — drop the beta Vite pin; run `npm audit`.
 - **Dashboard hardening** — API key stored plaintext in `localStorage` (move to short-lived / httpOnly);
   1.8 MB single bundle (code-split).
-- **TEST-1…5** — no coverage for live-chat handoff, RAG generation orchestrators end-to-end,
-  subscription lifecycle routes, outbound webhook delivery/retry; dashboard has zero tests.
+- **TEST-1…5** — no end-to-end coverage for live-chat visitor→operator handoff, RAG generation
+  orchestrators (`generate_response_stream`/`rag_pipeline_stream`), or outbound webhook
+  delivery/retry (the 30s/2m/10m/1h/4h schedule); dashboard (`app/`) has **zero** tests. *(Correction:
+  subscription **routes** are not uncovered — `test_subscription_routes_pricing.py`,
+  `test_subscription_seats.py`, `test_subscription_renewal_grants.py`, `test_billing_*` exist; what's
+  missing is a full trialing→active→past_due→canceled→expired state-machine e2e test.)*
 - **Ops hygiene** — add secret-format validation + a weekly Sentry-event check (salvaged from the retired
   `sentry-dsn-repair` runbook — the 2-char-truncated DSN outage would have been caught by either).
 
 ---
 
 ## 3. Super-admin dashboard backlog
-*Source: `superadmin-remediation-plan.md`. Backend endpoints are largely shipped; most remaining work
-is wiring the admin UI (which lives in the sibling `oyechats-admin/` repo, not this tree) plus a few
-backend gaps. Priorities as originally graded.*
+*Source: `superadmin-remediation-plan.md`. **Rewritten 2026-07-04 after a code audit against the
+sibling `oyechats-admin/` repo (branch `development`) + the API `superadmin_*` routes.** The original
+backlog is now ~80% stale: every P0/P1 item and all the P2 "pages to build" have shipped — the admin
+UI is wired to live endpoints, and the repo's own `SUPERADMIN_REVIEW.md` (2026-06-30) is itself
+stale. Only five backend gaps genuinely remain.*
 
-### P0 — fake/placeholder data still shown
-- **P0.1** — replace `Math.sin()` synthetic Command-Center/Revenue charts; backend `stats/timeseries`
-  now exists → wire it and delete `syntheticSeries`.
-- **P0.2** — `/integrations` hardcoded "connected" → drive from `health/full`.
-- **P0.3** — contract drift: confirm `GET /superadmin/clients` returns `suspended_at` +
-  `superadmin_role`; wire or drop `error_count` on `/superadmin/llm/usage`.
-- **P0.4** — Revenue cohort placeholder → render `/cohorts` data inline (backend exists).
+### 3.1 Missing backend endpoints (Tier 2) 🔴
+- **`GET /superadmin/departments`** — no superadmin route exists.
+- **`GET /superadmin/canned-responses`** — no superadmin route exists.
 
-### P1
-- **P1.1** — Permissions RBAC: promote/demote/role-edit wired to `PATCH /superadmin/clients/{id}`;
-  guard last-owner self-demotion.
-- **P1.2** — Settings page data-driven: surface `pricing-config` + `feature-flags` as editable; label
-  the rest read-only (optional `GET /superadmin/system/config`).
+### 3.2 Super-admin CRUD gaps (backend absent) 🔴
+Read routes exist; mutations do not.
+- **`PATCH` / `DELETE /superadmin/bots/{id}`** — only `GET /bots` + `GET /bots/{id}`
+  (`superadmin_routes_v2.py:338,357`) today.
+- **`POST` / `PATCH` / `DELETE /superadmin/operators`** — only `GET /operators`
+  (`superadmin_routes_v2.py:511`).
+- **`DELETE /superadmin/sessions/{id}`** — only `GET /sessions` + `GET /sessions/{id}`
+  (`superadmin_routes_v2.py:415,436`).
 
-### P2
-- **Build the admin pages/types** for endpoints that already exist: Usage Records, Offline Messages,
-  BANT Signals, Webhook Registrations, Payment Methods, Meeting Bookings, Create Client.
-- **Missing backend endpoints:** `/superadmin/departments`, `/superadmin/canned-responses` (Tier 2);
-  Tier 3/4 (OAuth accounts, failed-webhook DLQ replay, referral conversions, notifications viewer,
-  growth events).
-- **Superadmin CRUD gaps (backend absent):** `PATCH/DELETE /superadmin/bots/{id}`;
-  `POST/PATCH/DELETE /superadmin/operators`; `DELETE /superadmin/sessions/{id}`.
+### 3.3 Already shipped — struck from the backlog ✅
+For the record (audit evidence in git history), all of the following — previously graded P0/P1/P2 —
+are **done**: P0.1 synthetic-chart removal (`stats/timeseries` wired), P0.2 `/integrations` from
+`health/full`, P0.3 client-contract fields (`suspended_at`/`superadmin_role`, `error_count`), P0.4
+revenue cohorts, P1.1 RBAC promote/demote with last-owner guard, P1.2 data-driven settings
+(`pricing-config`/`feature-flags` editable), and **every** P2 admin page (Usage Records, Offline
+Messages, BANT Signals, Webhook Registrations, Payment Methods, Meeting Bookings, Create Client) plus
+the formerly-"Tier 3/4 missing" backend + pages: OAuth accounts, failed-webhook DLQ replay, referral
+conversions, notifications viewer, growth events, and the invoices/affiliate/GST-reconciliation ops.
 
 ---
 
@@ -213,17 +294,19 @@ as explicitly out-of-scope backlog and remain unbuilt.*
 - **`configuration.md`** — fix `admin/.env` → `app/.env`; add Razorpay/Stripe, Redis/ARQ, RAG
   feature-flag vars (`CAG_LITE_THRESHOLD`, `RELEVANCE_GATE_ENABLED`, `RERANK_ENABLED`), LLM fallback,
   `LANGFUSE_FORCE_DISABLE`.
-- **`database-schema.md`** — accurate for the core 10 models but expand to cover the ~15 additional
-  billing/qualification/webhook/affiliate/notification/OAuth tables now in `models.py` (~25 tables total).
+- **`database-schema.md`** — accurate for the core 10 models but expand to cover the **~32 additional**
+  billing/qualification/webhook/affiliate/notification/OAuth/audit tables now in `models.py`. **Actual
+  count is 42 tables** (42 `__tablename__` declarations) — not the "~25" cited elsewhere in these docs.
 - **`development-setup.md`** — `cd admin` → `cd app`; document the ARQ worker + Redis (required for
   invoice PDFs), `docker-compose`, and `scripts/dev.sh`.
 - **`api-reference.md`** — expand to cover billing/subscription, webhook, affiliate, oauth, and
   qualification endpoints; add the `X-Operator-Key` scheme.
 - **`billing/billing-system-overview.html`** — references Stripe 49× and the abandoned dual-provider
   architecture; update to Razorpay-only + invoicing v2.
-- **`system-design/` site** — `index.md` hero says "23 tables" (schema-reference + CLAUDE.md say 25);
-  `tech-stack.md` still lists a `landing/` project row (landing is a separate repo); pages are dated
-  2026-04-28 and due a refresh sweep after the recent billing/PDF work.
+- **`system-design/` site** — `index.md` hero + `er-diagram.md` say "23 tables" (CLAUDE.md says 25);
+  **both are wrong — the real count is 42.** `tech-stack.md` still lists a `landing/` project row
+  (landing is a separate repo); pages are dated 2026-04-28 and due a refresh sweep after the recent
+  billing/PDF work.
 - **`models.py:1401`** — the Affiliate model has a comment `see platform/docs/affiliate-program.md for
   details`; that plan doc was deleted (the affiliate program, incl. its deferred v2 money layer, is
   fully shipped). Drop or update the dangling reference.
