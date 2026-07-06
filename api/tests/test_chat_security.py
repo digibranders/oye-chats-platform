@@ -96,10 +96,16 @@ class TestUploadValidation:
 
         response = tc.post(
             "/chat/upload-url",
-            json={"filename": "malware.exe", "content_type": "application/x-executable", "size": 1000},
+            json={
+                "filename": "malware.exe",
+                "content_type": "application/x-executable",
+                "size": 1000,
+                "session_id": "s1",
+            },
             headers={"X-Bot-Key": "bot-test"},
         )
 
+        # content-type is rejected before the session-ownership check runs.
         assert response.status_code == 400
 
     def test_rejects_oversized_file(self):
@@ -109,10 +115,16 @@ class TestUploadValidation:
 
         response = tc.post(
             "/chat/upload-url",
-            json={"filename": "huge.pdf", "content_type": "application/pdf", "size": 20_000_000},
+            json={
+                "filename": "huge.pdf",
+                "content_type": "application/pdf",
+                "size": 20_000_000,
+                "session_id": "s1",
+            },
             headers={"X-Bot-Key": "bot-test"},
         )
 
+        # oversize is rejected before the session-ownership check runs.
         assert response.status_code == 400
 
     def test_accepts_valid_image(self):
@@ -121,14 +133,27 @@ class TestUploadValidation:
         tc = TestClient(app)
 
         with (
-            patch("app.services.r2_service.generate_presigned_put", return_value="https://presigned-url"),
+            patch(
+                "app.services.r2_service.generate_presigned_post",
+                return_value={"url": "https://presigned-url", "fields": {"key": "chat-files/x.jpg"}},
+            ),
             patch("app.services.r2_service._build_public_url", return_value="https://public-url"),
+            # A MagicMock session yields a truthy scalar_one_or_none(), so the
+            # bot-ownership check on session_id passes.
+            patch("app.api.chat_routes.get_session"),
         ):
             response = tc.post(
                 "/chat/upload-url",
-                json={"filename": "photo.jpg", "content_type": "image/jpeg", "size": 500_000},
+                json={
+                    "filename": "photo.jpg",
+                    "content_type": "image/jpeg",
+                    "size": 500_000,
+                    "session_id": "s1",
+                },
                 headers={"X-Bot-Key": "bot-test"},
             )
 
         assert response.status_code == 200
-        assert "upload_url" in response.json()
+        body = response.json()
+        assert "upload_url" in body
+        assert "fields" in body  # presigned POST carries the policy fields

@@ -17,15 +17,31 @@ OyeChats is a SaaS chatbot platform where customers sign up, create chatbot inst
 | [Timezone & Datetime Handling](./timezone-handling.md) | How time is stored (UTC), business-hours zones, and frontend display |
 | [RAG Pipeline & Ingestion](./rag-pipeline.md) | Document processing, embedding, hybrid search, and LLM generation |
 | [Widget Embedding Guide](./widget-embedding.md) | How the embeddable chat widget works, build process, and integration |
-| [Admin Dashboard](./admin-dashboard.md) | Bot management UI, analytics, and configuration |
 | [Configuration Reference](./configuration.md) | Environment variables, feature flags, and service dependencies |
+
+### Codebase Navigation (auto-generated)
+
+| Document | Description |
+|----------|-------------|
+| [Architecture Map](./graph-architecture-map.md) | Module/community map of the codebase |
+| [Critical Flows](./graph-critical-flows.md) | Impact ranking — which flows break if you touch X |
+| [Onboarding Map](./graph-onboarding.md) | Entry points and auth schemes for new contributors |
+| [System Design Site](./system-design/) | Interactive C4-style VitePress docs (context → capacity) |
+
+### Planning & Reviews
+
+| Document | Description |
+|----------|-------------|
+| [Consolidated Roadmap](./consolidated-roadmap.md) | **Single source of truth for all outstanding/unfinished work** |
+| [Production Readiness Review (2026-07-03)](./PRODUCTION_READINESS_REVIEW_2026-07-03.md) | Verified full-platform audit + corrections log (reference) |
+| [AI Response Audit (2026-04)](./ai-response-audit-fynix-2026-04.md) | Scored AI-quality audit + methodology (reference) |
 
 ## Quick Links
 
 - **Backend API:** `api/` — FastAPI + SQLAlchemy + pgvector
 - **Chat Widget:** `widget/` — React 19 + Vite IIFE bundle
 - **Admin Dashboard:** `admin/` — React 19 + Vite SPA
-- **Landing Page:** `../landing/` — Next.js 16
+- **Landing Page:** `../oyechats-website/` — Next.js 16 (separate repo)
 
 ## Contributing
 

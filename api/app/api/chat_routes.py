@@ -255,6 +255,57 @@ def _polite_offline_payload(bot: Bot, *, reason: str) -> dict:
     }
 
 
+def _refund_ai_chat_credit(bot: Bot, cost: int) -> None:
+    """Return a previously-charged ``ai_chat`` credit when generation ultimately
+    produced no real answer (both LLMs exhausted / mid-stream error). The LLM
+    layer never raises — it returns a canned error message — so the credit is
+    committed before we know the reply failed; this reverses it.
+
+    Best-effort: a refund failure must never mask the response or the original
+    error, so all exceptions are swallowed with a log.
+    """
+    if cost <= 0:
+        return
+    from app.services import credit_service
+
+    try:
+        with get_session() as db:
+            credit_service.refund(
+                db,
+                bot.client_id,
+                cost,
+                reference_id=bot.id,
+                note="ai_chat generation failed",
+                bot_id=credit_service.resolve_bot_ledger_bot_id(bot),
+            )
+            db.commit()
+        logger.info("Refunded ai_chat credit (generation failed) bot_id=%s cost=%s", bot.id, cost)
+    except Exception:
+        logger.exception("Failed to refund ai_chat credit for bot %s", getattr(bot, "id", "?"))
+
+
+def _final_metadata_failure_flag(chunk: str) -> bool | None:
+    """If ``chunk`` IS a terminal ``FINAL_METADATA`` frame, return its
+    ``generation_failed`` flag (bool); otherwise return None.
+
+    The pipeline yields the terminal frame as its own ``\\nFINAL_METADATA:{...}``
+    yield, so a genuine frame is exactly the marker (ignoring surrounding
+    whitespace) followed by JSON. Answer text that merely *contains* the marker
+    mid-sentence is NOT treated as a frame — that's why we require the stripped
+    chunk to *start* with the marker rather than searching for it anywhere.
+    Combined with the caller taking the LAST frame's flag (the genuine terminal
+    frame is always emitted last), a forged mid-stream frame cannot cause a
+    spurious refund."""
+    stripped = chunk.strip()
+    marker = "FINAL_METADATA:"
+    if not stripped.startswith(marker):
+        return None
+    try:
+        return bool(json.loads(stripped[len(marker) :].strip()).get("generation_failed"))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 @router.post("/chat")
 @limiter.limit("30/minute", key_func=key_from_bot_key)
 def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_current_bot)):
@@ -333,6 +384,10 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
 
         ans_len = len(result.get("answer", ""))
         logger.info(f"Chat response generated | session={session_id} | answer_length={ans_len}")
+        # Refund the credit when the pipeline only produced a canned error
+        # message (both LLMs exhausted) — the visitor got no real answer.
+        if result.get("generation_failed"):
+            _refund_ai_chat_credit(bot, cost)
         return result
     except HTTPException:
         raise
@@ -434,17 +489,32 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
 
     logger.info(f"Chat stream request | bot_id={bot.id} | bot_name={bot.name} | session={session_id}")
 
-    return StreamingResponse(
-        rag_pipeline_stream(
+    async def _stream_with_refund():
+        """Proxy the RAG stream and, once it finishes, refund the credit if the
+        terminal FINAL_METADATA frame flagged a failed generation (both LLMs
+        exhausted / mid-stream error). A client disconnect before that frame
+        cancels this generator and skips the refund — correct, since we never
+        confirmed a failed reply and must never over-refund a delivered one."""
+        generation_failed = False
+        async for chunk in rag_pipeline_stream(
             bot,
             body.question,
             session_id=session_id,
             location=location,
             device=formatted_device,
             bot_id=bot.id,
-        ),
-        media_type="text/event-stream",
-    )
+        ):
+            if isinstance(chunk, str):
+                flag = _final_metadata_failure_flag(chunk)
+                if flag is not None:
+                    # Last genuine terminal frame wins; the real one is emitted
+                    # last, so it overrides any earlier (even forged) frame.
+                    generation_failed = flag
+            yield chunk
+        if generation_failed:
+            _refund_ai_chat_credit(bot, cost)
+
+    return StreamingResponse(_stream_with_refund(), media_type="text/event-stream")
 
 
 @router.post("/chat/lead-capture")
@@ -829,6 +899,7 @@ class UploadUrlRequest(PydanticBaseModel):
     filename: str
     content_type: str
     size: int  # bytes — validated before issuing the URL
+    session_id: str  # must belong to the authenticated bot
 
 
 @router.post("/chat/upload-url")
@@ -848,15 +919,34 @@ async def get_visitor_upload_url(
     if body.size > _MAX_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="File exceeds 10 MB limit.")
 
+    # Anti-abuse: bind the presigned CDN upload to a real chat session that
+    # belongs to THIS bot. The bot key is public, so without this anyone could
+    # mint upload URLs and host arbitrary content on cdn.oyechats.com under a
+    # victim's key. Requiring a bot-owned session ties the capability to an
+    # actual conversation (and enables per-session cleanup/accounting later).
+    with get_session() as session:
+        owned_session = session.execute(
+            select(ChatSession.id).where(
+                ChatSession.id == body.session_id,
+                ChatSession.bot_id == bot.id,
+            )
+        ).scalar_one_or_none()
+    if not owned_session:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
     safe_name = body.filename.replace("/", "").replace("\\", "")[:100]
     ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else "bin"
     key = f"chat-files/{uuid.uuid4()}.{ext}"
 
-    from app.services.r2_service import _build_public_url, generate_presigned_put
+    from app.services.r2_service import _build_public_url, generate_presigned_post
 
-    upload_url = generate_presigned_put(key, body.content_type)
+    # Presigned POST (not PUT) so R2 enforces the 10 MB ceiling via the policy's
+    # content-length-range — the request-body ``size`` is otherwise only
+    # advisory and a holder of a presigned PUT could store an arbitrary-size
+    # object on the public CDN.
+    presigned = generate_presigned_post(key, body.content_type, _MAX_SIZE_BYTES)
     file_url = _build_public_url(key)
-    return {"upload_url": upload_url, "file_url": file_url, "key": key}
+    return {"upload_url": presigned["url"], "fields": presigned["fields"], "file_url": file_url, "key": key}
 
 
 # ── Transcript Email ──
@@ -902,6 +992,20 @@ def send_chat_transcript(
         ).scalar_one_or_none()
         if not chat_session:
             raise HTTPException(status_code=404, detail="Chat session not found.")
+
+        # Anti-exfiltration: recipient_email is visitor-typed free text, so on
+        # its own a leaked session_id would let anyone mail another visitor's
+        # conversation to an arbitrary inbox. When the session has a captured
+        # lead email, the transcript may only be sent to THAT address. Sessions
+        # with no lead on file keep the anonymous self-send flow (there is no
+        # identity to protect beyond the session_id itself).
+        lead = get_lead_info_by_session(session, body.session_id)
+        lead_email = (getattr(lead, "email", None) or "").strip().lower()
+        if lead_email and body.recipient_email.strip().lower() != lead_email:
+            raise HTTPException(
+                status_code=403,
+                detail="This transcript can only be sent to the email on file for this chat.",
+            )
 
         # Fetch all messages in chronological order
         messages = (
