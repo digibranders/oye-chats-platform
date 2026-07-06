@@ -6,14 +6,19 @@ on:
     paths: ['api/**', '.github/workflows/deploy-api.yml']
   workflow_dispatch:
 
+# Least-privilege GITHUB_TOKEN — deploy only checks out the repo; the SSH
+# deploy uses its own secrets, not the workflow token (audit F48).
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Deploy to DigitalOcean via SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         env:
           DB_URL: ${{ secrets.DB_URL }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

@@ -26,13 +26,18 @@ env:
   IMMUTABLE_CACHE: 'public, max-age=31536000, immutable'
   REVALIDATE_CACHE: 'no-cache, must-revalidate, s-maxage=300'
 
+# Least-privilege GITHUB_TOKEN — uploads use external CDN creds, not the
+# workflow token (audit F48).
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
 
