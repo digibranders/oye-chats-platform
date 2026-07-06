@@ -3,15 +3,15 @@
 ``get_online_operator_ids`` read only Redis and returned an empty set on any
 failure (Redis unset or a mid-op error). Since availability routing treats an
 empty set as ALL_OFFLINE, a brief Redis blip made *every* workspace report no
-operators online platform-wide. It must fall back to ``Operator.last_seen_at``
-freshness (DB), scoped to the workspace.
+operators online platform-wide. It must fall back to the ``Operator.is_online``
+column — the online flag actually maintained in the DB (set on WS connect,
+cleared on disconnect) — scoped to the workspace.
 """
 
 from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -30,16 +30,14 @@ def test_get_online_operator_ids_falls_back_to_db_when_redis_down(db, monkeypatc
     db.add_all([client_a, client_b])
     db.flush()
 
-    now = datetime.now(UTC)
-    fresh = Operator(client_id=client_a.id, name="Fresh", email="f@ex.com", last_seen_at=now)
-    stale = Operator(
-        client_id=client_a.id,
-        name="Stale",
-        email="s@ex.com",
-        last_seen_at=now - timedelta(seconds=presence.DB_FALLBACK_FRESHNESS_SECONDS + 60),
-    )
-    other = Operator(client_id=client_b.id, name="Other", email="o@ex.com", last_seen_at=now)
-    db.add_all([fresh, stale, other])
+    # Production truth: operator online-ness in the DB is tracked by the
+    # is_online column (set True on WS connect, cleared on disconnect /
+    # _fix_stale_online_flags). last_seen_at is NOT maintained, so the fallback
+    # must key on is_online.
+    online = Operator(client_id=client_a.id, name="Online", email="f@ex.com", is_online=True)
+    offline = Operator(client_id=client_a.id, name="Offline", email="s@ex.com", is_online=False)
+    other = Operator(client_id=client_b.id, name="Other", email="o@ex.com", is_online=True)
+    db.add_all([online, offline, other])
     db.commit()
 
     # Simulate Redis being unavailable and route the fallback's session to the
@@ -54,7 +52,7 @@ def test_get_online_operator_ids_falls_back_to_db_when_redis_down(db, monkeypatc
 
     monkeypatch.setattr(db_session, "get_session", _fake_session)
 
-    online = presence.get_online_operator_ids(client_a.id)
+    result_ids = presence.get_online_operator_ids(client_a.id)
 
-    # Only the fresh operator of client A — not the stale one, not client B's.
-    assert online == {fresh.id}
+    # Only the online operator of client A — not the offline one, not client B's.
+    assert result_ids == {online.id}

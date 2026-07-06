@@ -149,28 +149,21 @@ def is_online(operator_id: int, *, db_session: Session | None = None) -> bool:
 def _db_fallback_online_ids(client_id: int) -> set[int]:
     """Workspace online-set from the DB when Redis is unavailable.
 
-    Treats an operator as online when their ``last_seen_at`` heartbeat is within
-    the freshness window (the same signal ``is_online`` uses), scoped to the
-    workspace. Without this, a Redis blip collapsed live chat to ALL_OFFLINE for
-    every workspace platform-wide (audit F08).
+    Reads the ``Operator.is_online`` column — the online flag that IS maintained
+    in the DB (set True on WS connect in ws_routes, cleared on disconnect and by
+    ``_fix_stale_online_flags``). ``last_seen_at`` is deliberately NOT used: it
+    is never written, so a fallback keyed on it always returned empty and left
+    the whole platform reporting ALL_OFFLINE during a Redis blip (audit F08 /
+    code-review RV2).
     """
     try:
         from app.db.session import get_session
 
-        threshold = datetime.now(UTC) - timedelta(seconds=DB_FALLBACK_FRESHNESS_SECONDS)
         with get_session() as session:
             rows = session.execute(
-                select(Operator.id, Operator.last_seen_at).where(Operator.client_id == client_id)
+                select(Operator.id).where(Operator.client_id == client_id, Operator.is_online.is_(True))
             ).all()
-        online: set[int] = set()
-        for op_id, last_seen in rows:
-            if last_seen is None:
-                continue
-            if last_seen.tzinfo is None:
-                last_seen = last_seen.replace(tzinfo=UTC)
-            if last_seen >= threshold:
-                online.add(op_id)
-        return online
+        return {row[0] for row in rows}
     except Exception:
         logger.warning("Presence DB fallback failed for client=%s", client_id, exc_info=True)
         return set()
