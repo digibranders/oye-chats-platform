@@ -112,8 +112,17 @@ if SENTRY_ENABLED:
 else:
     logger.info("Sentry error tracking disabled (no DSN configured)")
 
+
 # Initialize FastAPI
-app = FastAPI(title="RAG Backend API", version="1.0.0")
+def _docs_urls(app_env: str) -> dict[str, str | None]:
+    """Docs/OpenAPI URLs. Disabled in production so the full API schema (every
+    route, params, auth headers) isn't publicly served as attacker recon (F22)."""
+    if app_env == "production":
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+
+
+app = FastAPI(title="RAG Backend API", version="1.0.0", **_docs_urls(APP_ENV))
 
 # --- Rate Limiting ---
 app.state.limiter = limiter
