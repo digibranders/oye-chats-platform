@@ -306,6 +306,7 @@ class TestPreviewSSRF:
         captured = {}
 
         class _FakeResp:
+            status_code = 200
             headers: dict = {}
 
         class _FakeClient:
@@ -326,3 +327,34 @@ class TestPreviewSSRF:
         bot_routes._check_iframe_allowed("https://example.com/")
 
         assert captured.get("follow_redirects") is False
+
+    def test_check_iframe_allowed_treats_redirect_as_not_embeddable(self, monkeypatch):
+        """A redirecting site (http->https, apex->www) returns a 3xx we don't
+        follow — treat it as not-embeddable so the demo serves the working hero
+        fallback instead of embedding a likely frame-blocked page (RV6)."""
+        import httpx
+
+        from app.api import bot_routes
+
+        monkeypatch.setattr(bot_routes, "validate_public_url", lambda u: u)
+
+        class _RedirectResp:
+            status_code = 301
+            headers: dict = {}
+
+        class _RedirectClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def head(self, *args, **kwargs):
+                return _RedirectResp()
+
+        monkeypatch.setattr(httpx, "Client", _RedirectClient)
+
+        assert bot_routes._check_iframe_allowed("https://example.com/") is False

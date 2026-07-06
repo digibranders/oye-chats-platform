@@ -671,6 +671,13 @@ def _check_iframe_allowed(target_url: str) -> bool:
     try:
         with httpx.Client(timeout=5, follow_redirects=False) as client:
             resp = client.head(target_url, headers={"User-Agent": "OyeChats-Preview/1.0"})
+            # A redirect (http→https, apex→www — near-universal): we intentionally
+            # don't follow it (SSRF), so we can't read the final page's framing
+            # headers. Report not-embeddable so the demo serves the working hero
+            # fallback instead of embedding a page that likely blocks framing
+            # (code-review RV6).
+            if 300 <= resp.status_code < 400:
+                return False
             xfo = (resp.headers.get("x-frame-options") or "").strip().upper()
             if xfo in ("DENY", "SAMEORIGIN"):
                 return False
