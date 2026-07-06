@@ -1,11 +1,17 @@
 import asyncio
 import logging
+import os
 
 import litellm
 
 from app.config import FALLBACK_MODEL_KEY_SET, PRIMARY_MODEL_KEY_SET
 from app.core.langfuse_client import langfuse_generation
 from app.services import runtime_config
+
+# Client-side timeout for non-streaming LLM calls (seconds). Without it a hung
+# upstream socket blocks the /chat threadpool worker forever and never trips the
+# LiteLLM fallback (audit F09). Env-tunable; generous enough for a full answer.
+_LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "45"))
 
 
 def _primary_model() -> str:
@@ -115,6 +121,7 @@ def _generate_response(
 
         generation_name = (metadata or {}).get("generation_name", "llm-generation")
         with langfuse_generation(generation_name, model=_primary_model(), prompt=prompt) as gen:
+            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
             gen.record_litellm(response, output=content)
@@ -189,6 +196,7 @@ Return ONLY the tone description, nothing else."""
             kwargs["fallbacks"] = _fallbacks
         _apply_model_family_kwargs(kwargs, _primary_model())
         with langfuse_generation("brand-tone-extraction", model=_primary_model(), prompt=prompt) as gen:
+            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             response = litellm.completion(**kwargs)
             tone = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=tone)
@@ -237,6 +245,7 @@ Website content:
             kwargs["fallbacks"] = _fallbacks
         _apply_model_family_kwargs(kwargs, _primary_model())
         with langfuse_generation("company-context-extraction", model=_primary_model(), prompt=prompt) as gen:
+            kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             response = litellm.completion(**kwargs)
             text = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=text)

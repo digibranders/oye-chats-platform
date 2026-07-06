@@ -1011,7 +1011,9 @@ def check_visitor_safety(question: str) -> tuple[bool, str | None]:
     if not MODERATION_ENABLED or not question or not question.strip():
         return True, None
     try:
-        response = litellm.moderation(model=MODERATION_MODEL, input=question)
+        # Bounded timeout so a hung moderation upstream can't stall the request
+        # (audit F09); moderation already fails open via the except below.
+        response = litellm.moderation(model=MODERATION_MODEL, input=question, timeout=10)
     except Exception as exc:
         logger.warning("Moderation check failed (non-blocking): %s", exc)
         return True, None
@@ -1644,6 +1646,9 @@ SCORING DISCIPLINE
         with langfuse_generation("bant-extraction-v2", model=LLM_MODEL, prompt=extraction_prompt) as gen:
             response = litellm.completion(
                 model=LLM_MODEL,
+                # Bounded timeout so a stalled upstream can't hang the BANT
+                # extraction background job indefinitely (audit F09).
+                timeout=45,
                 messages=[
                     {"role": "system", "content": "You are a qualification signal extractor. Return structured JSON."},
                     {"role": "user", "content": extraction_prompt},
@@ -3171,7 +3176,14 @@ def rag_pipeline(
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
-            # Save user message first (always persisted, even on cache hit)
+            # Save the visitor's question and commit it immediately, before any
+            # generation work. add_chat_message only flushes; the next commit for
+            # this turn is deep inside the post-generation block, so a mid-stream
+            # client disconnect (visitor closes the tab) or a generation error
+            # would otherwise roll back the visitor's own question and drop it
+            # from history. Committing here makes the documented "always
+            # persisted" contract true and only risks losing the
+            # not-yet-generated bot reply (audit F10).
             add_chat_message(
                 session,
                 session_id,
@@ -3182,6 +3194,7 @@ def rag_pipeline(
                 device=device,
                 bot_id=bid,
             )
+            session.commit()
 
             # ── Deterministic intent router ──────────────────────────────
             # Greetings ("hi"), acks ("thanks"), and identity questions
@@ -3871,7 +3884,14 @@ async def rag_pipeline_stream(
 
             ensure_chat_session(session, session_id, client_id=cid, bot_id=bid, location=location, device=device)
 
-            # Save user message first (always persisted, even on cache hit)
+            # Save the visitor's question and commit it immediately, before any
+            # generation work. add_chat_message only flushes; the next commit for
+            # this turn is deep inside the post-generation block, so a mid-stream
+            # client disconnect (visitor closes the tab) or a generation error
+            # would otherwise roll back the visitor's own question and drop it
+            # from history. Committing here makes the documented "always
+            # persisted" contract true and only risks losing the
+            # not-yet-generated bot reply (audit F10).
             add_chat_message(
                 session,
                 session_id,
@@ -3882,6 +3902,7 @@ async def rag_pipeline_stream(
                 device=device,
                 bot_id=bid,
             )
+            session.commit()
 
             # ── Deterministic intent router (streaming path) ─────────────────
             # Mirrors the non-stream path: greetings/acks/identity questions
