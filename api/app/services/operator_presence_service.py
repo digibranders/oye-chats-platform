@@ -146,17 +146,42 @@ def is_online(operator_id: int, *, db_session: Session | None = None) -> bool:
     return last_seen >= threshold
 
 
+def _db_fallback_online_ids(client_id: int) -> set[int]:
+    """Workspace online-set from the DB when Redis is unavailable.
+
+    Reads the ``Operator.is_online`` column — the online flag that IS maintained
+    in the DB (set True on WS connect in ws_routes, cleared on disconnect and by
+    ``_fix_stale_online_flags``). ``last_seen_at`` is deliberately NOT used: it
+    is never written, so a fallback keyed on it always returned empty and left
+    the whole platform reporting ALL_OFFLINE during a Redis blip (audit F08 /
+    code-review RV2).
+    """
+    try:
+        from app.db.session import get_session
+
+        with get_session() as session:
+            rows = session.execute(
+                select(Operator.id).where(Operator.client_id == client_id, Operator.is_online.is_(True))
+            ).all()
+        return {row[0] for row in rows}
+    except Exception:
+        logger.warning("Presence DB fallback failed for client=%s", client_id, exc_info=True)
+        return set()
+
+
 def get_online_operator_ids(client_id: int) -> set[int]:
     """Return the set of online operator IDs for a workspace.
 
     Reads from the Redis workspace set in a single SMEMBERS call (O(N) where
     N = number of online operators, typically <10). Then double-checks each
     against the per-operator TTL key so stale set entries (race condition
-    between TTL expiry and srem) don't return false positives.
+    between TTL expiry and srem) don't return false positives. If Redis is
+    unavailable, falls back to a DB freshness query (audit F08) instead of
+    reporting the whole workspace offline.
     """
     redis_client = get_redis()
     if redis_client is None:
-        return set()
+        return _db_fallback_online_ids(client_id)
     try:
         candidates = redis_client.smembers(_workspace_set_key(client_id))
         if not candidates:
@@ -180,8 +205,8 @@ def get_online_operator_ids(client_id: int) -> set[int]:
 
         return online
     except Exception:
-        logger.debug("get_online_operator_ids failed for client=%s", client_id, exc_info=True)
-        return set()
+        logger.debug("get_online_operator_ids Redis path failed for client=%s; DB fallback", client_id, exc_info=True)
+        return _db_fallback_online_ids(client_id)
 
 
 def get_online_operators_with_capacity(client_id: int, db_session: Session) -> list[Operator]:

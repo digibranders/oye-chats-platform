@@ -184,8 +184,11 @@ class WorkerSettings:
     # Enterprise customers a usable single-shot ceiling until auto-
     # segmentation (Tier 3) ships.
     job_timeout = int(os.getenv("WORKER_JOB_TIMEOUT", "1600"))
+    # Max attempts for a job that raises arq.worker.Retry (e.g. email tasks —
+    # audit F13). Note: ARQ does NOT retry on a plain exception, only on Retry.
+    # ``retry_defer`` was a no-op attribute (not an ARQ setting) — the per-retry
+    # backoff is set by the task via Retry(defer=...), so it has been removed.
     max_tries = 3
-    retry_defer = True  # Exponential backoff on retry
 
     # Lifecycle hooks
     on_startup = startup

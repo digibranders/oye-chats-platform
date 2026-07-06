@@ -289,8 +289,10 @@ async def task_deliver_webhook(
 ) -> bool:
     """Deliver a single webhook. Returns True on success.
 
-    On failure, ARQ's built-in retry (max_tries=3, exponential backoff)
-    handles re-execution automatically.
+    Retries are handled by the webhook subsystem itself, NOT by ARQ: on failure
+    ``_deliver_webhook`` records a ``WebhookDelivery`` row with ``next_retry_at``
+    and ``task_process_webhook_retries`` (30s cron) re-enqueues due attempts.
+    (ARQ would only retry on a raised ``Retry``; this task never raises.)
     """
     import asyncio
 
@@ -375,33 +377,39 @@ async def task_renew_due_subscriptions(ctx: dict) -> int:
                 .all()
             )
             for sub in subs:
-                # Period length matches the subscription's billing cycle.
-                # The old code hard-coded ``1`` here, which silently renewed
-                # annual subscriptions every month — twelve credit grants
-                # per paid year and a customer-facing billing surprise.
-                # ``billing_cycle`` is normalised to ``"monthly"`` / ``"annual"``
-                # at sub creation; anything else falls through to monthly so
-                # legacy / manual rows don't get stuck.
-                period_months = 12 if (sub.billing_cycle or "").lower() == "annual" else 1
-                # Grant this period's credits at most once, keyed on the
-                # per-scope + per-period marker the webhook path uses
-                # (``last_granted_period_end``). The old same-day client-wide
-                # ``plan_grant`` probe was scope-blind: under per-bot billing
-                # (an account sub + one sub per paid bot) one scope's grant
-                # today suppressed another scope's legitimate renewal, and any
-                # unrelated same-day grant starved a renewal — a permanent
-                # one-month credit loss (BL-5 / NB-8). ``grant_subscription_
-                # period_once`` resets + grants scoped to ``sub.bot_id`` so the
-                # account pool and each bot ledger renew independently.
-                granted = credit_service.grant_subscription_period_once(session, sub, sub.current_period_end)
-                # Roll the period forward regardless of whether a grant fired —
-                # without this the cron re-matches the same row every day (or,
-                # after the marker no-ops the grant, spins on it forever).
-                sub.current_period_start = sub.current_period_end
-                sub.current_period_end = add_months(sub.current_period_end, period_months)
-                if granted:
-                    renewed += 1
-            session.commit()
+                # Isolate each subscription: commit per-row and skip on error so
+                # one bad subscription (plan/ledger error) can't roll back the
+                # grants + period rolls of every other subscription in the run,
+                # nor make the cron re-fail the whole batch daily (audit F14).
+                try:
+                    # Period length matches the subscription's billing cycle.
+                    # The old code hard-coded ``1`` here, which silently renewed
+                    # annual subscriptions every month — twelve credit grants
+                    # per paid year and a customer-facing billing surprise.
+                    # ``billing_cycle`` is normalised to ``"monthly"`` /
+                    # ``"annual"`` at sub creation; anything else falls through
+                    # to monthly so legacy / manual rows don't get stuck.
+                    period_months = 12 if (sub.billing_cycle or "").lower() == "annual" else 1
+                    # Grant this period's credits at most once, keyed on the
+                    # per-scope + per-period marker the webhook path uses
+                    # (``last_granted_period_end``). ``grant_subscription_
+                    # period_once`` resets + grants scoped to ``sub.bot_id`` so
+                    # the account pool and each bot ledger renew independently.
+                    granted = credit_service.grant_subscription_period_once(session, sub, sub.current_period_end)
+                    # Roll the period forward regardless of whether a grant fired
+                    # — without this the cron re-matches the same row every day.
+                    sub.current_period_start = sub.current_period_end
+                    sub.current_period_end = add_months(sub.current_period_end, period_months)
+                    session.commit()
+                    if granted:
+                        renewed += 1
+                except Exception:
+                    logger.exception(
+                        "Renewal failed for subscription %s (client %s); skipping",
+                        getattr(sub, "id", "?"),
+                        getattr(sub, "client_id", "?"),
+                    )
+                    session.rollback()
         return renewed
 
     loop = asyncio.get_running_loop()
@@ -561,7 +569,13 @@ async def task_send_email(
     )
 
     if not result:
-        raise RuntimeError(f"Email delivery failed: to={to_email}, subject={subject[:50]}")
+        # Brevo failed (usually transient). ARQ only retries on Retry — a plain
+        # raise is marked permanently failed, silently dropping the email
+        # (audit F13). Defer with backoff; max_tries (3) bounds the attempts.
+        from arq.worker import Retry
+
+        job_try = ctx.get("job_try", 1)
+        raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))
 
     return True
 
@@ -588,7 +602,11 @@ async def task_send_template_email(
     )
 
     if not result:
-        raise RuntimeError(f"Template email delivery failed: to={to_email}, template={template_id}")
+        # See task_send_email: ARQ retries only on Retry, not a plain raise (F13).
+        from arq.worker import Retry
+
+        job_try = ctx.get("job_try", 1)
+        raise Retry(defer=min(10 * 2 ** (job_try - 1), 300))
 
     return True
 

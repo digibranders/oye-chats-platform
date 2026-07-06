@@ -6,14 +6,19 @@ on:
     paths: ['api/**', '.github/workflows/deploy-api.yml']
   workflow_dispatch:
 
+# Least-privilege GITHUB_TOKEN — deploy only checks out the repo; the SSH
+# deploy uses its own secrets, not the workflow token (audit F48).
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Deploy to DigitalOcean via SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         env:
           DB_URL: ${{ secrets.DB_URL }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -117,6 +122,14 @@ jobs:
             done
 
             cd /opt/oyechats/platform
+
+            # Snapshot the currently-deployed commit and env BEFORE we mutate
+            # the tree/.env, so a failed post-restart health check can restore
+            # them automatically (audit F05). .env.rollback is untracked, so the
+            # reset --hard below leaves it intact.
+            PREV_SHA=$(git rev-parse HEAD)
+            echo "🧷 Current release pinned for rollback: $PREV_SHA"
+            cp api/.env api/.env.rollback 2>/dev/null || true
 
             # Make the working tree match origin/main verbatim before
             # pulling. Operators occasionally hotfix files in place
@@ -274,8 +287,34 @@ jobs:
               sleep 5
             done
             echo "❌ Deploy failed — server not responding after 45s"
-            # Print service status for debugging
+            # Capture diagnostics from the BROKEN release before we roll back.
             systemctl status oyechats-api oyechats-worker --no-pager || true
             journalctl -u oyechats-api --since '1 minute ago' --no-pager -n 30 || true
             journalctl -u oyechats-worker --since '1 minute ago' --no-pager -n 20 || true
+
+            # ── Automatic rollback to the previous healthy release (audit F05) ──
+            # Restore the previous commit + env and restart. Schema is left
+            # forward-migrated: our migrations are backward-compatible by policy
+            # (see REMEDIATION_PLAN.md §8), so the previous code runs against the
+            # newer schema. We deliberately do NOT auto-downgrade migrations —
+            # that risks data loss and needs a human decision.
+            echo "↩️  Rolling back to previous release $PREV_SHA ..."
+            cd /opt/oyechats/platform
+            git reset --hard "$PREV_SHA"
+            if [ -f api/.env.rollback ]; then cp api/.env.rollback api/.env; fi
+            cd api
+            /root/.local/bin/uv sync || echo "WARN: uv sync failed during rollback"
+            systemctl restart oyechats-worker
+            systemctl restart oyechats-api
+            sleep 15
+            for i in 1 2 3 4 5 6; do
+              if curl -sf http://localhost:8000/health/full > /dev/null 2>&1; then
+                echo "✅ Rolled back to $PREV_SHA and healthy (attempt $i). Deploy still marked FAILED."
+                exit 1
+              fi
+              echo "⏳ Rollback health check attempt $i failed, retrying in 5s..."
+              sleep 5
+            done
+            echo "🔥 ROLLBACK ALSO UNHEALTHY — manual intervention required (previous release: $PREV_SHA)"
+            systemctl status oyechats-api oyechats-worker --no-pager || true
             exit 1

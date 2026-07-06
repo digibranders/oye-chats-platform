@@ -39,6 +39,10 @@ class ConnectionManager:
         self._disconnect_tasks: dict[str, asyncio.Task] = {}
         # operator_id → grace-period task (operator WS dropped, waiting for reconnect)
         self._operator_disconnect_tasks: dict[int, asyncio.Task] = {}
+        # session_id → owning client_id (tenant). Every session-scoped operator
+        # notification (new-chat, queue, roster) is partitioned by this so one
+        # workspace's visitor PII / roster never leaks to another (audit F03).
+        self._session_client_ids: dict[str, int] = {}
         # session_id → department_id (for department-aware routing)
         self._session_departments: dict[str, int | None] = {}
         # operator_id → department_id (cached on connect)
@@ -94,6 +98,12 @@ class ConnectionManager:
                 # 1. Restore waiting sessions to in-memory queue
                 stale_waiting = db.execute(select(ChatSession).where(ChatSession.status == "waiting")).scalars().all()
                 for cs in stale_waiting:
+                    # Always record the owning tenant, even if the session is
+                    # already queued — the F03 queue/notify guard fails OPEN when
+                    # _session_client_ids is missing, so a restored session
+                    # without it leaks across tenants (code-review RV1).
+                    if cs.client_id is not None:
+                        self._session_client_ids[cs.id] = cs.client_id
                     if cs.id not in self.waiting_queue:
                         self.waiting_queue.append(cs.id)
                         logger.info(f"Restored waiting session from DB: {cs.id}")
@@ -153,6 +163,7 @@ class ConnectionManager:
                 for sid in stale_ids:
                     self.assignments.pop(sid, None)
                     self._accept_locks.pop(sid, None)
+                    self._session_client_ids.pop(sid, None)
                     self._session_departments.pop(sid, None)
                     self._session_metadata.pop(sid, None)
                     self._disconnect_tasks.pop(sid, None)
@@ -201,6 +212,7 @@ class ConnectionManager:
         if was_waiting:
             with contextlib.suppress(ValueError):
                 self.waiting_queue.remove(session_id)
+            self._session_client_ids.pop(session_id, None)
             self._session_departments.pop(session_id, None)
             self._session_metadata.pop(session_id, None)
             self._mark_session_waiting_exit(session_id)
@@ -211,6 +223,7 @@ class ConnectionManager:
             if operator_id is not None:
                 asyncio.ensure_future(self._handle_visitor_disconnect(session_id, operator_id))
         else:
+            self._session_client_ids.pop(session_id, None)
             self._session_departments.pop(session_id, None)
             self._session_metadata.pop(session_id, None)
 
@@ -257,6 +270,7 @@ class ConnectionManager:
                 self._mark_session_closed(session_id)
                 # Clean up in-memory state and notify operator
                 operator_id = self.assignments.pop(session_id, None)
+                self._session_client_ids.pop(session_id, None)
                 self._session_departments.pop(session_id, None)
                 self._session_metadata.pop(session_id, None)
                 if operator_id:
@@ -524,6 +538,8 @@ class ConnectionManager:
                         for cs in live_sessions:
                             cs.status = "waiting"
                             cs.assigned_operator_id = None
+                            if cs.client_id is not None:
+                                self._session_client_ids[cs.id] = cs.client_id
                             orphaned_sessions.append(cs.id)
 
                         db.commit()
@@ -617,6 +633,8 @@ class ConnectionManager:
                 for cs in live_sessions:
                     cs.status = "waiting"
                     cs.assigned_operator_id = None
+                    if cs.client_id is not None:
+                        self._session_client_ids[cs.id] = cs.client_id
                     orphaned_sessions.append(cs.id)
                 db.commit()
         except Exception as e:
@@ -665,6 +683,7 @@ class ConnectionManager:
         reason: str | None = None,
         bot_id: int | None = None,
         bot_name: str | None = None,
+        client_id: int | None = None,
     ):
         """Add visitor to the waiting queue and notify operators.
 
@@ -681,6 +700,8 @@ class ConnectionManager:
                 await self._send_to_visitor(session_id, {"type": "status", "status": "unavailable"})
                 return
             self.waiting_queue.append(session_id)
+        if client_id is not None:
+            self._session_client_ids[session_id] = client_id
         self._session_departments[session_id] = department_id
         self._session_metadata[session_id] = {
             "name": visitor_name or "Anonymous",
@@ -699,16 +720,26 @@ class ConnectionManager:
             },
         )
 
-        # Notify relevant operators (department-aware)
+        # Notify relevant operators (tenant-scoped, then department-aware)
         for operator_id in list(self.operator_connections.keys()):
-            if self._should_notify_operator(operator_id, department_id):
+            if self._should_notify_operator(operator_id, department_id, session_client_id=client_id):
                 await self._notify_operator_queue(operator_id)
 
         # Start timeout
         self._start_timeout(session_id, timeout_seconds)
 
-    def _should_notify_operator(self, operator_id: int, department_id: int | None) -> bool:
-        """Check if an operator should be notified about a queue item."""
+    def _should_notify_operator(
+        self, operator_id: int, department_id: int | None, session_client_id: int | None = None
+    ) -> bool:
+        """Check if an operator should be notified about a queue item.
+
+        Tenant scoping is enforced first (audit F03): when the session's owning
+        ``client_id`` is known, only operators of that same workspace are
+        eligible — fail closed if the operator's client is unknown. Department
+        routing then applies within the workspace.
+        """
+        if session_client_id is not None and self._operator_client_ids.get(operator_id) != session_client_id:
+            return False
         if department_id is None:
             return True
         operator_dept = self._operator_departments.get(operator_id)
@@ -889,18 +920,22 @@ class ConnectionManager:
         Includes operators that are within their grace period (WS dropped but not
         yet timed out) so their active_chats count stays visible to the team.
         """
-        operators_payload = []
+        # Build the roster tagged with each operator's owning client_id, then
+        # fan out to each operator ONLY the entries for their own workspace —
+        # an operator must never see another tenant's roster (audit F03).
+        roster: list[dict] = []
         seen_ids: set[int] = set()
 
         # Currently connected operators — fully online
         for oid in list(self.operator_connections.keys()):
             active_count = len([sid for sid, o_id in self.assignments.items() if o_id == oid])
-            operators_payload.append(
+            roster.append(
                 {
                     "operator_id": oid,
                     "name": self._operator_names.get(oid, ""),
                     "active_chats": active_count,
                     "is_online": True,
+                    "_client_id": self._operator_client_ids.get(oid),
                 }
             )
             seen_ids.add(oid)
@@ -910,21 +945,27 @@ class ConnectionManager:
             if oid not in seen_ids:
                 active_count = len([sid for sid, o_id in self.assignments.items() if o_id == oid])
                 if active_count > 0:
-                    operators_payload.append(
+                    roster.append(
                         {
                             "operator_id": oid,
                             "name": self._operator_names.get(oid, ""),
                             "active_chats": active_count,
                             "is_online": False,  # temporarily away
+                            "_client_id": self._operator_client_ids.get(oid),
                         }
                     )
 
-        msg = {
-            "type": "operators_update",
-            "operators": operators_payload,
-        }
         for operator_id in list(self.operator_connections.keys()):
-            await self._send_to_operator(operator_id, msg)
+            recipient_client_id = self._operator_client_ids.get(operator_id)
+            operators_payload = [
+                {k: v for k, v in entry.items() if k != "_client_id"}
+                for entry in roster
+                if entry["_client_id"] == recipient_client_id
+            ]
+            await self._send_to_operator(
+                operator_id,
+                {"type": "operators_update", "operators": operators_payload},
+            )
 
     # ── Bot-mode presence (real-time "currently chatting" signal) ────────────
 
@@ -1248,6 +1289,7 @@ class ConnectionManager:
             if session_id in self.waiting_queue:
                 self.waiting_queue.remove(session_id)
                 self._mark_session_waiting_exit(session_id)
+                self._session_client_ids.pop(session_id, None)
                 self._session_departments.pop(session_id, None)
                 self._session_metadata.pop(session_id, None)
                 await self._send_to_visitor(
@@ -1312,6 +1354,8 @@ class ConnectionManager:
 
                 elif chat_session.status == "waiting":
                     # Sync in-memory queue from DB
+                    if chat_session.client_id is not None:
+                        self._session_client_ids[session_id] = chat_session.client_id
                     if session_id not in self.waiting_queue:
                         self.waiting_queue.append(session_id)
                         self._session_departments[session_id] = chat_session.department_id
@@ -1363,9 +1407,15 @@ class ConnectionManager:
     async def _notify_operator_queue(self, operator_id: int):
         """Send current queue to a specific operator (filtered by department), with visitor metadata."""
         operator_dept = self._operator_departments.get(operator_id)
+        operator_client_id = self._operator_client_ids.get(operator_id)
 
         visible_queue = []
         for sid in self.waiting_queue:
+            # Tenant scoping first: never surface another workspace's queued
+            # visitor (name/reason/bot) to this operator (audit F03).
+            session_client_id = self._session_client_ids.get(sid)
+            if session_client_id is not None and session_client_id != operator_client_id:
+                continue
             session_dept = self._session_departments.get(sid)
             if session_dept is None or operator_dept is None or session_dept == operator_dept:
                 meta = self._session_metadata.get(sid, {})

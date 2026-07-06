@@ -27,6 +27,8 @@ import logging
 import re
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
+from app.core.ssrf import SSRFError, fetch_text_safely, validate_public_url
+
 logger = logging.getLogger(__name__)
 
 _USER_AGENT = "OyeChats-Bot/1.0 (+https://oyechats.com)"
@@ -211,17 +213,17 @@ async def discover_website_urls(
     async with aiohttp.ClientSession(headers=headers, timeout=client_timeout) as session:
         # ── Step 1: robots.txt → find declared Sitemap URLs ──────────────────
         sitemap_seeds: list[str] = []
-        try:
-            async with session.get(f"{base}/robots.txt", allow_redirects=True, ssl=False) as r:
-                if r.status == 200:
-                    text = await r.text(errors="replace")
-                    for line in text.splitlines():
-                        if line.lower().startswith("sitemap:"):
-                            s = line[8:].strip()
-                            if s:
-                                sitemap_seeds.append(s)
-        except Exception:
-            pass
+        # robots.txt and the Sitemap: URLs it declares are attacker-controllable
+        # (the crawl target owns robots.txt), so every fetch goes through the
+        # SSRF guard: non-public hosts and redirect-to-internal are refused, and
+        # the body is size-capped (audit F07/F25).
+        robots = await fetch_text_safely(session, f"{base}/robots.txt")
+        if robots and robots[0] == 200:
+            for line in robots[1].splitlines():
+                if line.lower().startswith("sitemap:"):
+                    s = line[8:].strip()
+                    if s:
+                        sitemap_seeds.append(s)
 
         # Fallback: try the two most common standard locations
         if not sitemap_seeds:
@@ -239,13 +241,14 @@ async def discover_website_urls(
             if url in fetched_maps or depth > 2 or len(page_urls) >= max_urls:
                 return
             fetched_maps.add(url)
-            try:
-                async with session.get(url, allow_redirects=True, ssl=False) as r:
-                    if r.status != 200:
-                        return
-                    raw = await r.text(errors="replace")
-            except Exception:
+            # Sitemap URLs (declared in robots.txt or nested via <sitemapindex>)
+            # are attacker-controllable → SSRF-guarded fetch (audit F07). Allow
+            # up to the sitemap-spec ceiling (50 MB uncompressed) so a large but
+            # legitimate sitemap isn't truncated (code-review RV7).
+            result = await fetch_text_safely(url=url, session=session, max_bytes=50 * 1024 * 1024)
+            if not result or result[0] != 200:
                 return
+            raw = result[1]
 
             is_index = "<sitemapindex" in raw.lower()
             locs = re.findall(r"<loc>\s*(https?://[^\s<]+)\s*</loc>", raw)
@@ -374,16 +377,13 @@ async def discover_via_links(
             # Otherwise a site that answers many html-looking URLs with non-HTML
             # could drive the loop up to ``max_urls`` GETs instead of ``max_fetch``.
             fetched += 1
-            try:
-                async with session.get(url, allow_redirects=True, ssl=False) as r:
-                    if r.status != 200:
-                        continue
-                    ctype = r.headers.get("Content-Type", "")
-                    if "html" not in ctype.lower() and ctype:
-                        continue
-                    html = await r.text(errors="replace")
-            except Exception:
+            # SSRF-guarded fetch (code-review RV3): validates the URL, re-checks
+            # every redirect hop, and caps the body — so a same-host page that
+            # 302s to an internal address can't bounce this server-side GET.
+            result = await fetch_text_safely(session, url)
+            if not result or result[0] != 200:
                 continue
+            html = result[1]
 
             for link in _extract_links(url, html, base_netloc):
                 key = normalize_url(link)
@@ -438,12 +438,21 @@ async def check_urls_alive(
 
         async def _check(url: str) -> None:
             async with sem:
+                # SSRF guard (code-review RV4): refuse non-public targets and do
+                # NOT follow redirects (a public→internal 3xx must not bounce the
+                # server-side request). A 3xx still counts as alive below without
+                # being followed.
+                try:
+                    validate_public_url(url)
+                except SSRFError:
+                    results[url] = False
+                    return
                 # HEAD first — cheap and most servers support it. Fall back
                 # to a tiny GET if HEAD is rejected with 405 / 403 so we
                 # don't incorrectly flag the page as alive when it might
                 # actually be 404 via GET.
                 try:
-                    async with session.head(url, allow_redirects=True, ssl=False) as r:
+                    async with session.head(url, allow_redirects=False, ssl=False) as r:
                         if r.status in (404, 410):
                             results[url] = False
                             return
@@ -453,7 +462,7 @@ async def check_urls_alive(
                 except Exception:
                     pass
                 try:
-                    async with session.get(url, allow_redirects=True, ssl=False) as r:
+                    async with session.get(url, allow_redirects=False, ssl=False) as r:
                         results[url] = r.status not in (404, 410)
                 except Exception:
                     # Network error — keep the URL (conservative).
