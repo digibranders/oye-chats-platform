@@ -315,6 +315,12 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 )
 
             elif msg_type == "file":
+                # File shares consume the same per-connection rate budget as
+                # messages — otherwise a single connection could flood the DB
+                # with unlimited file inserts (audit F32).
+                if not rate_limiter.allow():
+                    await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
+                    continue
                 file_url = data.get("file_url", "").strip()
                 filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]
                 content_type = data.get("content_type", "")
@@ -719,7 +725,11 @@ async def operator_websocket(
                 await manager.route_operator_message(target_session, content, operator_name)
 
             elif msg_type == "file":
-                # File sharing — operator sends a file URL
+                # File sharing — operator sends a file URL. Rate-limited on the
+                # same per-connection budget as messages (audit F32).
+                if not rate_limiter.allow():
+                    await ws.send_json({"type": "error", "message": "Rate limit exceeded. Please slow down."})
+                    continue
                 target_session = data.get("session_id")
                 file_url = data.get("file_url", "").strip()
                 filename = data.get("filename", "file").replace("/", "").replace("\\", "")[:100]

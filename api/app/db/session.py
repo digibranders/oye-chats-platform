@@ -9,12 +9,16 @@ from sqlalchemy.orm import sessionmaker
 from app.config import DB_URL
 
 # ── Connection pool tuning ──────────────────────────────────────────────────
-# These defaults are safe for a single Gunicorn worker (5 + 10 = max 15).
-# When running multiple workers, reduce per-worker limits to stay within
-# the database's max_connections (e.g. DigitalOcean managed PG = 25):
-#   1 worker → pool_size=5, max_overflow=10  (max 15)
-#   2 workers → pool_size=3, max_overflow=5  (max 16)
-#   4 workers → pool_size=2, max_overflow=3  (max 20)
+# This engine is imported by BOTH the API (Gunicorn) and the ARQ worker, and
+# each PROCESS opens its own pool. Total DB connections must stay under the
+# server's max_connections. Budget = (api_gunicorn_workers × api_pool) +
+# (worker_procs × worker_pool). Defaults below are safe for a single Gunicorn
+# worker (5 + 10 = max 15). Tune per process via env (the worker systemd unit
+# sets its OWN smaller DB_POOL_SIZE/DB_MAX_OVERFLOW so its pool is sized to
+# WORKER_MAX_JOBS, not the API's assumptions — audit F30):
+#   API, 1 gunicorn worker → pool_size=5, max_overflow=10  (max 15)
+#   API, 2 gunicorn workers → pool_size=3, max_overflow=5  (max 16)
+#   ARQ worker (WORKER_MAX_JOBS=5) → pool_size=5, max_overflow=5  (max 10)
 _DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
 _DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
 _DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))

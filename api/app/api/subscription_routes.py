@@ -837,9 +837,19 @@ def plan_price_check(client: Client = Depends(get_current_client)):
     return {"plans": out}
 
 
+def _is_suspicious_geo_claim(confirmed_country: str, detected_country: str | None) -> bool:
+    """Flag a domestic (IN) billing claim that contradicts the server-side geo
+    signal (audit F35). A specific foreign detection while the customer claims IN
+    is a GST/FEMA audit signal. Unknown detection (None — geo lookups legitimately
+    fail) is not suspicious, and a non-IN confirmed country never reaches the INR
+    rail so it is out of scope here."""
+    return confirmed_country == "IN" and detected_country not in (None, "IN")
+
+
 @router.post("/checkout")
 def create_checkout(
     request: CheckoutRequest,
+    http_request: Request,
     client: Client = Depends(get_current_client),
 ):
     """Create a Razorpay checkout session for a paid plan.
@@ -855,6 +865,21 @@ def create_checkout(
     # Phase-2 USD rail is live. Unknown (no confirm + no stored country) defaults
     # to domestic; a country already on the client is honoured as the fallback.
     confirmed_country = (request.billing_country or client.billing_country or "IN").strip().upper()
+
+    # Server-side geo cross-check (audit F35): the confirmed country drives
+    # currency + GST classification but is client-supplied. We do NOT hard-block
+    # a mismatch (a confirmed country intentionally overrides IP geo so an Indian
+    # resident mis-detected abroad still reaches INR checkout — FEMA-safe), but a
+    # domestic claim that contradicts a specific foreign detection is logged as a
+    # GST/FEMA audit signal for review.
+    detected_country = resolve_country(http_request)
+    if _is_suspicious_geo_claim(confirmed_country, detected_country):
+        logger.warning(
+            "Checkout geo mismatch: client=%s claims billing_country=IN but IP geo detected %s (GST/FEMA review)",
+            client.id,
+            detected_country,
+        )
+
     if confirmed_country != "IN":
         raise HTTPException(
             status_code=409,

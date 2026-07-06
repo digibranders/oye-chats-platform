@@ -114,6 +114,9 @@ def send_push_to_subscription(
             vapid_private_key=_get_vapid(),
             vapid_claims={"sub": VAPID_SUBJECT},
             ttl=ttl,
+            # Bounded HTTP timeout (pywebpush → requests.post): one unresponsive
+            # push endpoint must not hang the fan-out to other subscribers (F44).
+            timeout=10,
         )
         return True, getattr(response, "status_code", 201)
     except WebPushException as exc:

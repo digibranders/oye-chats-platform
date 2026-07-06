@@ -294,7 +294,9 @@ def test_resolve_discounted_plan_reuses_cached(monkeypatch):
     monkeypatch.setattr(rs, "_get_razorpay", lambda: rzp)
 
     session = MagicMock()
-    cached = SimpleNamespace(razorpay_plan_id="plan_already_exists")
+    # A hit is valid only when the cached amount still matches the price the
+    # current base plan produces (F34): 459900 − 15% = 390915.
+    cached = SimpleNamespace(razorpay_plan_id="plan_already_exists", amount_paise=390915)
     session.scalars.return_value.first.return_value = cached
 
     base = _make_plan(id=2, name="Standard", slug="standard", monthly_price_cents=459900, annual_price_cents=4409900)

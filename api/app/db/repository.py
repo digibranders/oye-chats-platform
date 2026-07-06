@@ -890,42 +890,47 @@ def update_message_feedback(
 
 
 def get_feedback_data(session, client_id: int = None, bot_id: int = None):
-    """Retrieve all bot messages that have received feedback."""
+    """Retrieve all bot messages that have received feedback.
+
+    The preceding user question is resolved in the same query via a correlated
+    subquery (audit F28): the old code ran one extra SELECT per feedback row
+    (N+1), so a workspace with lots of feedback issued 1 + N round-trips.
+    """
     sf = _session_owner_filter(bot_id, client_id)
+    _UserMsg = aliased(ChatMessage)
+    # Latest user message in the same session at or before the bot message.
+    question_subq = (
+        select(_UserMsg.content)
+        .where(
+            _UserMsg.session_id == ChatMessage.session_id,
+            _UserMsg.role == "user",
+            _UserMsg.created_at <= ChatMessage.created_at,
+        )
+        .order_by(desc(_UserMsg.created_at))
+        .limit(1)
+        .correlate(ChatMessage)
+        .scalar_subquery()
+    )
     stmt = (
-        select(ChatMessage, ChatSession.id.label("session_id"))
+        select(
+            ChatMessage,
+            ChatSession.id.label("session_id"),
+            func.coalesce(question_subq, "Unknown Question").label("question"),
+        )
         .join(ChatSession)
         .where(sf, ChatMessage.role == "bot", ChatMessage.feedback.isnot(None))
         .order_by(ChatMessage.created_at)
     )
 
-    results = session.execute(stmt).all()
     feedback_list = []
-
-    for row in results:
+    for row in session.execute(stmt).all():
         bot_msg = row.ChatMessage
-        session_id = row.session_id
-
-        user_stmt = (
-            select(ChatMessage)
-            .where(
-                ChatMessage.session_id == session_id,
-                ChatMessage.role == "user",
-                ChatMessage.created_at <= bot_msg.created_at,
-            )
-            .order_by(desc(ChatMessage.created_at))
-            .limit(1)
-        )
-
-        user_msg = session.execute(user_stmt).scalar_one_or_none()
-        question = user_msg.content if user_msg else "Unknown Question"
-
         feedback_list.append(
             {
                 "message_id": bot_msg.id,
-                "session_id": session_id,
+                "session_id": row.session_id,
                 "created_at": bot_msg.created_at.isoformat(),
-                "question": question,
+                "question": row.question,
                 "answer": bot_msg.content,
                 "feedback": bot_msg.feedback,
             }
@@ -1109,15 +1114,21 @@ def get_client_platform_feedback(session, client_id: int) -> list[dict]:
     return [_serialize_platform_feedback(fb) for fb in rows]
 
 
-def get_visitor_data(session, client_id: int = None, bot_id: int = None):
-    """Retrieve all visitor sessions for admin dashboard."""
+def get_visitor_data(session, client_id: int = None, bot_id: int = None, *, limit: int = 500, offset: int = 0):
+    """Retrieve visitor sessions for the admin dashboard (most-recent first).
+
+    Bounded by ``limit``/``offset`` (audit F26): the query previously loaded
+    every ChatSession for the workspace into memory, which grows without limit.
+    """
     sf = _session_owner_filter(bot_id, client_id)
     stmt = (
         select(ChatSession, func.count(ChatMessage.id).label("message_count"))
         .outerjoin(ChatMessage)
         .where(sf)
         .group_by(ChatSession.id)
-        .order_by(ChatSession.created_at)
+        .order_by(ChatSession.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     results = session.execute(stmt).all()
 

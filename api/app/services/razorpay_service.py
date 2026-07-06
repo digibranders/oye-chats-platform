@@ -452,15 +452,6 @@ def resolve_discounted_plan(
     if billing_cycle not in ("monthly", "annual"):
         raise ValueError(f"billing_cycle must be 'monthly' or 'annual', got {billing_cycle!r}")
 
-    cached = session.scalars(
-        select(DiscountedPlanCache)
-        .where(DiscountedPlanCache.base_plan_id == base_plan.id)
-        .where(DiscountedPlanCache.billing_cycle == billing_cycle)
-        .where(DiscountedPlanCache.discount_bps == discount_bps)
-    ).first()
-    if cached is not None:
-        return cached.razorpay_plan_id
-
     base_amount = int(base_plan.annual_price_cents if billing_cycle == "annual" else base_plan.monthly_price_cents)
     discounted_paise = base_amount - (base_amount * discount_bps) // 10000
     # Minimum-price floor (remediation C3): even with the discount cap, never
@@ -470,6 +461,20 @@ def resolve_discounted_plan(
             f"discounted price ₹{discounted_paise / 100:.2f} is below the ₹{MIN_DISCOUNTED_PLAN_PAISE / 100:.2f} "
             f"minimum (base ₹{base_amount / 100:.2f}, {discount_bps} bps)"
         )
+
+    cached = session.scalars(
+        select(DiscountedPlanCache)
+        .where(DiscountedPlanCache.base_plan_id == base_plan.id)
+        .where(DiscountedPlanCache.billing_cycle == billing_cycle)
+        .where(DiscountedPlanCache.discount_bps == discount_bps)
+    ).first()
+    # A cache hit is only valid if the cached amount still equals the price the
+    # CURRENT base plan produces. Otherwise the base price changed since we
+    # cached and the row points at a Razorpay plan billing the old amount, so we
+    # must create a fresh discounted plan and refresh the row (audit F34).
+    if cached is not None and cached.amount_paise == discounted_paise:
+        return cached.razorpay_plan_id
+
     period = "yearly" if billing_cycle == "annual" else "monthly"
 
     rzp = _get_razorpay()
@@ -489,14 +494,21 @@ def resolve_discounted_plan(
         }
     )
 
-    row = DiscountedPlanCache(
-        base_plan_id=base_plan.id,
-        billing_cycle=billing_cycle,
-        discount_bps=discount_bps,
-        razorpay_plan_id=plan["id"],
-        amount_paise=discounted_paise,
-    )
-    session.add(row)
+    if cached is not None:
+        # Refresh the stale row in place — the UNIQUE (base_plan_id, cycle, bps)
+        # constraint means we can't insert a second row for the same key.
+        cached.razorpay_plan_id = plan["id"]
+        cached.amount_paise = discounted_paise
+    else:
+        session.add(
+            DiscountedPlanCache(
+                base_plan_id=base_plan.id,
+                billing_cycle=billing_cycle,
+                discount_bps=discount_bps,
+                razorpay_plan_id=plan["id"],
+                amount_paise=discounted_paise,
+            )
+        )
     session.flush()
     return plan["id"]
 

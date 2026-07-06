@@ -180,13 +180,15 @@ def get_top_questions_endpoint(
 @router.get("/visitors")
 def get_visitors_endpoint(
     bot_id: int | None = Query(None),
+    limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     auth: dict = Depends(get_current_client_or_operator),
 ):
-    """Retrieve all visitor sessions for the admin dashboard."""
+    """Retrieve visitor sessions for the admin dashboard (most-recent first, paginated)."""
     try:
         _verify_bot_ownership(bot_id, auth["client_id"])
         with get_session() as session:
-            data = get_visitor_data(session, client_id=auth["client_id"], bot_id=bot_id)
+            data = get_visitor_data(session, client_id=auth["client_id"], bot_id=bot_id, limit=limit, offset=offset)
 
             unique_visitors = {}
             current_user_index = 1
