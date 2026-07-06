@@ -26,12 +26,17 @@ from fastapi.params import Depends as DependsParam
 from app.api import client_routes
 from app.api.auth import get_current_client_strict
 
-# Account-credential / identity endpoints that must be owner-only (X-API-Key).
+# Account-credential / identity / workspace-config endpoints that must be
+# owner-only (X-API-Key). Includes bot/workspace mutations (settings, logo):
+# an operator key must not be able to rewrite the bot's name/colors/logo
+# (code-review RV5).
 OWNER_ONLY_HANDLERS = [
     "get_client_api_key",
     "regenerate_client_api_key",
     "update_client_profile",
     "change_client_password",
+    "update_client_settings",
+    "upload_logo_endpoint",
 ]
 
 

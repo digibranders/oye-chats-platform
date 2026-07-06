@@ -73,7 +73,7 @@ def get_client_settings(
 def update_client_settings(
     request: ClientSettingsUpdate,
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    client: Client = Depends(get_current_client_strict),
 ):
     """Update chatbot customization settings."""
     try:
@@ -258,7 +258,7 @@ async def upload_logo_endpoint(
     request: Request,
     file: UploadFile = File(...),
     bot_id: int | None = Query(None),
-    client: Client = Depends(get_current_client),
+    client: Client = Depends(get_current_client_strict),
 ):
     """Upload a logo to Backblaze B2 and return the URL."""
     try:
