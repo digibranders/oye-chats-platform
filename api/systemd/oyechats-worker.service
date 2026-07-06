@@ -18,6 +18,13 @@ Type=simple
 User=root
 WorkingDirectory=/opt/oyechats/platform/api
 EnvironmentFile=/opt/oyechats/platform/api/.env
+# Worker-specific DB pool (audit F30): the worker shares api/.env with the API
+# but is a SEPARATE process with its own pool. Size it to WORKER_MAX_JOBS (~5)
+# rather than inheriting the API's pool assumptions, so API + worker together
+# stay under the server's max_connections. These Environment= lines override the
+# shared EnvironmentFile for this unit only.
+Environment=DB_POOL_SIZE=5
+Environment=DB_MAX_OVERFLOW=5
 ExecStart=/root/.local/bin/uv run arq app.worker.settings.WorkerSettings
 
 # Auto-restart on crash with 5s backoff
