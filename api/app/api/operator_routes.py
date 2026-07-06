@@ -788,6 +788,7 @@ async def request_handoff(request: HandoffRequest, bot: Bot = Depends(get_curren
             reason=request.reason,
             bot_id=bot.id,
             bot_name=bot.name,
+            client_id=bot.client_id,
         )
     )
 
@@ -1152,6 +1153,7 @@ async def transfer_chat(session_id: str, request: TransferRequest, auth=Depends(
                 request.target_department_id,
                 bot_id=bot.id,
                 bot_name=bot.name,
+                client_id=bot.client_id,
             )
         )
 
