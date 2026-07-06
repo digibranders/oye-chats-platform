@@ -27,6 +27,8 @@ import logging
 import re
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
+from app.core.ssrf import fetch_text_safely
+
 logger = logging.getLogger(__name__)
 
 _USER_AGENT = "OyeChats-Bot/1.0 (+https://oyechats.com)"
@@ -211,17 +213,17 @@ async def discover_website_urls(
     async with aiohttp.ClientSession(headers=headers, timeout=client_timeout) as session:
         # ── Step 1: robots.txt → find declared Sitemap URLs ──────────────────
         sitemap_seeds: list[str] = []
-        try:
-            async with session.get(f"{base}/robots.txt", allow_redirects=True, ssl=False) as r:
-                if r.status == 200:
-                    text = await r.text(errors="replace")
-                    for line in text.splitlines():
-                        if line.lower().startswith("sitemap:"):
-                            s = line[8:].strip()
-                            if s:
-                                sitemap_seeds.append(s)
-        except Exception:
-            pass
+        # robots.txt and the Sitemap: URLs it declares are attacker-controllable
+        # (the crawl target owns robots.txt), so every fetch goes through the
+        # SSRF guard: non-public hosts and redirect-to-internal are refused, and
+        # the body is size-capped (audit F07/F25).
+        robots = await fetch_text_safely(session, f"{base}/robots.txt")
+        if robots and robots[0] == 200:
+            for line in robots[1].splitlines():
+                if line.lower().startswith("sitemap:"):
+                    s = line[8:].strip()
+                    if s:
+                        sitemap_seeds.append(s)
 
         # Fallback: try the two most common standard locations
         if not sitemap_seeds:
@@ -239,13 +241,12 @@ async def discover_website_urls(
             if url in fetched_maps or depth > 2 or len(page_urls) >= max_urls:
                 return
             fetched_maps.add(url)
-            try:
-                async with session.get(url, allow_redirects=True, ssl=False) as r:
-                    if r.status != 200:
-                        return
-                    raw = await r.text(errors="replace")
-            except Exception:
+            # Sitemap URLs (declared in robots.txt or nested via <sitemapindex>)
+            # are attacker-controllable → SSRF-guarded fetch (audit F07).
+            result = await fetch_text_safely(url=url, session=session)
+            if not result or result[0] != 200:
                 return
+            raw = result[1]
 
             is_index = "<sitemapindex" in raw.lower()
             locs = re.findall(r"<loc>\s*(https?://[^\s<]+)\s*</loc>", raw)

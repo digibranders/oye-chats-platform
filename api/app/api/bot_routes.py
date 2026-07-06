@@ -19,6 +19,8 @@ from app.api.auth import (
 )
 from app.core.cache import bot_config_key, cache_delete
 from app.core.origin_check import normalize_domain_input
+from app.core.rate_limit import limiter
+from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import Bot, BotGrowthEvent
 from app.db.session import get_session
 
@@ -656,8 +658,18 @@ def _check_iframe_allowed(target_url: str) -> bool:
     """
     import httpx  # local import — only used in this preview path
 
+    # Re-validate here (defence in depth) and — crucially — do NOT follow
+    # redirects: the initial URL passed _validate_preview_url, but a 3xx could
+    # bounce the server-side request to an internal address. A redirect is
+    # surfaced as-is (its 3xx response carries no framing headers → "allow").
+    # (audit F11)
     try:
-        with httpx.Client(timeout=5, follow_redirects=True, max_redirects=5) as client:
+        validate_public_url(target_url)
+    except SSRFError:
+        return False
+
+    try:
+        with httpx.Client(timeout=5, follow_redirects=False) as client:
             resp = client.head(target_url, headers={"User-Agent": "OyeChats-Preview/1.0"})
             xfo = (resp.headers.get("x-frame-options") or "").strip().upper()
             if xfo in ("DENY", "SAMEORIGIN"):
@@ -940,7 +952,9 @@ def _build_preview_page_html(bot: Bot, target_url: str, edit: bool = False) -> s
 
 
 @public_router.get("/demo/{bot_key}", response_class=HTMLResponse)
+@limiter.limit("20/minute")
 def get_bot_demo_page(
+    request: Request,
     bot_key: str,
     url: str | None = Query(default=None),
     edit: int = Query(default=0, ge=0, le=1),

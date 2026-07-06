@@ -4,9 +4,12 @@ from unittest.mock import MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.api.auth import get_current_client_or_operator
 from app.api.bot_routes import public_router, router
+from app.core.rate_limit import limiter
 from app.db.models import BotGrowthEvent
 
 
@@ -33,6 +36,10 @@ def _session_context(session):
 
 def _build_test_client():
     app = FastAPI()
+    # /demo is rate-limited (audit F11) — wire slowapi as main.py does so the
+    # decorated route resolves app.state.limiter under TestClient.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.include_router(public_router)
     app.include_router(router)
     return app
@@ -273,3 +280,49 @@ class TestBotDemoRoutes:
 
         assert response.status_code == 400
         assert "Invalid URL" in response.json()["detail"]
+
+
+class TestPreviewSSRF:
+    """F11: the iframe-preview HEAD must not be a server-side SSRF primitive."""
+
+    def test_check_iframe_allowed_blocks_internal_hosts(self):
+        """A non-public target is refused outright — no server-side request."""
+        from app.api import bot_routes
+
+        assert bot_routes._check_iframe_allowed("http://127.0.0.1/") is False
+        assert bot_routes._check_iframe_allowed("http://169.254.169.254/latest/meta-data/") is False
+        assert bot_routes._check_iframe_allowed("http://10.0.0.5/") is False
+
+    def test_check_iframe_allowed_does_not_follow_redirects(self, monkeypatch):
+        """The HEAD client must be built with follow_redirects=False so a 3xx
+        can't bounce the request to an internal address (the F11 bypass)."""
+        import httpx
+
+        from app.api import bot_routes
+
+        # Skip the DNS-backed guard so this test isolates the redirect behavior.
+        monkeypatch.setattr(bot_routes, "validate_public_url", lambda u: u)
+
+        captured = {}
+
+        class _FakeResp:
+            headers: dict = {}
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                captured.update(kwargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def head(self, *args, **kwargs):
+                return _FakeResp()
+
+        monkeypatch.setattr(httpx, "Client", _FakeClient)
+
+        bot_routes._check_iframe_allowed("https://example.com/")
+
+        assert captured.get("follow_redirects") is False
