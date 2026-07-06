@@ -438,8 +438,9 @@ class LeadInfo(Base):
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id = Column(String, primary_key=True)
-    # Legacy FK — kept during migration transition
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True)
+    # Legacy FK — kept during migration transition. Indexed (audit F27): every
+    # analytics query filters chat_sessions by client_id when bot_id is absent.
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=True, index=True)
     # New FK — primary association
     bot_id = Column(Integer, ForeignKey("bots.id", ondelete="CASCADE"), nullable=True)
 
