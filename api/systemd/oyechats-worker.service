@@ -27,6 +27,22 @@ RestartSec=5
 # Resource limits
 LimitNOFILE=65535
 
+# Security hardening (audit F06). REMAINING STEP: drop from root to a dedicated
+# unprivileged `oyechats` user — do this on staging first (also requires making
+# `uv` runnable by that user and chowning /opt/oyechats/platform + api/.env +
+# the documents dir where invoice PDFs are written). The directives below are
+# safe with the current root + /root/.local/bin/uv + /opt layout. PrivateTmp is
+# compatible with WeasyPrint/pango (they use a private /tmp, still writable).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
 # Logging
 StandardOutput=journal
 StandardError=journal
