@@ -98,6 +98,12 @@ class ConnectionManager:
                 # 1. Restore waiting sessions to in-memory queue
                 stale_waiting = db.execute(select(ChatSession).where(ChatSession.status == "waiting")).scalars().all()
                 for cs in stale_waiting:
+                    # Always record the owning tenant, even if the session is
+                    # already queued — the F03 queue/notify guard fails OPEN when
+                    # _session_client_ids is missing, so a restored session
+                    # without it leaks across tenants (code-review RV1).
+                    if cs.client_id is not None:
+                        self._session_client_ids[cs.id] = cs.client_id
                     if cs.id not in self.waiting_queue:
                         self.waiting_queue.append(cs.id)
                         logger.info(f"Restored waiting session from DB: {cs.id}")
@@ -532,6 +538,8 @@ class ConnectionManager:
                         for cs in live_sessions:
                             cs.status = "waiting"
                             cs.assigned_operator_id = None
+                            if cs.client_id is not None:
+                                self._session_client_ids[cs.id] = cs.client_id
                             orphaned_sessions.append(cs.id)
 
                         db.commit()
@@ -625,6 +633,8 @@ class ConnectionManager:
                 for cs in live_sessions:
                     cs.status = "waiting"
                     cs.assigned_operator_id = None
+                    if cs.client_id is not None:
+                        self._session_client_ids[cs.id] = cs.client_id
                     orphaned_sessions.append(cs.id)
                 db.commit()
         except Exception as e:
@@ -1344,6 +1354,8 @@ class ConnectionManager:
 
                 elif chat_session.status == "waiting":
                     # Sync in-memory queue from DB
+                    if chat_session.client_id is not None:
+                        self._session_client_ids[session_id] = chat_session.client_id
                     if session_id not in self.waiting_queue:
                         self.waiting_queue.append(session_id)
                         self._session_departments[session_id] = chat_session.department_id
