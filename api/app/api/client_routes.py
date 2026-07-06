@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 
-from app.api.auth import get_current_client
+from app.api.auth import get_current_client, get_current_client_strict
 from app.core.feedback import CONTEXT_KEYS, FEEDBACK_AREAS, FEEDBACK_SEVERITIES, FEEDBACK_TYPES
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, Client
@@ -295,7 +295,7 @@ class ClientProfilePatch(BaseModel):
 @router.patch("/profile")
 def update_client_profile(
     body: ClientProfilePatch,
-    client: Client = Depends(get_current_client),
+    client: Client = Depends(get_current_client_strict),
 ):
     """Update the authenticated client's name and/or email."""
     with get_session() as session:
@@ -334,7 +334,7 @@ class ChangePasswordRequest(BaseModel):
 @router.post("/change-password")
 def change_client_password(
     body: ChangePasswordRequest,
-    client: Client = Depends(get_current_client),
+    client: Client = Depends(get_current_client_strict),
 ):
     """Change the authenticated client's password (verifies the current one)."""
     with get_session() as session:
@@ -353,13 +353,13 @@ def _mask_key(key: str | None) -> str:
 
 
 @router.get("/api-key")
-def get_client_api_key(client: Client = Depends(get_current_client)):
+def get_client_api_key(client: Client = Depends(get_current_client_strict)):
     """Return the authenticated client's API key in masked form."""
     return {"api_key_masked": _mask_key(client.api_key)}
 
 
 @router.post("/api-key/regenerate")
-def regenerate_client_api_key(client: Client = Depends(get_current_client)):
+def regenerate_client_api_key(client: Client = Depends(get_current_client_strict)):
     """Rotate the client's API key. Returns the full new key ONCE for copy."""
     with get_session() as session:
         row = session.get(Client, client.id)

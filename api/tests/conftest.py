@@ -11,7 +11,12 @@ from sqlalchemy import create_engine, make_url
 from sqlalchemy import text as _sa_text
 from sqlalchemy.orm import Session as _Session
 
-from app.api.auth import get_current_bot, get_current_client, get_current_client_or_operator
+from app.api.auth import (
+    get_current_bot,
+    get_current_client,
+    get_current_client_or_operator,
+    get_current_client_strict,
+)
 from app.db.models import Base as _Base
 
 # ── Real-Postgres throwaway DB (for DB-layer tests: locks, ledger, clawback) ──
@@ -207,8 +212,18 @@ def test_app():
 
 @pytest.fixture()
 def auth_override_client(mock_client):
-    """Returns a dependency override dict for client auth."""
-    return {get_current_client: lambda: mock_client}
+    """Returns a dependency override dict for client auth.
+
+    Overrides both the permissive (``get_current_client``, also accepts an
+    X-Operator-Key) and the strict (``get_current_client_strict``, X-API-Key
+    only) dependencies: a real client's X-API-Key satisfies both, so a test
+    authenticating "as this client" should work whichever guard an endpoint
+    uses. Account-credential endpoints use the strict one (audit F01/F02).
+    """
+    return {
+        get_current_client: lambda: mock_client,
+        get_current_client_strict: lambda: mock_client,
+    }
 
 
 @pytest.fixture()
