@@ -10,8 +10,10 @@ from app.services import runtime_config
 
 # Client-side timeout for non-streaming LLM calls (seconds). Without it a hung
 # upstream socket blocks the /chat threadpool worker forever and never trips the
-# LiteLLM fallback (audit F09). Env-tunable; generous enough for a full answer.
-_LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "45"))
+# LiteLLM fallback (audit F09). Env-tunable; 60s leaves headroom for a genuinely
+# slow large-context completion while still bounding a hung socket (code-review
+# RV9).
+_LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "60"))
 
 
 def _primary_model() -> str:
