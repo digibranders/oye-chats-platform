@@ -37,6 +37,13 @@ export const STREAM_SENTINELS = Object.freeze([
 const CTA_PREFIX = '[CTA:';
 const CTA_PATTERN = /\[CTA:[a-zA-Z0-9_]+\]/g;
 
+// [CTA_Q:short follow-up question] — the qualifying-question twin of [CTA:].
+// Body grammar mirrors the backend's _CTA_Q_PATTERN (rag_service.py): any
+// run of chars except ']' / newline, up to 200. Checked BEFORE CTA_PREFIX
+// everywhere since '[CTA_Q:' also contains '[CTA' as a leading substring.
+const CTA_Q_PREFIX = '[CTA_Q:';
+const CTA_Q_PATTERN = /\[CTA_Q:[^\]\n]{0,200}\]/g;
+
 // Media card sentinels — same pattern as CTA but with a different body
 // grammar. [YOUTUBE_CARD:VIDEO_ID] where VIDEO_ID is the 11-char URL-safe
 // alphabet; [DOWNLOAD_CARD:URL|FILENAME] where URL is a bracket/pipe/
@@ -63,7 +70,11 @@ const DOWNLOAD_CARD_PATTERN = /\[DOWNLOAD_CARD:[^\s|\]]{1,500}\|[^\]\n]{1,200}\]
 //
 // History: PR #234 used a keyword-free /\[[^\]\n]{1,300}\](?!\()/g sweep that
 // deleted every bracket not followed by "(", corrupting all of the above.
-const LLM_LEAKED_BRACKET_PATTERN = /\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,720}\]/g;
+// CTA/CTA_Q joined the sweep in audit F41: the strict CTA_PATTERN rejects a
+// spaced or otherwise malformed body ("[CTA: budget range]"), which then
+// leaked verbatim into the bubble. CTA_Q before CTA so the alternation
+// reads unambiguously (the regex engine handles either order).
+const LLM_LEAKED_BRACKET_PATTERN = /\[(?:YOUTUBE_CARD|DOWNLOAD_CARD|CTA_Q|CTA):[^\]\n]{0,720}\]/g;
 
 const MAX_SENTINEL_LEN = STREAM_SENTINELS.reduce((m, s) => Math.max(m, s.length), 0);
 
@@ -80,6 +91,20 @@ const couldBeCtaPrefix = (tail) => {
     const body = tail.slice(CTA_PREFIX.length);
     // Still building the dimension name (or just hit ':') and no ']' yet.
     return /^[a-zA-Z0-9_]*$/.test(body);
+};
+
+/**
+ * Return true if `tail` could still grow into a complete
+ * [CTA_Q:question] marker: prefix build-up ("[C" … "[CTA_Q:") or an open
+ * free-text body (anything except ']' / newline, ≤200 chars) awaiting its
+ * closing bracket in a later chunk.
+ */
+const couldBeCtaQPrefix = (tail) => {
+    if (!tail.startsWith('[')) return false;
+    if (CTA_Q_PREFIX.startsWith(tail)) return true;
+    if (!tail.startsWith(CTA_Q_PREFIX)) return false;
+    const body = tail.slice(CTA_Q_PREFIX.length);
+    return body.length <= 200 && !/[\]\n]/.test(body);
 };
 
 /**
@@ -128,6 +153,9 @@ export const stripAllSentinels = (text) => {
     for (const s of STREAM_SENTINELS) {
         if (out.includes(s)) out = out.split(s).join('');
     }
+    // CTA_Q first: '[CTA_Q:' also contains the '[CTA' lead-in, and the strict
+    // CTA_PATTERN can never match a CTA_Q body — but ordering keeps intent clear.
+    if (out.includes(CTA_Q_PREFIX)) out = out.replace(CTA_Q_PATTERN, '');
     if (out.includes(CTA_PREFIX)) out = out.replace(CTA_PATTERN, '');
     if (out.includes(YOUTUBE_CARD_PREFIX)) out = out.replace(YOUTUBE_CARD_PATTERN, '');
     if (out.includes(DOWNLOAD_CARD_PREFIX)) out = out.replace(DOWNLOAD_CARD_PATTERN, '');
@@ -188,6 +216,7 @@ export const createSentinelStripper = () => {
                 if (
                     tail.startsWith('[') &&
                     (STREAM_SENTINELS.some((s) => s.startsWith(tail)) ||
+                        couldBeCtaQPrefix(tail) ||
                         couldBeCtaPrefix(tail) ||
                         couldBeYoutubeCardPrefix(tail) ||
                         couldBeDownloadCardPrefix(tail))

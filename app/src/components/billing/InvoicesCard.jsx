@@ -44,16 +44,25 @@ function hasPendingPdf(invoices) {
 export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [pollTick, setPollTick] = useState(0);
 
   // Refetches whenever the parent bumps refreshKey (post-payment refresh
   // cycle, manual Refresh button) or the PDF poll fires. Only the first
-  // load shows the skeleton — refreshes swap the rows in place.
+  // load shows the skeleton — refreshes swap the rows in place. A fetch
+  // failure is tracked as a distinct error state (audit F36): rendering it
+  // as the "no invoices" empty state told customers their tax documents
+  // don't exist when the API was merely unreachable.
   useEffect(() => {
     let cancelled = false;
     getInvoices()
-      .then(rows => { if (!cancelled) setInvoices(rows || []); })
-      .catch(() => { if (!cancelled) setInvoices([]); })
+      .then(rows => {
+        if (!cancelled) {
+          setInvoices(rows || []);
+          setError(false);
+        }
+      })
+      .catch(() => { if (!cancelled) setError(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [refreshKey, pollTick]);
@@ -69,6 +78,24 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
     return (
       <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
         <div className="h-4 w-24 rounded bg-surface-100 dark:bg-surface-800 animate-pulse" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-1">Invoices</h3>
+        <p className="text-[13px] text-surface-500 mb-3">
+          Couldn&apos;t load your invoices. Check your connection and try again.
+        </p>
+        <button
+          type="button"
+          onClick={() => { setLoading(true); setPollTick(t => t + 1); }}
+          className="text-[13px] font-medium text-primary-500 hover:text-primary-600"
+        >
+          Retry
+        </button>
       </div>
     );
   }

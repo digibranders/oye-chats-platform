@@ -154,40 +154,33 @@ curl http://localhost:8000/docs  # Should return Swagger HTML
 ```
 
 ### 1.6 Nginx Reverse Proxy
-```bash
-cat > /etc/nginx/sites-available/oyechats-api <<'NGINX'
-server {
-    server_name api.oyechats.com;
 
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # WebSocket support (required for /ws/chat/ and /ws/agent)
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        proxy_buffering off;
-        proxy_read_timeout 300s;
-    }
-
-    client_max_body_size 50M;
-}
-NGINX
-```
+> **Use the checked-in hardened templates in `api/nginx/` — do NOT hand-write
+> the config.** The repo templates carry protections a minimal proxy block
+> silently drops: Cloudflare real-IP validation (`CF-Connecting-IP` is
+> attacker-controlled unless the connection provably comes from a Cloudflare
+> edge), per-IP rate limiting, security headers, WebSocket/SSE handling, and
+> connection limits. A hand-typed config is exactly how a box drifts from the
+> hardened templates (audit F21).
 
 ```bash
+# Install the three templates from the repo (source of truth)
+mkdir -p /etc/nginx/snippets
+cp /opt/oyechats/platform/api/nginx/cloudflare-real-ip.conf /etc/nginx/snippets/
+cp /opt/oyechats/platform/api/nginx/oyechats-locations.conf /etc/nginx/snippets/
+cp /opt/oyechats/platform/api/nginx/oyechats-api.conf /etc/nginx/sites-available/oyechats-api
+
 ln -s /etc/nginx/sites-available/oyechats-api /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
-# SSL (after DNS is pointed)
+# SSL (after DNS is pointed) — then flip the HTTP→HTTPS redirect inside
+# oyechats-api.conf as its header comments describe.
 certbot --nginx -d api.oyechats.com
 ```
+
+Cloudflare publishes its edge ranges at <https://www.cloudflare.com/ips/>;
+refresh `cloudflare-real-ip.conf` when they change (see that file's header).
 
 ### 1.7 Firewall
 ```bash
@@ -197,18 +190,24 @@ ufw --force enable
 ```
 
 ### 1.8 Database Backups
+
+The backup pipeline is fully committed to the repo — script
+(`api/scripts/backup.sh`: local dump → gzip integrity + size floor → restore
+drill into a throwaway DB → off-site R2 upload → retention pruning) and
+schedule (`api/systemd/oyechats-backup.timer`, nightly 03:00 UTC). Do NOT
+hand-write a cron line; the deploy workflow installs and enables the timer
+automatically. Manual first-time setup:
+
 ```bash
 mkdir -p /opt/oyechats/backups
+chmod +x /opt/oyechats/platform/api/scripts/backup.sh
+cp /opt/oyechats/platform/api/systemd/oyechats-backup.{service,timer} /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now oyechats-backup.timer
 
-cat > /opt/oyechats/backup.sh <<'BASH'
-#!/bin/bash
-sudo -u postgres pg_dump oyechats | gzip > /opt/oyechats/backups/oyechats-$(date +%Y%m%d).sql.gz
-find /opt/oyechats/backups -mtime +7 -delete
-BASH
-
-chmod +x /opt/oyechats/backup.sh
-crontab -e
-# Add: 0 3 * * * /opt/oyechats/backup.sh
+# Verify: run one backup now and read its log
+systemctl start oyechats-backup
+journalctl -u oyechats-backup -n 30 --no-pager
 ```
 
 ---

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 
 /**
@@ -68,6 +68,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
     const [error, setError] = useState(false);
     const [confirming, setConfirming] = useState(false);
     const [cspBlocked, setCspBlocked] = useState(false);
+    const iframeRef = useRef(null);
 
     useEffect(() => {
         if (!safeUrl) return;
@@ -126,6 +127,12 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
 
     useEffect(() => {
         const handleMessage = (event) => {
+            // Bind the handler to OUR iframe, not just the provider's origin
+            // (audit F42). The host page can embed the same provider elsewhere
+            // (its own Calendly popup, another widget) — those iframes share
+            // event.origin, and without the source check their booking events
+            // would flip this session to a false "meeting booked" state.
+            if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return;
             if (provider === 'calendly') {
                 if (event.origin !== 'https://calendly.com') return;
                 const data = event?.data;
@@ -265,6 +272,7 @@ const MeetingBooking = ({ calendlyUrl, sessionId, onBooked, onDismiss, provider 
                         </div>
                     )}
                     <iframe
+                        ref={iframeRef}
                         key={error ? 'retry' : 'initial'}
                         title={`${PROVIDER_LABELS[provider] || 'Calendly'} Booking`}
                         src={buildIframeSrc(safeUrl, provider)}

@@ -32,7 +32,13 @@ permissions:
   contents: read
 
 jobs:
+  # In-repo CI gate (audit F20): the widget cannot ship to the CDN unless the
+  # full CI suite passes in THIS run.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

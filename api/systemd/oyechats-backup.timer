@@ -1,0 +1,16 @@
+# Nightly trigger for oyechats-backup.service — see that unit for install steps.
+
+[Unit]
+Description=Nightly OyeChats database backup at 03:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Fire on next boot if the droplet was down at 03:00 — a missed nightly
+# backup must not silently widen the recovery window.
+Persistent=true
+# Jitter so the dump never lands exactly on another 03:00 cron spike.
+RandomizedDelaySec=5min
+Unit=oyechats-backup.service
+
+[Install]
+WantedBy=timers.target

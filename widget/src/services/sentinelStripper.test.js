@@ -376,3 +376,36 @@ test('handles mixed leaked card marker + markdown link in one string', () => {
         'Watch this.  See our [pricing](https://x.com) for details.',
     );
 });
+
+// ── CTA_Q + leaked-marker backstop (audit F41) ───────────────────────────────
+
+test('stripAllSentinels removes a well-formed CTA_Q marker', () => {
+    assert.equal(
+        stripAllSentinels('Here are the options. [CTA_Q:Which length works better for you?]'),
+        'Here are the options. ',
+    );
+});
+
+test('stripper holds back a CTA_Q marker split across chunks', () => {
+    const s = createSentinelStripper();
+    assert.equal(s.push('Pick one. [CTA_Q:Which len'), 'Pick one. ');
+    assert.equal(s.push('gth works better for you?]'), '');
+    assert.equal(s.flush(), '');
+});
+
+test('leaked-marker backstop catches malformed CTA and CTA_Q shapes', () => {
+    // Shapes the strict patterns reject: a spaced CTA body, an echoed
+    // CTA_Q with an illegal char sneaking through the strict pattern's
+    // grammar. The prefix-keyed backstop must still remove them.
+    assert.equal(
+        stripAllSentinels('Sure! [CTA: budget range] happy to help'),
+        'Sure!  happy to help',
+    );
+    assert.equal(stripAllSentinels('[CTA_Q:]'), '');
+});
+
+test('backstop still preserves legitimate bracketed text', () => {
+    assert.equal(stripAllSentinels('See [1] and press [Enter]'), 'See [1] and press [Enter]');
+    assert.equal(stripAllSentinels('Open 9-5 [9am-5pm] daily'), 'Open 9-5 [9am-5pm] daily');
+    assert.equal(stripAllSentinels('[docs](https://x.test)'), '[docs](https://x.test)');
+});

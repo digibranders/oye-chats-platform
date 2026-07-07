@@ -1,9 +1,10 @@
 #!/bin/bash
-# OyeChats nightly DB backup — local + off-site (Backblaze B2).
+# OyeChats nightly DB backup — local + off-site (Cloudflare R2).
 #
-# Schedule (root cron): `0 3 * * * /opt/oyechats/backup.sh >> /var/log/oyechats-backup.log 2>&1`
+# Schedule: systemd timer — api/systemd/oyechats-backup.timer is the IaC
+# source of truth (audit F19). Remove any legacy root-cron `backup.sh` line.
 #
-# Why off-site: local backups die with the droplet. B2 keeps a 30-day
+# Why off-site: local backups die with the droplet. R2 keeps a 30-day
 # tail so a droplet loss is recoverable. Local copy stays at 7 days for
 # fast restore.
 #
@@ -54,6 +55,34 @@ if [ "$DUMP_SIZE_BYTES" -lt 1024 ]; then
 fi
 DUMP_SIZE_HUMAN="$(du -h "$DUMP_PATH" | cut -f1)"
 echo "[$(date -Iseconds)] Local dump complete ($DUMP_SIZE_HUMAN)"
+
+# 1.5 Restore drill (audit F18): gzip integrity + a size floor prove the FILE
+# is intact, not that it RESTORES — a dump poisoned by a mid-write schema
+# change or a truncated COPY block gunzips fine and still fails at the worst
+# possible moment. Restore tonight's dump into a throwaway database and sanity
+# check row-bearing tables. The dump is ~1 MB, so this costs seconds.
+# Disable with BACKUP_RESTORE_CHECK=0 (e.g. on a disk-pressured host).
+RESTORE_DB="${BACKUP_RESTORE_CHECK_DB:-oyechats_restore_check}"
+if [[ "${BACKUP_RESTORE_CHECK:-1}" == "1" ]]; then
+  echo "[$(date -Iseconds)] Restore drill: loading dump into throwaway db ${RESTORE_DB}"
+  sudo -u postgres psql -q -c "DROP DATABASE IF EXISTS ${RESTORE_DB}" postgres
+  sudo -u postgres psql -q -c "CREATE DATABASE ${RESTORE_DB}" postgres
+  if ! gunzip -c "$DUMP_PATH" | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$RESTORE_DB" >/dev/null; then
+    echo "[$(date -Iseconds)] FATAL: restore drill FAILED — tonight's dump does not restore cleanly ($DUMP_PATH)" >&2
+    exit 1
+  fi
+  RESTORED_TABLES="$(sudo -u postgres psql -tA -d "$RESTORE_DB" \
+    -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")"
+  RESTORED_CLIENTS="$(sudo -u postgres psql -tA -d "$RESTORE_DB" -c "SELECT count(*) FROM clients")"
+  sudo -u postgres psql -q -c "DROP DATABASE ${RESTORE_DB}" postgres
+  # The live schema has 25+ tables and at least one client row; a restore that
+  # comes up short restored a husk, not the database.
+  if [ "${RESTORED_TABLES:-0}" -lt 20 ] || [ "${RESTORED_CLIENTS:-0}" -lt 1 ]; then
+    echo "[$(date -Iseconds)] FATAL: restore drill produced ${RESTORED_TABLES} tables / ${RESTORED_CLIENTS} clients — dump is incomplete" >&2
+    exit 1
+  fi
+  echo "[$(date -Iseconds)] Restore drill OK (${RESTORED_TABLES} tables, ${RESTORED_CLIENTS} clients)"
+fi
 
 # 2. Off-site upload (B2 via boto3 — uses the API venv that already ships boto3)
 if [[ -z "${R2_KEY_ID:-}" || -z "${R2_APPLICATION_KEY:-}" || -z "${R2_BUCKET_NAME:-}" || -z "${R2_ENDPOINT:-}" ]]; then

@@ -5,6 +5,10 @@ on:
     branches: [development]
   pull_request:
     branches: [main]
+  # Reusable entry point: the deploy workflows call this so production deploys
+  # carry an in-repo dependency on CI passing (audit F20) — merges to main
+  # cannot reach the droplet/CDN without these jobs going green first.
+  workflow_call:
 
 # Least-privilege GITHUB_TOKEN — these jobs only read the repo (audit F48).
 permissions:
