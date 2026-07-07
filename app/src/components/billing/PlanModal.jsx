@@ -14,8 +14,6 @@ import {
 } from '../../services/api';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 import { cn } from '../../lib/utils';
-import Select from '../ui/Select';
-import { COUNTRY_OPTIONS } from '../../lib/countries';
 import { useCurrency } from '../../context/CurrencyContext';
 
 // Override at build time via VITE_SALES_EMAIL when the sales address ever
@@ -112,32 +110,18 @@ export default function PlanModal({
     // Informational (non-error) checkout notice — e.g. "payment cancelled".
     const [submitNotice, setSubmitNotice] = useState('');
 
-    // Billing country confirmed at checkout — drives display currency, the
-    // charged plan, and the invoice. Defaults to geo detection once the profile
-    // lands; the user can correct it (VPN / travelling / mis-detection).
-    const [billingCountry, setBillingCountry] = useState(null);
-    useEffect(() => {
-        if (geo?.country) setBillingCountry((prev) => prev ?? geo.country);
-    }, [geo]);
-
-    // Changing the country in the modal also updates the global currency, so
-    // every price behind the modal (Billing page, top-ups, seats) flips to
-    // match — the country picker is app-wide, not modal-local.
-    const { setCountry: setGlobalCountry } = useCurrency();
-    const handleBillingCountryChange = (c) => {
-        setBillingCountry(c);
-        setGlobalCountry(c);
-    };
-
-    // The confirmed country overrides detection everywhere in the modal, so the
-    // rail + focused plan flip currency together and match what checkout charges.
-    const effectiveCountry = billingCountry || geo?.country || null;
+    // Currency/country come from the ACCOUNT (set once in Billing details or at
+    // signup, honoured app-wide via CurrencyContext). The plan modal has no
+    // country picker of its own — Billing details is the single place to change
+    // it; here we just reflect the account's currency.
+    const { country: acctCountry, currency: acctCurrency } = useCurrency();
+    const effectiveCountry = acctCountry || geo?.country || null;
     const effGeo = useMemo(
         () =>
             geo
-                ? { ...geo, country: effectiveCountry, display_currency: effectiveCountry === 'IN' ? 'INR' : 'USD' }
+                ? { ...geo, country: effectiveCountry, display_currency: (acctCurrency || 'usd').toUpperCase() }
                 : geo,
-        [geo, effectiveCountry],
+        [geo, effectiveCountry, acctCurrency],
     );
 
     // ESC closes.
@@ -552,8 +536,6 @@ export default function PlanModal({
                                                 plan={selected}
                                                 billingCycle={billingCycle}
                                                 geo={effGeo}
-                                                billingCountry={effectiveCountry}
-                                                onBillingCountryChange={handleBillingCountryChange}
                                                 isCurrent={selected.slug === currentPlanSlug}
                                                 currentPlanSlug={currentPlanSlug}
                                                 currentSubscriptionStatus={currentSubscriptionStatus}
@@ -706,7 +688,7 @@ function TierRailCard({ plan, billingCycle, geo, isSelected, isCurrent, isMostPo
 
 /** The right-hand "focused plan" detail pane. */
 function FocusedPlan({
-    plan, billingCycle, geo, billingCountry, onBillingCountryChange,
+    plan, billingCycle, geo,
     isCurrent, currentPlanSlug, currentSubscriptionStatus,
     hasActiveSubscription, trialEndIso, dataRetentionUntilIso, currentPlan,
     submitting, submitError, submitNotice, onCta, referral,
@@ -802,34 +784,6 @@ function FocusedPlan({
                 >
                     <AlertCircle size={14} className="shrink-0 mt-0.5" />
                     <span>{submitNotice}</span>
-                </div>
-            )}
-
-            {/* Billing country — confirmed before checkout. Drives the charged
-                currency, plan set, and invoice. Only meaningful for a real
-                paid checkout (Free has nothing to charge, Enterprise is a
-                sales conversation). */}
-            {!isFree && !isEnterprise && (
-                <div>
-                    <label
-                        htmlFor="billing-country"
-                        className="block text-[12px] font-medium text-surface-600 dark:text-surface-300 mb-1"
-                    >
-                        Billing country
-                    </label>
-                    <Select
-                        id="billing-country"
-                        searchable
-                        value={billingCountry || ''}
-                        onChange={onBillingCountryChange}
-                        options={COUNTRY_OPTIONS}
-                        placeholder="Select your country…"
-                    />
-                    <p className="mt-1 text-[11px] text-surface-500 dark:text-surface-400">
-                        {billingCountry === 'IN'
-                            ? 'Billed in INR via UPI or card.'
-                            : 'USD billing for international customers is coming soon — Indian customers are billed in INR.'}
-                    </p>
                 </div>
             )}
 

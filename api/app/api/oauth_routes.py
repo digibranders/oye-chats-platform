@@ -37,6 +37,7 @@ from app.config import (
     GOOGLE_OAUTH_ENABLED,
     OAUTH_SUCCESS_REDIRECT_URL,
 )
+from app.core.geo import resolve_country
 from app.core.rate_limit import limiter
 from app.db.models import Client, OAuthAccount
 from app.db.session import get_session
@@ -220,7 +221,7 @@ def google_callback(
         return _error_redirect("oauth_email_unverified", next_path=next_path)
 
     try:
-        client, is_new = _resolve_client_for_profile(profile)
+        client, is_new = _resolve_client_for_profile(profile, resolve_country(request))
     except _DuplicatePasswordAccount:
         # An existing password account has the same email but the user
         # has never linked Google. We block auto-linking out of an
@@ -247,7 +248,7 @@ class _DuplicatePasswordAccount(Exception):
     """Raised when an OAuth profile's email matches a password-only account."""
 
 
-def _resolve_client_for_profile(profile: GoogleProfile) -> tuple[Client, bool]:
+def _resolve_client_for_profile(profile: GoogleProfile, billing_country: str | None = None) -> tuple[Client, bool]:
     """Find or create the Client for a verified Google profile.
 
     Returns ``(client, is_new)``. The Client object is detached from the
@@ -328,6 +329,7 @@ def _resolve_client_for_profile(profile: GoogleProfile) -> tuple[Client, bool]:
             hashed_password=None,  # OAuth-only; no password set.
             api_key=uuid.uuid4().hex,
             website=None,
+            billing_country=billing_country,  # IP-detected at signup; editable in Billing details
             is_superadmin=False,
             is_verified=True,  # Google has already verified the email.
         )
