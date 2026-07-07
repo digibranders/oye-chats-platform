@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import Select from '../ui/Select';
 import { cn } from '../../lib/utils';
 import { COUNTRY_OPTIONS, countryLabel } from '../../lib/countries';
+import { useCurrency } from '../../context/CurrencyContext';
 
 // GST state codes 01–38 + 97 (Other Territory) — mirrors the backend's
 // VALID_STATE_CODES set in api/app/core/gstin.py.
@@ -208,6 +209,7 @@ function detailsToForm(details) {
  */
 export default function BillingDetailsCard() {
   const { showToast } = useToast();
+  const { currency, setCountry: setGlobalCountry } = useCurrency();
 
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -258,6 +260,9 @@ export default function BillingDetailsCard() {
     try {
       const updated = await updateBillingDetails(patch);
       setDetails(updated);
+      // Country drives the account's display/charge currency — propagate the
+      // saved value so every price across the app flips immediately, no reload.
+      if ('billing_country' in patch) setGlobalCountry(updated?.billing_country || null);
       setEditing(false);
       showToast('Billing details saved.', 'success');
     } catch (err) {
@@ -293,6 +298,11 @@ export default function BillingDetailsCard() {
             </CardTitle>
             <CardDescription>
               Printed on your invoices. Add your GSTIN to claim input tax credit.
+              {' '}Your billing country sets your currency — you&apos;re billed in{' '}
+              <span className="font-medium text-surface-700 dark:text-surface-200">
+                {currency === 'inr' ? '₹ INR' : '$ USD'}
+              </span>
+              .
             </CardDescription>
           </div>
           {!loading && !loadError && !editing && (

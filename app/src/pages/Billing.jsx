@@ -182,6 +182,7 @@ const TABS = [
   { id: 'overview', label: 'Overview', icon: Activity },
   { id: 'topups', label: 'Buy credits', icon: CreditCoin },
   { id: 'seats', label: 'Plan & seats', icon: Users },
+  { id: 'details', label: 'Billing details', icon: FileText },
   { id: 'history', label: 'History', icon: ListOrdered },
 ];
 
@@ -590,6 +591,8 @@ export default function Billing() {
               <HistoryTab history={history} totalRemaining={totalRemaining} />
             </div>
           )}
+
+          {activeTab === 'details' && <BillingDetailsCard />}
         </>
       )}
 
@@ -1340,10 +1343,6 @@ function SeatsTab({
           </div>
         </CardContent>
       </Card>
-
-      {/* Buyer tax identity for invoices (invoicing v2) — self-contained
-          card that loads/saves /subscriptions/billing-details itself. */}
-      <BillingDetailsCard />
     </div>
   );
 }
