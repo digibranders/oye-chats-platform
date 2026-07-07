@@ -1307,6 +1307,8 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     document, uploads to R2 under a capability URL, and stamps
     ``pdf_url``/``invoice_url``. Emails the customer only when
     ``INVOICE_EMAILS_ENABLED`` (shadow mode keeps documents admin-only).
+    A recovery pass then re-attempts delivery for rendered-but-unmailed
+    documents so a post-render email failure is never permanent (audit F43).
     Per-invoice failures are logged and left for the next sweep; the money
     path is never involved. Returns the number of PDFs produced.
     """
@@ -1382,6 +1384,39 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
                     except Exception:  # noqa: BLE001
                         session.rollback()
                         logger.exception("task_render_invoice_pdfs: email failed for invoice %s", invoice.id)
+            # Recovery pass (audit F43): a failed send above leaves the invoice
+            # OUTSIDE the pdf_url-IS-NULL sweep forever — the customer would
+            # silently never receive their tax invoice. Re-attempt delivery for
+            # rendered-but-unmailed documents. Snapshots with no email address
+            # are excluded in SQL so they can't starve the batch (they surface
+            # via reconciliation_anomalies instead). The PDF is re-rendered for
+            # the attachment — the bytes are not stored, only their R2 URL.
+            if config.INVOICE_EMAILS_ENABLED:
+                unmailed = (
+                    session.execute(
+                        sa_select(InvoiceModel)
+                        .where(
+                            InvoiceModel.invoice_number.isnot(None),
+                            InvoiceModel.pdf_url.isnot(None),
+                            InvoiceModel.emailed_at.is_(None),
+                            InvoiceModel.buyer_snapshot["email"].astext.isnot(None),
+                        )
+                        .order_by(InvoiceModel.id)
+                        .limit(10)
+                    )
+                    .scalars()
+                    .all()
+                )
+                for invoice in unmailed:
+                    try:
+                        pdf = _render_invoice_pdf(invoice)
+                        _send_invoice_email(invoice.buyer_snapshot["email"], invoice, invoice.pdf_url, pdf_bytes=pdf)
+                        invoice.emailed_at = _utcnow()
+                        session.commit()
+                        logger.info("task_render_invoice_pdfs: recovered email for invoice %s", invoice.id)
+                    except Exception:  # noqa: BLE001 — retried next sweep; alerted daily via emails_pending
+                        session.rollback()
+                        logger.exception("task_render_invoice_pdfs: recovery email failed for invoice %s", invoice.id)
         return done
 
     loop = asyncio.get_running_loop()

@@ -31,6 +31,16 @@ from app.core.cache import PREFIX, get_redis
 
 logger = logging.getLogger(__name__)
 
+
+class EmbedWaitExceeded(RuntimeError):
+    """The reserved wait exceeds the caller's ceiling (latency-sensitive path).
+
+    Raised only when ``acquire`` is given an explicit ``max_wait`` — the query
+    path uses this to fail fast and degrade to keyword-only retrieval instead of
+    pinning a request-serving thread behind bulk-ingestion token debt.
+    """
+
+
 _KEY = f"{PREFIX}embed:rpm"
 # A single acquire never sleeps longer than this; a wait that large means the
 # bucket is badly misconfigured (or the clock jumped), so we fail open rather
@@ -98,6 +108,11 @@ class _TokenBucket:
             self.tokens -= cost  # reserve (may go negative — that is the debt)
             return wait
 
+    def refund(self, cost: float) -> None:
+        """Return an aborted reservation's tokens, capped at capacity."""
+        with self._lock:
+            self.tokens = min(self.capacity, self.tokens + cost)
+
 
 _local_bucket: _TokenBucket | None = None
 _local_lock = threading.Lock()
@@ -141,12 +156,34 @@ def _reserve_wait(cost: int, rate: float) -> float:
     return _get_local_bucket().acquire(float(cost), time.monotonic())
 
 
-def acquire(cost: int) -> None:
+def _refund(cost: int) -> None:
+    """Hand an aborted reservation's tokens back (best-effort).
+
+    Without this, every ceiling-exceeded query acquire would leave phantom debt
+    in the bucket that ingestion then sleeps off for real.
+    """
+    client = get_redis()
+    if client is not None:
+        try:
+            client.hincrbyfloat(_KEY, "tokens", float(cost))
+            return
+        except Exception:
+            logger.debug("embed rate limiter: Redis refund failed", exc_info=True)
+    _get_local_bucket().refund(float(cost))
+
+
+def acquire(cost: int, *, max_wait: float | None = None) -> None:
     """Block until ``cost`` embedding request-units fit under the RPM ceiling.
 
     ``cost`` is the number of content items in the batch — each counts as one
     request against Gemini's per-minute quota. A non-positive cost or a
     disabled limit (``EMBED_RPM_LIMIT <= 0``) is a no-op.
+
+    ``max_wait`` is the caller's latency ceiling: when the reserved wait
+    exceeds it, the reservation is refunded and :class:`EmbedWaitExceeded` is
+    raised instead of sleeping. The query-embedding path uses a small ceiling
+    so a chat request never queues behind bulk-ingestion debt (audit F38);
+    ingestion omits it and keeps the fail-open cap below.
     """
     if cost <= 0:
         return
@@ -155,6 +192,9 @@ def acquire(cost: int) -> None:
         return
     wait = _reserve_wait(cost, rate)
     if wait > 0:
+        if max_wait is not None and wait > max_wait:
+            _refund(cost)
+            raise EmbedWaitExceeded(f"embed limiter wait {wait:.1f}s exceeds caller ceiling {max_wait:.1f}s")
         if wait > _MAX_WAIT_SECONDS:
             logger.warning(
                 "embed rate limiter: computed wait %.1fs exceeds cap %.0fs — proceeding without full throttle",

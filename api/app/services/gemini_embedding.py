@@ -66,7 +66,7 @@ def _retry_delay_from_429(resp: httpx.Response) -> float | None:
     return float(match.group(1)) if match else None
 
 
-def _embed_one_batch(client: httpx.Client, batch: list[str]) -> list[list[float]]:
+def _embed_one_batch(client: httpx.Client, batch: list[str], max_wait_s: float | None = None) -> list[list[float]]:
     url = f"{GEMINI_EMBED_URL}/models/{GEMINI_EMBED_MODEL}:batchEmbedContents"
     body = {
         "requests": [
@@ -82,8 +82,11 @@ def _embed_one_batch(client: httpx.Client, batch: list[str]) -> list[list[float]
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
         # Reserve this batch's request-units against the project-wide per-minute
         # quota before every POST (retries included — each POST is billed) so we
-        # pace under the ceiling instead of bursting into 429s.
-        embed_rate_limiter.acquire(len(batch))
+        # pace under the ceiling instead of bursting into 429s. A caller-supplied
+        # ``max_wait_s`` (the query path) raises EmbedWaitExceeded here rather
+        # than sleeping behind bulk-ingestion debt — deliberately NOT caught by
+        # this retry loop: retrying can't make the bucket drain faster.
+        embed_rate_limiter.acquire(len(batch), max_wait=max_wait_s)
         try:
             resp = client.post(url, params={"key": GOOGLE_API_KEY}, json=body, timeout=_TIMEOUT)
         except httpx.HTTPError as exc:
@@ -129,6 +132,7 @@ def embed_texts(
     texts: list[str],
     *,
     progress_cb: Callable[[int, int], None] | None = None,
+    max_wait_s: float | None = None,
     _client: httpx.Client | None = None,
 ) -> list[list[float]]:
     """Embed ``texts`` → EMBED_DIMENSIONS-wide, L2-normalized vectors.
@@ -137,7 +141,10 @@ def embed_texts(
     runtime-tunable ``embed.concurrency``, super-admin Models & RAG card) since
     embedding is network-bound — this is the main lever on large-crawl
     wall-clock. Output order matches input order regardless of completion order.
-    ``progress_cb(done, total)`` fires as batches finish.
+    ``progress_cb(done, total)`` fires as batches finish. ``max_wait_s`` bounds
+    how long any batch may queue behind the shared rate-limiter's token debt —
+    the query path passes a small ceiling and treats the resulting
+    ``EmbedWaitExceeded`` as an embedding failure (keyword-only fallback).
 
     Raises RuntimeError on a missing key or persistent API failure. Callers rely
     on that: ingestion retries via ARQ; the query path degrades to full-text
@@ -164,7 +171,7 @@ def embed_texts(
     start = perf_counter()
     try:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            future_to_idx = {pool.submit(_embed_one_batch, client, b): i for i, b in enumerate(batches)}
+            future_to_idx = {pool.submit(_embed_one_batch, client, b, max_wait_s): i for i, b in enumerate(batches)}
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 results[idx] = future.result()  # propagates a batch's terminal failure

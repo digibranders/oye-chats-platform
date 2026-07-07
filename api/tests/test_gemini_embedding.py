@@ -18,7 +18,7 @@ def _stub_rate_limiter(monkeypatch):
     the per-batch request cost so wiring can be asserted.
     """
     costs: list[int] = []
-    monkeypatch.setattr(ge.embed_rate_limiter, "acquire", costs.append)
+    monkeypatch.setattr(ge.embed_rate_limiter, "acquire", lambda cost, **kw: costs.append(cost))
     return costs
 
 

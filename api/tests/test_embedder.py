@@ -11,7 +11,7 @@ def test_embed_chunks_uses_google(monkeypatch):
     monkeypatch.setattr(embedder, "EMBED_PROVIDER", "google")
     captured = {}
 
-    def fake_embed(texts, *, progress_cb=None):
+    def fake_embed(texts, *, progress_cb=None, max_wait_s=None):
         captured["texts"] = texts
         return [[0.1] * 768 for _ in texts]
 
