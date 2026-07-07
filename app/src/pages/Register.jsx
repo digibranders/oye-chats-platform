@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
+import { Loader2, Eye, EyeOff, CheckCircle2, Mail, Lock, User, Building2, Globe, MapPin, ArrowRight, Zap, BookOpen, BarChart3, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { registerClient } from '../services/api';
 import { clearTrialBannerDismissals } from '../utils/trialBanner';
 import { setAuthBundle, getAuthItem } from '../utils/authStorage';
 import { cn } from '../lib/utils';
 import GoogleAuthButton from '../components/GoogleAuthButton';
+import { COUNTRY_OPTIONS } from '../lib/countries';
 
 const features = [
   { icon: BookOpen, title: 'Knowledge Base', desc: 'Train on your docs in minutes' },
@@ -20,6 +21,7 @@ export default function Register() {
   const [email, setEmail] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [website, setWebsite] = useState('');
+  const [billingCountry, setBillingCountry] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -86,6 +88,7 @@ export default function Register() {
         password,
         companyName.trim() || null,
         website.trim() || null,
+        billingCountry || null,
       );
 
       // Register defaults to ``persistent=true`` — newly signed-up
@@ -315,13 +318,36 @@ export default function Register() {
             </div>
 
             <div>
+              <label className="block text-[13px] font-medium text-white/70 mb-1.5">
+                Billing country <span className="text-white/30 font-normal text-[11px]">(sets your currency)</span>
+              </label>
+              <div className="relative group">
+                <MapPin size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-blue-400 transition-colors" />
+                <select
+                  value={billingCountry}
+                  onChange={(e) => setBillingCountry(e.target.value)}
+                  className={cn(inputCls, 'appearance-none cursor-pointer')}
+                  tabIndex={5}
+                >
+                  <option value="" className="bg-surface-900 text-white">Detect automatically</option>
+                  {COUNTRY_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value} className="bg-surface-900 text-white">
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-1 text-[11px] text-white/30">India is billed in ₹ INR; other countries in $ USD.</p>
+            </div>
+
+            <div>
               <label className="block text-[13px] font-medium text-white/70 mb-1.5">Password</label>
               <div className="relative group">
                 <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-blue-400 transition-colors" />
                 <input
                   type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
                   className={cn(inputCls, 'pr-11')}
-                  placeholder="Create a strong password" autoComplete="new-password" tabIndex={5}
+                  placeholder="Create a strong password" autoComplete="new-password" tabIndex={6}
                 />
                 <button
                   type="button" onClick={() => setShowPassword(!showPassword)}
@@ -370,7 +396,7 @@ export default function Register() {
                         : 'border-rose-500/60 focus:border-rose-500'
                       : 'border-white/[.08] focus:border-blue-500/60'
                   )}
-                  placeholder="Re-enter your password" autoComplete="new-password" tabIndex={6}
+                  placeholder="Re-enter your password" autoComplete="new-password" tabIndex={7}
                 />
               </div>
               {confirmPassword && !passwordsMatch && (
@@ -398,7 +424,7 @@ export default function Register() {
                       ? 'border-rose-500 ring-2 ring-rose-500/40'
                       : 'border-white/20 focus:ring-blue-500/25'
                   )}
-                  tabIndex={7}
+                  tabIndex={8}
                 />
                 <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -438,7 +464,7 @@ export default function Register() {
                 'shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]',
                 'flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm'
               )}
-              tabIndex={8}
+              tabIndex={9}
             >
               {isLoading ? <Loader2 size={18} className="animate-spin" /> : <>Create Account <ArrowRight size={15} /></>}
             </button>
@@ -446,7 +472,7 @@ export default function Register() {
 
           <p className="text-center text-sm text-white/40 mt-6">
             Already have an account?{' '}
-            <Link to="/login" tabIndex={9} className="font-semibold text-blue-400 hover:text-blue-300 transition-colors">
+            <Link to="/login" tabIndex={10} className="font-semibold text-blue-400 hover:text-blue-300 transition-colors">
               Sign in
             </Link>
           </p>

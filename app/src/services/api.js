@@ -143,9 +143,11 @@ export const registerClient = async (
     password,
     companyName = null,
     website = null,
+    billingCountry = null,
 ) => {
     try {
         const payload = { name, email, password, company_name: companyName, website };
+        if (billingCountry) payload.billing_country = billingCountry;
         const response = await api.post('/auth/register', payload);
         return response.data;
     } catch (error) {

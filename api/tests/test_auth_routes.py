@@ -171,6 +171,41 @@ class TestRegister:
         assert len(added_objects) == 1
         assert response.json()["client_id"] == 42
 
+    def test_registration_persists_billing_country(self, monkeypatch):
+        from app.api import auth_routes
+
+        session = MagicMock()
+        session.execute.return_value = _ExecuteResult(None)  # no duplicate
+
+        added_objects = []
+
+        def mock_flush():
+            for obj in added_objects:
+                if not hasattr(obj, "id") or obj.id is None:
+                    obj.id = 42
+
+        session.add.side_effect = added_objects.append
+        session.flush.side_effect = mock_flush
+        session.refresh.side_effect = lambda obj: None
+        monkeypatch.setattr(auth_routes, "get_session", lambda: _session_ctx(session))
+        monkeypatch.setattr(auth_routes, "get_password_hash", lambda p: "hashed")
+
+        tc = TestClient(_build_app())
+        response = tc.post(
+            "/auth/register",
+            json={
+                "name": "IN User",
+                "email": "in-user@example.com",
+                "password": "password1",
+                "billing_country": "in",  # lower-case → normalised to IN
+            },
+        )
+
+        assert response.status_code == 200
+        # The new Client is the first object added; its billing country persists
+        # so the account renders INR from the very first load.
+        assert added_objects[0].billing_country == "IN"
+
     def test_duplicate_email_rejected(self, monkeypatch):
         from app.api import auth_routes
 
