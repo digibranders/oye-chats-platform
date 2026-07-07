@@ -153,14 +153,12 @@ function formToPatch(form, details) {
   }
 
   const country = trim(form.billing_country).toUpperCase();
-  // The form seeds 'IN' as a display default when no country is stored yet
-  // (see detailsToForm) — only send that value if the user actually touched
-  // the field, so an untouched default is never persisted on first save.
-  if (
-    country !== stored.billing_country &&
-    (stored.billing_country || form.billing_country_touched)
-  ) {
-    patch.billing_country = country || null;
+  // The form is seeded from the account's EFFECTIVE country (stored value, else
+  // the detected billing country), so persisting it on save is correct — it
+  // makes the Country row and the "billed in ₹/$" line agree instead of leaving
+  // the country blank while a currency is already being charged.
+  if (country && country !== stored.billing_country) {
+    patch.billing_country = country;
   }
   // State is server-derived from the GSTIN when one is set — only send an
   // explicit state when the form has no GSTIN, otherwise a stale select
@@ -179,7 +177,7 @@ function formToPatch(form, details) {
   return patch;
 }
 
-function detailsToForm(details) {
+function detailsToForm(details, fallbackCountry) {
   const address = details?.billing_address || {};
   return {
     legal_name: details?.legal_name || '',
@@ -190,11 +188,10 @@ function detailsToForm(details) {
     state: address.state || '',
     postal_code: address.postal_code || '',
     billing_state_code: details?.billing_state_code || '',
-    billing_country: details?.billing_country || 'IN',
+    // Stored country, else the account's detected country, else India — so the
+    // dropdown reflects (and, on save, persists) the currency actually charged.
+    billing_country: details?.billing_country || fallbackCountry || 'IN',
     billing_email: details?.billing_email || '',
-    // Distinguishes a user-entered country from the seeded 'IN' default so
-    // formToPatch never persists a default the user did not choose.
-    billing_country_touched: false,
   };
 }
 
@@ -209,7 +206,7 @@ function detailsToForm(details) {
  */
 export default function BillingDetailsCard() {
   const { showToast } = useToast();
-  const { currency, setCountry: setGlobalCountry } = useCurrency();
+  const { currency, country: acctCountry, setCountry: setGlobalCountry } = useCurrency();
 
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -245,7 +242,7 @@ export default function BillingDetailsCard() {
   };
 
   function startEditing() {
-    setForm(detailsToForm(details));
+    setForm(detailsToForm(details, acctCountry));
     setEditing(true);
   }
 
@@ -444,13 +441,7 @@ export default function BillingDetailsCard() {
                 <Select
                   id="bd-country"
                   value={form.billing_country}
-                  onChange={(v) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      billing_country: v,
-                      billing_country_touched: true,
-                    }))
-                  }
+                  onChange={(v) => setForm((prev) => ({ ...prev, billing_country: v }))}
                   options={COUNTRY_OPTIONS}
                   placeholder="Select a country…"
                   searchable
@@ -510,7 +501,7 @@ export default function BillingDetailsCard() {
             <ReadonlyRow icon={FileText} label="GSTIN" value={details?.gstin} />
             <ReadonlyRow icon={MapPin} label="Address" value={addressLine} />
             <ReadonlyRow icon={MapPin} label="State" value={stateLabel} />
-            <ReadonlyRow icon={MapPin} label="Country" value={countryLabel(details?.billing_country)} />
+            <ReadonlyRow icon={MapPin} label="Country" value={countryLabel(details?.billing_country || acctCountry)} />
             <ReadonlyRow
               icon={Mail}
               label="Billing email"

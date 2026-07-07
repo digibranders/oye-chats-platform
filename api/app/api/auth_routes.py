@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.api.auth import get_current_client_or_operator, get_current_operator
 from app.core.dates import trial_days_remaining
+from app.core.geo import resolve_country
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, ChatSession, Client, Document, Operator
@@ -709,7 +710,10 @@ def register(request: Request, body: RegisterRequest):
                 hashed_password=get_password_hash(body.password),
                 api_key=str(uuid.uuid4().hex),
                 website=body.website.strip() if body.website else None,
-                billing_country=body.billing_country,  # validator normalised to ISO-2 or None
+                # Explicit choice from the form wins; otherwise stamp the
+                # IP-detected country so the account has the right currency from
+                # first load (editable later in Billing details).
+                billing_country=body.billing_country or resolve_country(request),
                 is_superadmin=False,
             )
 
