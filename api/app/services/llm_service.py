@@ -285,7 +285,7 @@ Website content:
         return None
 
 
-_STREAM_CHUNK_TIMEOUT_S = 30
+_STREAM_CHUNK_TIMEOUT_S = 60
 
 
 async def _stream_from_model(

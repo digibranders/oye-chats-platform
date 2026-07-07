@@ -45,8 +45,8 @@ export const sendMessage = async (message, sessionId = null) => {
 
 // Wrap reader.read() in a race against a timeout so a stalled stream
 // (backend hung, TCP open but no bytes flowing) never freezes the UI forever.
-// 35s = 30s server-side chunk timeout + 5s network RTT buffer.
-const _STREAM_READ_TIMEOUT_MS = 35_000;
+// 65s = 60s server-side chunk timeout + 5s network RTT buffer.
+const _STREAM_READ_TIMEOUT_MS = 65_000;
 
 const _readWithTimeout = (reader) =>
     new Promise((resolve, reject) => {

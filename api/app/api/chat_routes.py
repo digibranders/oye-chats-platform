@@ -168,41 +168,46 @@ def _resolve_and_update_location(session_id: str, ip_address: str):
 
         location = None
 
-        # Try ip-api.com first
+        # Primary: ipwho.is (10k/month free, HTTPS, no key, no per-second cap).
         try:
             req = urllib.request.Request(
-                f"http://ip-api.com/json/{ip_address}",
+                f"https://ipwho.is/{ip_address}",
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             with urllib.request.urlopen(req, timeout=3.0) as response:
                 data = json.loads(response.read().decode())
-                if data.get("status") == "success":
-                    city = data.get("city", "")
-                    country = data.get("country", "")
+                if data.get("success"):
+                    city = data.get("city", "") or ""
+                    country = data.get("country", "") or ""
                     if city and country:
                         location = f"{city}, {country} | {ip_address}"
                     elif country:
                         location = f"{country} | {ip_address}"
+                else:
+                    logger.warning(f"ipwho.is returned failure for {ip_address}: {data.get('message')}")
         except Exception as e1:
-            logger.warning(f"ip-api.com failed for {ip_address}: {e1}")
+            logger.warning(f"ipwho.is failed for {ip_address}: {e1}")
 
-        # Fallback to ipinfo.io
+        # Fallback: ipapi.co (~30k/month free, HTTPS, no key).
         if not location:
             try:
                 req2 = urllib.request.Request(
-                    f"https://ipinfo.io/{ip_address}/json",
-                    headers={"User-Agent": "Mozilla/5.0"},
+                    f"https://ipapi.co/{ip_address}/json/",
+                    headers={"User-Agent": "OyeChats/1.0"},
                 )
                 with urllib.request.urlopen(req2, timeout=3.0) as response2:
                     data2 = json.loads(response2.read().decode())
-                    city = data2.get("city", "")
-                    country = data2.get("country", "")
-                    if city and country:
-                        location = f"{city}, {country} | {ip_address}"
-                    elif country:
-                        location = f"{country} | {ip_address}"
+                    if not data2.get("error"):
+                        city = data2.get("city", "") or ""
+                        country = data2.get("country_name", "") or ""
+                        if city and country:
+                            location = f"{city}, {country} | {ip_address}"
+                        elif country:
+                            location = f"{country} | {ip_address}"
+                    else:
+                        logger.warning(f"ipapi.co returned error for {ip_address}: {data2.get('reason')}")
             except Exception as e2:
-                logger.warning(f"ipinfo.io also failed for {ip_address}: {e2}")
+                logger.warning(f"ipapi.co also failed for {ip_address}: {e2}")
 
         if not location:
             return

@@ -2627,6 +2627,7 @@ RULES:
 6. For LIST and COUNT questions ("who are your clients", "what services do you offer", "how many people on your team"): give the COMPLETE list that appears in the reference material — never a partial subset. Use the company's exact branded names where the reference material gives them (e.g. "Performance Marketing & Tracking", not generic "ads"; "Brand Identity & Storytelling", not generic "branding"). Never hedge with "at least N", "30+", or "we have several" when the reference material lists the items by name — count or enumerate them precisely. If the list is genuinely long, summarise with an exact count plus the most prominent names: "we work with 19 brands including X, Y, Z".
 6a. LIST NORMALIZATION: When the reference material contains a list whose items are joined inline with " - " or " — " separators (a sign the source HTML was flattened during crawl — e.g. "Event A — 15 March 2026 - Event B — 21 February 2026 - Event C — 03 December 2025"), DO NOT echo it verbatim. Split on the inline separators and render each item as its own markdown bullet on its own line. Never produce a single bullet that contains multiple distinct items.
 6b. DATE-FILTERED LISTS: For "upcoming", "next", "future", "this year", or "current" questions about dated items (events, webinars, releases, deadlines, offers), use the DATE ANALYSIS block below (when present) as ground truth for which dates are PAST vs UPCOMING — it is computed against TODAY'S DATE, so trust its verdicts instead of comparing dates yourself. Include only UPCOMING items; silently drop PAST items. If a date in the reference material has no DATE ANALYSIS entry, fall back to comparing it against TODAY'S DATE above. If every dated item in the reference material is PAST, say so plainly — e.g. "I don't have any upcoming events on file right now — the event list I'm seeing has already passed. Check [our events page](URL) for the latest schedule." Never label a PAST date as "upcoming".
+6c. DATELESS EVENT MENTIONS (READ TWICE — this is a real bug): An event title that contains a year (e.g. "KCD Delhi 2026", "DevOps Summit 2026", "GIDS 2026") is NOT a date — it is just the event's NAME. You must NEVER treat a year in an event title as evidence that the event is upcoming. The event is "upcoming" ONLY when its SPECIFIC date (day + month) appears in the retrieved reference material AND that date is marked UPCOMING in the DATE ANALYSIS block (or, absent DATE ANALYSIS, is a real calendar date AFTER today). If the retrieved chunks mention an event by name but do NOT include its specific day/month date, you MUST NOT list it as upcoming — regardless of nearby text like "Upcoming Events", "Never Miss an Upcoming Event", "Register now", or any other UI copy that happens to sit adjacent to the event title (these are subscribe-box / marketing labels, not evidence). In that case, respond with something like: "Our events are listed at [our events page](URL) — I'd point you there for the current schedule of upcoming ones." Do NOT guess. Do NOT infer freshness from the year in a title. Do NOT infer freshness from nearby marketing copy. A single wrong "upcoming" listing damages credibility more than an honest "check the events page" deflection.
 7. Only ask a follow-up question if the user's query is genuinely ambiguous.
 8. Use plain language. No corporate buzzwords like "operational efficiency" or "synergy".
 9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".
@@ -3531,10 +3532,10 @@ def rag_pipeline(
             # temperature=0.3: low enough that "what services do you offer"
             # produces the same answer in 4-of-5 fresh sessions (was ~1.0
             # default → high variance), high enough that the bot doesn't
-            # sound robotic. max_tokens=600 keeps answers within the 1–3
-            # sentence rule (with headroom for occasional list responses)
-            # and prevents the model from running off into 1000-token
-            # essays when the context is rich.
+            # sound robotic. max_tokens=1500 gives enough headroom for
+            # markdown list answers (bold headers + bullets burn tokens
+            # fast — 600 was truncating mid-list in production) while
+            # still preventing runaway essays.
             # Structural failure signal (text, failed) — the caller refunds the
             # ai_chat credit when generation produced only a canned error (both
             # LLMs exhausted). Derived from the call outcome, not the answer
@@ -3543,7 +3544,7 @@ def rag_pipeline(
             answer, _generation_failed = generate_response_checked(
                 prompt,
                 temperature=0.3,
-                max_tokens=600,
+                max_tokens=1500,
                 metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
             )
 
@@ -4272,7 +4273,7 @@ async def rag_pipeline_stream(
                 async for chunk in generate_response_stream(
                     prompt,
                     temperature=0.3,
-                    max_tokens=600,
+                    max_tokens=1500,
                     metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
                 ):
                     if chunk:
