@@ -16,6 +16,7 @@ import { openRazorpayCheckout } from '../../lib/razorpay';
 import { cn } from '../../lib/utils';
 import Select from '../ui/Select';
 import { COUNTRY_OPTIONS } from '../../lib/countries';
+import { useCurrency } from '../../context/CurrencyContext';
 
 // Override at build time via VITE_SALES_EMAIL when the sales address ever
 // changes — same env-driven pattern as VITE_API_URL elsewhere in the app.
@@ -118,6 +119,15 @@ export default function PlanModal({
     useEffect(() => {
         if (geo?.country) setBillingCountry((prev) => prev ?? geo.country);
     }, [geo]);
+
+    // Changing the country in the modal also updates the global currency, so
+    // every price behind the modal (Billing page, top-ups, seats) flips to
+    // match — the country picker is app-wide, not modal-local.
+    const { setCountry: setGlobalCountry } = useCurrency();
+    const handleBillingCountryChange = (c) => {
+        setBillingCountry(c);
+        setGlobalCountry(c);
+    };
 
     // The confirmed country overrides detection everywhere in the modal, so the
     // rail + focused plan flip currency together and match what checkout charges.
@@ -543,7 +553,7 @@ export default function PlanModal({
                                                 billingCycle={billingCycle}
                                                 geo={effGeo}
                                                 billingCountry={effectiveCountry}
-                                                onBillingCountryChange={setBillingCountry}
+                                                onBillingCountryChange={handleBillingCountryChange}
                                                 isCurrent={selected.slug === currentPlanSlug}
                                                 currentPlanSlug={currentPlanSlug}
                                                 currentSubscriptionStatus={currentSubscriptionStatus}
