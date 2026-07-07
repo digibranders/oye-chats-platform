@@ -324,7 +324,7 @@ def get_current_subscription(client: Client = Depends(get_current_client)):
 
 
 @router.get("/geo")
-def get_billing_geo(request: Request, _client: Client = Depends(get_current_client)):
+def get_billing_geo(request: Request, client: Client = Depends(get_current_client)):
     """Return the geo / currency profile the UI should render against.
 
     Single call so the Billing page and PlanModal don't have to fan out a
@@ -337,7 +337,11 @@ def get_billing_geo(request: Request, _client: Client = Depends(get_current_clie
     """
     from app.config import RAZORPAY_KEY_ID
 
-    country = resolve_country(request)
+    # The saved billing country is authoritative (set at checkout / billing
+    # settings / onboarding); IP geo is only the fallback for accounts that
+    # haven't chosen one yet. This is what makes "set the country once, and the
+    # currency follows everywhere" hold across sessions.
+    country = (client.billing_country or "").strip().upper() or resolve_country(request)
     # Geo-split model: Indians see and pay INR; everyone else sees (and — once
     # the Phase-2 USD rail is live — pays) USD. Display currency == charge
     # currency by design, so there is no currency mismatch to disclose.
@@ -717,7 +721,9 @@ def checkout_quote(
         # step) overrides IP geo so an Indian resident mis-detected abroad is
         # never routed to USD — and vice-versa (FEMA-safe).
         detected = resolve_country(request)
-        confirmed = (billing_country or "").strip().upper() or None
+        # Explicit param (this checkout) wins, then the account's saved country,
+        # then IP geo — so the quote matches what the rest of the app shows.
+        confirmed = (billing_country or "").strip().upper() or (client.billing_country or "").strip().upper() or None
         country = confirmed or detected
         is_domestic = country == "IN"
 

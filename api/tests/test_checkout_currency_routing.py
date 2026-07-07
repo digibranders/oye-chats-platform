@@ -105,6 +105,24 @@ def test_geo_returns_usd_for_foreign_buyer(db, monkeypatch):
     assert res.json()["country"] == "US"
 
 
+def test_geo_prefers_stored_billing_country_over_ip(db, monkeypatch):
+    # A saved billing_country is authoritative: an Indian who set IN stays on
+    # INR even when the IP geo mis-detects them abroad (and vice-versa).
+    from app.api import subscription_routes
+
+    client = _make_client(db, email="geo-stored@e.com")
+    client.billing_country = "IN"
+    db.commit()
+    monkeypatch.setattr(subscription_routes, "resolve_country", lambda request: "US")
+
+    api = _api(db, client)
+    res = api.get("/subscriptions/geo")
+
+    assert res.status_code == 200, res.text
+    assert res.json()["country"] == "IN"
+    assert res.json()["display_currency"] == "INR"
+
+
 # ── Task 2: /checkout/quote currency routing ──────────────────────────────────
 
 
