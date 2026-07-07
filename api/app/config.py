@@ -95,6 +95,11 @@ EMBED_RPM_LIMIT = int(_env("EMBED_RPM_LIMIT", "2850"))
 # Token-bucket burst allowance (request-units). One full batch (100) may fire
 # immediately after idle; sustained throughput is still capped at EMBED_RPM_LIMIT.
 EMBED_RATE_BURST = int(_env("EMBED_RATE_BURST", "100"))
+# Latency ceiling for QUERY-time embeds against the shared bucket. Bulk crawls
+# can run the bucket minutes into token debt; a chat request must not sleep
+# that off (it would pin a request thread — audit F38). Past this ceiling the
+# query embed aborts and retrieval degrades to keyword-only for that message.
+EMBED_QUERY_MAX_WAIT_S = float(_env("EMBED_QUERY_MAX_WAIT_S", "2.0"))
 CHUNK_SIZE = int(_env("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(_env("CHUNK_OVERLAP", "200"))
 

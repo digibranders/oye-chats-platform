@@ -154,40 +154,33 @@ curl http://localhost:8000/docs  # Should return Swagger HTML
 ```
 
 ### 1.6 Nginx Reverse Proxy
-```bash
-cat > /etc/nginx/sites-available/oyechats-api <<'NGINX'
-server {
-    server_name api.oyechats.com;
 
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # WebSocket support (required for /ws/chat/ and /ws/agent)
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        proxy_buffering off;
-        proxy_read_timeout 300s;
-    }
-
-    client_max_body_size 50M;
-}
-NGINX
-```
+> **Use the checked-in hardened templates in `api/nginx/` — do NOT hand-write
+> the config.** The repo templates carry protections a minimal proxy block
+> silently drops: Cloudflare real-IP validation (`CF-Connecting-IP` is
+> attacker-controlled unless the connection provably comes from a Cloudflare
+> edge), per-IP rate limiting, security headers, WebSocket/SSE handling, and
+> connection limits. A hand-typed config is exactly how a box drifts from the
+> hardened templates (audit F21).
 
 ```bash
+# Install the three templates from the repo (source of truth)
+mkdir -p /etc/nginx/snippets
+cp /opt/oyechats/platform/api/nginx/cloudflare-real-ip.conf /etc/nginx/snippets/
+cp /opt/oyechats/platform/api/nginx/oyechats-locations.conf /etc/nginx/snippets/
+cp /opt/oyechats/platform/api/nginx/oyechats-api.conf /etc/nginx/sites-available/oyechats-api
+
 ln -s /etc/nginx/sites-available/oyechats-api /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
-# SSL (after DNS is pointed)
+# SSL (after DNS is pointed) — then flip the HTTP→HTTPS redirect inside
+# oyechats-api.conf as its header comments describe.
 certbot --nginx -d api.oyechats.com
 ```
+
+Cloudflare publishes its edge ranges at <https://www.cloudflare.com/ips/>;
+refresh `cloudflare-real-ip.conf` when they change (see that file's header).
 
 ### 1.7 Firewall
 ```bash
@@ -197,18 +190,24 @@ ufw --force enable
 ```
 
 ### 1.8 Database Backups
+
+The backup pipeline is fully committed to the repo — script
+(`api/scripts/backup.sh`: local dump → gzip integrity + size floor → restore
+drill into a throwaway DB → off-site R2 upload → retention pruning) and
+schedule (`api/systemd/oyechats-backup.timer`, nightly 03:00 UTC). Do NOT
+hand-write a cron line; the deploy workflow installs and enables the timer
+automatically. Manual first-time setup:
+
 ```bash
 mkdir -p /opt/oyechats/backups
+chmod +x /opt/oyechats/platform/api/scripts/backup.sh
+cp /opt/oyechats/platform/api/systemd/oyechats-backup.{service,timer} /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now oyechats-backup.timer
 
-cat > /opt/oyechats/backup.sh <<'BASH'
-#!/bin/bash
-sudo -u postgres pg_dump oyechats | gzip > /opt/oyechats/backups/oyechats-$(date +%Y%m%d).sql.gz
-find /opt/oyechats/backups -mtime +7 -delete
-BASH
-
-chmod +x /opt/oyechats/backup.sh
-crontab -e
-# Add: 0 3 * * * /opt/oyechats/backup.sh
+# Verify: run one backup now and read its log
+systemctl start oyechats-backup
+journalctl -u oyechats-backup -n 30 --no-pager
 ```
 
 ---
@@ -344,3 +343,88 @@ cd widget && npm run build && npx vite preview --port 4173
 # Set local API URL for widget dev
 VITE_API_URL=http://localhost:8000 npm run build
 ```
+
+---
+
+## Migrating services to non-root (F06)
+
+The `oyechats-api` / `oyechats-worker` units in `api/systemd/` run as a
+dedicated unprivileged `oyechats` system user (`ProtectSystem=strict`,
+`ProtectHome=true`, venv binaries executed directly instead of
+`/root/.local/bin/uv run`). Deploys are unchanged — GitHub Actions still
+SSHes as root and runs `git reset` / `uv sync` / `alembic` / unit install as
+root; only the long-running services drop privileges.
+
+### Prerequisites
+
+- The F06 unit files (`User=oyechats`) and `api/scripts/migrate-to-nonroot.sh`
+  are present on the droplet checkout (see fetch step below).
+- **Ordering (mitigated, but still do the staged run first):** the deploy
+  workflow calls `migrate-to-nonroot.sh --prepare-only` before installing
+  units, so even a merge that lands before the staged migration creates the
+  service user + file grants inline and cannot strand the services on a
+  missing user — and the rollback path now restores the *previous* release's
+  unit files alongside the code. The staged manual run below is still the
+  recommended first step because it additionally preflight-probes WeasyPrint,
+  venv imports, and R2 access **as the service user** before any restart.
+
+### Exact commands
+
+```bash
+ssh -i ~/.ssh/oyechats_deploy -o IdentitiesOnly=yes root@159.223.45.213
+
+cd /opt/oyechats/platform
+# Pull just the F06 files onto the droplet (main doesn't have them yet).
+# The next deploy's `git reset --hard origin/main` cleans these up.
+git fetch origin development
+git checkout origin/development -- \
+  api/systemd/oyechats-api.service \
+  api/systemd/oyechats-worker.service \
+  api/scripts/migrate-to-nonroot.sh
+
+bash api/scripts/migrate-to-nonroot.sh
+```
+
+The script is idempotent (safe to re-run). It creates the user, fixes
+permissions (`.env` → `root:oyechats 0640`; `documents/` + `archive/` →
+`oyechats`-owned; `.venv` readability; `/var/cache/oyechats` service home),
+preflight-probes **as the service user** (`.env` read, venv imports,
+WeasyPrint render, R2 upload+delete), installs the units, restarts
+worker-then-API, gates on `/health/full`, and confirms both MainPIDs run as
+`oyechats`.
+
+After a green run, **merge the F06 PR to `main` promptly** — until then, the
+next deploy reinstalls the old root units from `main` (harmless, but it
+reverts the privilege drop until the merge lands).
+
+### Verification checklist
+
+- [ ] Script exits 0 and prints `MIGRATION COMPLETE`
+- [ ] `systemctl show -p User --value oyechats-api` → `oyechats` (same for worker)
+- [ ] `curl -sf http://127.0.0.1:8000/health/full` → 200
+- [ ] `ls -l /opt/oyechats/platform/api/.env` → `-rw-r----- root oyechats`
+- [ ] Upload a document in the dashboard → ingestion completes and the file
+      lands in `archive/` (proves `documents/`+`archive/` write access)
+- [ ] Trigger/await an invoice PDF render → `pdf_url` populated (WeasyPrint +
+      R2 as the service user, in the real worker process)
+- [ ] Super-admin console → Logs page loads entries (journalctl via
+      `SupplementaryGroups=systemd-journal`)
+- [ ] Widget chat round trip (LLM + Redis + DB under the sandboxed unit)
+- [ ] Next `main` deploy goes green end-to-end (`.env` rewrite + `uv sync`
+      re-assertions in `deploy-api.yml` keep the non-root services readable)
+
+### Rollback
+
+```bash
+# Flip the installed units back to root (rest of the hardening stays active):
+sed -i -e 's/^User=oyechats/User=root/' -e 's/^Group=oyechats/Group=root/' \
+  /etc/systemd/system/oyechats-api.service \
+  /etc/systemd/system/oyechats-worker.service
+systemctl daemon-reload
+systemctl restart oyechats-worker && systemctl restart oyechats-api
+curl -sf http://127.0.0.1:8000/health/full && echo OK
+```
+
+The permission changes (group-read `.env`, `documents/`/`archive/` ownership)
+are harmless under root and need no undo. For a byte-exact revert, restore the
+pre-F06 `api/systemd/*.service` from `main`'s history and reinstall them.

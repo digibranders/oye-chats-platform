@@ -82,16 +82,20 @@ def transition_session(
 
         current = chat_session.status
 
+        # CAS check FIRST — before the idempotency short-circuit. "Already at
+        # target" still means the expected state was lost to a concurrent
+        # transition (e.g. a timeout flipped waiting→bot before a visitor's
+        # leave-queue CAS from waiting): callers key side effects off success,
+        # so a lost CAS must fail loudly, not report a no-op win.
+        if expected_current is not None and current != expected_current:
+            raise InvalidTransitionError(session_id, current, target_status)
+
         # Idempotent: already in target state
         if current == target_status:
             return current
 
         # Validate transition
         if not is_valid_transition(current, target_status):
-            raise InvalidTransitionError(session_id, current, target_status)
-
-        # If expected_current is specified, enforce it (atomic CAS)
-        if expected_current is not None and current != expected_current:
             raise InvalidTransitionError(session_id, current, target_status)
 
         # Apply transition

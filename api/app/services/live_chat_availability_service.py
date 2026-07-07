@@ -45,7 +45,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -53,7 +53,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.cache import PREFIX, get_redis
-from app.db.models import Bot, LiveChatQueueEntry, Operator
+from app.db.models import Bot, ChatSession, Operator
 from app.services import operator_presence_service as presence
 
 logger = logging.getLogger(__name__)
@@ -335,12 +335,29 @@ def _write_cache(bot_id: int, availability: LiveChatAvailability, department_id:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
+# A visitor whose waiting session saw no activity for this long is a
+# crash-orphan (lost timeout task / dead worker), not a live queue member.
+# Real queue waits are bounded by operator_timeout_seconds (~2 min); an hour
+# of headroom means stale rows can never brick the queue with false
+# QUEUE_FULL, while genuine waiters are always counted.
+_QUEUE_STALENESS_WINDOW = timedelta(hours=1)
+
+
 def _current_queue_size(bot_id: int, db_session: Session) -> int:
-    """Number of visitors currently waiting in this bot's queue."""
+    """Number of visitors currently waiting in this bot's queue.
+
+    Derived from ``ChatSession.status == 'waiting'`` — the state every
+    handoff/accept/timeout/leave-queue path actually maintains — NOT from
+    ``LiveChatQueueEntry``, which no write path populates (audit F33: reading
+    the always-empty table made QUEUE_FULL protection permanently dead and
+    queue positions always 1).
+    """
+    cutoff = datetime.now(UTC) - _QUEUE_STALENESS_WINDOW
     count = db_session.execute(
-        select(func.count(LiveChatQueueEntry.id)).where(
-            LiveChatQueueEntry.bot_id == bot_id,
-            LiveChatQueueEntry.dequeued_at.is_(None),
+        select(func.count(ChatSession.id)).where(
+            ChatSession.bot_id == bot_id,
+            ChatSession.status == "waiting",
+            ChatSession.last_active_at >= cutoff,
         )
     ).scalar_one()
     return int(count or 0)

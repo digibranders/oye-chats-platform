@@ -16,6 +16,7 @@ from app.db.repository import add_chat_message, get_lead_info_by_session
 from app.db.session import get_session
 from app.services.live_chat_service import manager
 from app.services.plan_service import get_client_subscription
+from app.services.session_state_machine import InvalidTransitionError, transition_session
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,48 @@ async def _heartbeat(ws: WebSocket) -> None:
     while True:
         await asyncio.sleep(_HEARTBEAT_INTERVAL)
         await ws.send_json({"type": "ping"})
+
+
+# ── CAS session transitions for the WS close paths (audit F31) ────────────────
+#
+# These used to be plain read-then-write status mutations inside the handlers,
+# which raced the operator-accept guarded UPDATE (waiting→live): an accept
+# committing between the read and the write was silently clobbered back to
+# "bot" — the operator kept chatting into a dead session. Each helper routes
+# through the row-locked state machine with an expected_current CAS; False
+# means the CAS lost (or the session is terminal) and the caller must skip its
+# side effects (system message, close broadcast).
+
+
+def _leave_queue_transition(session_id: str) -> bool:
+    """Visitor left the queue: waiting → bot, only if still waiting."""
+    try:
+        transition_session(session_id, "bot", expected_current="waiting", audit_action="visitor_left_queue")
+        return True
+    except (InvalidTransitionError, ValueError):
+        return False
+
+
+def _visitor_end_transition(session_id: str) -> bool:
+    """Visitor ended the live chat: live → bot, only if still live."""
+    try:
+        transition_session(session_id, "bot", expected_current="live", audit_action="visitor_ended_chat")
+        return True
+    except (InvalidTransitionError, ValueError):
+        return False
+
+
+def _operator_close_transition(session_id: str, operator_id: int) -> bool:
+    """Operator closed the chat: live → bot, only if still live.
+
+    The live-only CAS also stops the old resurrection bug: closing an
+    already-closed session used to flip the terminal state back to "bot".
+    """
+    try:
+        transition_session(session_id, "bot", operator_id=operator_id, expected_current="live", audit_action="closed")
+        return True
+    except (InvalidTransitionError, ValueError):
+        return False
 
 
 async def _send_initial_waiting_queue(
@@ -481,38 +524,30 @@ async def visitor_websocket(ws: WebSocket, session_id: str, bot_key: str | None 
                 # Visitor decided not to wait — drop them from the queue and
                 # let the bot conversation resume. Cleaner than them just
                 # closing the widget (which would also clear queue state but
-                # leaves the audit trail unclear).
+                # leaves the audit trail unclear). CAS from "waiting": if an
+                # operator accept won the race, the live chat stands (F31).
                 with get_session() as session:
                     from app.services import live_chat_queue_service as queue_svc
 
                     queue_svc.abandon(session_id, session)
-                    chat_session = session.execute(
-                        select(ChatSession).where(ChatSession.id == session_id)
-                    ).scalar_one_or_none()
-                    if chat_session and chat_session.status == "waiting":
-                        chat_session.status = "bot"
-                        chat_session.assigned_operator_id = None
-                        session.commit()
+                _leave_queue_transition(session_id)
                 await ws.send_json({"type": "queue_left"})
 
             elif msg_type == "visitor_end_chat":
                 # Visitor deliberately ended the chat (clicked "End chat and return to AI").
                 # Close the session immediately in DB and notify the operator — do NOT
                 # start the 120s grace period, as this is an intentional user action.
-                with get_session() as session:
-                    chat_session = session.execute(
-                        select(ChatSession).where(ChatSession.id == session_id)
-                    ).scalar_one_or_none()
-                    if chat_session and chat_session.status == "live":
-                        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+                # CAS from "live" (F31): side effects only fire when this write
+                # actually won — a concurrent transfer/close skips them.
+                if _visitor_end_transition(session_id):
+                    with get_session() as session:
+                        bot = session.execute(select(Bot).where(Bot.id == bot_id)).scalar_one_or_none()
                         bot_name = bot.name if bot else "AI Assistant"
                         add_chat_message(
                             session, session_id, role="system", content="Visitor ended the live chat.", bot_id=bot_id
                         )
-                        chat_session.status = "bot"
-                        chat_session.assigned_operator_id = None
                         session.commit()
-                        await manager.close_chat(session_id, bot_name)
+                    await manager.close_chat(session_id, bot_name)
 
             elif msg_type and msg_type != "pong":
                 logger.warning(f"Unknown visitor WS message type: {msg_type} from {session_id}")
@@ -768,6 +803,7 @@ async def operator_websocket(
             elif msg_type == "close_chat":
                 target_session = data.get("session_id")
                 if target_session:
+                    bot_name = None
                     with get_session() as session:
                         chat_session = session.execute(
                             select(ChatSession).where(ChatSession.id == target_session)
@@ -783,6 +819,11 @@ async def operator_websocket(
                                 continue
                             # Capture bot_name before session closes (avoid DetachedInstanceError)
                             bot_name = bot.name
+                    # CAS from "live" (F31): the row-locked state machine wins or
+                    # loses atomically against a concurrent accept/transfer, and
+                    # a terminal (closed) session is never resurrected to "bot".
+                    if bot_name is not None and _operator_close_transition(target_session, operator_id):
+                        with get_session() as session:
                             # Persist system message for operator-initiated closure
                             add_chat_message(
                                 session,
@@ -791,10 +832,8 @@ async def operator_websocket(
                                 content=f"Operator {operator_name} ended the live chat.",
                                 bot_id=None,
                             )
-                            chat_session.status = "bot"
-                            chat_session.assigned_operator_id = None
                             session.commit()
-                            await manager.close_chat(target_session, bot_name)
+                        await manager.close_chat(target_session, bot_name)
 
     except WebSocketDisconnect:
         heartbeat_task.cancel()

@@ -1,0 +1,30 @@
+# OyeChats nightly DB backup — systemd oneshot (paired with oyechats-backup.timer)
+#
+# Codifies the backup schedule as IaC (audit F19) instead of a root-cron line
+# that lived only as a comment in backup.sh. Install BOTH units:
+#   sudo cp oyechats-backup.service oyechats-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now oyechats-backup.timer
+#
+# Run on demand:
+#   sudo systemctl start oyechats-backup
+# Logs:
+#   journalctl -u oyechats-backup -f
+
+[Unit]
+Description=OyeChats nightly database backup (local + off-site R2)
+After=postgresql.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/oyechats/platform/api
+ExecStart=/opt/oyechats/platform/api/scripts/backup.sh
+# A hung upload must not wedge the timer forever.
+TimeoutStartSec=15min
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=oyechats-backup

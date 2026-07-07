@@ -2,10 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for psycopg2 and playwright
+# System deps: psycopg2 build chain + WeasyPrint's cairo/pango stack (invoice
+# PDF rendering — without these the worker logs "PDF renderer unavailable" and
+# invoice PDFs silently never render). Crawling is off-box (Spider.cloud/Jina),
+# so no Playwright/Chromium here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    libffi8 \
+    shared-mime-info \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -17,9 +27,6 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
 COPY . .
-
-# Install playwright browsers
-RUN uv run playwright install --with-deps chromium
 
 EXPOSE 8000
 

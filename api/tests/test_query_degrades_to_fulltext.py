@@ -11,7 +11,7 @@ import app.services.rag_service as rag
 def test_embed_success_returns_vector(monkeypatch):
     monkeypatch.setattr(rag, "cache_get", lambda *_a, **_k: None)
     monkeypatch.setattr(rag, "cache_set", lambda *_a, **_k: None)
-    monkeypatch.setattr(rag, "embed_chunks", lambda _q: [[0.1] * 768])
+    monkeypatch.setattr(rag, "embed_chunks", lambda _q, **_kw: [[0.1] * 768])
     out = rag._embed_query_cached(1, 2, "hello")
     assert out == [0.1] * 768
 
@@ -53,7 +53,7 @@ def test_async_embed_success(monkeypatch):
     monkeypatch.setattr(rag, "cache_get", lambda *_a, **_k: None)
     monkeypatch.setattr(rag, "cache_set", lambda *_a, **_k: None)
 
-    async def ok(_q):
+    async def ok(_q, **_kw):
         return [[0.3] * 768]
 
     monkeypatch.setattr(rag, "embed_chunks_async", ok)

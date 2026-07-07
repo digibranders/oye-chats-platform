@@ -12,6 +12,7 @@ import litellm
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import joinedload
 
+from app import config
 from app.config import LLM_FALLBACKS, LLM_MODEL
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.langfuse_client import get_langfuse, langfuse_generation
@@ -1273,7 +1274,9 @@ def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> 
     if cached and isinstance(cached, list):
         return cached
     try:
-        embs = embed_chunks([search_query])
+        # Small wait ceiling: a bulk crawl's rate-limiter debt must not pin
+        # this request thread (EmbedWaitExceeded lands in the except below).
+        embs = embed_chunks([search_query], max_wait_s=config.EMBED_QUERY_MAX_WAIT_S)
     except Exception as exc:
         logger.warning(
             "Query embedding failed (%s) — falling back to keyword-only retrieval",
@@ -1293,7 +1296,7 @@ async def _embed_query_cached_async(bid: int | None, cid: int | None, search_que
     if cached and isinstance(cached, list):
         return cached
     try:
-        embs = await embed_chunks_async([search_query])
+        embs = await embed_chunks_async([search_query], max_wait_s=config.EMBED_QUERY_MAX_WAIT_S)
     except Exception as exc:
         logger.warning(
             "Query embedding failed (%s) — streaming with keyword-only retrieval",

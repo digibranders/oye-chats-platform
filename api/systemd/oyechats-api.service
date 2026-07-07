@@ -19,11 +19,41 @@ Wants=postgresql.service redis.service
 # until TimeoutStartSec. If we later wire sd_notify into gunicorn.conf.py
 # we can flip back to Type=notify and reinstate WatchdogSec.
 Type=simple
-User=root
+
+# Non-root service account (audit F06 — completed).
+# MIGRATION PREREQUISITE: run api/scripts/migrate-to-nonroot.sh on the droplet
+# ONCE before this unit is first installed. It creates the `oyechats` system
+# user/group, fixes permissions (.env group-read, documents/ + archive/
+# ownership, /var/cache/oyechats), installs these units and restarts the
+# services. Installing this unit before the user exists makes the service fail
+# to start ("Failed to determine user credentials").
+# Deploys still run as root (git reset, uv sync, alembic, unit install) —
+# only the long-running service drops privileges.
+User=oyechats
+Group=oyechats
+# The super-admin logs endpoint (app/services/logs_service.py) shells out to
+# `journalctl -u <service>`; a non-root user can only read the full journal
+# as a member of systemd-journal.
+SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/oyechats/platform/api
 EnvironmentFile=/opt/oyechats/platform/api/.env
-ExecStart=/root/.local/bin/uv run gunicorn app.main:app -c gunicorn.conf.py
+# Exec the venv entrypoint directly instead of `/root/.local/bin/uv run`:
+# uv lives under /root (unreachable with ProtectHome=true) and `uv run` may
+# try to re-sync the venv, which the unprivileged user must not (and cannot)
+# write. The deploy workflow's root-run `uv sync` keeps the venv current;
+# gunicorn args are unchanged from the previous unit.
+ExecStart=/opt/oyechats/platform/api/.venv/bin/gunicorn app.main:app -c gunicorn.conf.py
 ExecReload=/bin/kill -HUP $MAINPID
+
+# The service account has no usable home (created with -d /nonexistent), so
+# point HOME and the XDG cache at the systemd-managed cache directory:
+# fontconfig (via WeasyPrint) and anything else calling expanduser("~") gets
+# a persistent writable location instead of erroring on /nonexistent.
+# CacheDirectory= makes systemd create /var/cache/oyechats owned by the
+# service user and keeps it writable under ProtectSystem=strict.
+CacheDirectory=oyechats
+Environment=HOME=/var/cache/oyechats
+Environment=XDG_CACHE_HOME=/var/cache/oyechats
 
 # Auto-restart on crash with 5s backoff
 Restart=always
@@ -32,22 +62,47 @@ RestartSec=5
 # Resource limits
 LimitNOFILE=65535
 
-# Security hardening (audit F06). REMAINING STEP: drop from root to a dedicated
-# unprivileged `oyechats` user — do this on staging first, since it also
-# requires making `uv` runnable by that user and chowning
-# /opt/oyechats/platform + api/.env + the documents dir. The directives below
-# are safe with the current root + /root/.local/bin/uv + /opt layout and add
-# real defence-in-depth now (a compromised process can't gain new privileges,
-# gets a private /tmp, and sees /usr,/boot,/etc read-only).
+# ── Security hardening (audit F06 — service is now non-root) ────────────────
+# ProtectSystem upgraded full → strict: `full` only remounts /usr, /boot and
+# /etc read-only, leaving /opt — i.e. the code checkout itself — writable, so
+# a compromised process could rewrite its own source. `strict` mounts the
+# ENTIRE filesystem read-only except the explicit allow-list below. Complete
+# inventory of runtime write locations (everything else — invoice PDFs, chat
+# uploads, logos, widget assets — is uploaded to Cloudflare R2 in memory):
+#   documents/ + archive/   tenant uploads and their processed/quarantined
+#                           copies (app/config.py DOCUMENTS_DIR/ARCHIVE_DIR,
+#                           relative to WorkingDirectory)
+#   /tmp                    WeasyPrint scratch + flashrank cache (PrivateTmp)
+#   /var/cache/oyechats     CacheDirectory= above (auto-whitelisted)
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
+ReadWritePaths=/opt/oyechats/platform/api/documents
+ReadWritePaths=/opt/oyechats/platform/api/archive
+# Nothing under /root or /home is needed anymore now that ExecStart no longer
+# goes through /root/.local/bin/uv.
+ProtectHome=true
+PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
+RestrictNamespaces=true
 LockPersonality=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# AF_NETLINK stays allowed: glibc getaddrinfo uses rtnetlink for
+# AI_ADDRCONFIG — dropping it can silently break DNS resolution.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# MemoryDenyWriteExecute deliberately NOT set: cffi (a WeasyPrint dependency,
+# importable from the API tree too) needs writable+executable pages for its
+# callback trampolines.
+# Keep tenant uploads out of world-readable: files land 0640 / dirs 0750.
+UMask=0027
 
 # Logging
 StandardOutput=journal

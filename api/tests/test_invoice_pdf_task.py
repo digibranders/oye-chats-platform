@@ -121,7 +121,13 @@ def test_email_sent_only_when_enabled(db, env, monkeypatch):
     monkeypatch.setattr(config, "INVOICE_EMAILS_ENABLED", True)
     _mk_invoice(db, "pdf-8@test.example", "DB/26-27/000007")
     asyncio.run(worker_tasks.task_render_invoice_pdfs({}))
-    assert env["emails"] == [("billing-pdf-8@test.example", "DB/26-27/000007")]
+    # The new invoice is emailed inline; the shadow-mode one is picked up by the
+    # F43 recovery pass — enabling emails delivers the backlog of numbered
+    # documents (a tax invoice must reach the buyer), it doesn't strand them.
+    assert env["emails"] == [
+        ("billing-pdf-8@test.example", "DB/26-27/000007"),
+        ("billing-pdf-7@test.example", "DB/26-27/000006"),
+    ]
 
 
 def test_sweep_skips_cleanly_when_renderer_unavailable(db, env, monkeypatch):

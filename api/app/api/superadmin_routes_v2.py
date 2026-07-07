@@ -270,6 +270,7 @@ def impersonate(
             expires_at=expires_at,
         )
         session.add(record)
+        session.flush()  # assign record.id so it can be returned for revocation
 
         record_audit(
             session,
@@ -277,15 +278,59 @@ def impersonate(
             action="client.impersonate",
             target_type="client",
             target_id=client_id,
-            after={"expires_at": expires_at.isoformat()},
+            after={"token_id": record.id, "expires_at": expires_at.isoformat()},
             request=request,
         )
         session.commit()
         return {
             "token": raw,
+            "token_id": record.id,
             "expires_at": expires_at.isoformat(),
             "redirect_url": f"https://app.oyechats.com/?impersonation={raw}",
         }
+
+
+@router.post("/impersonation/{token_id}/revoke")
+def revoke_impersonation(
+    token_id: int,
+    request: Request,
+    admin: Client = Depends(get_superadmin),
+):
+    """Revoke an impersonation token server-side (audit F16).
+
+    Marks ``revoked_at`` on the ``impersonation_tokens`` row so the token can
+    no longer be redeemed — any redemption path MUST require
+    ``revoked_at IS NULL AND expires_at > now()``. The raw token itself never
+    reaches this endpoint; revocation is by row id, so the dashboard can exit
+    without holding the sensitive credential.
+
+    Authorization: the super-admin who issued the token may always revoke it
+    (including read-only admins — revocation strictly reduces privilege);
+    revoking another admin's token requires a write-capable super-admin role.
+    Idempotent: revoking an already-revoked token is a no-op success.
+    """
+    with get_session() as session:
+        token = session.get(ImpersonationToken, token_id)
+        if not token:
+            raise HTTPException(status_code=404, detail="Impersonation token not found")
+
+        if token.actor_id != admin.id:
+            _require_write(admin)
+
+        if token.revoked_at is None:
+            token.revoked_at = datetime.now(UTC)
+            record_audit(
+                session,
+                actor=admin,
+                action="client.impersonate_revoke",
+                target_type="client",
+                target_id=token.target_id,
+                after={"token_id": token.id, "revoked_at": token.revoked_at.isoformat()},
+                request=request,
+            )
+            session.commit()
+
+        return {"ok": True, "revoked_at": token.revoked_at.isoformat()}
 
 
 @router.post("/clients/{client_id}/reset-password")

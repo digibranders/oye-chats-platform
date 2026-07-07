@@ -175,6 +175,10 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
       Re-issue from the superadmin console.
     * ``pdfs_pending`` — numbered documents still without a PDF well past the
       sweep interval (renderer down / pango missing / data poison).
+    * ``emails_pending`` — rendered documents the customer still hasn't been
+      emailed well past the sweep interval (delivery outage / missing buyer
+      email). Only meaningful when ``INVOICE_EMAILS_ENABLED`` — shadow mode
+      never emails, so unmailed documents are expected there, not anomalous.
     * ``broken_totals`` — tax components that no longer reconcile (impossible
       by construction; presence means manual DB tampering).
     """
@@ -225,6 +229,26 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
         .all()
     )
 
+    # Rendered but never delivered (audit F43): the sweep's recovery pass keeps
+    # retrying these, so anything still here after an hour means delivery has
+    # been failing repeatedly (or the buyer snapshot has no email at all).
+    from app import config
+
+    emails_pending: list[Invoice] = []
+    if config.INVOICE_EMAILS_ENABLED:
+        emails_pending = (
+            session.execute(
+                select(Invoice).where(
+                    Invoice.invoice_number.isnot(None),
+                    Invoice.pdf_url.isnot(None),
+                    Invoice.emailed_at.is_(None),
+                    Invoice.issued_at < cutoff,
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     # Reconciliation identities pushed into SQL so this returns only the (near
     # always zero) offending rows instead of hydrating every document ever
     # issued — the check stays cheap as the table grows.
@@ -261,5 +285,6 @@ def reconciliation_anomalies(session: Session) -> dict[str, list[dict[str, Any]]
     return {
         "refunds_without_credit_note": [_brief(i) for i in refunds_missing_cn],
         "pdfs_pending": [_brief(i) for i in pdfs_pending],
+        "emails_pending": [_brief(i) for i in emails_pending],
         "broken_totals": [_brief(i) for i in broken],
     }
