@@ -343,3 +343,88 @@ cd widget && npm run build && npx vite preview --port 4173
 # Set local API URL for widget dev
 VITE_API_URL=http://localhost:8000 npm run build
 ```
+
+---
+
+## Migrating services to non-root (F06)
+
+The `oyechats-api` / `oyechats-worker` units in `api/systemd/` run as a
+dedicated unprivileged `oyechats` system user (`ProtectSystem=strict`,
+`ProtectHome=true`, venv binaries executed directly instead of
+`/root/.local/bin/uv run`). Deploys are unchanged — GitHub Actions still
+SSHes as root and runs `git reset` / `uv sync` / `alembic` / unit install as
+root; only the long-running services drop privileges.
+
+### Prerequisites
+
+- The F06 unit files (`User=oyechats`) and `api/scripts/migrate-to-nonroot.sh`
+  are present on the droplet checkout (see fetch step below).
+- **Ordering (mitigated, but still do the staged run first):** the deploy
+  workflow calls `migrate-to-nonroot.sh --prepare-only` before installing
+  units, so even a merge that lands before the staged migration creates the
+  service user + file grants inline and cannot strand the services on a
+  missing user — and the rollback path now restores the *previous* release's
+  unit files alongside the code. The staged manual run below is still the
+  recommended first step because it additionally preflight-probes WeasyPrint,
+  venv imports, and R2 access **as the service user** before any restart.
+
+### Exact commands
+
+```bash
+ssh -i ~/.ssh/oyechats_deploy -o IdentitiesOnly=yes root@159.223.45.213
+
+cd /opt/oyechats/platform
+# Pull just the F06 files onto the droplet (main doesn't have them yet).
+# The next deploy's `git reset --hard origin/main` cleans these up.
+git fetch origin development
+git checkout origin/development -- \
+  api/systemd/oyechats-api.service \
+  api/systemd/oyechats-worker.service \
+  api/scripts/migrate-to-nonroot.sh
+
+bash api/scripts/migrate-to-nonroot.sh
+```
+
+The script is idempotent (safe to re-run). It creates the user, fixes
+permissions (`.env` → `root:oyechats 0640`; `documents/` + `archive/` →
+`oyechats`-owned; `.venv` readability; `/var/cache/oyechats` service home),
+preflight-probes **as the service user** (`.env` read, venv imports,
+WeasyPrint render, R2 upload+delete), installs the units, restarts
+worker-then-API, gates on `/health/full`, and confirms both MainPIDs run as
+`oyechats`.
+
+After a green run, **merge the F06 PR to `main` promptly** — until then, the
+next deploy reinstalls the old root units from `main` (harmless, but it
+reverts the privilege drop until the merge lands).
+
+### Verification checklist
+
+- [ ] Script exits 0 and prints `MIGRATION COMPLETE`
+- [ ] `systemctl show -p User --value oyechats-api` → `oyechats` (same for worker)
+- [ ] `curl -sf http://127.0.0.1:8000/health/full` → 200
+- [ ] `ls -l /opt/oyechats/platform/api/.env` → `-rw-r----- root oyechats`
+- [ ] Upload a document in the dashboard → ingestion completes and the file
+      lands in `archive/` (proves `documents/`+`archive/` write access)
+- [ ] Trigger/await an invoice PDF render → `pdf_url` populated (WeasyPrint +
+      R2 as the service user, in the real worker process)
+- [ ] Super-admin console → Logs page loads entries (journalctl via
+      `SupplementaryGroups=systemd-journal`)
+- [ ] Widget chat round trip (LLM + Redis + DB under the sandboxed unit)
+- [ ] Next `main` deploy goes green end-to-end (`.env` rewrite + `uv sync`
+      re-assertions in `deploy-api.yml` keep the non-root services readable)
+
+### Rollback
+
+```bash
+# Flip the installed units back to root (rest of the hardening stays active):
+sed -i -e 's/^User=oyechats/User=root/' -e 's/^Group=oyechats/Group=root/' \
+  /etc/systemd/system/oyechats-api.service \
+  /etc/systemd/system/oyechats-worker.service
+systemctl daemon-reload
+systemctl restart oyechats-worker && systemctl restart oyechats-api
+curl -sf http://127.0.0.1:8000/health/full && echo OK
+```
+
+The permission changes (group-read `.env`, `documents/`/`archive/` ownership)
+are harmless under root and need no undo. For a byte-exact revert, restore the
+pre-F06 `api/systemd/*.service` from `main`'s history and reinstall them.

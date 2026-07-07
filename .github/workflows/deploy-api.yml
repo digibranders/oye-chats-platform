@@ -219,6 +219,19 @@ jobs:
               "VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}" \
               > api/.env
 
+            # Non-root services (audit F06): after the one-time
+            # migrate-to-nonroot.sh migration the API/worker run as the
+            # `oyechats` user and must be able to read the freshly (re)written
+            # .env. The `>` redirection above truncates in place and preserves
+            # owner/mode, but re-assert here so a deleted/recreated .env can
+            # never lock the services out. No-op before the migration (the
+            # group doesn't exist yet) and it must stay 0640 — .env holds every
+            # production secret.
+            if getent group oyechats >/dev/null 2>&1; then
+              chgrp oyechats api/.env
+              chmod 640 api/.env
+            fi
+
             # System libs for WeasyPrint (invoice PDF rendering) — idempotent.
             # Without pango the worker's invoice-PDF sweep logs one clear
             # error per tick and skips; installing here makes it functional.
@@ -228,6 +241,16 @@ jobs:
             # Sync dependencies
             cd api
             /root/.local/bin/uv sync
+
+            # Non-root services (audit F06) safety net: uv sync runs as root
+            # with umask 022, so the venv is normally already group/world
+            # readable — but a wheel can ship restrictive file modes.
+            # Normalize so the unprivileged `oyechats` service user can always
+            # import the venv. Ownership stays root (the service must not be
+            # able to rewrite its own packages). No-op before the migration.
+            if getent group oyechats >/dev/null 2>&1; then
+              chmod -R u+rwX,go+rX .venv
+            fi
 
             # Assert litellm installed cleanly before touching migrations or
             # restarting services. The 2026-07-01 outage was a partial `uv sync`
@@ -256,6 +279,16 @@ jobs:
 
             # Run migrations
             /root/.local/bin/uv run alembic upgrade head
+
+            # F06 prerequisites: the committed units run as the `oyechats`
+            # service user. Create the user + file grants BEFORE installing
+            # units — idempotent, so on an already-migrated droplet this is a
+            # fast no-op, and on one that never ran the staged migration the
+            # units can't strand the services on a missing user. (The full
+            # script without --prepare-only additionally runs preflight probes
+            # as the service user — the recommended staged path, see
+            # DEPLOYMENT.md "Migrating services to non-root".)
+            bash /opt/oyechats/platform/api/scripts/migrate-to-nonroot.sh --prepare-only
 
             # Sync systemd units from the repo (repo is source of truth).
             # This ensures the worker — and any future unit-file edits — are
@@ -315,8 +348,20 @@ jobs:
             cd /opt/oyechats/platform
             git reset --hard "$PREV_SHA"
             if [ -f api/.env.rollback ]; then cp api/.env.rollback api/.env; fi
+            # Restore the PREVIOUS release's unit files too — the forward path
+            # installed the new tree's units, and a release whose units are
+            # what broke it (e.g. a bad hardening directive) can only recover
+            # if rollback reverts them alongside the code.
+            cp api/systemd/oyechats-api.service api/systemd/oyechats-worker.service /etc/systemd/system/
+            systemctl daemon-reload
             cd api
             /root/.local/bin/uv sync || echo "WARN: uv sync failed during rollback"
+            # F06: same .env group-read + venv-readability re-assertions as the
+            # forward path — the restored services still run as `oyechats`.
+            if getent group oyechats >/dev/null 2>&1; then
+              chgrp oyechats .env && chmod 640 .env
+              chmod -R u+rwX,go+rX .venv
+            fi
             systemctl restart oyechats-worker
             systemctl restart oyechats-api
             sleep 15
