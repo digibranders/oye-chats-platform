@@ -342,6 +342,11 @@ class CurrentUserResponse(BaseModel):
     kind: str  # "client" | "operator"
     name: str
     email: str
+    # Set only for clients with an unconfirmed /client/change-email/request
+    # in flight; None otherwise (always None for operators, who don't own
+    # this flow). Lets the Settings UI resume the "verify your new email"
+    # step across page reloads.
+    pending_email: str | None = None
     company_name: str | None = None
     website: str | None = None
     created_at: str
@@ -461,6 +466,7 @@ def get_current_user_endpoint(auth: dict = Depends(get_current_client_or_operato
             kind="client",
             name=client.name,
             email=client.email,
+            pending_email=client.pending_email,
             company_name=client.company_name,
             website=client.website,
             created_at=client.created_at.isoformat() if client.created_at else "",

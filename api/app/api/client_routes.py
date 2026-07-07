@@ -1,5 +1,9 @@
+import hmac
 import logging
+import re
+import secrets
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, field_validator
@@ -7,10 +11,14 @@ from sqlalchemy import select
 
 from app.api.auth import get_current_client, get_current_client_strict
 from app.core.feedback import CONTEXT_KEYS, FEEDBACK_AREAS, FEEDBACK_SEVERITIES, FEEDBACK_TYPES
+from app.core.rate_limit import key_from_api_key, limiter
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Bot, Client
 from app.db.session import get_session
 from app.schemas.client import ClientSettingsUpdate
+from app.services.email_service import send_email_change_otp, send_email_change_requested_notice
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +287,6 @@ async def upload_logo_endpoint(
 
 class ClientProfilePatch(BaseModel):
     name: str | None = None
-    email: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -297,26 +304,23 @@ def update_client_profile(
     body: ClientProfilePatch,
     client: Client = Depends(get_current_client_strict),
 ):
-    """Update the authenticated client's name and/or email."""
+    """Update the authenticated client's display name.
+
+    Email changes go through /client/change-email/* instead — that flow
+    requires the current password and confirms ownership of the new inbox
+    via OTP before the login email actually moves.
+    """
     with get_session() as session:
         row = session.get(Client, client.id)
         if not row:
             raise HTTPException(status_code=404, detail="Client not found.")
-
-        if body.email and body.email.lower() != (row.email or "").lower():
-            existing = (
-                session.execute(select(Client).where(Client.email == body.email, Client.id != row.id)).scalars().first()
-            )
-            if existing:
-                raise HTTPException(status_code=400, detail="A client with this email already exists.")
-            row.email = body.email
 
         if body.name:
             row.name = body.name
 
         session.commit()
         session.refresh(row)
-        return {"id": row.id, "name": row.name, "email": row.email}
+        return {"id": row.id, "name": row.name, "email": row.email, "pending_email": row.pending_email}
 
 
 class ChangePasswordRequest(BaseModel):
@@ -344,6 +348,126 @@ def change_client_password(
         if not verify_password(body.current_password, row.hashed_password or ""):
             raise HTTPException(status_code=400, detail="Current password is incorrect.")
         row.hashed_password = get_password_hash(body.new_password)
+        session.commit()
+        return {"ok": True}
+
+
+# ── Account: email change (password-confirmed, OTP-verified) ─────────────────
+
+
+class ChangeEmailRequest(BaseModel):
+    new_email: str
+    current_password: str
+
+    @field_validator("new_email")
+    @classmethod
+    def email_looks_valid(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("Enter a valid email address.")
+        return v
+
+
+class ChangeEmailConfirm(BaseModel):
+    otp: str
+
+
+@router.post("/change-email/request")
+@limiter.limit("5/minute", key_func=key_from_api_key)
+def request_client_email_change(
+    request: Request,
+    body: ChangeEmailRequest,
+    client: Client = Depends(get_current_client_strict),
+):
+    """Start an email change: verify the current password, then OTP-verify the new inbox.
+
+    The login email is NOT updated here — it only moves once
+    ``/change-email/confirm`` validates the code sent to ``new_email``. The
+    current (old) address also gets a notice, so an attacker who has
+    hijacked the session can't quietly redirect account recovery without
+    the real owner finding out.
+    """
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Client not found.")
+
+        if not verify_password(body.current_password, row.hashed_password or ""):
+            raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+        if body.new_email == (row.email or "").lower():
+            raise HTTPException(status_code=400, detail="That's already your current email address.")
+
+        existing = (
+            session.execute(select(Client).where(Client.email == body.new_email, Client.id != row.id)).scalars().first()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="A client with this email already exists.")
+
+        otp = str(secrets.randbelow(900000) + 100000)
+        row.pending_email = body.new_email
+        row.email_change_otp = otp
+        row.email_change_otp_expires_at = datetime.now(UTC) + timedelta(minutes=15)
+        session.commit()
+
+        try:
+            send_email_change_otp(row.pending_email, row.name, otp)
+            send_email_change_requested_notice(row.email, row.name, row.pending_email)
+        except Exception as mail_err:
+            logger.warning("email_change_otp_send_failed for client %s: %s", row.id, mail_err)
+
+        return {"message": "Verification code sent to your new email address.", "pending_email": row.pending_email}
+
+
+@router.post("/change-email/confirm")
+@limiter.limit("10/minute", key_func=key_from_api_key)
+def confirm_client_email_change(
+    request: Request,
+    body: ChangeEmailConfirm,
+    client: Client = Depends(get_current_client_strict),
+):
+    """Verify the OTP sent to the pending new email and promote it to the login email."""
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Client not found.")
+
+        if not row.pending_email or not row.email_change_otp or not row.email_change_otp_expires_at:
+            raise HTTPException(status_code=400, detail="No email change is pending.")
+
+        if datetime.now(UTC) > row.email_change_otp_expires_at:
+            row.pending_email = None
+            row.email_change_otp = None
+            row.email_change_otp_expires_at = None
+            session.commit()
+            raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
+
+        if not hmac.compare_digest(row.email_change_otp, body.otp.strip()):
+            # Invalidate after a wrong guess to prevent brute-force retries.
+            row.email_change_otp = None
+            row.email_change_otp_expires_at = None
+            session.commit()
+            raise HTTPException(status_code=400, detail="Invalid code. Please request a new one.")
+
+        row.email = row.pending_email
+        row.pending_email = None
+        row.email_change_otp = None
+        row.email_change_otp_expires_at = None
+        session.commit()
+        session.refresh(row)
+        return {"id": row.id, "name": row.name, "email": row.email, "pending_email": None}
+
+
+@router.post("/change-email/cancel")
+def cancel_client_email_change(client: Client = Depends(get_current_client_strict)):
+    """Abandon a pending email change before it's confirmed."""
+    with get_session() as session:
+        row = session.get(Client, client.id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Client not found.")
+        row.pending_email = None
+        row.email_change_otp = None
+        row.email_change_otp_expires_at = None
         session.commit()
         return {"ok": True}
 

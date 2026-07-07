@@ -1057,6 +1057,77 @@ def send_verification_otp_email(to_email: str, name: str, otp: str) -> None:
     )
 
 
+def send_email_change_otp(to_email: str, name: str, otp: str) -> None:
+    """Send a 6-digit code to a client's *new* email to confirm an email-change request."""
+    safe_name = _esc(name or "there")
+    safe_otp = _esc(otp)
+
+    html = f"""
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <div style="background:#2563eb;padding:28px 32px;border-radius:8px 8px 0 0">
+    <h1 style="color:#fff;margin:0;font-size:22px">Confirm your new email</h1>
+  </div>
+  <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
+    <p style="margin:0 0 16px">Hi {safe_name},</p>
+    <p style="margin:0 0 24px;color:#6b7280">
+      You asked to change the email address on your OyeChats account to this address.
+      Enter the code below to confirm the change. It expires in <strong>15 minutes</strong>.
+    </p>
+    <div style="background:#f3f4f6;border-radius:8px;padding:20px 32px;text-align:center;margin-bottom:24px">
+      <span style="font-size:36px;font-weight:700;letter-spacing:10px;color:#111827;font-family:monospace">{safe_otp}</span>
+    </div>
+    <p style="margin:0;font-size:13px;color:#9ca3af">
+      If you didn&apos;t request this, you can safely ignore this email — your account email will not change.
+    </p>
+  </div>
+</div>
+"""
+
+    send_email_async(
+        to_email=to_email,
+        subject="Confirm your new OyeChats email address",
+        html_body=html,
+    )
+
+
+def send_email_change_requested_notice(to_email: str, name: str, new_email: str) -> None:
+    """Notify a client's *current* (old) email that an email change was requested.
+
+    Fire-and-forget security tripwire: lets the account owner catch an
+    unauthorized change attempt even though this address isn't the one
+    holding the confirmation OTP.
+    """
+    safe_name = _esc(name or "there")
+    safe_new_email = _esc(new_email)
+
+    html = f"""
+<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1f2937">
+  <div style="background:#111827;padding:28px 32px;border-radius:8px 8px 0 0">
+    <h1 style="color:#fff;margin:0;font-size:22px">Email change requested</h1>
+  </div>
+  <div style="background:#fff;padding:32px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
+    <p style="margin:0 0 16px">Hi {safe_name},</p>
+    <p style="margin:0 0 16px;color:#6b7280">
+      Someone requested to change the login email on your OyeChats account to
+      <strong>{safe_new_email}</strong>. The change only takes effect once that
+      address confirms a verification code — this inbox stays the login email
+      until then.
+    </p>
+    <p style="margin:0;font-size:13px;color:#9ca3af">
+      If this wasn&apos;t you, please reset your password immediately and contact
+      support@oyechats.com.
+    </p>
+  </div>
+</div>
+"""
+
+    send_email_async(
+        to_email=to_email,
+        subject="Email change requested on your OyeChats account",
+        html_body=html,
+    )
+
+
 # ── Visitor-Facing Email Templates ──
 
 
