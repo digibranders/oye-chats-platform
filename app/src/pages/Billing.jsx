@@ -1221,67 +1221,77 @@ function SeatsTab({
   onChangePlan,
   onCreateBot,
 }) {
+  const planName = plan?.name || 'Free';
+  const planCostLabel =
+    plan?.monthly_price_usd_cents > 0
+      ? `${fmtCurrency(planPriceCents(plan, 'monthly'))} / month`
+      : 'No paid subscription';
+  const planCreditsLabel = plan?.credits_per_month
+    ? `${fmtNumber(plan.credits_per_month)} credits / month`
+    : '—';
+  const billingMethodLabel = subscription?.payment_provider
+    ? `billed via ${subscription.payment_provider}`
+    : '—';
+
+  const seatsIncludedLabel =
+    includedSeats > 0
+      ? `${includedSeats} included with your plan`
+      : 'Free plan does not include seats';
+  const extraSeatLabel =
+    includedSeats > 0 ? `${seatPriceLabel} each / month` : '—';
+
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <span className="flex items-center gap-2">
-              <CreditCard className="w-4 h-4 text-surface-500" /> Current plan
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-surface-900 dark:text-surface-50">
-                {plan?.name || 'Free'}
-              </div>
-              <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
-                {plan?.monthly_price_usd_cents > 0
-                  ? `${fmtCurrency(planPriceCents(plan, 'monthly'))} / month · ${fmtNumber(plan.credits_per_month)} credits / month`
-                  : 'No paid subscription'}
-                {subscription?.payment_provider ? ` · billed via ${subscription.payment_provider}` : ''}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+        {/* Current plan */}
+        <Card className="flex flex-col">
+          <CardHeader>
+            <CardTitle>
+              <span className="flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-surface-500" /> Current plan
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 flex flex-col">
+            <dl className="space-y-2 text-xs">
+              <DetailRow label="Plan" value={planName} valueClassName="font-semibold text-surface-900 dark:text-surface-50" />
+              <DetailRow label="Cost" value={planCostLabel} />
+              <DetailRow label="Credits" value={planCreditsLabel} />
+              <DetailRow label="Billing method" value={billingMethodLabel} />
+            </dl>
+            <div className="mt-auto pt-4">
               <Button onClick={onChangePlan} size="sm">
                 <ArrowUpRight className="w-3.5 h-3.5" />
                 {plan?.monthly_price_usd_cents > 0 ? 'Change plan' : 'Choose a plan'}
               </Button>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <span className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-surface-500" /> Operator seats
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <div className="text-sm text-surface-700 dark:text-surface-200">
-                <strong>{seatLimit}</strong> {seatLimit === 1 ? 'seat' : 'seats'} total
-                {includedSeats > 0
-                  ? ` · ${includedSeats} included with your plan`
-                  : ' · Free plan does not include operator seats'}
-              </div>
-              <div className="text-xs text-surface-500 dark:text-surface-400 mt-1">
-                {includedSeats > 0
-                  ? `Extra seats: ${seatPriceLabel} each / month. Live chat is free of credit charges, covered by the seat fee.`
-                  : 'Upgrade to Starter to unlock live chat and invite operators to handle conversations.'}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
+        {/* Operator seats */}
+        <Card className="flex flex-col">
+          <CardHeader>
+            <CardTitle>
+              <span className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-surface-500" /> Operator seats
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 flex flex-col">
+            <dl className="space-y-2 text-xs">
+              <DetailRow
+                label="Total seats"
+                value={String(seatLimit)}
+                valueClassName="font-semibold text-surface-900 dark:text-surface-50"
+              />
+              <DetailRow label="Included" value={seatsIncludedLabel} />
+              <DetailRow label="Extra" value={extraSeatLabel} />
+            </dl>
+            <div className="mt-auto pt-4 flex items-center gap-3 flex-wrap">
               {/* On Free (includedSeats === 0) the Add/Remove buttons are
                   meaningless — there's nothing to add against and nothing
                   to remove. Replace with a single Upgrade CTA that opens
-                  the plan-selector, same pattern as the Bot Seats card. */}
+                  the plan-selector. */}
               {includedSeats === 0 ? (
                 <Button onClick={onChangePlan} size="sm">
                   <ArrowUpRight className="w-3.5 h-3.5" />
@@ -1290,8 +1300,15 @@ function SeatsTab({
               ) : (
                 <>
                   <Button
-                    variant="outline"
                     size="sm"
+                    onClick={() => onSeatChange(1)}
+                    disabled={seatBusy}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add seat ({seatPriceLabel}/mo)
+                  </Button>
+                  <button
+                    type="button"
                     onClick={() => onSeatChange(-1)}
                     disabled={seatBusy || seatLimit <= includedSeats}
                     title={
@@ -1299,46 +1316,64 @@ function SeatsTab({
                         ? `You can’t go below the ${includedSeats} included with your plan`
                         : ''
                     }
+                    className={cn(
+                      'inline-flex items-center gap-1 text-xs text-surface-500 dark:text-surface-400',
+                      'hover:text-surface-700 dark:hover:text-surface-200 transition-colors',
+                      'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-surface-500',
+                    )}
                   >
                     <Minus className="w-3.5 h-3.5" />
                     Remove seat
-                  </Button>
-                  <Button onClick={() => onSeatChange(1)} disabled={seatBusy} size="sm">
-                    <Plus className="w-3.5 h-3.5" />
-                    Add seat ({seatPriceLabel}/mo)
-                  </Button>
+                  </button>
                 </>
               )}
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <span className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-surface-500" /> Chatbots
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="text-xs text-surface-500 dark:text-surface-400">
-              Each chatbot is its own subscription with isolated credits.
-              Free includes one bot; subscribe again to add more.
+        {/* Chatbots */}
+        <Card className="flex flex-col">
+          <CardHeader>
+            <CardTitle>
+              <span className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-surface-500" /> Chatbots
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 flex flex-col">
+            <p className="text-sm text-surface-500 dark:text-surface-400 leading-relaxed">
+              Each chatbot is its own subscription with isolated credits. Free includes one bot;
+              subscribe again to add more.
+            </p>
+            <div className="mt-auto pt-4">
+              <Button onClick={onCreateBot} size="sm">
+                <Plus className="w-3.5 h-3.5" />
+                Create a bot
+              </Button>
             </div>
-            <Button onClick={onCreateBot} size="sm" className="shrink-0">
-              <Plus className="w-3.5 h-3.5" />
-              Create a bot
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Buyer tax identity for invoices (invoicing v2) — self-contained
           card that loads/saves /subscriptions/billing-details itself. */}
       <BillingDetailsCard />
+    </div>
+  );
+}
+
+function DetailRow({ label, value, valueClassName }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <dt className="text-surface-500 dark:text-surface-400 shrink-0">{label}:</dt>
+      <dd
+        className={cn(
+          'text-right text-surface-700 dark:text-surface-200 min-w-0 break-words',
+          valueClassName,
+        )}
+      >
+        {value}
+      </dd>
     </div>
   );
 }

@@ -362,6 +362,30 @@ class Bot(Base):
     is_legacy_pooled = Column(Boolean, default=False, server_default="false", nullable=False)
     credits_balance = Column(Integer, default=0, server_default="0", nullable=False)
 
+    # ── Auto-recrawl (weekly refresh of previously-crawled URLs) ──────────
+    # Gated by the ``auto_recrawl`` feature flag on the client's plan
+    # (Standard + Enterprise). ``next_recrawl_at`` is stamped as
+    # ``now + 7 days`` on toggle-on and cleared on toggle-off — see
+    # ``recrawl_service`` and ``task_auto_recrawl_sweep``. The partial
+    # index ``ix_bots_next_recrawl_due`` keeps the sweep query cheap.
+    recrawl_enabled = Column(Boolean, default=False, server_default="false", nullable=False)
+    next_recrawl_at = Column(DateTime(timezone=True), nullable=True)
+    last_recrawl_at = Column(DateTime(timezone=True), nullable=True)
+    last_recrawl_status = Column(String, nullable=True)  # success | partial | failed | empty
+    last_recrawl_summary = Column(JSONB, nullable=True)
+    # Rolling window (most-recent 20) of past recrawl runs — powers the
+    # Sources-table history expander. Each element: ``{"ran_at": str,
+    # "status": str, "total": int, "unchanged": int, "changed": int,
+    # "failed": int}``. Older entries are trimmed inside
+    # ``recrawl_service._persist_summary`` so the JSONB never grows without
+    # bound.
+    recrawl_history = Column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=sqlalchemy.text("'[]'::jsonb"),
+    )
+
     # Relationships
     client = relationship("Client", back_populates="bots")
     documents = relationship("Document", back_populates="bot", cascade="all, delete-orphan")

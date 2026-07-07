@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { Fragment, useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye, ChevronsUp } from 'lucide-react';
+import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye, ChevronsUp, ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription, discoverCrawlUrls, diffRecrawl } from '../services/api';
+import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription, discoverCrawlUrls, diffRecrawl, getRecrawlStatus } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
+import AutoRecrawlCard from '../components/AutoRecrawlCard';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { useCrawl } from '../context/CrawlContext';
@@ -221,6 +222,39 @@ export default function KnowledgeBase() {
   // Which diff bucket's URL list is currently expanded ('unchanged' | 'new' | 'removed' | null)
   const [recrawlDiffViewing, setRecrawlDiffViewing] = useState(null);
   const [drawerSource, setDrawerSource] = useState(null);
+
+  // ── Recrawl history expander (per-Sources-row) ──
+  // Only mounted for clients with the ``auto_recrawl`` entitlement — Free
+  // and Starter never see the chevron. The history payload is bot-scoped
+  // (auto-recrawl refreshes every crawled URL together, so there's no
+  // per-URL history to render) and cached in local state; a re-fetch
+  // fires when the customer opens the expander so a very recent run is
+  // reflected without a full page reload.
+  const autoRecrawlAvailable = entitlements.hasFeature('auto_recrawl');
+  const [expandedSource, setExpandedSource] = useState(null);
+  const [recrawlHistory, setRecrawlHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const toggleSourceHistory = async (sourceName) => {
+    if (expandedSource === sourceName) {
+      setExpandedSource(null);
+      return;
+    }
+    setExpandedSource(sourceName);
+    if (!selectedBot?.id) return;
+    setHistoryLoading(true);
+    try {
+      const data = await getRecrawlStatus(selectedBot.id);
+      setRecrawlHistory(Array.isArray(data?.recrawl_history) ? data.recrawl_history : []);
+    } catch (err) {
+      // A history-fetch failure isn't worth a toast — the expander just
+      // renders "No recrawl history yet" and the customer can retry.
+      console.warn('[KnowledgeBase] recrawl history fetch failed:', err?.message);
+      setRecrawlHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const fetchDocuments = async () => {
     setIsLoadingDocs(true);
@@ -1335,6 +1369,9 @@ export default function KnowledgeBase() {
                 </ul>
               </div>
             )}
+
+            {/* AUTO-RECRAWL — weekly refresh of crawled URLs (Standard/Enterprise) */}
+            {selectedBot?.id && <AutoRecrawlCard botId={selectedBot.id} />}
           </div>
         )}
 
@@ -1392,8 +1429,14 @@ export default function KnowledgeBase() {
                       const isUrl = doc.name.startsWith('http://') || doc.name.startsWith('https://');
                       const Icon = isUrl ? LinkIcon : FileText;
                       const dateStr = doc.ingested_at ? new Date(doc.ingested_at).toLocaleDateString() : 'Unknown';
+                      // History expander is a Website-only, Standard/Enterprise-only affordance.
+                      // Free / Starter customers never see the chevron so the sources table
+                      // stays visually identical to their existing experience.
+                      const showHistoryChevron = isUrl && autoRecrawlAvailable;
+                      const isHistoryOpen = showHistoryChevron && expandedSource === doc.name;
                       return (
-                        <tr key={idx} className="hover:bg-surface-50 dark:hover:bg-surface-800/30 transition-colors">
+                        <Fragment key={idx}>
+                        <tr className="hover:bg-surface-50 dark:hover:bg-surface-800/30 transition-colors">
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
                               <div className={cn('p-1.5 rounded-lg shrink-0', isUrl ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-500' : 'bg-rose-50 dark:bg-rose-500/10 text-rose-500')}>
@@ -1409,6 +1452,22 @@ export default function KnowledgeBase() {
                                 </button>
                               ) : (
                                 <span className="text-sm font-medium text-surface-900 dark:text-white truncate max-w-[280px]">{doc.name}</span>
+                              )}
+                              {/* Recrawl-history chevron — Website + Standard/Enterprise only.
+                                  Renders to the right of the URL text. Free / Starter customers
+                                  simply don't see it, so the row stays visually clean. */}
+                              {showHistoryChevron && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSourceHistory(doc.name)}
+                                  className="p-0.5 rounded text-surface-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors shrink-0"
+                                  aria-expanded={isHistoryOpen}
+                                  aria-label={isHistoryOpen ? 'Hide recrawl history' : 'Show recrawl history'}
+                                >
+                                  {isHistoryOpen
+                                    ? <ChevronDown size={14} />
+                                    : <ChevronRight size={14} />}
+                                </button>
                               )}
                             </div>
                           </td>
@@ -1489,6 +1548,60 @@ export default function KnowledgeBase() {
                             )}
                           </td>
                         </tr>
+                        {isHistoryOpen && (
+                          <tr className="bg-surface-50/70 dark:bg-surface-900/50 border-t border-surface-100 dark:border-surface-800">
+                            <td colSpan={6} className="px-5 py-3">
+                              {historyLoading ? (
+                                <div className="flex items-center gap-2 text-xs text-surface-500">
+                                  <Loader2 size={12} className="animate-spin" />
+                                  Loading recrawl history…
+                                </div>
+                              ) : recrawlHistory.length === 0 ? (
+                                <div className="text-xs text-surface-500">
+                                  No recrawl history yet. The first auto-run will appear here after it completes.
+                                </div>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  <div className="text-[10px] uppercase tracking-wide text-surface-400 font-semibold mb-1.5">
+                                    Auto-recrawl history
+                                  </div>
+                                  {recrawlHistory.map((entry, i) => (
+                                    <div
+                                      key={i}
+                                      className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-surface-600 dark:text-surface-300 tabular-nums"
+                                    >
+                                      <span className="text-surface-500 min-w-[110px]">
+                                        {entry.ran_at
+                                          ? new Date(entry.ran_at).toLocaleDateString(undefined, {
+                                              month: 'short',
+                                              day: 'numeric',
+                                              year: 'numeric',
+                                            })
+                                          : '—'}
+                                      </span>
+                                      <span>
+                                        <span className="text-surface-400">unchanged</span>{' '}
+                                        <span className="font-medium text-surface-700 dark:text-surface-200">{entry.unchanged ?? 0}</span>
+                                      </span>
+                                      <span>
+                                        <span className="text-surface-400">added</span>{' '}
+                                        <span className="font-medium text-primary-600 dark:text-primary-400">{entry.changed ?? 0}</span>
+                                      </span>
+                                      <span>
+                                        <span className="text-surface-400">removed</span>{' '}
+                                        <span className={cn(
+                                          'font-medium',
+                                          (entry.failed ?? 0) > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-surface-500'
+                                        )}>{entry.failed ?? 0}</span>
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>

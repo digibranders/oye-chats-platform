@@ -1,0 +1,396 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+    RefreshCw,
+    CalendarClock,
+    CheckCircle2,
+    AlertCircle,
+    Loader2,
+    Lock,
+    ArrowRight,
+} from 'lucide-react';
+import { getRecrawlStatus, updateRecrawl } from '../services/api';
+import useEntitlements from '../hooks/useEntitlements';
+import { cn } from '../lib/utils';
+
+/**
+ * AutoRecrawlCard — bot-scoped weekly auto-refresh of crawled URLs.
+ *
+ * Standard / Enterprise plans see a working toggle plus the last-run
+ * summary and the next scheduled run. Free / Starter plans see the same
+ * layout with the toggle disabled and a persistent upsell banner in
+ * place of a transient error.
+ *
+ * There is no manual "Recrawl now" trigger — the ARQ sweep at :05 past
+ * every hour fires the per-bot task the moment ``next_recrawl_at`` has
+ * elapsed. The card is a status surface, not a control surface for
+ * ad-hoc runs.
+ *
+ * The client-side entitlements check is a convenience; the backend
+ * re-enforces the gate on every PATCH so a stale entitlements cache
+ * can't grant a paid feature by accident.
+ */
+export default function AutoRecrawlCard({ botId }) {
+    const { entitlements, loading: entitlementsLoading } = useEntitlements();
+    const featureAvailable = entitlements.hasFeature('auto_recrawl');
+
+    const [status, setStatus] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState(null);
+    const [confirmingDisable, setConfirmingDisable] = useState(false);
+    const [flash, setFlash] = useState(null);
+
+    const load = useCallback(async () => {
+        if (!botId) return;
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await getRecrawlStatus(botId);
+            setStatus(data);
+        } catch (err) {
+            setError(err.message || 'Failed to load auto-recrawl status');
+        } finally {
+            setLoading(false);
+        }
+    }, [botId]);
+
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    // Auto-clear the flash message after 4 seconds so it doesn't linger
+    // as a permanent banner — the customer's next action is a fresh signal.
+    useEffect(() => {
+        if (!flash) return undefined;
+        const timer = setTimeout(() => setFlash(null), 4000);
+        return () => clearTimeout(timer);
+    }, [flash]);
+
+    const handleToggle = async (nextEnabled) => {
+        // Turning off shows a confirmation first — the customer might be
+        // one click away from losing their weekly refresh cadence and
+        // should hear the "next enable resets the 7-day clock" caveat.
+        if (!nextEnabled && status?.enabled) {
+            setConfirmingDisable(true);
+            return;
+        }
+        await commitToggle(nextEnabled);
+    };
+
+    const commitToggle = async (nextEnabled) => {
+        setSaving(true);
+        setError(null);
+        setConfirmingDisable(false);
+        try {
+            const updated = await updateRecrawl(botId, nextEnabled);
+            setStatus(updated);
+            setFlash({
+                type: 'success',
+                message: nextEnabled
+                    ? 'Auto-recrawl enabled. Next check scheduled in 7 days.'
+                    : 'Auto-recrawl disabled. Toggle on again anytime to restart the weekly cycle.',
+            });
+        } catch (err) {
+            setError(err.message || 'Failed to update auto-recrawl');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // The ``auto_recrawl`` plan flag decides whether the toggle is
+    // interactive. Two sources so a stale client cache can't wrongly
+    // enable it:
+    //  * ``backendLocked`` is the ground truth from the GET response.
+    //  * ``clientLocked`` is the fast client-side check for pre-fetch renders.
+    // When either is true the toggle is disabled and a persistent upsell
+    // banner points the customer at /billing.
+    const backendLocked = status && status.feature_available === false;
+    const clientLocked = !entitlementsLoading && !featureAvailable;
+    const autoRecrawlLocked = Boolean(backendLocked || clientLocked);
+    const upsellPlanSlug = status?.current_plan || entitlements.planSlug;
+
+    if (loading) {
+        return (
+            <div className="rounded-2xl border border-surface-200 dark:border-surface-800 p-6 bg-white dark:bg-surface-900">
+                <div className="flex items-center gap-3">
+                    <Loader2 className="animate-spin text-primary-500" size={18} />
+                    <span className="text-sm text-surface-500">Loading auto-recrawl status…</span>
+                </div>
+            </div>
+        );
+    }
+
+    const {
+        enabled = false,
+        cadence_days: cadenceDays = 7,
+        next_recrawl_at: nextRecrawlAt,
+        last_recrawl_at: lastRecrawlAt,
+        last_recrawl_status: lastStatus,
+        sources_count: sourcesCount = 0,
+    } = status || {};
+
+    return (
+        <div className="rounded-2xl border border-surface-200 dark:border-surface-800 bg-white dark:bg-surface-900 overflow-hidden">
+            <div className="p-6 space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+                            <RefreshCw className="text-primary-600 dark:text-primary-400" size={18} />
+                        </div>
+                        <div>
+                            <h3 className="text-base font-semibold text-surface-900 dark:text-white">Auto-recrawl</h3>
+                            <p className="text-sm text-surface-500 mt-0.5">
+                                Refresh every crawled URL once a week. We only re-embed pages whose content actually changed.
+                            </p>
+                        </div>
+                    </div>
+
+                    <ToggleSwitch
+                        enabled={enabled}
+                        disabled={saving || autoRecrawlLocked}
+                        onChange={handleToggle}
+                        label={
+                            autoRecrawlLocked
+                                ? 'Weekly auto-recrawl requires Standard or Enterprise'
+                                : 'Toggle weekly auto-recrawl'
+                        }
+                    />
+                </div>
+
+                {/* Live status strip */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <StatusTile
+                        label="Cadence"
+                        value={enabled ? `Every ${cadenceDays} days` : 'Off'}
+                        icon={<CalendarClock size={14} />}
+                    />
+                    <StatusTile
+                        label="Last checked"
+                        value={lastRecrawlAt ? formatRelative(lastRecrawlAt) : '—'}
+                        sub={lastStatus ? capitalize(lastStatus) : null}
+                    />
+                    <StatusTile
+                        label="Next check"
+                        value={enabled && nextRecrawlAt ? formatRelative(nextRecrawlAt) : '—'}
+                        sub={enabled && nextRecrawlAt ? formatDate(nextRecrawlAt) : null}
+                    />
+                </div>
+
+                {/* Sources line */}
+                <div className="text-xs text-surface-500">
+                    {sourcesCount === 0 ? (
+                        <span>No crawled URLs yet. Scan a website first to enable recrawl.</span>
+                    ) : (
+                        <span>{sourcesCount} URL{sourcesCount === 1 ? '' : 's'} in the recrawl set</span>
+                    )}
+                </div>
+
+                {/* Persistent upsell banner — shown for Free / Starter with a link
+                    to /billing so the customer isn't stranded. */}
+                {autoRecrawlLocked && <UpsellBanner currentPlan={upsellPlanSlug} />}
+
+                {flash && (
+                    <div
+                        className={cn(
+                            'flex items-start gap-2 px-3 py-2 rounded-lg text-sm',
+                            flash.type === 'success'
+                                ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                : 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300',
+                        )}
+                        role="status"
+                    >
+                        {flash.type === 'success' ? (
+                            <CheckCircle2 size={16} className="flex-shrink-0 mt-0.5" />
+                        ) : (
+                            <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                        )}
+                        <span>{flash.message}</span>
+                    </div>
+                )}
+
+                {/* Transient error — PATCH failures, network hiccups, etc. */}
+                {error && (
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300">
+                        <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                        <span>{error}</span>
+                    </div>
+                )}
+            </div>
+
+            {confirmingDisable && (
+                <ConfirmDisableDialog
+                    onCancel={() => setConfirmingDisable(false)}
+                    onConfirm={() => commitToggle(false)}
+                />
+            )}
+        </div>
+    );
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function ToggleSwitch({ enabled, disabled, onChange, label }) {
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            aria-label={label}
+            disabled={disabled}
+            onClick={() => onChange(!enabled)}
+            className={cn(
+                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full',
+                'border-2 border-transparent transition-colors duration-200 ease-in-out',
+                'focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                'focus:ring-offset-white dark:focus:ring-offset-surface-900',
+                enabled ? 'bg-primary-600' : 'bg-surface-300 dark:bg-surface-700',
+                disabled && 'opacity-50 cursor-not-allowed',
+            )}
+        >
+            <span
+                className={cn(
+                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow',
+                    'ring-0 transition duration-200 ease-in-out',
+                    enabled ? 'translate-x-5' : 'translate-x-0',
+                )}
+            />
+        </button>
+    );
+}
+
+function StatusTile({ label, value, sub, icon }) {
+    return (
+        <div className="rounded-xl border border-surface-200 dark:border-surface-800 bg-surface-50 dark:bg-surface-900/50 p-3">
+            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-surface-500 font-medium">
+                {icon}
+                <span>{label}</span>
+            </div>
+            <div className="text-sm font-medium text-surface-900 dark:text-white mt-1">{value}</div>
+            {sub && <div className="text-xs text-surface-500 mt-0.5">{sub}</div>}
+        </div>
+    );
+}
+
+function ConfirmDisableDialog({ onCancel, onConfirm }) {
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            role="dialog"
+            aria-modal="true"
+        >
+            <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-surface-900 p-5 shadow-2xl border border-surface-200 dark:border-surface-800">
+                <h4 className="text-base font-semibold text-surface-900 dark:text-white">
+                    Turn off auto-recrawl?
+                </h4>
+                <p className="text-sm text-surface-500 mt-2">
+                    Your bot will stop refreshing crawled pages automatically. If you toggle it back on later,
+                    the 7-day countdown starts fresh from that moment.
+                </p>
+                <div className="flex justify-end gap-2 mt-5">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium text-surface-700 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onConfirm}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700"
+                    >
+                        Turn off
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── Upsell banner (persistent, inside the live card) ───────────────────────
+
+function UpsellBanner({ currentPlan }) {
+    return (
+        <div
+            className={cn(
+                'flex items-start gap-3 px-4 py-3 rounded-xl',
+                'bg-gradient-to-r from-primary-50 to-surface-50 dark:from-primary-900/20 dark:to-surface-900/40',
+                'border border-primary-100 dark:border-primary-800/40',
+            )}
+            role="status"
+        >
+            <div className="w-8 h-8 rounded-lg bg-primary-100 dark:bg-primary-900/40 flex items-center justify-center flex-shrink-0">
+                <Lock size={14} className="text-primary-600 dark:text-primary-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-surface-900 dark:text-white">
+                    Auto-recrawl is a Standard feature
+                </div>
+                <div className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
+                    You&apos;re on{' '}
+                    <strong className="text-surface-700 dark:text-surface-300">
+                        {capitalize(currentPlan)}
+                    </strong>{' '}
+                    — upgrade to Standard or Enterprise to have the bot refresh your crawled URLs
+                    automatically every 7 days.
+                </div>
+            </div>
+            <Link
+                to="/billing"
+                className={cn(
+                    'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium',
+                    'bg-primary-600 hover:bg-primary-700 text-white',
+                    'transition-colors shadow-sm shadow-primary-500/20 flex-shrink-0',
+                )}
+            >
+                Upgrade
+                <ArrowRight size={12} />
+            </Link>
+        </div>
+    );
+}
+
+// ─── Formatting helpers ──────────────────────────────────────────────────────
+
+function capitalize(slug) {
+    if (!slug) return 'Free';
+    return slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
+function formatDate(iso) {
+    try {
+        return new Date(iso).toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+        });
+    } catch {
+        return '—';
+    }
+}
+
+function formatRelative(iso) {
+    try {
+        const then = new Date(iso).getTime();
+        const now = Date.now();
+        const diffMs = then - now;
+        const absSeconds = Math.abs(diffMs) / 1000;
+        const isFuture = diffMs > 0;
+
+        const units = [
+            { limit: 60, label: 'sec', divisor: 1 },
+            { limit: 3600, label: 'min', divisor: 60 },
+            { limit: 86400, label: 'hour', divisor: 3600 },
+            { limit: 604800, label: 'day', divisor: 86400 },
+            { limit: 2629800, label: 'week', divisor: 604800 },
+            { limit: Infinity, label: 'month', divisor: 2629800 },
+        ];
+        const unit = units.find((u) => absSeconds < u.limit);
+        const value = Math.round(absSeconds / unit.divisor);
+        const plural = value === 1 ? unit.label : `${unit.label}s`;
+        return isFuture ? `in ${value} ${plural}` : `${value} ${plural} ago`;
+    } catch {
+        return '—';
+    }
+}
