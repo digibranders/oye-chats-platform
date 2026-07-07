@@ -2189,10 +2189,10 @@ export const unsubscribePush = async (endpoint, keys) => {
 // --- CLIENT ACCOUNT (Settings → Profile / Security / Workspace) ---
 
 /**
- * Update the authenticated client's profile (name and/or email). Only the
- * provided fields are changed; the backend rejects a duplicate email with 400.
- * @param {{ name?: string, email?: string }} patch
- * @returns {Promise<{ id: number, name: string, email: string }>}
+ * Update the authenticated client's display name. Email changes go through
+ * requestClientEmailChange / confirmClientEmailChange instead.
+ * @param {{ name?: string }} patch
+ * @returns {Promise<{ id: number, name: string, email: string, pending_email: string|null }>}
  */
 export const updateClientProfile = async (patch) => {
     try {
@@ -2201,6 +2201,56 @@ export const updateClientProfile = async (patch) => {
     } catch (error) {
         console.error('API Error updating client profile:', error);
         throw buildApiError(error, 'Failed to update profile');
+    }
+};
+
+/**
+ * Start an email change: verifies the current password, stores the new
+ * address as pending, and emails it a confirmation code. The login email
+ * does not change until confirmClientEmailChange succeeds.
+ * @param {string} newEmail
+ * @param {string} currentPassword
+ * @returns {Promise<{ message: string, pending_email: string }>}
+ */
+export const requestClientEmailChange = async (newEmail, currentPassword) => {
+    try {
+        const response = await api.post('/client/change-email/request', {
+            new_email: newEmail,
+            current_password: currentPassword,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('API Error requesting email change:', error);
+        throw buildApiError(error, 'Failed to start email change');
+    }
+};
+
+/**
+ * Confirm a pending email change with the OTP sent to the new address.
+ * @param {string} otp
+ * @returns {Promise<{ id: number, name: string, email: string, pending_email: null }>}
+ */
+export const confirmClientEmailChange = async (otp) => {
+    try {
+        const response = await api.post('/client/change-email/confirm', { otp });
+        return response.data;
+    } catch (error) {
+        console.error('API Error confirming email change:', error);
+        throw buildApiError(error, 'Failed to confirm email change');
+    }
+};
+
+/**
+ * Cancel a pending email change before it's confirmed.
+ * @returns {Promise<{ ok: boolean }>}
+ */
+export const cancelClientEmailChange = async () => {
+    try {
+        const response = await api.post('/client/change-email/cancel');
+        return response.data;
+    } catch (error) {
+        console.error('API Error cancelling email change:', error);
+        throw buildApiError(error, 'Failed to cancel email change');
     }
 };
 

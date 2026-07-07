@@ -68,6 +68,15 @@ class Client(Base):
     reset_otp = Column(String, nullable=True)
     reset_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Email change verification. The login email only ever moves to
+    # ``pending_email`` once the OTP sent to that *new* address is confirmed
+    # (see /client/change-email/*) — a bare profile PATCH can no longer
+    # overwrite ``email`` directly, so a hijacked session can't silently
+    # redirect account recovery to an attacker-controlled inbox.
+    pending_email = Column(String, nullable=True)
+    email_change_otp = Column(String, nullable=True)
+    email_change_otp_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     # ── Affiliate program v1 (referral attribution) ──
     # First-touch attribution: set once at signup if a valid ?ref=code cookie
     # is present, then immutable. ``referral_code_id`` is FK to referral_codes.

@@ -107,6 +107,9 @@ def mock_client():
         is_superadmin=False,
         max_bots=5,
         system_prompt=None,
+        pending_email=None,
+        email_change_otp=None,
+        email_change_otp_expires_at=None,
     )
 
 
