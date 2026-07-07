@@ -1426,6 +1426,134 @@ async def task_render_invoice_pdfs(ctx: dict) -> int:
     return total
 
 
+# ── Auto-recrawl (weekly refresh of previously-crawled URLs) ────────────────
+#
+# Two tasks drive the pipeline:
+#
+# * ``task_auto_recrawl_sweep``    — hourly cron. Queries bots whose
+#   ``next_recrawl_at`` has elapsed and enqueues a per-bot task for each.
+#   The partial index ``ix_bots_next_recrawl_due`` keeps the read cheap.
+#
+# * ``task_auto_recrawl_bot``      — per-bot fan-out. Loads the bot, checks
+#   the plan gate one more time (a downgrade between sweep and execution
+#   auto-disables the toggle), then delegates to ``recrawl_service`` which
+#   returns the summary that gets persisted back onto the bot row.
+#
+# The sweep runs every hour at :05 (offset from the invoice-PDF sweep at
+# :01 and the webhook-retry poll at :00/:30 so ARQ concurrency isn't
+# starved on the minute boundary).
+
+
+async def task_auto_recrawl_sweep(ctx: dict) -> int:
+    """Cron: enqueue an auto-recrawl for every bot whose weekly window has elapsed.
+
+    Idempotent within an hour bucket via ``_job_id`` — two sweeps that fire
+    in the same clock hour (e.g. a redeploy overlap) can't double-enqueue
+    the same bot. Returns the number of bots enqueued this tick.
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.db.models import Bot
+    from app.db.session import get_session
+    from app.worker.enqueue import enqueue
+
+    def _due_bot_ids() -> list[int]:
+        with get_session() as session:
+            return list(
+                session.execute(
+                    select(Bot.id).where(
+                        Bot.recrawl_enabled.is_(True),
+                        Bot.next_recrawl_at.is_not(None),
+                        Bot.next_recrawl_at <= datetime.now(UTC),
+                        Bot.is_active.is_(True),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+    loop = asyncio.get_running_loop()
+    bot_ids = await loop.run_in_executor(None, _due_bot_ids)
+
+    if not bot_ids:
+        return 0
+
+    # Dedup key: (bot_id, hour_bucket). A second sweep firing in the same
+    # UTC hour for the same bot is a no-op; the next hourly tick re-enqueues
+    # cleanly if the previous job dropped for any reason.
+    hour_bucket = datetime.now(UTC).strftime("%Y%m%d%H")
+    enqueued = 0
+    for bot_id in bot_ids:
+        try:
+            job = await enqueue(
+                "task_auto_recrawl_bot",
+                bot_id,
+                _job_id=f"auto_recrawl:{bot_id}:{hour_bucket}",
+            )
+        except Exception:
+            logger.exception("task_auto_recrawl_sweep: enqueue failed for bot %s", bot_id)
+            continue
+        if job is not None:
+            enqueued += 1
+
+    if enqueued:
+        logger.info("task_auto_recrawl_sweep: enqueued auto-recrawl for %d bot(s)", enqueued)
+    return enqueued
+
+
+async def task_auto_recrawl_bot(ctx: dict, bot_id: int) -> dict:
+    """Refresh every previously-crawled URL for one bot.
+
+    Re-validates the plan gate on entry: if the client downgraded between
+    the sweep read and this task running, the toggle is force-disabled and
+    the run is skipped rather than silently continuing on a paid feature.
+    """
+    import asyncio
+
+    from app.db.models import Bot
+    from app.db.session import get_session
+    from app.services.plan_entitlements_service import get_entitlements
+    from app.services.recrawl_service import recrawl_bot
+
+    def _plan_check() -> tuple[bool, str | None]:
+        """Return (should_run, reason_if_skip)."""
+        with get_session() as session:
+            bot = session.get(Bot, bot_id)
+            if bot is None:
+                return False, "bot_not_found"
+            if not bot.recrawl_enabled:
+                return False, "toggle_off"
+            entitlements = get_entitlements(bot.client_id, session)
+            if not entitlements.has_feature("auto_recrawl"):
+                # Plan lost the entitlement (downgrade / lapsed sub). Auto-
+                # disable so the sweep stops picking this bot up until the
+                # customer re-enables after re-upgrading.
+                bot.recrawl_enabled = False
+                bot.next_recrawl_at = None
+                session.commit()
+                return False, "plan_downgraded"
+            return True, None
+
+    loop = asyncio.get_running_loop()
+    should_run, skip_reason = await loop.run_in_executor(None, _plan_check)
+    if not should_run:
+        logger.info("task_auto_recrawl_bot: bot %s skipped (%s)", bot_id, skip_reason)
+        return {"status": "skipped", "reason": skip_reason}
+
+    summary = await recrawl_bot(bot_id)
+    logger.info(
+        "task_auto_recrawl_bot: bot %s finished — status=%s changed=%s failed=%s",
+        bot_id,
+        summary.get("status"),
+        summary.get("changed_pages"),
+        summary.get("failed"),
+    )
+    return summary
+
+
 async def task_invoice_reconciliation_alert(ctx: dict) -> int:
     """Daily cron: surface invoice anomalies loudly (error-level → Sentry).
 

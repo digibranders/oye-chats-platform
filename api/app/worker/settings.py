@@ -22,6 +22,8 @@ from arq.connections import RedisSettings
 litellm.drop_params = True
 
 from app.worker.tasks import (  # noqa: E402  (litellm config must precede)
+    task_auto_recrawl_bot,
+    task_auto_recrawl_sweep,
     task_crawl_and_ingest,
     task_delete_expired_trial_data,
     task_deliver_webhook,
@@ -135,6 +137,8 @@ class WorkerSettings:
         task_reembed_document,
         task_render_invoice_pdfs,
         task_invoice_reconciliation_alert,
+        task_auto_recrawl_sweep,
+        task_auto_recrawl_bot,
     ]
 
     # Cron jobs:
@@ -170,6 +174,11 @@ class WorkerSettings:
         # Invoice anomaly sweep — daily at 01:00 UTC, after the midnight
         # billing crons have settled.
         cron(task_invoice_reconciliation_alert, hour=1, minute=0),
+        # Auto-recrawl sweep — hourly at :05. Fires ``task_auto_recrawl_bot``
+        # for every bot whose ``next_recrawl_at`` has elapsed. Offset from
+        # the :00/:30 webhook / heartbeat crons and the :01/… invoice-PDF
+        # sweep so the minute boundary isn't concurrency-starved.
+        cron(task_auto_recrawl_sweep, minute=5),
     ]
 
     # Redis connection

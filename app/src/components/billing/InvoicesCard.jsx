@@ -85,7 +85,7 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
   if (error) {
     return (
       <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
-        <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-1">Invoices</h3>
+        <h3 className="text-base font-semibold tracking-tight text-surface-900 dark:text-surface-50 mb-1">Invoices</h3>
         <p className="text-[13px] text-surface-500 mb-3">
           Couldn&apos;t load your invoices. Check your connection and try again.
         </p>
@@ -103,7 +103,7 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
   if (invoices.length === 0) {
     return (
       <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
-        <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-1">Invoices</h3>
+        <h3 className="text-base font-semibold tracking-tight text-surface-900 dark:text-surface-50 mb-1">Invoices</h3>
         <p className="text-[13px] text-surface-500">
           Your tax invoices and receipts appear here after each payment.
         </p>
@@ -113,7 +113,7 @@ export default function InvoicesCard({ limit = 25, refreshKey = 0 }) {
 
   return (
     <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
-      <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-4">Invoices</h3>
+      <h3 className="text-base font-semibold tracking-tight text-surface-900 dark:text-surface-50 mb-4">Invoices</h3>
       <div className="space-y-2">
         {invoices.slice(0, limit).map(inv => {
           const isCreditNote = inv.invoice_type === 'credit_note';

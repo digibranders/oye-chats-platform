@@ -1501,6 +1501,160 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
         raise HTTPException(status_code=500, detail="Failed to save bot settings.") from e
 
 
+# ── Auto-recrawl (Standard + Enterprise plans) ───────────────────────────────
+#
+# Two endpoints back the KnowledgeBase → Auto-Recrawl card:
+#
+# * ``GET  /bots/{bot_id}/recrawl``   — current toggle state, last-run
+#                                       summary, next-run timestamp, and a
+#                                       ``feature_available`` boolean the UI
+#                                       uses to decide between the live card
+#                                       and the upsell.
+# * ``PATCH /bots/{bot_id}/recrawl``  — toggle on/off. Enforces the plan
+#                                       gate; toggle-on stamps
+#                                       ``next_recrawl_at = now + 7d``,
+#                                       toggle-off clears the schedule
+#                                       (history fields preserved).
+
+
+class RecrawlStatusResponse(BaseModel):
+    enabled: bool
+    cadence_days: int
+    feature_available: bool
+    current_plan: str
+    next_recrawl_at: str | None
+    last_recrawl_at: str | None
+    last_recrawl_status: str | None
+    last_recrawl_summary: dict | None
+    sources_count: int
+    # Rolling window (newest first) of past auto-recrawl runs. Each entry:
+    # ``{"ran_at": str, "status": str, "total": int, "unchanged": int,
+    # "changed": int, "failed": int}``. Bounded server-side to 20 entries
+    # so the payload stays small regardless of run count.
+    recrawl_history: list[dict]
+
+
+class RecrawlUpdateRequest(BaseModel):
+    enabled: bool
+
+
+def _load_recrawl_context(bot_id: int, client_id: int):
+    """Shared read: bot row, entitlements, and crawled-source count.
+
+    Kept as a helper so every recrawl route enforces the same tenant
+    isolation (``bot.client_id == client_id``) and the same feature check
+    path. Returns a ``(bot, entitlements, sources_count)`` tuple; raises
+    404 if the bot isn't in the workspace.
+    """
+    from sqlalchemy import func as sa_func
+
+    from app.db.models import Document
+    from app.services.plan_entitlements_service import get_entitlements
+
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, client_id)
+        entitlements = get_entitlements(client_id, session)
+        sources_count = int(
+            session.execute(
+                select(sa_func.count(sa_func.distinct(Document.document_name))).where(
+                    Document.bot_id == bot_id,
+                    Document.source == "crawl",
+                )
+            ).scalar_one()
+            or 0
+        )
+        return bot, entitlements, sources_count
+
+
+def _serialize_recrawl_status(bot: Bot, entitlements, sources_count: int) -> RecrawlStatusResponse:
+    """Build the response payload the admin card renders."""
+    from app.services.recrawl_service import RECRAWL_CADENCE_DAYS
+
+    return RecrawlStatusResponse(
+        enabled=bool(bot.recrawl_enabled),
+        cadence_days=RECRAWL_CADENCE_DAYS,
+        feature_available=entitlements.has_feature("auto_recrawl"),
+        current_plan=entitlements.plan_slug,
+        next_recrawl_at=bot.next_recrawl_at.isoformat() if bot.next_recrawl_at else None,
+        last_recrawl_at=bot.last_recrawl_at.isoformat() if bot.last_recrawl_at else None,
+        last_recrawl_status=bot.last_recrawl_status,
+        last_recrawl_summary=bot.last_recrawl_summary,
+        sources_count=sources_count,
+        recrawl_history=list(bot.recrawl_history or []),
+    )
+
+
+@router.get("/{bot_id}/recrawl", response_model=RecrawlStatusResponse)
+def get_recrawl_status(bot_id: int, auth=Depends(get_current_client_or_operator)):
+    """Return the current auto-recrawl state + last-run summary for a bot."""
+    bot, entitlements, sources_count = _load_recrawl_context(bot_id, auth["client_id"])
+    return _serialize_recrawl_status(bot, entitlements, sources_count)
+
+
+@router.patch("/{bot_id}/recrawl", response_model=RecrawlStatusResponse)
+def update_recrawl(
+    bot_id: int,
+    request: RecrawlUpdateRequest,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Toggle auto-recrawl on or off for a bot.
+
+    Enabling requires the ``auto_recrawl`` feature flag on the client's
+    plan — Free / Starter plans get a structured 403 the admin UI catches
+    and routes to the upgrade flow. Disabling always succeeds so a
+    customer can turn the feature off even after a plan downgrade left
+    them without the entitlement.
+    """
+    _require_bot_management_access(auth)
+
+    from app.services.plan_entitlements_service import get_entitlements
+    from app.services.recrawl_service import compute_next_recrawl_at
+
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        entitlements = get_entitlements(auth["client_id"], session)
+
+        if request.enabled and not entitlements.has_feature("auto_recrawl"):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "feature_locked",
+                    "feature": "auto_recrawl",
+                    "current_plan": entitlements.plan_slug,
+                    "message": ("Auto-recrawl is available on Standard and Enterprise plans. Upgrade to enable it."),
+                    "upgrade_url": "/billing",
+                },
+            )
+
+        now = datetime.now(UTC)
+        if request.enabled:
+            bot.recrawl_enabled = True
+            # Fresh 7-day countdown from the moment the toggle flips on.
+            # Toggling off then on again resets this — that's the product
+            # behavior the customer sees on the card.
+            bot.next_recrawl_at = compute_next_recrawl_at(now)
+        else:
+            bot.recrawl_enabled = False
+            bot.next_recrawl_at = None
+            # ``last_recrawl_*`` fields are intentionally preserved so the
+            # card's history section keeps showing "Last checked: Jul 3"
+            # even after the customer disables the feature.
+
+        session.commit()
+        logger.info(
+            "Bot %s auto-recrawl set to %s by workspace %s",
+            bot_id,
+            "enabled" if request.enabled else "disabled",
+            auth["client_id"],
+        )
+
+    _, entitlements, sources_count = _load_recrawl_context(bot_id, auth["client_id"])
+    # Re-load the fresh bot so the response reflects the committed row.
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        return _serialize_recrawl_status(bot, entitlements, sources_count)
+
+
 @router.delete("/{bot_id}")
 def delete_bot(bot_id: int, auth=Depends(get_current_client_or_operator)):
     """Delete a bot and all its data (documents, sessions, messages).

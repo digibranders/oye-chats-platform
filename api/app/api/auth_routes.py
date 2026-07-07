@@ -248,6 +248,10 @@ class RegisterRequest(BaseModel):
     password: str
     company_name: str | None = None
     website: str | None = None
+    # Billing country chosen at signup — sets the account's display/charge
+    # currency (IN -> INR, else USD) from the very first load. Optional; falls
+    # back to IP geo when omitted.
+    billing_country: str | None = None
     # Optional affiliate referral code captured from the ``?ref=`` cookie at
     # signup. Silent on invalid/self-referral — registration must never fail
     # because of a referral problem.
@@ -259,6 +263,16 @@ class RegisterRequest(BaseModel):
         v = v.strip()
         if len(v) < 2:
             raise ValueError("Name must be at least 2 characters.")
+        return v
+
+    @field_validator("billing_country")
+    @classmethod
+    def normalize_billing_country(cls, v):
+        if not v:
+            return None
+        v = v.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", v):
+            raise ValueError("billing_country must be a 2-letter ISO code")
         return v
 
     @field_validator("email")
@@ -695,6 +709,7 @@ def register(request: Request, body: RegisterRequest):
                 hashed_password=get_password_hash(body.password),
                 api_key=str(uuid.uuid4().hex),
                 website=body.website.strip() if body.website else None,
+                billing_country=body.billing_country,  # validator normalised to ISO-2 or None
                 is_superadmin=False,
             )
 

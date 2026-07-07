@@ -143,9 +143,11 @@ export const registerClient = async (
     password,
     companyName = null,
     website = null,
+    billingCountry = null,
 ) => {
     try {
         const payload = { name, email, password, company_name: companyName, website };
+        if (billingCountry) payload.billing_country = billingCountry;
         const response = await api.post('/auth/register', payload);
         return response.data;
     } catch (error) {
@@ -421,6 +423,35 @@ export const deleteDocument = async (documentName, botId) => {
     } catch (error) {
         console.error('API Error deleting document:', error);
         throw buildApiError(error, 'Failed to delete document');
+    }
+};
+
+// ── Auto-recrawl ─────────────────────────────────────────────────────────────
+// Weekly automatic refresh of a bot's previously-crawled URLs. Only
+// available on Standard + Enterprise plans; Free / Starter clients get a
+// 403 on PATCH with { error: 'feature_locked', current_plan, upgrade_url }
+// that the admin UI surfaces via the existing FeatureGate / UpgradeModal
+// flow. The ARQ sweep fires on schedule — there is no manual trigger.
+
+/** Get the current auto-recrawl state and last-run summary for a bot. */
+export const getRecrawlStatus = async (botId) => {
+    try {
+        const response = await api.get(`/bots/${botId}/recrawl`);
+        return response.data;
+    } catch (error) {
+        console.error('API Error fetching recrawl status:', error);
+        throw buildApiError(error, 'Failed to load auto-recrawl status');
+    }
+};
+
+/** Toggle auto-recrawl on or off for a bot. */
+export const updateRecrawl = async (botId, enabled) => {
+    try {
+        const response = await api.patch(`/bots/${botId}/recrawl`, { enabled });
+        return response.data;
+    } catch (error) {
+        console.error('API Error updating recrawl:', error);
+        throw buildApiError(error, 'Failed to update auto-recrawl setting');
     }
 };
 
