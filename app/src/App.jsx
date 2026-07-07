@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { ToastProvider } from './context/ToastContext';
 import { UpgradeModalProvider } from './context/UpgradeModalContext';
 import { CrawlProvider } from './context/CrawlContext';
+import { CurrencyProvider } from './context/CurrencyContext';
 import { getAuthState } from './utils/auth';
 import { getCurrentUser } from './services/api';
 
@@ -177,10 +178,12 @@ function App() {
                         path="/"
                         element={
                             <ProtectedRoute>
-                                <CrawlProvider>
-                                    <AdminLayout />
-                                    <GlobalCrawlIndicator />
-                                </CrawlProvider>
+                                <CurrencyProvider>
+                                    <CrawlProvider>
+                                        <AdminLayout />
+                                        <GlobalCrawlIndicator />
+                                    </CrawlProvider>
+                                </CurrencyProvider>
                             </ProtectedRoute>
                         }
                     >
