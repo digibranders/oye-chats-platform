@@ -223,11 +223,20 @@ s3.delete_object(Bucket=bucket, Key=probe_key)
 print(f"    ok (put+delete s3://{bucket}/{probe_key})")
 PY
 chmod 644 "${R2_PROBE}"
-# Source .env exactly as systemd's EnvironmentFile would, then run the probe —
-# this also exercises the group-read grant from step 3 end to end.
+# Extract ONLY the R2_* keys from .env — never `source` the whole file: it is
+# written for python-dotenv/systemd (values literal to end of line), not for
+# shell. VAPID_PRIVATE_KEY is an unquoted PEM with spaces that bash would
+# word-split into a command. Reading the file as the service user also
+# exercises the group-read grant from step 3 end to end.
 runuser -u "${SERVICE_USER}" -- bash -c "
   set -euo pipefail
-  set -a; . '${APP_DIR}/.env'; set +a
+  while IFS= read -r line; do
+    case \"\$line\" in
+      R2_KEY_ID=* | R2_APPLICATION_KEY=* | R2_BUCKET_NAME=* | R2_ENDPOINT=*)
+        export \"\${line?}\"
+        ;;
+    esac
+  done < '${APP_DIR}/.env'
   export HOME='${CACHE_DIR}' XDG_CACHE_HOME='${CACHE_DIR}'
   exec '${APP_DIR}/.venv/bin/python' '${R2_PROBE}'
 " || { rm -f "${R2_PROBE}"; fail "R2 probe failed as ${SERVICE_USER}"; }
