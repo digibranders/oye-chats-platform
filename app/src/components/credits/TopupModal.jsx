@@ -12,15 +12,18 @@ import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
 import { getTopupPacks, initiateTopup, verifyTopupPayment } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useCurrency } from '../../context/CurrencyContext';
 import { openRazorpayCheckout } from '../../lib/razorpay';
 
-/** Display amount with USD symbol. */
+/** Display a MAJOR-unit amount with the right currency symbol + grouping. */
 function formatAmount(amount, currency) {
-  const sym = currency === 'USD' ? '$' : currency + ' ';
+  const isInr = String(currency).toUpperCase() === 'INR';
+  const sym = isInr ? '₹' : currency === 'USD' ? '$' : `${currency} `;
+  const locale = isInr ? 'en-IN' : undefined; // en-IN → lakh/crore grouping
   const numeric = Number(amount);
   const formatted = Number.isInteger(numeric)
-    ? numeric.toLocaleString()
-    : numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    ? numeric.toLocaleString(locale)
+    : numeric.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${sym}${formatted}`;
 }
 
@@ -39,6 +42,7 @@ function pricePerKCredits(amount, credits) {
  */
 export default function TopupModal({ open, onClose, onSuccess, botId = null, botName = null }) {
   const { showToast } = useToast();
+  const { isInr } = useCurrency();
   const [packs, setPacks] = useState([]);
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [submittingPack, setSubmittingPack] = useState(null);
@@ -134,12 +138,16 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {packs.map((pack) => {
-              const amount = Number(pack.amount ?? pack.usd ?? 0);
-              const displayAmount = Number(pack.display_amount ?? amount);
-              const displayCurrency = (pack.display_currency || pack.currency || 'USD').toUpperCase();
+              const amount = Number(pack.amount ?? pack.usd ?? 0); // charge amount (INR major units)
+              // Show the account currency: INR accounts see the real ₹ charge
+              // (pack.amount); everyone else sees the USD display amount.
+              const shownAmount = isInr ? amount : Number(pack.display_amount ?? amount);
+              const shownCurrency = isInr
+                ? 'INR'
+                : (pack.display_currency || pack.currency || 'USD').toUpperCase();
               const featured = (pack.bonus_pct || 0) >= 20;
               const submitting = submittingPack === amount;
-              const perK = pricePerKCredits(displayAmount, pack.credits);
+              const perK = pricePerKCredits(shownAmount, pack.credits);
               return (
                 <button
                   key={amount}
@@ -162,7 +170,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
                   )}
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="text-2xl font-bold tabular-nums text-surface-900 dark:text-surface-50">
-                      {formatAmount(displayAmount, displayCurrency)}
+                      {formatAmount(shownAmount, shownCurrency)}
                     </span>
                   </div>
                   <div className="mt-1 flex items-center gap-1.5 text-sm text-surface-600 dark:text-surface-300 flex-wrap">
@@ -179,7 +187,7 @@ export default function TopupModal({ open, onClose, onSuccess, botId = null, bot
                   </div>
                   {perK && (
                     <div className="mt-3 text-xs text-surface-500 dark:text-surface-400">
-                      {formatAmount(perK, displayCurrency)} per 1,000 credits
+                      {formatAmount(perK, shownCurrency)} per 1,000 credits
                     </div>
                   )}
                   <div className="mt-4 flex items-center text-xs font-medium text-primary-600 dark:text-primary-400">
