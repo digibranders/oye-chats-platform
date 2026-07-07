@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Minus, Loader2, X, Smartphone, ArrowUpRight } from 'lucide-react';
 import { useState } from 'react';
-import { formatMoney } from '../../lib/currency';
+import { useCurrency } from '../../context/CurrencyContext';
 
 /**
  * Confirmation step before adding or removing an operator seat.
@@ -9,8 +9,8 @@ import { formatMoney } from '../../lib/currency';
  * The backend ``POST /subscriptions/seats`` route dispatches to Razorpay
  * based on ``Subscription.payment_provider``. The modal surfaces:
  *   • Net effect on seat count.
- *   • The per-seat price in the currency it is denominated in
- *     (``seatPriceCurrency`` — USD headline column or plan-native paise).
+ *   • The per-seat price in the account's display currency (via useCurrency;
+ *     ``seatPriceCents`` is already in that currency's minor units).
  *   • A clear CTA + cancel.
  *
  * When ``hasSubscription`` is false (Free plan), renders an upgrade CTA.
@@ -20,19 +20,19 @@ export default function AddSeatConfirmModal({
     onClose,
     delta,
     seatPriceCents,
-    seatPriceCurrency = 'usd',
     currentSeatCount,
     includedSeats,
     hasSubscription,
     onConfirm, // async () => void
     onUpgradeClick, // () => void  (shown when !hasSubscription)
 }) {
+    const { format } = useCurrency();
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
 
     const isAdd = delta > 0;
     const newTotal = currentSeatCount + delta;
-    const seatPriceDisplay = formatMoney(seatPriceCents, seatPriceCurrency);
+    const seatPriceDisplay = format(seatPriceCents);
 
     async function handleConfirm() {
         setSubmitting(true);

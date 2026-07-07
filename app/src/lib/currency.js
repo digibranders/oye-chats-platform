@@ -23,3 +23,20 @@ export function formatMoney(amountMinor, currency = 'usd') {
     maximumFractionDigits: useDecimals ? 2 : 0,
   })}`;
 }
+
+/**
+ * Choose the minor-unit amount for the active currency from an entity that
+ * carries BOTH an INR column and a USD column (plans, packs, seats).
+ *
+ * INR is the charge currency for Indian accounts, so the INR column is read
+ * directly (never a converted USD figure) — the number shown then equals the
+ * Razorpay debit.
+ *
+ * @param {{inrMinor?: number|null, usdMinor?: number|null}} amounts
+ * @param {string} currency - 'inr' | 'usd' (case-insensitive)
+ * @returns {number} amount in the active currency's minor units (0 if absent)
+ */
+export function pickAmount({ inrMinor, usdMinor }, currency) {
+  const isInr = String(currency || '').toLowerCase() === 'inr';
+  return Number((isInr ? inrMinor : usdMinor) ?? 0);
+}

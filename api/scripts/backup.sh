@@ -21,13 +21,19 @@ REMOTE_PREFIX="${BACKUP_REMOTE_PREFIX:-database-backups}"
 ENV_FILE="${OYECHATS_ENV_FILE:-/opt/oyechats/platform/api/.env}"
 VENV_PY="${OYECHATS_VENV_PY:-/opt/oyechats/platform/api/.venv/bin/python}"
 
-# Pull R2_* credentials from the app .env so this script needs no
-# duplicated config. set -a exports every var; +a turns it off again.
+# Pull ONLY the R2_* credentials from the app .env. Never `source` the whole
+# file: .env is written for python-dotenv/systemd (values taken literally to
+# end of line), not for shell — e.g. VAPID_PRIVATE_KEY is an unquoted PEM
+# with spaces, which bash word-splits into "run the command PRIVATE" and
+# aborts under set -e. The export "KEY=VALUE" form below is split-safe.
 if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  while IFS= read -r line; do
+    case "$line" in
+      R2_KEY_ID=* | R2_APPLICATION_KEY=* | R2_BUCKET_NAME=* | R2_ENDPOINT=*)
+        export "${line?}"
+        ;;
+    esac
+  done < "$ENV_FILE"
 else
   echo "[$(date -Iseconds)] FATAL: env file $ENV_FILE not found" >&2
   exit 1

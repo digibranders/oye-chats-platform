@@ -43,37 +43,42 @@ import TrialUpgradeBanner from '../components/billing/TrialUpgradeBanner';
 import BillingDetailsCard from '../components/billing/BillingDetailsCard';
 import InvoicesCard from '../components/billing/InvoicesCard';
 import { cn } from '../lib/utils';
-import { formatMoney } from '../lib/currency';
+import { pickAmount } from '../lib/currency';
+import { useCurrency } from '../context/CurrencyContext';
 import { trialDaysLeft } from '../utils/trial';
 
 const fmtNumber = (n) => Number(n || 0).toLocaleString();
 
-// All prices are stored in USD cents (monthly_price_usd_cents / annual_price_usd_cents).
-function planPriceCents(plan, cycle = 'monthly') {
+// Plan price in the ACTIVE currency's minor units. Reads the INR column for
+// INR accounts and the USD column for USD accounts, so the number shown equals
+// the Razorpay charge. `currency` comes from useCurrency().
+function planPriceCents(plan, cycle = 'monthly', currency = 'usd') {
   if (!plan) return 0;
-  return cycle === 'annual'
-    ? (plan.annual_price_usd_cents ?? 0)
-    : (plan.monthly_price_usd_cents ?? 0);
+  const annual = cycle === 'annual';
+  return pickAmount(
+    {
+      inrMinor: annual ? plan.annual_price_cents : plan.monthly_price_cents,
+      usdMinor: annual ? plan.annual_price_usd_cents : plan.monthly_price_usd_cents,
+    },
+    currency,
+  );
 }
 
-// Seat price with the currency it is denominated in. The USD headline column
-// wins when present; the fallback `extra_seat_price_cents` column is
-// plan-native minor units (paise for INR plans), so it must NOT be formatted
-// as USD — return the plan's own currency alongside it.
-function planSeatPrice(plan) {
-  if (!plan) return { cents: 0, currency: 'usd' };
-  if (plan.extra_seat_price_usd_cents != null) {
-    return { cents: plan.extra_seat_price_usd_cents, currency: 'usd' };
-  }
-  return { cents: plan.extra_seat_price_cents ?? 0, currency: plan.currency || 'inr' };
+// Extra-seat price in the ACTIVE currency's minor units (INR column for INR,
+// USD column for USD).
+function planSeatPrice(plan, currency = 'usd') {
+  if (!plan) return 0;
+  return pickAmount(
+    { inrMinor: plan.extra_seat_price_cents, usdMinor: plan.extra_seat_price_usd_cents },
+    currency,
+  );
 }
 
-// Delegates to the shared money formatter. Amounts on this page are the
-// USD headline columns (monthly_price_usd_cents / extra_seat_price_usd_cents),
-// so the default currency stays 'usd'; pass an explicit currency for any
-// amount that carries one.
-function fmtCurrency(amountMinor, currency = 'usd') {
-  return formatMoney(amountMinor, currency);
+// Whether a plan is a paid tier — currency-independent (INR is the canonical
+// price column, always set for paid plans), so this stays correct when the
+// display currency flips.
+function planIsPaid(plan) {
+  return Number(plan?.monthly_price_cents ?? 0) > 0;
 }
 
 function fmtDate(iso) {
@@ -242,6 +247,7 @@ function TrialCountdownBadge({ trialEndIso }) {
 }
 
 export default function Billing() {
+  const { currency, format } = useCurrency();
   const { showToast } = useToast();
   const navigate = useNavigate();
   // ``selectedBot`` is the bot the user picked in the sidebar — the
@@ -385,10 +391,8 @@ export default function Billing() {
   // "+$5/mo" instead of falling back to a stale figure or a blank label.
   // When the price comes from the plan-native column it carries the plan's
   // own currency (paise for INR plans) and is formatted accordingly.
-  const seatPrice = planSeatPrice(plan);
-  const seatPriceCents = seatPrice.cents || 500;
-  const seatPriceCurrency = seatPrice.cents ? seatPrice.currency : 'usd';
-  const seatPriceLabel = fmtCurrency(seatPriceCents, seatPriceCurrency);
+  const seatPriceCents = planSeatPrice(plan, currency) || 500;
+  const seatPriceLabel = format(seatPriceCents);
 
   const usage = balance?.usage || {};
   // Merge per-key so a backend payload that hasn't been redeployed since a
@@ -605,7 +609,6 @@ export default function Billing() {
         onClose={() => setSeatConfirmDelta(null)}
         delta={seatConfirmDelta ?? 0}
         seatPriceCents={seatPriceCents}
-        seatPriceCurrency={seatPriceCurrency}
         paymentProvider={subscription?.payment_provider}
         currentSeatCount={
           subscription?.operator_quantity ?? plan?.included_operator_seats ?? 1
@@ -641,7 +644,7 @@ export default function Billing() {
           if (evt.kind === 'switched') {
             const credit = Number(evt.response?.proration_credit_cents || 0);
             toastMsg = credit > 0
-              ? `Switched to ${evt.plan.name}. Unused time credited (${fmtCurrency(credit)}).`
+              ? `Switched to ${evt.plan.name}. Unused time credited (${format(credit)}).`
               : `Switched to ${evt.plan.name} — the new pricing is being prorated.`;
           } else if (evt.kind === 'downgraded') {
             toastMsg = `Downgrade to ${evt.plan.name} scheduled at period end.`;
@@ -655,7 +658,7 @@ export default function Billing() {
           } else if (evt.kind === 'subscribed') {
             const credit = Number(evt.response?.proration_credit_cents || 0);
             toastMsg = credit > 0
-              ? `Subscribed to ${evt.plan.name}. Unused previous-plan time credited (${fmtCurrency(credit)}).`
+              ? `Subscribed to ${evt.plan.name}. Unused previous-plan time credited (${format(credit)}).`
               : `Subscribed to ${evt.plan.name}. Welcome aboard!`;
           }
           showToast(toastMsg, 'success');
@@ -751,6 +754,7 @@ function OverviewTab({
   onTopup,
   onTopupBot,
 }) {
+  const { currency, format } = useCurrency();
   // Per-bot ledgers — one entry per bot with its own paid subscription.
   // The Overview tab is scoped to the bot currently selected in the
   // sidebar: switching to bot 1 shows bot 1's ledger only, switching to
@@ -985,8 +989,8 @@ function OverviewTab({
                 )}
               </div>
               <div className="mt-1 text-xs text-surface-500 dark:text-surface-400">
-                {plan?.monthly_price_usd_cents > 0
-                  ? `${fmtCurrency(planPriceCents(plan, 'monthly'))} / month`
+                {planIsPaid(plan)
+                  ? `${format(planPriceCents(plan, 'monthly', currency))} / month`
                   : 'No paid subscription'}
                 {' · '}
                 {fmtNumber(dMonthlyGrant)} credits / month
@@ -1221,11 +1225,15 @@ function SeatsTab({
   onChangePlan,
   onCreateBot,
 }) {
+  // Currency awareness (from the app-wide currency refactor) — the display
+  // format follows the user's picked currency instead of a fixed USD.
+  // ``planIsPaid`` is the shared "does this plan actually bill?" helper so
+  // Free-plan rows uniformly show "No paid subscription".
+  const { currency, format } = useCurrency();
   const planName = plan?.name || 'Free';
-  const planCostLabel =
-    plan?.monthly_price_usd_cents > 0
-      ? `${fmtCurrency(planPriceCents(plan, 'monthly'))} / month`
-      : 'No paid subscription';
+  const planCostLabel = planIsPaid(plan)
+    ? `${format(planPriceCents(plan, 'monthly', currency))} / month`
+    : 'No paid subscription';
   const planCreditsLabel = plan?.credits_per_month
     ? `${fmtNumber(plan.credits_per_month)} credits / month`
     : '—';
@@ -1262,7 +1270,7 @@ function SeatsTab({
             <div className="mt-auto pt-4">
               <Button onClick={onChangePlan} size="sm">
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                {plan?.monthly_price_usd_cents > 0 ? 'Change plan' : 'Choose a plan'}
+                {planIsPaid(plan) ? 'Change plan' : 'Choose a plan'}
               </Button>
             </div>
           </CardContent>
