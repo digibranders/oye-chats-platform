@@ -9,11 +9,14 @@ Audit references: F07 (sitemap SSRF), F11 (preview redirect SSRF), F24 (DNS
 rebinding — mitigated by re-validating every redirect hop), F25 (response-size
 DoS — :func:`fetch_text_safely` caps the body).
 
-Note on residual TOCTOU: :func:`validate_public_url` resolves the hostname and
-rejects the host if *any* resolved address is non-public, then the HTTP client
-performs its own resolution when connecting. Full IP-pinning (connecting to the
-exact validated address) lives in ``webhook_service`` for the outbound-webhook
-path; extending pinning to the async crawler is tracked as a follow-up (F24).
+AR-42: :func:`fetch_text_safely` used to only validate via
+:func:`validate_public_url`, then let aiohttp perform its own separate DNS
+resolution when actually connecting — a classic DNS-rebinding TOCTOU window
+(attacker DNS returns a public IP at validation time, then a private-range/
+169.254.169.254 address at connect time). Fixed by resolving once via
+:func:`_resolve_pinned_public_ip` and connecting to exactly that IP via a
+custom aiohttp resolver (:class:`_PinnedResolver`), mirroring the pattern
+``webhook_service`` already used for the outbound-webhook path.
 """
 
 from __future__ import annotations
@@ -88,6 +91,69 @@ def validate_public_url(url: str) -> str:
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 
+def _resolve_pinned_public_ip(hostname: str) -> str | None:
+    """Resolve ``hostname`` once and return a single public IP to pin the
+    actual connection to.
+
+    AR-42: without this, ``validate_public_url``'s resolution and the HTTP
+    client's later, separate resolution at connect time could return
+    different addresses for the same hostname — an attacker-controlled DNS
+    server returns a public IP the millisecond this check runs, then a
+    private-range/169.254.169.254 address for the actual connection
+    microseconds later. Resolving once here and pinning the connection to
+    exactly this address closes that window. Fail-closed: any non-public
+    resolved address (or a resolution failure) rejects the host. Mirrors
+    ``webhook_service._resolve_pinned_public_ip`` for this async path.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return None
+    pinned: str | None = None
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return None
+        if not ip_is_public(ip):
+            return None
+        if pinned is None:
+            pinned = str(ip)
+    return pinned
+
+
+class _PinnedResolver:
+    """aiohttp resolver that always returns one pre-validated, pinned IP for
+    a given hostname instead of performing a fresh DNS lookup at connect
+    time — the mechanism that actually closes the AR-42 TOCTOU window.
+    """
+
+    def __init__(self, pins: dict[str, str]) -> None:
+        self._pins = pins
+
+    async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET) -> list[dict]:
+        pinned_ip = self._pins.get(host)
+        if pinned_ip is None:
+            # Should never happen — every hostname this resolver is asked
+            # to resolve was pinned before the request was issued. Fail
+            # closed rather than falling through to a real DNS lookup.
+            raise OSError(f"No pinned IP for host {host!r}")
+        resolved_family = socket.AF_INET6 if ":" in pinned_ip else socket.AF_INET
+        return [
+            {
+                "hostname": host,
+                "host": pinned_ip,
+                "port": port,
+                "family": resolved_family,
+                "proto": 0,
+                "flags": 0,
+            }
+        ]
+
+    async def close(self) -> None:
+        return None
+
+
 async def fetch_text_safely(
     session,
     url: str,
@@ -95,26 +161,48 @@ async def fetch_text_safely(
     max_bytes: int = DEFAULT_MAX_BYTES,
     max_redirects: int = 3,
 ) -> tuple[int, str] | None:
-    """Fetch ``url`` as text through an aiohttp ``session`` with SSRF + size guards.
+    """Fetch ``url`` as text with SSRF + size guards.
 
     - Validates the URL (and every redirect hop) via :func:`validate_public_url`.
     - Does not let aiohttp auto-follow redirects; each ``Location`` is resolved
       and re-validated before the next hop (closes the redirect-to-internal
-      bypass, F07/F11, and re-checks on rebinding, F24).
+      bypass, F07/F11).
+    - AR-42: connects to a pinned, pre-validated IP for each hop (via
+      :class:`_PinnedResolver`) instead of letting aiohttp re-resolve the
+      hostname at connect time — closes the DNS-rebinding TOCTOU window
+      (F24). ``session`` is used only to inherit the caller's headers/
+      timeout configuration; the actual connection for each hop goes
+      through a short-lived session bound to that hop's pinned resolver.
     - Caps the response body at ``max_bytes`` (F25).
 
     Returns ``(status_code, text)`` for a final (non-redirect) response, or
     ``None`` if the URL is unsafe, too many redirects occur, or a transport
     error is raised. Never raises — callers treat ``None`` as "skip".
     """
+    import aiohttp
+
     current = url
     for _ in range(max_redirects + 1):
         try:
             validate_public_url(current)
         except SSRFError:
             return None
+
+        hostname = urlparse(current).hostname
         try:
-            async with session.get(current, allow_redirects=False, ssl=False) as resp:
+            pinned_ip = ipaddress.ip_address(hostname)
+            pinned_ip = str(pinned_ip)  # IP-literal host — already validated above
+        except ValueError:
+            pinned_ip = _resolve_pinned_public_ip(hostname)
+        if pinned_ip is None:
+            return None
+
+        connector = aiohttp.TCPConnector(resolver=_PinnedResolver({hostname: pinned_ip}), ssl=False)
+        try:
+            async with (
+                aiohttp.ClientSession(headers=session.headers, timeout=session.timeout, connector=connector) as pinned,
+                pinned.get(current, allow_redirects=False, ssl=False) as resp,
+            ):
                 if resp.status in _REDIRECT_STATUSES:
                     location = resp.headers.get("Location")
                     if not location:
