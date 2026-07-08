@@ -31,6 +31,10 @@ _SENTRY_FORWARD_METRICS = frozenset(
         "injection_attempt",
         "system_prompt_leak",
         "moderation_block",
+        # AR-46: the model actually GENERATED content flagged under
+        # moderation categories — a jailbreak succeeded, not just an
+        # attempt. Page on it like the other security events here.
+        "output_moderation_block",
         # AR-15: a misconfiguration-class LLM error (revoked key, bad request)
         # needs a human, not a retry — page on it like the security events above.
         "llm_config_error",

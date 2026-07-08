@@ -1130,6 +1130,7 @@ _SAFETY_NET_METRIC_NAMES = [
     "moderation_block",
     "no_info_pivot",
     "off_topic_refusal",
+    "output_moderation_block",
     "system_prompt_leak",
     # AR-15/AR-16: LLM call-outcome metrics (llm_service.py), included here
     # for a single unified reporting endpoint even though they're not

@@ -1059,6 +1059,37 @@ def check_visitor_safety(question: str) -> tuple[bool, str | None]:
         return True, None
 
 
+def check_generated_answer_safety(
+    answer: str, *, bot_id: int | None, session_id: str | None, path: str
+) -> tuple[bool, str | None]:
+    """AR-46: moderation on the OUTPUT side — the generated answer, not just
+    visitor input.
+
+    Before this, moderation only ran on visitor input plus a narrow system-
+    prompt-leak string check on output; a jailbreak or an unusual retrieval
+    context could coax the model into generating content that would flag
+    under moderation categories even with clean visitor input, and it would
+    reach the visitor unfiltered since only inbound moderation ran.
+
+    Reuses :func:`check_visitor_safety` (same ``omni-moderation-latest``
+    call, same fail-open contract — a moderation-service outage must not
+    block a legitimate answer) against the generated text instead of the
+    question. Emits a distinct safety-net metric when flagged so this is
+    observable via the existing safety-net-metrics endpoint, separate from
+    the inbound ``moderation_block`` metric.
+    """
+    is_safe, category = check_visitor_safety(answer)
+    if not is_safe:
+        _safety_net_metric(
+            "output_moderation_block",
+            path=path,
+            session=session_id,
+            bot_id=bot_id,
+            category=category,
+        )
+    return is_safe, category
+
+
 # Sentinels that uniquely identify text from the platform's system prompt.
 # If the LLM emits any of these in its reply, it has been jailbroken into
 # leaking the prompt — replace the response with the refusal and log it.
@@ -3925,6 +3956,16 @@ def rag_pipeline(
                 )
                 answer = _off_topic_refusal(_company_name)
 
+            # ── Output-side moderation guard (AR-46) ─────────────────────
+            # Catches generated content that would flag under moderation
+            # categories even when the visitor's input was clean (e.g. a
+            # jailbreak, or an unusual retrieval context steering the model).
+            _answer_safe, _answer_flag_category = check_generated_answer_safety(
+                answer, bot_id=bid, session_id=session_id, path="nonstream"
+            )
+            if not _answer_safe:
+                answer = _off_topic_refusal(_company_name)
+
             # Strip CTA marker before saving
             answer, _cta, _cta_q = _strip_cta_marker(answer, bant_config)
 
@@ -4700,6 +4741,21 @@ async def rag_pipeline_stream(
                 yield " [I encountered an error. Please try again.]"
                 _stream_error = True
                 suggest_handoff = False  # Don't suggest handoff on errored/partial responses
+
+            # ── Output-side moderation guard (AR-46) ─────────────────────
+            # Bytes already yielded to the visitor can't be recalled (same
+            # constraint the leak-guard above documents), so this can't
+            # prevent a flagged answer from having been streamed — but it
+            # keeps the DB/cache from persisting flagged text for reuse on
+            # future turns, and makes a real occurrence observable via the
+            # safety-net metric. Skipped when the leak-guard already fired
+            # (full_answer is already the refusal) or the stream errored.
+            if not _leak_aborted and not _stream_error:
+                _answer_safe, _answer_flag_category = check_generated_answer_safety(
+                    full_answer, bot_id=bid, session_id=session_id, path="stream"
+                )
+                if not _answer_safe:
+                    full_answer = _off_topic_refusal(_company_name)
 
             # Strip CTA marker from response before saving. The third return
             # carries any [CTA_Q:…] the LLM wrote, so the fallback can still
