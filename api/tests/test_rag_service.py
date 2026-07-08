@@ -1490,3 +1490,36 @@ class TestNormalizeQuestionForCache:
         assert _normalize_question_for_cache("What's your price?") != _normalize_question_for_cache(
             "What's your refund policy?"
         )
+
+
+# ── _build_history_context (AR-36) ──────────────────────────────────────────
+
+
+class TestBuildHistoryContext:
+    def test_short_messages_are_not_truncated(self):
+        from app.services.rag_service import _build_history_context
+
+        history = [SimpleNamespace(role="user", content="hi"), SimpleNamespace(role="bot", content="hello there")]
+        assert _build_history_context(history) == "user: hi\nbot: hello there"
+
+    def test_long_message_is_truncated_with_marker(self):
+        from app.services.rag_service import _HISTORY_MESSAGE_MAX_CHARS, _build_history_context
+
+        long_content = "x" * (_HISTORY_MESSAGE_MAX_CHARS + 1000)
+        history = [SimpleNamespace(role="user", content=long_content)]
+        result = _build_history_context(history)
+
+        assert result.startswith("user: " + "x" * _HISTORY_MESSAGE_MAX_CHARS)
+        assert result.endswith("[truncated]")
+        assert len(result) < len(long_content)
+
+    def test_empty_content_does_not_crash(self):
+        from app.services.rag_service import _build_history_context
+
+        history = [SimpleNamespace(role="user", content=None), SimpleNamespace(role="bot", content="")]
+        assert _build_history_context(history) == "user: \nbot: "
+
+    def test_empty_history_returns_empty_string(self):
+        from app.services.rag_service import _build_history_context
+
+        assert _build_history_context([]) == ""

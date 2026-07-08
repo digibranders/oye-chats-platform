@@ -1216,6 +1216,30 @@ def _build_reference_context(final_results: list, company_name: str | None) -> s
     return "\n---\n".join(context_parts)
 
 
+# AR-36: history is capped to 5 messages (get_chat_history(..., limit=5)),
+# but each message's *content* was never length-bounded before joining into
+# history_context. A visitor pasting several 20k-char messages persisted
+# them verbatim in ChatMessage.content, and every subsequent turn for the
+# rest of the session re-injected them in full — compounding AR-19's
+# context-token budget on every later turn with content that's almost never
+# load-bearing for the conversation (a wall of pasted text, not a genuine
+# multi-thousand-char question).
+_HISTORY_MESSAGE_MAX_CHARS = 500
+
+
+def _build_history_context(history: list) -> str:
+    """Join chat history into the ``role: content`` block used by the prompt,
+    truncating each message's content to ``_HISTORY_MESSAGE_MAX_CHARS`` first.
+    """
+    lines = []
+    for m in history:
+        content = m.content or ""
+        if len(content) > _HISTORY_MESSAGE_MAX_CHARS:
+            content = content[:_HISTORY_MESSAGE_MAX_CHARS] + " [truncated]"
+        lines.append(f"{m.role}: {content}")
+    return "\n".join(lines)
+
+
 def _build_media_catalog(media_sources: list[dict]) -> str:
     """Return a single "AVAILABLE MEDIA" block covering every video or file
     across the provided sources — deduplicated by video_id / URL, ordered
@@ -3765,7 +3789,7 @@ def rag_pipeline(
                 media_sources.extend(get_bot_media_urls(session, bot_id=bid))
             context_text += _build_media_catalog(media_sources)
             context_text += _build_date_hints(context_text, date.today())
-            history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+            history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "nonstream")
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
@@ -4501,7 +4525,7 @@ async def rag_pipeline_stream(
                 media_sources.extend(get_bot_media_urls(session, bot_id=bid))
             context_text += _build_media_catalog(media_sources)
             context_text += _build_date_hints(context_text, date.today())
-            history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+            history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "stream")
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
