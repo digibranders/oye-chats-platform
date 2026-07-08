@@ -593,10 +593,12 @@ def search_similar_documents(
     Uses raw SQL for the vector distance calculation to bypass pgvector Python
     package version incompatibilities with the Vector type processor.
 
-    ``max_distance`` is **cosine** distance (the ``<=>`` operator). Both
-    BAAI/bge-base-en-v1.5 (primary) and OpenAI text-embedding-3-small (fallback)
-    produce L2-normalised vectors, so cosine distance equals L2 rank ordering
-    and is the correct metric for either model.
+    ``max_distance`` is **cosine** distance (the ``<=>`` operator). The sole
+    embedding provider is Google ``gemini-embedding-001`` (768-dim,
+    Matryoshka-truncated, client-side L2-normalized — see
+    ``gemini_embedding.py``; AR-37, replacing the stale BAAI/bge-base-en-v1.5 +
+    OpenAI text-embedding-3-small pair this docstring used to describe), so
+    cosine distance equals L2 rank ordering and is the correct metric here.
 
     The default 0.78 is the math-equivalent of the previously tuned
     ``L2 = 1.25`` (for unit vectors, ``cos_dist = L2² / 2``). That threshold
