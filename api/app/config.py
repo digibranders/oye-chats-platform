@@ -132,8 +132,10 @@ LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 # Set LANGFUSE_FORCE_DISABLE=true to explicitly suppress Langfuse even when keys are present.
-# Useful on low-memory servers where the langfuse_otel callback causes APIConnectionError
-# during LiteLLM streaming — remove this env var once server RAM is upgraded.
+# Kill switch for the Langfuse v4 SDK's OTEL BatchSpanProcessor (app/core/langfuse_client.py),
+# which caused APIConnectionError under memory pressure on the production droplet.
+# (LiteLLM's own built-in "langfuse" callback is unrelated and not registered at all — see
+# the comment above `_litellm.drop_params` in main.py.) Remove this env var once diagnosed/fixed.
 _LANGFUSE_FORCE_DISABLE = os.getenv("LANGFUSE_FORCE_DISABLE", "").lower() in ("1", "true", "yes")
 LANGFUSE_ENABLED = bool(LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY) and not _LANGFUSE_FORCE_DISABLE
 
@@ -436,7 +438,7 @@ JINA_FETCH_CONCURRENCY = int(_env("JINA_FETCH_CONCURRENCY", "5"))
 # Which scrape backend page-list fetches try first: "spider" or "jina". The
 # other one becomes the fallback. Env default only — the super-admin Models &
 # RAG page overrides it at runtime via pricing_config (crawl.provider_primary).
-CRAWL_PROVIDER_PRIMARY = _env("CRAWL_PROVIDER_PRIMARY", "spider").strip().lower()
+CRAWL_PROVIDER_PRIMARY = _env("CRAWL_PROVIDER_PRIMARY", "jina").strip().lower()
 
 # ── Streaming crawl ingestion ────────────────────────────────────────────────
 # Overlap the embed+ingest phase with the scrape phase: as pages come back from

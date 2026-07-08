@@ -196,6 +196,95 @@ class TestLLMService:
             result = generate_response("test")
             assert "Configuration error" in result
 
+    def test_generate_response_model_override_skips_key_check_and_fallbacks(self):
+        """AR-10: when a caller passes model= (e.g. the gate-tier model for a
+        non-generative task), the primary-model key-set guard and fallback
+        chain must be bypassed — it's a different, independently-configured
+        model with its own contract (no cross-provider fallback)."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "answer"
+
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", False),
+        ):
+            mock_litellm.completion.return_value = mock_response
+            from app.services.llm_service import generate_response
+
+            result = generate_response("test", model="gemini/gemini-2.5-flash")
+
+        assert result == "answer"
+        call_kwargs = mock_litellm.completion.call_args.kwargs
+        assert call_kwargs["model"] == "gemini/gemini-2.5-flash"
+        assert "fallbacks" not in call_kwargs
+
+
+class TestNonGenerativeTasksUseGateModel:
+    """AR-10: query rewrite, brand-tone extraction, company-context
+    extraction, and BANT extraction are all classification/summarization
+    tasks with no customer-facing generation quality bar — identical in
+    shape to relevance-gate judging, already proven adequate on the cheap
+    gate-tier model. Route them there instead of the expensive primary
+    model; BANT extraction's own coverage lives in test_rag_service.py."""
+
+    def test_extract_brand_tone_uses_gate_model(self):
+        from app.services.llm_service import extract_brand_tone
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Friendly and casual."
+
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/gemini-2.5-flash"),
+        ):
+            mock_litellm.completion.return_value = mock_response
+            result = extract_brand_tone("Some website content about our friendly team.")
+
+        assert result == "Friendly and casual."
+        call_kwargs = mock_litellm.completion.call_args.kwargs
+        assert call_kwargs["model"] == "gemini/gemini-2.5-flash"
+        assert "fallbacks" not in call_kwargs
+
+    def test_extract_brand_tone_no_longer_gated_on_primary_key(self):
+        """Previously guarded on PRIMARY_MODEL_KEY_SET even though it never
+        used the primary model's fallback chain — that guard is now
+        irrelevant since this task resolves its own (gate-tier) model."""
+        from app.services.llm_service import extract_brand_tone
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Friendly and casual."
+
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", False),
+        ):
+            mock_litellm.completion.return_value = mock_response
+            result = extract_brand_tone("Some website content.")
+
+        assert result == "Friendly and casual."
+
+    def test_extract_company_context_uses_gate_model(self):
+        from app.services.llm_service import extract_company_context
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "NAME: Acme Corp\nDESCRIPTION: A widget maker."
+
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/gemini-2.5-flash"),
+        ):
+            mock_litellm.completion.return_value = mock_response
+            result = extract_company_context("Some website content about Acme Corp.")
+
+        assert result == {"name": "Acme Corp", "description": "A widget maker."}
+        call_kwargs = mock_litellm.completion.call_args.kwargs
+        assert call_kwargs["model"] == "gemini/gemini-2.5-flash"
+        assert "fallbacks" not in call_kwargs
+
 
 class TestFeedbackScoring:
     """Tests for feedback → Langfuse score wiring."""

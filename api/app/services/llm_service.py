@@ -87,6 +87,7 @@ def _generate_response(
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
+    model: str | None = None,
 ) -> tuple[str, bool]:
     """Core non-streaming LLM call. Returns ``(text, failed)``.
 
@@ -96,14 +97,24 @@ def _generate_response(
     the returned text, so a caller that refunds a per-answer credit cannot be
     tricked by a bot whose system prompt is crafted to echo a canned failure
     string.
+
+    ``model``: override the resolved primary model for this call only (e.g.
+    ``runtime_config.get_gate_model()`` for non-generative classification/
+    rewrite tasks — AR-10: these don't need the expensive customer-facing
+    model tier, and routing them to the same cheap tier already proven
+    adequate by the relevance gate cuts primary-model call volume with no
+    quality loss). When set, no cross-provider fallback chain is attempted
+    (matching the gate's own single-model-no-fallback contract) — callers
+    needing fallback protection should leave this unset.
     """
-    if not PRIMARY_MODEL_KEY_SET:
-        logger.error(f"Cannot generate response: API key for primary model '{_primary_model()}' is not set.")
+    resolved_model = model or _primary_model()
+    if model is None and not PRIMARY_MODEL_KEY_SET:
+        logger.error(f"Cannot generate response: API key for primary model '{resolved_model}' is not set.")
         return LLM_CONFIG_ERROR_MESSAGE, True
     try:
-        logger.info(f"Generating LLM response | model={_primary_model()} | prompt_length={len(prompt)}")
+        logger.info(f"Generating LLM response | model={resolved_model} | prompt_length={len(prompt)}")
         kwargs: dict = {
-            "model": _primary_model(),
+            "model": resolved_model,
             "messages": [{"role": "user", "content": prompt}],
         }
         # Only include optional kwargs when they're set. LiteLLM's
@@ -112,17 +123,18 @@ def _generate_response(
         # ``metadata=None`` while ``fallbacks`` is also configured.
         if metadata is not None:
             kwargs["metadata"] = metadata
-        fallbacks = _llm_fallbacks()
-        if fallbacks:
-            kwargs["fallbacks"] = fallbacks
+        if model is None:
+            fallbacks = _llm_fallbacks()
+            if fallbacks:
+                kwargs["fallbacks"] = fallbacks
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         if temperature is not None:
             kwargs["temperature"] = temperature
-        _apply_model_family_kwargs(kwargs, _primary_model())
+        _apply_model_family_kwargs(kwargs, resolved_model)
 
         generation_name = (metadata or {}).get("generation_name", "llm-generation")
-        with langfuse_generation(generation_name, model=_primary_model(), prompt=prompt) as gen:
+        with langfuse_generation(generation_name, model=resolved_model, prompt=prompt) as gen:
             kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
@@ -145,9 +157,14 @@ def generate_response(
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
+    model: str | None = None,
 ) -> str:
-    """Generate a non-streaming response via LiteLLM (text only)."""
-    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata)[0]
+    """Generate a non-streaming response via LiteLLM (text only).
+
+    ``model``: see :func:`_generate_response` — override for non-generative
+    (classification/rewrite) callers that should use a cheaper tier.
+    """
+    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata, model=model)[0]
 
 
 def generate_response_checked(
@@ -156,12 +173,13 @@ def generate_response_checked(
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
+    model: str | None = None,
 ) -> tuple[str, bool]:
     """Like :func:`generate_response` but also returns a structural ``failed``
     flag (True when generation produced only a canned error, i.e. no real
     answer). Use this on the credit-charged chat path so a failed reply can be
     refunded without relying on forgeable answer-text matching."""
-    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata)
+    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata, model=model)
 
 
 def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:
@@ -169,10 +187,17 @@ def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> 
 
     Returns a short tone description (e.g., "Professional and friendly, uses simple language")
     or None if extraction fails.
+
+    Uses the gate-tier model (AR-10): a pure classification/summarization task
+    with no customer-facing generation quality bar, identical in shape to the
+    relevance-gate judging work already proven adequate on this cheaper tier.
+    No cross-provider fallback — matches the gate's own single-model contract
+    and the try/except below already fails safe (returns None) on any error.
     """
-    if not PRIMARY_MODEL_KEY_SET or not content_sample.strip():
+    if not content_sample.strip():
         return None
     try:
+        _model = runtime_config.get_gate_model()
         prompt = f"""Analyze this website content and describe the brand's communication tone in 1-2 sentences.
 
 Focus on: formality level (formal/casual/mixed), personality (friendly/authoritative/playful/neutral), vocabulary complexity (simple/technical/mixed), and overall voice.
@@ -188,16 +213,13 @@ Website content:
 Return ONLY the tone description, nothing else."""
 
         kwargs: dict = {
-            "model": _primary_model(),
+            "model": _model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 100,
             "metadata": metadata or {"generation_name": "brand-tone-extraction"},
         }
-        _fallbacks = _llm_fallbacks()
-        if _fallbacks:
-            kwargs["fallbacks"] = _fallbacks
-        _apply_model_family_kwargs(kwargs, _primary_model())
-        with langfuse_generation("brand-tone-extraction", model=_primary_model(), prompt=prompt) as gen:
+        _apply_model_family_kwargs(kwargs, _model)
+        with langfuse_generation("brand-tone-extraction", model=_model, prompt=prompt) as gen:
             kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             response = litellm.completion(**kwargs)
             tone = (response.choices[0].message.content or "").strip()
@@ -216,10 +238,14 @@ def extract_company_context(content_sample: str, *, metadata: dict | None = None
 
     Returns ``{"name": "Acme Corp", "description": "Acme Corp is a ..."}``
     or *None* if extraction fails.
+
+    Uses the gate-tier model (AR-10) — see :func:`extract_brand_tone` for the
+    rationale; identical shape of task, identical fix.
     """
-    if not PRIMARY_MODEL_KEY_SET or not content_sample.strip():
+    if not content_sample.strip():
         return None
     try:
+        _model = runtime_config.get_gate_model()
         prompt = f"""Analyze this website content and extract two things:
 
 1. COMPANY NAME: The exact official company/brand name (e.g., "Fynix Digital", "Acme Corp").
@@ -237,16 +263,13 @@ Website content:
 {content_sample[:4000]}"""
 
         kwargs: dict = {
-            "model": _primary_model(),
+            "model": _model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 250,
             "metadata": metadata or {"generation_name": "company-context-extraction"},
         }
-        _fallbacks = _llm_fallbacks()
-        if _fallbacks:
-            kwargs["fallbacks"] = _fallbacks
-        _apply_model_family_kwargs(kwargs, _primary_model())
-        with langfuse_generation("company-context-extraction", model=_primary_model(), prompt=prompt) as gen:
+        _apply_model_family_kwargs(kwargs, _model)
+        with langfuse_generation("company-context-extraction", model=_model, prompt=prompt) as gen:
             kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
             response = litellm.completion(**kwargs)
             text = (response.choices[0].message.content or "").strip()

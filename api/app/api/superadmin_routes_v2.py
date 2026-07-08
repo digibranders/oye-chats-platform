@@ -1034,6 +1034,31 @@ def patch_model_config(
     _require_write(admin)
     from app.services import runtime_config
 
+    # Cross-field validation: chunk_size/chunk_overlap are independently
+    # range-checked by ModelConfigPatch's Field(ge=..., le=...), but that
+    # can't catch two separately-valid PUTs leaving overlap >= size (e.g. one
+    # admin PUTs chunk_overlap=500 while chunk_size is still the 300 default
+    # from an earlier PUT). An invalid combo crashes RecursiveCharacterTextSplitter
+    # with an uncaught ValueError on the next ingestion (upload or crawl) —
+    # a platform-wide outage, not a per-request error. Validate the EFFECTIVE
+    # post-patch values (new value if patched, else the current stored one)
+    # before writing anything.
+    effective_chunk_size = body.chunk_size if body.chunk_size is not None else runtime_config.get_chunk_size()
+    effective_chunk_overlap = (
+        body.chunk_overlap if body.chunk_overlap is not None else runtime_config.get_chunk_overlap()
+    )
+    if (
+        body.chunk_size is not None or body.chunk_overlap is not None
+    ) and effective_chunk_overlap >= effective_chunk_size:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"chunk_overlap ({effective_chunk_overlap}) must be less than "
+                f"chunk_size ({effective_chunk_size}) — this combination would crash "
+                "ingestion (RecursiveCharacterTextSplitter) on the next upload or crawl."
+            ),
+        )
+
     # Map field name -> pricing_config key
     field_to_key = {
         "primary_model": "model.primary",

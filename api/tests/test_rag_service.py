@@ -3,6 +3,32 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# ── _background_groundedness_check (AR-12) ──────────────────────────────────
+
+
+class TestBackgroundGroundednessCheck:
+    def test_logs_metric_with_score_and_verdict(self):
+        from app.services.rag_service import _background_groundedness_check
+
+        with (
+            patch("app.services.rag_service.check_groundedness", return_value=(False, 0.2)),
+            patch("app.services.rag_service._safety_net_metric") as mock_metric,
+        ):
+            _background_groundedness_check("Q", "A", [MagicMock()], bot_id=5, client_id=None)
+
+        mock_metric.assert_called_once_with("groundedness_check", bot_id=5, client_id=None, score=0.2, grounded=False)
+
+    def test_never_raises_even_if_check_groundedness_raises(self):
+        """A fire-and-forget background task raising would surface as an
+        unhandled exception in the thread pool worker — must never happen."""
+        from app.services.rag_service import _background_groundedness_check
+
+        with patch("app.services.rag_service.check_groundedness", side_effect=RuntimeError("boom")):
+            _background_groundedness_check("Q", "A", [MagicMock()], bot_id=None, client_id=None)  # must not raise
+
+
 # ── reciprocal_rank_fusion ───────────────────────────────────────────────────
 
 
@@ -759,6 +785,119 @@ class TestRewriteQuery:
 
         assert result == "What is the price of the software?"
 
+    def test_uses_gate_tier_model_not_primary(self):
+        """AR-10: query rewrite is a classification/rewrite task with no
+        customer-facing generation quality bar — route to the cheap
+        gate-tier model, not the expensive primary model."""
+        from app.services.rag_service import rewrite_query
+
+        history = [
+            self._msg("user", "What is your product?"),
+            self._msg("bot", "We sell software."),
+        ]
+        with (
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/gemini-2.5-flash"),
+            patch("app.services.rag_service.generate_response", return_value="rewritten") as mock_gen,
+        ):
+            rewrite_query("sess1", "What about the price of that?", history)
+
+        _, kwargs = mock_gen.call_args
+        assert kwargs["model"] == "gemini/gemini-2.5-flash"
+
+
+# ── _resolve_search_query_and_embedding (AR-09 rewrite/embed overlap) ───────
+
+
+class TestResolveSearchQueryAndEmbedding:
+    """AR-09: query rewrite and a speculative raw-question embed run
+    concurrently. These tests pin correctness of the reuse-vs-discard
+    decision — the optimization must never change WHICH text ends up
+    embedded, only WHEN the embedding work happens."""
+
+    @staticmethod
+    def _msg(role, content):
+        return SimpleNamespace(role=role, content=content)
+
+    @pytest.mark.asyncio
+    async def test_no_rewrite_reuses_speculative_embedding(self):
+        """Common case: rewrite_query returns the question unchanged (short
+        history / no follow-up signal). The speculative embed (of the raw
+        question) must be reused — embed must be called exactly once."""
+        from app.services.rag_service import _resolve_search_query_and_embedding
+
+        embed_calls = []
+
+        async def fake_embed(bid, cid, search_query):
+            embed_calls.append(search_query)
+            return [0.1] * 768
+
+        with (
+            patch("app.services.rag_service.rewrite_query", return_value="What is your product?"),
+            patch("app.services.rag_service._embed_query_cached_async", fake_embed),
+        ):
+            search_query, embedding = await _resolve_search_query_and_embedding(
+                "sess1", "What is your product?", [], bid=1, cid=None, company_name=None
+            )
+
+        assert search_query == "What is your product?"
+        assert embedding == [0.1] * 768
+        assert embed_calls == ["What is your product?"]  # embedded exactly once
+
+    @pytest.mark.asyncio
+    async def test_rewrite_change_discards_speculative_and_embeds_fresh(self):
+        """Follow-up case: rewrite_query changes the text. The final
+        embedding must be for the REWRITTEN text, not the raw question — even
+        though a speculative embed of the raw question was already in
+        flight."""
+        from app.services.rag_service import _resolve_search_query_and_embedding
+
+        embed_calls = []
+
+        async def fake_embed(bid, cid, search_query):
+            embed_calls.append(search_query)
+            return {"What about the price of that?": [0.1] * 768, "What is the price of the software?": [0.9] * 768}[
+                search_query
+            ]
+
+        history = [self._msg("user", "What is your product?"), self._msg("bot", "We sell software.")]
+
+        with (
+            patch("app.services.rag_service.rewrite_query", return_value="What is the price of the software?"),
+            patch("app.services.rag_service._embed_query_cached_async", fake_embed),
+        ):
+            search_query, embedding = await _resolve_search_query_and_embedding(
+                "sess1", "What about the price of that?", history, bid=1, cid=None, company_name=None
+            )
+
+        assert search_query == "What is the price of the software?"
+        assert embedding == [0.9] * 768  # the REWRITTEN query's embedding, not the raw one's
+        assert sorted(embed_calls) == sorted(["What about the price of that?", "What is the price of the software?"])
+
+    @pytest.mark.asyncio
+    async def test_company_expansion_applied_before_reuse_comparison(self):
+        """_expand_company_query runs on both the raw question and the
+        rewritten query before the reuse-vs-discard comparison — if rewrite
+        returns the question unchanged, expansion must still be applied
+        exactly once (not skipped, not doubled)."""
+        from app.services.rag_service import _resolve_search_query_and_embedding
+
+        embed_calls = []
+
+        async def fake_embed(bid, cid, search_query):
+            embed_calls.append(search_query)
+            return [0.1] * 768
+
+        with (
+            patch("app.services.rag_service.rewrite_query", return_value="what is this company about?"),
+            patch("app.services.rag_service._embed_query_cached_async", fake_embed),
+        ):
+            search_query, _ = await _resolve_search_query_and_embedding(
+                "sess1", "what is this company about?", [], bid=1, cid=None, company_name="Acme Corp"
+            )
+
+        assert search_query == "what is this company about? Acme Corp"
+        assert embed_calls == ["what is this company about? Acme Corp"]
+
 
 # ── extract_qualification_signals ────────────────────────────────────────────
 
@@ -785,6 +924,55 @@ class TestExtractQualificationSignals:
             result = extract_qualification_signals("", "Hi", "", {})
 
         assert isinstance(result, list)
+
+    def test_uses_runtime_config_resolved_model_not_frozen_constant(self):
+        """AR-06 regression: BANT extraction previously imported LLM_MODEL/
+        LLM_FALLBACKS directly from app.config at module load time, so an
+        admin swapping the gate model during an incident left BANT extraction
+        silently calling the old model forever. It must now resolve via
+        runtime_config on every call. (AR-10 additionally routes BANT to the
+        cheap gate-tier model instead of the expensive primary model — see
+        test_uses_gate_tier_model_not_primary below — so this test asserts
+        against get_gate_model(), not get_primary_model()/get_fallback_model().)
+        """
+        from app.services.rag_service import extract_qualification_signals
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"signals": []}'
+
+        with (
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/incident-swap-model"),
+            patch("app.services.rag_service.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion.return_value = mock_response
+            extract_qualification_signals("some real history context", "What's your timeline?", "answer", {})
+
+        _, kwargs = mock_litellm.completion.call_args
+        assert kwargs["model"] == "gemini/incident-swap-model"
+
+    def test_uses_gate_tier_model_not_primary(self):
+        """AR-10: BANT extraction is a structured-signal-extraction task with
+        no customer-facing generation quality bar — route it to the cheap
+        gate-tier model (already proven adequate by the relevance gate),
+        not the expensive primary model."""
+        from app.services.rag_service import extract_qualification_signals
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"signals": []}'
+
+        with (
+            patch("app.services.runtime_config.get_gate_model", return_value="gemini/gemini-2.5-flash"),
+            patch("app.services.runtime_config.get_primary_model", return_value="openai/gpt-5.4-mini"),
+            patch("app.services.rag_service.litellm") as mock_litellm,
+        ):
+            mock_litellm.completion.return_value = mock_response
+            extract_qualification_signals("some real history context", "What's your timeline?", "answer", {})
+
+        _, kwargs = mock_litellm.completion.call_args
+        assert kwargs["model"] == "gemini/gemini-2.5-flash"
+        assert "fallbacks" not in kwargs
 
 
 # ── build_hybrid_prompt ──────────────────────────────────────────────────────

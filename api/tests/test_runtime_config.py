@@ -52,3 +52,48 @@ def test_embed_concurrency_bad_value_falls_back(monkeypatch):
     # A corrupt DB row must never crash embedding — fall back to the env default.
     _stub_get(monkeypatch, "not-a-number")
     assert runtime_config.get_embed_concurrency() == EMBED_CONCURRENCY
+
+
+# ── get_chunk_overlap clamp (AR-07 defense-in-depth backstop) ───────────────
+
+
+def test_chunk_overlap_clamped_below_chunk_size(monkeypatch):
+    """The write-time cross-validator (superadmin_routes_v2.patch_model_config)
+    is the primary defense, but this getter is the last line of defense
+    against any invalid combo already persisted — RecursiveCharacterTextSplitter
+    raises an uncaught ValueError on overlap >= size, crashing all ingestion."""
+
+    def fake_get(key, default=None):
+        if key == "rag.chunk_size":
+            return 300
+        if key == "rag.chunk_overlap":
+            return 500  # invalid: overlap > size
+        return default
+
+    monkeypatch.setattr(runtime_config, "get", fake_get)
+    assert runtime_config.get_chunk_size() == 300
+    assert runtime_config.get_chunk_overlap() < 300
+
+
+def test_chunk_overlap_equal_to_chunk_size_is_clamped(monkeypatch):
+    def fake_get(key, default=None):
+        if key == "rag.chunk_size":
+            return 300
+        if key == "rag.chunk_overlap":
+            return 300  # invalid: overlap == size
+        return default
+
+    monkeypatch.setattr(runtime_config, "get", fake_get)
+    assert runtime_config.get_chunk_overlap() == 299
+
+
+def test_chunk_overlap_unaffected_when_already_valid(monkeypatch):
+    def fake_get(key, default=None):
+        if key == "rag.chunk_size":
+            return 1000
+        if key == "rag.chunk_overlap":
+            return 200
+        return default
+
+    monkeypatch.setattr(runtime_config, "get", fake_get)
+    assert runtime_config.get_chunk_overlap() == 200

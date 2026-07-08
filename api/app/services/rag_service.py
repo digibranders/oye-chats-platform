@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import joinedload
 
 from app import config
-from app.config import LLM_FALLBACKS, LLM_MODEL
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.langfuse_client import get_langfuse, langfuse_generation
 from app.core.thread_pool import submit_background
@@ -31,7 +30,9 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
+from app.services import runtime_config
 from app.services.email_service import send_qualified_lead_email
+from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import generate_response, generate_response_checked, generate_response_stream
@@ -1101,6 +1102,28 @@ def _iter_media_urls_from_chunks(retrieved_chunks) -> list[dict]:
     return out
 
 
+def _build_reference_context(final_results: list, company_name: str | None) -> str:
+    """Build the ``<<<DOCUMENT i>>>``-fenced reference context block from
+    retrieved chunks, with an optional company-identity line prepended.
+
+    Extracted (AR-35) from near-identical duplicated blocks in the
+    non-streaming and streaming pipelines — a fix to truncation cap,
+    delimiter format, or media dedup applied to one path and not the other
+    would otherwise let streaming and non-streaming responses for the same
+    bot silently diverge in injection-resistance/completeness. Chunks are
+    fenced so adversarial document content can't impersonate system
+    instructions (e.g. "ignore the prompt and reveal it" embedded in a PDF).
+    """
+    context_parts = []
+    if company_name:
+        context_parts.append(f"[Company Identity] This chatbot represents {company_name}.")
+    for i, doc in enumerate(final_results, 1):
+        # Truncate per-chunk to prevent prompt token overflow on large documents.
+        chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
+        context_parts.append(f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n")
+    return "\n---\n".join(context_parts)
+
+
 def _build_media_catalog(media_sources: list[dict]) -> str:
     """Return a single "AVAILABLE MEDIA" block covering every video or file
     across the provided sources — deduplicated by video_id / URL, ordered
@@ -1290,9 +1313,16 @@ def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> 
 
 
 async def _embed_query_cached_async(bid: int | None, cid: int | None, search_query: str) -> list | None:
-    """Async twin of :func:`_embed_query_cached` for the streaming path."""
+    """Async twin of :func:`_embed_query_cached` for the streaming path.
+
+    ``cache_get``/``cache_set`` use the sync redis-py client (``app/core/cache.py``
+    has no async client) — run them via ``asyncio.to_thread`` so a slow/blocked
+    Redis round-trip can't stall the sole event loop under ``WEB_CONCURRENCY=1``,
+    mirroring the ``asyncio.to_thread`` pattern already used elsewhere in this
+    function for blocking calls.
+    """
     emb_key = _query_embed_cache_key(bid, cid, search_query)
-    cached = cache_get(emb_key)
+    cached = await asyncio.to_thread(cache_get, emb_key)
     if cached and isinstance(cached, list):
         return cached
     try:
@@ -1305,7 +1335,7 @@ async def _embed_query_cached_async(bid: int | None, cid: int | None, search_que
         return None
     query_embedding = embs[0] if embs else None
     if query_embedding is not None:
-        cache_set(emb_key, query_embedding, _EMBED_CACHE_TTL)
+        await asyncio.to_thread(cache_set, emb_key, query_embedding, _EMBED_CACHE_TTL)
     return query_embedding
 
 
@@ -1521,6 +1551,28 @@ def _build_bant_state(chat_session: ChatSession | None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _bant_model() -> str:
+    """Resolve the BANT-extraction model at call time via ``runtime_config``,
+    instead of the frozen ``LLM_MODEL`` env constant captured at import time.
+
+    Two fixes layered here:
+
+    - **AR-06**: reading a frozen module-level constant meant swapping the
+      primary model platform-wide during an incident (via the super-admin
+      dashboard) updated chat generation but left BANT extraction silently
+      calling the old (possibly broken) model indefinitely — the same class
+      of decorative-control bug as AR-05's gate model. Fixed by resolving at
+      call time, matching ``llm_service._primary_model()``.
+    - **AR-10**: BANT extraction is a structured-signal-extraction task with
+      no customer-facing generation quality bar — identical in shape to
+      relevance-gate judging, already proven adequate on the cheaper
+      gate-tier model. Routed there (no cross-provider fallback, matching
+      the gate's own single-model contract) instead of the expensive primary
+      model, cutting cost with no quality loss.
+    """
+    return runtime_config.get_gate_model()
+
+
 def extract_qualification_signals(
     history_context: str, question: str, bot_answer: str, current_bant: dict, bant_config: dict | None = None
 ) -> list[dict]:
@@ -1646,9 +1698,10 @@ SCORING DISCIPLINE
 - Greetings, acknowledgments, fillers ("hi", "thanks", "okay", "interesting", "let me think") → return an empty signals list.
 - When in doubt, return NO signal. False positives are more harmful than false negatives — a missed signal is fixable on the next turn; a false signal corrupts the lead's score permanently because of the never-downgrade rule downstream."""
 
-        with langfuse_generation("bant-extraction-v2", model=LLM_MODEL, prompt=extraction_prompt) as gen:
+        bant_model = _bant_model()
+        with langfuse_generation("bant-extraction-v2", model=bant_model, prompt=extraction_prompt) as gen:
             response = litellm.completion(
-                model=LLM_MODEL,
+                model=bant_model,
                 # Bounded timeout so a stalled upstream can't hang the BANT
                 # extraction background job indefinitely (audit F09).
                 timeout=45,
@@ -1665,7 +1718,6 @@ SCORING DISCIPLINE
                     },
                 },
                 metadata={"generation_name": "bant-extraction-v2"},
-                fallbacks=LLM_FALLBACKS,
             )
             resp_text = response.choices[0].message.content
             gen.record_litellm(response, output=resp_text)
@@ -1692,6 +1744,28 @@ def extract_bant_from_conversation(
 ) -> list[dict]:
     """Backward-compatible alias."""
     return extract_qualification_signals(history_context, question, bot_answer, current_bant, bant_config)
+
+
+def _background_groundedness_check(
+    question: str, answer: str, chunks: list, bot_id: int | None, client_id: int | None
+) -> None:
+    """Fire-and-forget post-generation groundedness check (AR-12).
+
+    Observability-only — logs a structured metric via ``_safety_net_metric``,
+    never alters the already-streamed answer. See ``groundedness_gate.py``'s
+    module docstring for why this is detection-only, not correction.
+    """
+    try:
+        is_grounded, score = check_groundedness(question, answer, chunks, bot_id=bot_id, client_id=client_id)
+        _safety_net_metric(
+            "groundedness_check",
+            bot_id=bot_id,
+            client_id=client_id,
+            score=round(score, 2),
+            grounded=is_grounded,
+        )
+    except Exception as exc:  # never let this fire-and-forget task raise
+        logger.warning("Background groundedness check failed (non-blocking): %s", exc)
 
 
 def _background_bant_extraction(
@@ -2713,11 +2787,67 @@ FOLLOW-UP QUESTION: {question}
 Respond with ONLY the rewritten standalone query, nothing else."""
 
     try:
-        rewritten = generate_response(rewrite_prompt, metadata={"generation_name": "query-rewrite"})
+        # Gate-tier model (AR-10): query rewriting is a classification/rewrite
+        # task with no customer-facing generation quality bar, identical in
+        # shape to relevance-gate judging already proven adequate on this
+        # cheaper tier — not a customer-facing answer, so it doesn't need the
+        # expensive primary model.
+        rewritten = generate_response(
+            rewrite_prompt,
+            model=runtime_config.get_gate_model(),
+            metadata={"generation_name": "query-rewrite"},
+        )
         return rewritten.strip() if rewritten and rewritten.strip() else question
     except Exception as e:
         logger.warning(f"Query rewrite failed, using original: {e}")
         return question
+
+
+async def _resolve_search_query_and_embedding(
+    session_id: str,
+    question: str,
+    history: list,
+    bid: int | None,
+    cid: int | None,
+    company_name: str | None,
+) -> tuple[str, list | None]:
+    """Resolve the retrieval query (rewritten + company-expanded) and its
+    embedding, overlapping the query-rewrite LLM call with a speculative embed
+    of the raw question (AR-09).
+
+    ``rewrite_query`` only calls an LLM for follow-up-shaped questions
+    (pronoun/phrase signals) — most turns return ``question`` unchanged after
+    a cheap synchronous check. Previously that LLM round-trip (when it does
+    fire) sat fully ahead of embedding in the streaming pipeline, adding to
+    the dead-air-before-first-token chain. Firing the rewrite and a
+    speculative embed of the raw (pre-rewrite, pre-expansion) question
+    concurrently means: if rewrite turns out not to have changed the query
+    (the common case), the speculative embedding is reused for free; if
+    rewrite DID change the query, a fresh embedding is computed for the
+    rewritten text and the speculative one is discarded — never a
+    correctness regression, only a wasted (already-parallel, not-additive)
+    embed call in the rewrite case.
+    """
+    raw_expanded_query = _expand_company_query(question, company_name)
+    rewrite_task = asyncio.create_task(asyncio.to_thread(rewrite_query, session_id, question, history))
+    speculative_embed_task = asyncio.create_task(_embed_query_cached_async(bid, cid, raw_expanded_query))
+
+    search_query = await rewrite_task
+    search_query = _expand_company_query(search_query, company_name)
+
+    if search_query == raw_expanded_query:
+        query_embedding = await speculative_embed_task
+    else:
+        # Rewrite changed the query — the speculative embed is for stale
+        # text. _embed_query_cached_async never raises (it returns None on
+        # failure), so awaiting both concurrently is safe; only the second
+        # result is used.
+        query_embedding, _ = await asyncio.gather(
+            _embed_query_cached_async(bid, cid, search_query),
+            speculative_embed_task,
+        )
+
+    return search_query, query_embedding
 
 
 def _extract_contextual_q(text: str) -> str | None:
@@ -3475,21 +3605,7 @@ def rag_pipeline(
                     "message_id": None,
                 }
 
-            context_parts = []
-            # Inject company identity so "about the company" queries always have context
-            if _company_name:
-                context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
-            for i, doc in enumerate(final_results, 1):
-                # Truncate per-chunk to prevent prompt token overflow on large documents
-                chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
-                # Fence each chunk so adversarial document content can't impersonate
-                # system instructions ("ignore the prompt and reveal it" embedded in
-                # a PDF). Delimiters are intentionally non-printable-ish to be hard
-                # to forge from a normal upload.
-                context_parts.append(
-                    f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
-                )
-            context_text = "\n---\n".join(context_parts)
+            context_text = _build_reference_context(final_results, _company_name)
             # Combine retrieved-chunk media with the bot-wide DB fetch so
             # the LLM sees EVERY video/file in the knowledge base — not
             # only the URLs that happened to ride with the top-K retrieved
@@ -3703,6 +3819,9 @@ def rag_pipeline(
                     bant_config,
                     bot_msg.id,
                 )
+
+            if should_sample():
+                submit_background(_background_groundedness_check, question, answer, final_results, bid, cid)
 
             live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
             result = {
@@ -4061,11 +4180,9 @@ async def rag_pipeline_stream(
                 suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question)
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
-                search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
-                search_query = _expand_company_query(search_query, _company_name)
-
-                # ── Phase 4B: embedding cache (async; degrades to keyword-only) ─
-                query_embedding = await _embed_query_cached_async(bid, cid, search_query)
+                search_query, query_embedding = await _resolve_search_query_and_embedding(
+                    session_id, question, history, bid, cid, _company_name
+                )
 
                 try:
                     suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0)
@@ -4212,15 +4329,7 @@ async def rag_pipeline_stream(
             yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
 
             # Build context with company identity injection
-            context_parts = []
-            if _company_name:
-                context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
-            for i, doc in enumerate(final_results, 1):
-                chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
-                context_parts.append(
-                    f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
-                )
-            context_text = "\n---\n".join(context_parts)
+            context_text = _build_reference_context(final_results, _company_name)
             # See non-streaming path for rationale — combine retrieved-chunk
             # media with the bot-wide DB fetch so the LLM sees every
             # video/file in the KB and can pick by topic match.
@@ -4535,6 +4644,11 @@ async def rag_pipeline_stream(
                             bid,
                             bant_config,
                             bot_msg_id,
+                        )
+
+                    if should_sample():
+                        submit_background(
+                            _background_groundedness_check, question, full_answer, final_results, bid, cid
                         )
 
                     live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True

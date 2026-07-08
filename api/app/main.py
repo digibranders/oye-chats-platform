@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 import sys
+import threading
+import time
 
 # Fix for Playwright on Windows:
 if sys.platform.startswith("win"):
@@ -70,22 +72,14 @@ import litellm as _litellm  # noqa: E402
 
 _litellm.drop_params = True
 
-# Register the lightweight Langfuse callback so every LiteLLM completion is
-# logged as a `generation` observation with the model name, prompt/completion
-# tokens, cost, and latency populated. Without this, the rag-pipeline trace
-# wrapper in rag_service.py only emits a `chain` span — explaining the
-# "model: unknown / 0 tokens / $0" gap surfaced on /observability.
-#
-# We use the plain "langfuse" callback (REST API) instead of "langfuse_otel"
-# because the OTEL variant caused APIConnectionError under memory pressure on
-# the production droplet — see CLAUDE.md and config.LANGFUSE_FORCE_DISABLE.
-
 # LiteLLM's built-in "langfuse" callback targets the Langfuse v2/v3 SDK API
 # (langfuse.version.__version__, Langfuse(sdk_integration=...), Langfuse.trace()).
-# All three are absent in Langfuse v4, causing non-blocking errors on every
-# LLM call. The callback is intentionally not registered here.
-# RAG pipeline traces are emitted via the Langfuse v4 SDK directly in
-# rag_service.py using start_as_current_observation / propagate_attributes.
+# All three are absent in Langfuse v4 (pinned in pyproject.toml), causing
+# non-blocking errors on every LLM call. The callback is intentionally not
+# registered here (removed in 393a15d, 2026-06-29). RAG pipeline traces are
+# emitted via the Langfuse v4 SDK directly — see app/core/langfuse_client.py
+# (start_as_current_observation) and its call sites in llm_service.py /
+# rag_service.py.
 
 # Initialize Sentry (must be before FastAPI app creation)
 if SENTRY_ENABLED:
@@ -222,7 +216,7 @@ os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 
 def _llm_ready() -> bool:
-    """Cheap LLM-path readiness signal for ``/health/full``.
+    """Cheap LLM-path import check — catches a hollow-namespace litellm install.
 
     The 2026-07-01 outage was a partial ``uv sync`` that left litellm as a
     hollow namespace package (missing ``__init__.py``): ``import litellm``
@@ -231,8 +225,70 @@ def _llm_ready() -> bool:
     path. This verifies the already-imported litellm module still exposes its
     public completion API. It is a local attribute check — **not** a network or
     paid LLM call — so it is safe to run on every health hit without caching.
+
+    This alone does **not** detect a live provider outage (revoked key, billing
+    block, provider downtime) — see :func:`_llm_probe` for that.
     """
     return hasattr(_litellm, "completion")
+
+
+# TTL-cached real LLM completion probe. A cheap import check (``_llm_ready``)
+# cannot detect a revoked API key, a provider billing block, or a provider
+# outage — the 2026-07-07 ~4h production incident (OpenAI `insufficient_quota`)
+# ran the whole time with `/health/full` reporting healthy, because the only
+# check was the import-attribute probe above. This makes one real, tiny,
+# same-model completion call and caches the result so polling health endpoints
+# (BetterStack/UptimeRobot hit both every ~60s) doesn't multiply into a burst
+# of paid LLM calls.
+_LLM_PROBE_TTL_SECONDS = float(os.getenv("HEALTH_LLM_PROBE_TTL_SECONDS", "30"))
+_LLM_PROBE_TIMEOUT_SECONDS = float(os.getenv("HEALTH_LLM_PROBE_TIMEOUT_SECONDS", "3"))
+# 1 is too low for some reasoning-capable models (e.g. gpt-5.4-mini), which
+# spend part of the completion-token budget on internal reasoning tokens and
+# raise BadRequestError before emitting visible output — a false-negative
+# "unhealthy" for a perfectly healthy model. 16 leaves headroom for that.
+_LLM_PROBE_MAX_TOKENS = int(os.getenv("HEALTH_LLM_PROBE_MAX_TOKENS", "16"))
+_llm_probe_lock = threading.Lock()
+_llm_probe_cache: dict = {"ts": 0.0, "ok": True, "detail": None}
+
+
+def _llm_probe() -> tuple[bool, str | None]:
+    """Real, TTL-cached LLM readiness probe — a live completion call, not an import check.
+
+    Returns ``(ok, detail)``. ``detail`` is ``None`` on success, or a short
+    error string (exception type + message, truncated) on failure. Skips the
+    network call entirely if the cheap import check already failed, since a
+    hollow litellm install can't make a completion call anyway.
+    """
+    if not _llm_ready():
+        return False, "litellm.completion missing — partial/namespace install"
+
+    now = time.monotonic()
+    with _llm_probe_lock:
+        if now - _llm_probe_cache["ts"] < _LLM_PROBE_TTL_SECONDS:
+            return _llm_probe_cache["ok"], _llm_probe_cache["detail"]
+
+    from app.services import runtime_config
+
+    ok = True
+    detail: str | None = None
+    try:
+        model = runtime_config.get_primary_model()
+        _litellm.completion(
+            model=model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=_LLM_PROBE_MAX_TOKENS,
+            timeout=_LLM_PROBE_TIMEOUT_SECONDS,
+        )
+    except Exception as e:  # noqa: BLE001 - any failure means the LLM path is down
+        ok = False
+        detail = f"{type(e).__name__}: {e}"[:200]
+
+    with _llm_probe_lock:
+        _llm_probe_cache["ts"] = time.monotonic()
+        _llm_probe_cache["ok"] = ok
+        _llm_probe_cache["detail"] = detail
+
+    return ok, detail
 
 
 def _gather_health() -> tuple[dict, bool, bool]:
@@ -304,8 +360,10 @@ def _gather_health() -> tuple[dict, bool, bool]:
                 pass
 
     # -- LLM readiness check --
-    # Local attribute probe, not a paid/network call — see _llm_ready docstring.
-    llm_ok = _llm_ready()
+    # Real, TTL-cached completion call — see _llm_probe docstring. Falls back
+    # to the cheap import check's failure mode/message when the probe itself
+    # short-circuits on a hollow litellm install.
+    llm_ok, llm_detail = _llm_probe()
 
     ready_to_serve = db_ok and redis_ok
     worker_required_ok = worker_status in ("alive", "disabled")
@@ -330,8 +388,9 @@ def _gather_health() -> tuple[dict, bool, bool]:
         },
         "llm": {
             "status": "ready" if llm_ok else "unavailable",
-            "import_ok": llm_ok,
-            "detail": None if llm_ok else "litellm.completion missing — partial/namespace install",
+            "import_ok": _llm_ready(),
+            "probe_ok": llm_ok,
+            "detail": llm_detail,
         },
         "pool": pool_stats,
         "version": "1.0.0",
