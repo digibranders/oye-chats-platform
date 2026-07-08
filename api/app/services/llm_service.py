@@ -6,7 +6,11 @@ import litellm
 
 from app.config import FALLBACK_MODEL_KEY_SET, PRIMARY_MODEL_KEY_SET
 from app.core.langfuse_client import langfuse_generation
-from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
+from app.core.metrics import (
+    forward_to_sentry_if_alertable,
+    increment_metric_counter,
+    increment_metric_counter_by,
+)
 from app.services import runtime_config
 
 # Client-side timeout for non-streaming LLM calls (seconds). Without it a hung
@@ -97,6 +101,35 @@ def _meter_fallback_if_used(requested_model: str, response) -> None:
             increment_metric_counter("llm_fallback_triggered")
     except Exception as exc:  # noqa: BLE001 - metering must never break the caller
         logger.debug("Fallback metering failed (non-blocking): %s", exc)
+
+
+def _meter_token_usage(response, metadata: dict | None) -> None:
+    """AR-26: log real prompt/completion token counts per bot for FinOps
+    visibility, independent of credit charging.
+
+    The credit ledger charges a flat 1 credit per ``ai_chat`` reply regardless
+    of actual token volume (a bot engineered for maximal context — verbose
+    custom prompt, near-CAG-lite-threshold KB, chatty visitor history — costs
+    several times more in real LLM spend than a minimal bot, charged
+    identically). Whether to introduce a token-based cost tier is a pricing/
+    product decision requiring business sign-off (it changes what every
+    existing customer is billed), not something to change unilaterally in an
+    engineering pass — so this only adds the measurement half of the fix:
+    real per-bot token counts, queryable the same way as the AR-13 safety-net
+    metrics, so FinOps can decide from data whether cross-subsidization is
+    actually a problem worth a pricing change.
+    """
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        bot_id = (metadata or {}).get("bot_id")
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        increment_metric_counter_by("llm_tokens_prompt", prompt_tokens, bot_id=bot_id)
+        increment_metric_counter_by("llm_tokens_completion", completion_tokens, bot_id=bot_id)
+    except Exception as exc:  # noqa: BLE001 - metering must never break the caller
+        logger.debug("Token usage metering failed (non-blocking): %s", exc)
 
 
 def _primary_model() -> str:
@@ -233,6 +266,7 @@ def _generate_response(
             gen.record_litellm(response, output=content)
 
         _meter_fallback_if_used(resolved_model, response)
+        _meter_token_usage(response, metadata)
 
         if content:
             logger.info(f"LLM response received | length={len(content)}")
@@ -439,6 +473,11 @@ async def _stream_from_model(
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": True,
+                # AR-26: ask the provider for a final usage-only chunk (empty
+                # ``choices``, populated ``usage``) so streamed replies can be
+                # token-metered the same as non-streaming ones — without this,
+                # a streaming response never reports token counts at all.
+                "stream_options": {"include_usage": True},
                 "metadata": metadata,
             }
             if max_tokens is not None:
@@ -462,6 +501,11 @@ async def _stream_from_model(
                         raise TimeoutError(
                             f"LLM chunk timeout after {_STREAM_CHUNK_TIMEOUT_S}s — upstream stalled"
                         ) from exc
+                    usage = getattr(chunk, "usage", None)
+                    if usage is not None:
+                        _meter_token_usage(chunk, metadata)
+                    if not chunk.choices:
+                        continue
                     content = chunk.choices[0].delta.content
                     if content:
                         _output += content

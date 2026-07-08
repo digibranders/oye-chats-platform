@@ -52,17 +52,26 @@ def increment_metric_counter(name: str, bot_id: int | None = None) -> None:
     """Increment this hour's rolling counter for ``name`` (optionally scoped
     to ``bot_id``). Best-effort — never raises; a Redis hiccup must not break
     the caller (these are called from hot request paths)."""
+    increment_metric_counter_by(name, 1, bot_id=bot_id)
+
+
+def increment_metric_counter_by(name: str, amount: int, bot_id: int | None = None) -> None:
+    """Like :func:`increment_metric_counter` but adds an arbitrary ``amount``
+    in one round trip (e.g. a token count) instead of always incrementing by 1.
+    Best-effort — never raises."""
     try:
+        if amount <= 0:
+            return
         client = get_redis()
         if client is None:
             return
         key = _counter_key(name, bot_id, _hour_bucket())
         pipe = client.pipeline()
-        pipe.incr(key)
+        pipe.incrby(key, amount)
         pipe.expire(key, _COUNTER_TTL_SECONDS)
         pipe.execute()
     except Exception as exc:  # noqa: BLE001 - metrics must never break the caller
-        logger.debug("increment_metric_counter failed (non-blocking): %s", exc)
+        logger.debug("increment_metric_counter_by failed (non-blocking): %s", exc)
 
 
 def get_metric_counts(name: str, bot_id: int | None = None, hours: int = 24) -> dict[str, int]:

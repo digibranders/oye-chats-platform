@@ -1137,6 +1137,10 @@ _SAFETY_NET_METRIC_NAMES = [
     "llm_transient_error",
     "llm_unknown_error",
     "llm_fallback_triggered",
+    # AR-26: real per-bot token volume for FinOps visibility into the flat
+    # 1-credit `ai_chat` charge — see `_meter_token_usage` (llm_service.py).
+    "llm_tokens_prompt",
+    "llm_tokens_completion",
 ]
 
 

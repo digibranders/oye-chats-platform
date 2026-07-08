@@ -3759,7 +3759,7 @@ def rag_pipeline(
                 prompt,
                 temperature=0.3,
                 max_tokens=1500,
-                metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
+                metadata={"generation_name": "rag-generation", "context_chunks": len(final_results), "bot_id": bid},
             )
 
             # ── Output-side leakage guard ────────────────────────────────
@@ -4498,7 +4498,11 @@ async def rag_pipeline_stream(
                     prompt,
                     temperature=0.3,
                     max_tokens=1500,
-                    metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
+                    metadata={
+                        "generation_name": "rag-stream-generation",
+                        "context_chunks": len(final_results),
+                        "bot_id": bid,
+                    },
                 ):
                     if chunk:
                         chunk_count += 1

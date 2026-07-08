@@ -25,12 +25,16 @@ class TestIncrementMetricCounter:
         with patch("app.core.metrics.get_redis", return_value=mock_redis):
             increment_metric_counter("moderation_block", bot_id=5)
 
-        mock_pipe.incr.assert_called_once()
+        # AR-26: increment_metric_counter now delegates to
+        # increment_metric_counter_by(name, 1, ...) so a single amount-aware
+        # code path backs both the +1 and +N counter APIs.
+        mock_pipe.incrby.assert_called_once()
         mock_pipe.expire.assert_called_once()
         mock_pipe.execute.assert_called_once()
-        key_arg = mock_pipe.incr.call_args[0][0]
+        key_arg, amount_arg = mock_pipe.incrby.call_args[0]
         assert "moderation_block" in key_arg
         assert "b5" in key_arg
+        assert amount_arg == 1
 
     def test_scoped_globally_when_no_bot_id(self):
         mock_redis = MagicMock()
@@ -40,7 +44,7 @@ class TestIncrementMetricCounter:
         with patch("app.core.metrics.get_redis", return_value=mock_redis):
             increment_metric_counter("injection_attempt", bot_id=None)
 
-        key_arg = mock_pipe.incr.call_args[0][0]
+        key_arg = mock_pipe.incrby.call_args[0][0]
         assert "global" in key_arg
 
     def test_never_raises_when_redis_unavailable(self):
