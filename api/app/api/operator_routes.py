@@ -5,7 +5,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select, update
 
 from app.api.auth import get_current_bot, get_current_client_or_operator
@@ -14,6 +14,12 @@ from app.db.models import BANTSignal, Bot, ChatAuditLog, ChatMessage, ChatSessio
 from app.db.repository import get_lead_info_by_session
 from app.db.session import get_session
 from app.services.live_chat_service import manager
+from app.services.qualification_service import (
+    calculate_composite_score,
+    framework_dimension_keys,
+    get_framework_config,
+    get_tier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1316,6 +1322,118 @@ def get_session_details(session_id: str, auth=Depends(get_current_client_or_oper
             "bot_name": bot.name,
             "department_name": dept_name,
             "operator_name": operator_name,
+        }
+
+
+class QualificationOverrideRequest(BaseModel):
+    dimension: str
+    score: int = Field(..., ge=0)
+
+
+_LEGACY_DIMENSION_TEXT_ATTR = {
+    "need": "bant_need",
+    "budget": "bant_budget",
+    "authority": "bant_authority",
+    "timeline": "bant_timeline",
+}
+_LEGACY_DIMENSION_SCORE_ATTR = {
+    "need": "bant_need_score",
+    "budget": "bant_budget_score",
+    "authority": "bant_authority_score",
+    "timeline": "bant_timeline_score",
+}
+
+
+@router.patch("/session/{session_id}/qualification")
+def override_qualification_dimension(
+    session_id: str, request: QualificationOverrideRequest, auth=Depends(get_current_client_or_operator)
+):
+    """Manually correct or reset one qualification dimension's score (BR-03).
+
+    The automated extraction path (``rag_service._background_bant_extraction``)
+    deliberately never downgrades a dimension's score, and budget/authority
+    scores never decay — by design, so a weak follow-up can't erase a strong
+    earlier signal. But that also means a single false-positive extraction, or
+    a visitor typing an implausible statement in bad faith ("we have a
+    $50k/month budget approved"), permanently misclassifies a lead with no
+    remedy short of direct database editing. This gives operators an audited
+    way to correct or reset (score=0) a dimension without weakening the
+    never-downgrade guarantee for the automated path — every override is
+    still logged as an append-only ``BANTSignal`` row, same as an LLM or
+    CTA-click signal, just tagged ``source="operator_override"``.
+    """
+    from datetime import UTC, datetime
+
+    with get_session() as session:
+        chat_session = session.execute(select(ChatSession).where(ChatSession.id == session_id)).scalar_one_or_none()
+        if not chat_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        bot = session.execute(select(Bot).where(Bot.id == chat_session.bot_id)).scalar_one_or_none()
+        if not bot or bot.client_id != auth["client_id"]:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+        config = get_framework_config(bot)
+        dimensions = framework_dimension_keys(config) or list(_LEGACY_DIMENSION_TEXT_ATTR)
+        if request.dimension not in dimensions:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown dimension '{request.dimension}' for this bot's framework."
+            )
+
+        dim_config = config.get(request.dimension) or {}
+        max_score = max((int(o.get("score", 0)) for o in dim_config.get("options") or []), default=25)
+        if request.score > max_score:
+            raise HTTPException(
+                status_code=400,
+                detail=f"score {request.score} exceeds the max ({max_score}) for dimension '{request.dimension}'.",
+            )
+
+        dimension_scores = dict(chat_session.dimension_scores or {})
+        dim_entry = (
+            dimension_scores.get(request.dimension) if isinstance(dimension_scores.get(request.dimension), dict) else {}
+        )
+        score_before = int(dim_entry.get("score", 0) or 0)
+
+        new_value = None if request.score == 0 else dim_entry.get("value")
+        dimension_scores[request.dimension] = {"score": request.score, "value": new_value}
+        chat_session.dimension_scores = dimension_scores
+
+        if request.dimension in _LEGACY_DIMENSION_SCORE_ATTR:
+            setattr(chat_session, _LEGACY_DIMENSION_SCORE_ATTR[request.dimension], request.score)
+            setattr(chat_session, _LEGACY_DIMENSION_TEXT_ATTR[request.dimension], new_value)
+
+        chat_session.bant_score = calculate_composite_score(dimension_scores, config)
+        chat_session.bant_tier = get_tier(chat_session.bant_score, thresholds=config.get("thresholds"))
+        chat_session.dimensions_assessed = sum(
+            1
+            for payload in dimension_scores.values()
+            if isinstance(payload, dict) and int(payload.get("score", 0) or 0) > 0
+        )
+        chat_session.bant_last_updated = datetime.now(UTC)
+
+        session.add(
+            BANTSignal(
+                session_id=session_id,
+                message_id=None,
+                dimension=request.dimension,
+                signal_text=f"Operator override ({auth.get('type')} id={auth.get('operator_id') or auth.get('client_id')})",
+                extracted_value=str(request.score),
+                confidence="operator",
+                score_before=score_before,
+                score_after=request.score,
+                source="operator_override",
+            )
+        )
+
+        session.commit()
+
+        return {
+            "session_id": session_id,
+            "dimension": request.dimension,
+            "score_before": score_before,
+            "score_after": request.score,
+            "bant_score": chat_session.bant_score,
+            "bant_tier": chat_session.bant_tier,
         }
 
 
