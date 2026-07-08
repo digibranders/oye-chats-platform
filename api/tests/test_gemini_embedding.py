@@ -176,3 +176,33 @@ def test_retries_then_raises_on_5xx(monkeypatch):
     with pytest.raises(RuntimeError):
         ge.embed_texts(["a"], _client=_client(handler))
     assert calls["n"] == 2  # retried up to _RETRY_ATTEMPTS
+
+
+def test_first_batch_exception_cancels_not_yet_started_futures(monkeypatch):
+    """AR-38: before this fix, ThreadPoolExecutor.__exit__ on one batch's
+    exception blocked-until-complete (not cancel) on every other submitted
+    future — with a single worker, that meant every OTHER queued batch still
+    ran to completion (consuming billed Gemini quota and wall-clock) for a
+    result about to be discarded, since embed_texts is guaranteed to raise
+    once the first exception surfaces. With cancellation, queued-but-not-
+    started batches must never reach the handler at all.
+    """
+    monkeypatch.setattr(ge, "GOOGLE_API_KEY", "k")
+    monkeypatch.setattr(ge, "EMBED_DIMENSIONS", 2)
+    monkeypatch.setattr(ge, "_MAX_BATCH", 1)  # one text per batch -> 5 batches
+    # Force strictly sequential execution (1 worker) so batches 2-5 are
+    # still PENDING (never started) when batch 1 raises immediately.
+    monkeypatch.setattr("app.services.runtime_config.get_embed_concurrency", lambda: 1)
+
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    with pytest.raises(RuntimeError):
+        ge.embed_texts(["0", "1", "2", "3", "4"], _client=_client(handler))
+
+    # Only the first (already-running) batch should have reached the
+    # handler — the other 4 were cancelled while still PENDING.
+    assert calls["n"] == 1

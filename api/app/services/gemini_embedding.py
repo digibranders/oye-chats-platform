@@ -178,9 +178,10 @@ def embed_texts(
     # perf_counter is imported directly (not via ``time``) so the retry tests
     # that stub ``time.sleep`` don't accidentally break throughput timing.
     start = perf_counter()
+    pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            future_to_idx = {pool.submit(_embed_one_batch, client, b, max_wait_s): i for i, b in enumerate(batches)}
+        future_to_idx = {pool.submit(_embed_one_batch, client, b, max_wait_s): i for i, b in enumerate(batches)}
+        try:
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 results[idx] = future.result()  # propagates a batch's terminal failure
@@ -188,7 +189,22 @@ def embed_texts(
                     done += len(batches[idx])
                     with contextlib.suppress(Exception):
                         progress_cb(done, total)
+        except Exception:
+            # AR-38: on one batch's non-retryable exception, cancel every
+            # not-yet-started future instead of letting the executor's
+            # default shutdown block-until-complete on them. Without this, a
+            # large concurrent batch (e.g. a 500-page crawl re-embed) that
+            # hits one immediate 4xx keeps 7+ other in-flight batches running
+            # — consuming billed Gemini quota and wall-clock — for a result
+            # that's about to be discarded anyway, since embed_texts is
+            # guaranteed to raise once this exception surfaces. Futures
+            # already running can't be cancelled (not PENDING anymore) and
+            # will still complete; this only stops ones that haven't started.
+            for f in future_to_idx:
+                f.cancel()
+            raise
     finally:
+        pool.shutdown(wait=True)
         if owns_client:
             client.close()
 
