@@ -152,13 +152,23 @@ async def task_ingest_web_batch(
 # ── Embedding Backfill ──────────────────────────────────────────────────────
 
 
-async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
-    """Re-embed all documents using the current embed_chunks() provider.
+# AR-44: how many batches run concurrently in task_reembed_all_documents.
+# Each embed_chunks() call is itself internally concurrent (a ThreadPoolExecutor
+# inside gemini_embedding.py), but consecutive BATCHES previously ran strictly
+# sequentially — batch N+1 waited for batch N's full embed+commit even though
+# the network-bound embed calls could overlap under the same project-wide
+# rate limiter (embed_rate_limiter paces requests regardless of how many
+# concurrent callers there are, so widening this is safe, not just faster).
+# Kept small — this is an offline backfill task, not latency-sensitive; the
+# win is fewer idle gaps waiting on one batch's DB round-trip while the next
+# batch's embed call could already be in flight.
+_REEMBED_CONCURRENT_BATCHES = 3
 
-    Run this once after the a1b2c3d4e5f6 migration to backfill 768-dim vectors
-    for every document that has a NULL embedding (i.e. all rows post-migration).
 
-    Returns a summary dict with total, succeeded, and failed counts.
+async def _reembed_one_batch(batch_ids: list[int]) -> tuple[int, int]:
+    """Embed + persist one batch of documents. Returns (succeeded, failed)
+    counts for this batch — never raises; a batch-level failure is caught
+    and counted as fully failed so one bad batch doesn't abort the run.
     """
     import asyncio
 
@@ -167,9 +177,61 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
     from app.db.session import get_session
     from app.ingestion.embedder import embed_chunks
 
-    logger.info("task_reembed_all_documents: starting (batch_size=%d)", batch_size)
+    with get_session() as session:
+        rows = session.execute(
+            text("SELECT id, content FROM documents WHERE id = ANY(:ids)"),
+            {"ids": batch_ids},
+        ).fetchall()
 
-    total = succeeded = failed = 0
+    contents = [r[1] for r in rows]
+
+    try:
+        embeddings = await asyncio.to_thread(embed_chunks, contents)
+    except Exception as exc:
+        logger.error(
+            "task_reembed_all_documents: batch starting id=%d failed — %s: %s",
+            batch_ids[0],
+            type(exc).__name__,
+            exc,
+        )
+        return 0, len(batch_ids)
+
+    with get_session() as session:
+        for row, embedding in zip(rows, embeddings, strict=True):
+            emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
+            session.execute(
+                text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
+                {"emb": emb_str, "id": row[0]},
+            )
+        session.commit()
+
+    return len(batch_ids), 0
+
+
+async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
+    """Re-embed all documents using the current embed_chunks() provider.
+
+    Run this once after the a1b2c3d4e5f6 migration to backfill 768-dim vectors
+    for every document that has a NULL embedding (i.e. all rows post-migration).
+
+    Batches run in windows of ``_REEMBED_CONCURRENT_BATCHES`` concurrently
+    (AR-44) rather than strictly one at a time — safe because the shared
+    project-wide embed rate limiter paces actual request volume regardless
+    of how many concurrent batches are in flight.
+
+    Returns a summary dict with total, succeeded, and failed counts.
+    """
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.db.session import get_session
+
+    logger.info(
+        "task_reembed_all_documents: starting (batch_size=%d, concurrent_batches=%d)",
+        batch_size,
+        _REEMBED_CONCURRENT_BATCHES,
+    )
 
     with get_session() as session:
         # Fetch IDs of all documents with NULL embedding in ascending order.
@@ -179,39 +241,15 @@ async def task_reembed_all_documents(ctx: dict, batch_size: int = 50) -> dict:
     total = len(doc_ids)
     logger.info("task_reembed_all_documents: %d documents to embed", total)
 
-    for batch_start in range(0, total, batch_size):
-        batch_ids = doc_ids[batch_start : batch_start + batch_size]
+    batches = [doc_ids[i : i + batch_size] for i in range(0, total, batch_size)]
+    succeeded = failed = 0
 
-        with get_session() as session:
-            rows = session.execute(
-                text("SELECT id, content FROM documents WHERE id = ANY(:ids)"),
-                {"ids": batch_ids},
-            ).fetchall()
-
-        contents = [r[1] for r in rows]
-
-        try:
-            embeddings = await asyncio.to_thread(embed_chunks, contents)
-        except Exception as exc:
-            logger.error(
-                "task_reembed_all_documents: batch starting id=%d failed — %s: %s",
-                batch_ids[0],
-                type(exc).__name__,
-                exc,
-            )
-            failed += len(batch_ids)
-            continue
-
-        with get_session() as session:
-            for row, embedding in zip(rows, embeddings, strict=True):
-                emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
-                session.execute(
-                    text("UPDATE documents SET embedding = CAST(:emb AS vector) WHERE id = :id"),
-                    {"emb": emb_str, "id": row[0]},
-                )
-            session.commit()
-
-        succeeded += len(batch_ids)
+    for window_start in range(0, len(batches), _REEMBED_CONCURRENT_BATCHES):
+        window = batches[window_start : window_start + _REEMBED_CONCURRENT_BATCHES]
+        results = await asyncio.gather(*(_reembed_one_batch(b) for b in window))
+        for batch_succeeded, batch_failed in results:
+            succeeded += batch_succeeded
+            failed += batch_failed
         logger.info(
             "task_reembed_all_documents: %d/%d done (failed=%d)",
             succeeded,
