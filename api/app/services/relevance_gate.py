@@ -19,17 +19,41 @@ Key: ``oyechats:gate:{bot_id}:{question_hash}`` (TTL: 3600s)
 """
 
 import hashlib
-import json
 import logging
 import os
 
 import litellm
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.cache import cache_get, cache_set
 from app.core.langfuse_client import langfuse_generation
 from app.services import runtime_config
 
 logger = logging.getLogger(__name__)
+
+
+class _RelevanceScoreResult(BaseModel):
+    """AR-33: strict structured output for the gate judge, mirroring the BANT
+    extraction pattern (rag_service.QualificationExtractionResult).
+
+    Before this, the gate used the loose ``json_object`` format with no
+    schema enforcement — any parse exception (malformed JSON, wrong shape,
+    non-numeric score) fell through to the blanket ``except Exception`` and
+    failed open, identically to a chunk that successfully manipulated the
+    score to 1.0. Combined with AR-18's chunk-content injection gap, a chunk
+    engineered to break JSON parsing bypassed the gate exactly like one that
+    manipulated the score directly. A schema-enforced response makes that a
+    provider-level guarantee instead of something this code has to defend
+    against after the fact.
+    """
+
+    # ``extra='forbid'`` → ``additionalProperties: false`` in the emitted
+    # JSON schema — required by OpenAI/Gemini structured-output strict mode
+    # (see QualificationSignalExtraction's identical comment in rag_service.py).
+    model_config = ConfigDict(extra="forbid")
+
+    score: float = Field(ge=0.0, le=1.0, description="Relevance score from 0.0 (unrelated) to 1.0 (directly answers)")
+
 
 RELEVANCE_GATE_ENABLED: bool = os.getenv("RELEVANCE_GATE_ENABLED", "true").lower() in (
     "1",
@@ -159,18 +183,34 @@ def check_relevance(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=20,
-                response_format={"type": "json_object"},
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "RelevanceScoreResult",
+                        "strict": True,
+                        "schema": _RelevanceScoreResult.model_json_schema(),
+                    },
+                },
                 timeout=_GATE_LLM_TIMEOUT_S,
                 metadata={"generation_name": "relevance-gate"},
             )
             raw = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=raw)
-        data = json.loads(raw)
-        score = float(data.get("score", 1.0))
-        score = max(0.0, min(1.0, score))  # clamp to [0, 1]
+        score = _RelevanceScoreResult.model_validate_json(raw).score
     except Exception as exc:
-        # Timeout, rate limit, JSON parse error, network — all fail open.
-        # Visitor gets a possibly-irrelevant answer instead of 30s of silence.
+        # AR-33: still fails open on timeout/rate-limit/network errors — a
+        # blanket switch to fail-closed was considered and deliberately NOT
+        # made, because those failure modes are common, transient, and not
+        # attacker-controlled; failing closed there would turn an ordinary
+        # provider blip into "refuses every question" for every bot, a much
+        # worse and more frequent outage than an occasional irrelevant
+        # answer. What strict-schema output DOES close is the actual
+        # exploitable path this finding flagged: a chunk engineered to break
+        # JSON parsing (or the schema shape) no longer differs from any
+        # other malformed-response case — the provider guarantees valid,
+        # in-schema JSON or raises, so there is no longer a parse-exception
+        # branch a chunk's content can deliberately trigger to force
+        # fail-open the same way a successfully-manipulated score would.
         logger.warning("Relevance gate failed (non-blocking, fail-open): %s", exc)
         return True, 1.0
 
