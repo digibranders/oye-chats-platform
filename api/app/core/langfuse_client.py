@@ -99,7 +99,10 @@ def langfuse_generation(name: str, *, model: str | None = None, prompt: str | No
         mgr = lf.start_as_current_observation(name=name, as_type="generation", model=model, input=resolved_input)
         span = mgr.__enter__()
     except Exception as exc:  # never let tracing setup break the LLM call
-        logger.debug("langfuse_generation start failed (%s) — continuing untraced", exc)
+        # AR-29: was logged at debug, invisible at the normal info/warning
+        # level an operator actually scans — a Langfuse connectivity blip
+        # silently dropped tracing for that call with zero visible signal.
+        logger.warning("langfuse_generation start failed (%s) — continuing untraced", exc)
         yield _GenerationRecorder(None, model)
         return
 

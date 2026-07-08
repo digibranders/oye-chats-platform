@@ -83,3 +83,25 @@ def test_generation_setup_failure_is_safe(monkeypatch):
     # A tracing-setup failure must not break the LLM path.
     with lc.langfuse_generation("gen", model="m", prompt="hi") as gen:
         gen.record_litellm(_Resp())
+
+
+def test_generation_setup_failure_logs_at_warning_not_debug(monkeypatch, caplog):
+    """AR-29: a start-failure was previously logged at debug — invisible at
+    the info/warning level an operator actually scans, so an intermittent
+    Langfuse connectivity blip silently dropped tracing with zero visible
+    signal. Must be loud enough to notice without digging through debug logs."""
+    import logging
+
+    class _BoomLF:
+        def start_as_current_observation(self, **kw):
+            raise RuntimeError("otel exploded")
+
+    monkeypatch.setattr(lc, "get_langfuse", lambda: _BoomLF())
+    with (
+        caplog.at_level(logging.WARNING, logger="app.core.langfuse_client"),
+        lc.langfuse_generation("gen", model="m", prompt="hi") as gen,
+    ):
+        gen.record_litellm(_Resp())
+
+    assert any("langfuse_generation start failed" in r.message for r in caplog.records)
+    assert all(r.levelno >= logging.WARNING for r in caplog.records)
