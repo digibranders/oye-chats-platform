@@ -4,6 +4,16 @@ from copy import deepcopy
 
 from app.db.models import Bot, ChatSession
 
+# BR-04: every dimension across every preset defaults ``cta_enabled`` to
+# False. The BANT preset's need/timeline dimensions already documented why
+# (interrogative pill questions read as qualification fishing to modern B2B
+# visitors — Drift/Intercom Fin/HubSpot all default this off; background LLM
+# extraction still scores the dimension without an intrusive prompt). MEDDIC/
+# CHAMP/GPCTBA+C&I previously left several dimensions on by default with no
+# equivalent rationale — an oversight from the presets being authored
+# independently, not a deliberate framework-specific design choice. Customers
+# who want the more interrogative flow can still flip individual dimensions
+# on per-bot from the admin Qualification page.
 PRESET_FRAMEWORKS = {
     "bant": {
         "framework": "bant",
@@ -90,7 +100,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Target KPIs committed", "score": 17},
                 {"label": "Board-level quantified outcomes", "score": 21},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "What measurable outcomes matter most to your team?",
         },
         "economic_buyer": {
@@ -103,7 +113,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Direct access to economic buyer", "score": 17},
                 {"label": "Economic buyer actively driving deal", "score": 21},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "Who ultimately owns budget approval for this initiative?",
         },
         "decision_criteria": {
@@ -142,7 +152,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Urgent pain with business impact", "score": 17},
                 {"label": "Critical pain tied to executive goals", "score": 21},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "What is the biggest challenge you need to solve first?",
         },
         "champion": {
@@ -181,7 +191,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "High-impact challenge", "score": 20},
                 {"label": "Critical challenge requiring urgent change", "score": 25},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "What challenge is most urgent for your team right now?",
         },
         "authority": {
@@ -220,7 +230,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Near-term priority", "score": 20},
                 {"label": "Top priority initiative", "score": 25},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "Where does this initiative sit in your current priorities?",
         },
         "thresholds": {"mql": 30, "sal": 55, "sql": 75},
@@ -238,7 +248,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Specific goals", "score": 11},
                 {"label": "Strategic measurable goals", "score": 14},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "What outcomes are you targeting this quarter?",
         },
         "plans": {
@@ -262,7 +272,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "High-impact blockers", "score": 11},
                 {"label": "Critical blockers with urgency", "score": 14},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "What is currently blocking progress the most?",
         },
         "timeline": {
@@ -274,7 +284,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Planned timeline", "score": 11},
                 {"label": "Committed launch timeline", "score": 14},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "When do you need this in place?",
         },
         "budget": {
@@ -310,7 +320,7 @@ PRESET_FRAMEWORKS = {
                 {"label": "Significant business impact", "score": 11},
                 {"label": "Severe consequences if unresolved", "score": 14},
             ],
-            "cta_enabled": True,
+            "cta_enabled": False,
             "cta_prompt": "What happens if this is not solved in time?",
         },
         "thresholds": {"mql": 30, "sal": 55, "sql": 75},
