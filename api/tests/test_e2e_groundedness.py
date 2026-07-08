@@ -68,14 +68,14 @@ class TestEndToEndGroundedness:
     def test_grounded_answer_passes(self):
         """A mocked LLM answer that only restates fixture facts must pass."""
         context_text = _build_reference_context(GOLDEN_CHUNKS, company_name="Acme Corp")
-        prompt = build_hybrid_prompt(
+        _system, user = build_hybrid_prompt(
             client=type("C", (), {"name": "Acme Corp"})(),
             question="How much does the standard plan cost?",
             context_text=context_text,
             history_context="",
         )
 
-        assert "$49" in prompt  # the real fact made it into the assembled prompt
+        assert "$49" in user  # the real fact made it into the assembled prompt
 
         mocked_answer = "Our standard plan costs $49 per month."
         assert _answer_is_grounded(mocked_answer, GOLDEN_CHUNKS) is True
@@ -86,13 +86,13 @@ class TestEndToEndGroundedness:
         AR-11/AR-12 exist to catch (e.g. the April 2026 'Fynix Digital made
         me' fabrication)."""
         context_text = _build_reference_context(GOLDEN_CHUNKS, company_name="Acme Corp")
-        prompt = build_hybrid_prompt(
+        _system, user = build_hybrid_prompt(
             client=type("C", (), {"name": "Acme Corp"})(),
             question="How much does the standard plan cost?",
             context_text=context_text,
             history_context="",
         )
-        assert "$49" in prompt
+        assert "$49" in user
 
         hallucinated_answer = "Our standard plan costs $99 per month and was founded by John Smith."
         assert _answer_is_grounded(hallucinated_answer, GOLDEN_CHUNKS) is False

@@ -42,10 +42,10 @@ class TestStreamFallbackMetering:
     async def _drain(self, agen):
         return [chunk async for chunk in agen]
 
-    async def _fake_stream_ok(self, model, prompt, max_tokens, metadata, temperature):
+    async def _fake_stream_ok(self, model, prompt, max_tokens, metadata, temperature, system_prompt=None):
         yield f"chunk-from-{model}"
 
-    async def _fake_stream_fails(self, model, prompt, max_tokens, metadata, temperature):
+    async def _fake_stream_fails(self, model, prompt, max_tokens, metadata, temperature, system_prompt=None):
         raise RuntimeError("primary down")
         yield  # pragma: no cover - unreachable, makes this a generator
 
@@ -59,7 +59,7 @@ class TestStreamFallbackMetering:
             patch("app.services.llm_service.increment_metric_counter") as mock_incr,
         ):
 
-            async def stream_side_effect(model, prompt, max_tokens, metadata, temperature):
+            async def stream_side_effect(model, prompt, max_tokens, metadata, temperature, system_prompt=None):
                 if model == "openai/gpt-5.4-mini":
                     async for _ in self._fake_stream_fails(model, prompt, max_tokens, metadata, temperature):
                         yield _  # pragma: no cover

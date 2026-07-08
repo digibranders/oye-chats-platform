@@ -2094,8 +2094,13 @@ def build_hybrid_prompt(
     # ``list[{name, url}]`` shape — normalized inside the function.
     services: list[str | dict] | None = None,
     services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
-) -> str:
-    """Construct the Hybrid RAG system prompt with BANT qualification support."""
+) -> tuple[str, str]:
+    """Construct the Hybrid RAG prompt with BANT qualification support.
+
+    Returns ``(system_prompt, user_prompt)`` — see the AR-27 comment above
+    ``user_prompt``'s assembly for why the split falls where it does (stable
+    identity/rules/config vs. per-turn state/context/history/question).
+    """
 
     bs = bant_state or {}
     config = bant_config or get_framework_config(None)
@@ -2805,11 +2810,24 @@ RULES:
 9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".
 10. LINKS: Whenever you mention any URL (website, pricing, contact, booking link, social media, docs, support page, etc.), format it as a markdown link with short, descriptive text — e.g. `[our pricing page](https://example.com/pricing)`, `[book a demo](https://example.com/book)`, `[contact us](https://example.com/contact)`. NEVER paste a bare URL or write the URL as plain text in parentheses — bare URLs do NOT render as clickable in the chat widget. Use the visible page/action name as the link label, not the URL itself. Only http:// and https:// links are allowed. This rule applies ONLY to actual URLs — internal sentinel tokens like `[CTA:timeline]`, `[LEAVE_MESSAGE_CARD]`, or `[MEETING_CARD]` are NOT URLs and MUST be emitted exactly as documented elsewhere in these instructions, not rewritten as markdown links.
 11. PUNCTUATION: Do NOT use the em-dash character (—) anywhere in your response. The em-dash is a well-known AI-generated-text tell and makes your replies feel robotic. Use a period, comma, colon, semicolon, or a plain hyphen (-) instead. This rule has no exceptions; substitute the em-dash even when quoting or paraphrasing reference material.{custom_prompt_section}{tone_section}{company_section}{services_section}
-{qualification_section}
 {handoff_section}
 {meeting_section}
 {media_cards_section}
 {response_style_block}
+"""
+
+    # AR-27: the qualification (BANT) state, retrieved context, conversation
+    # history, and the question itself are the only genuinely per-turn-variable
+    # parts of the prompt — everything above (identity/scope/voice/rules plus
+    # this bot's stable config sections) is byte-identical across every turn
+    # of every session for the same bot until an admin edits its settings.
+    # Splitting here keeps that stable block as its own `system` message so a
+    # provider's prefix-based prompt cache (e.g. OpenAI) can actually match it
+    # turn over turn — previously the BANT-state block sat inside the single
+    # message the caller sent, one section away from the stable rules, so ANY
+    # turn where BANT state changed (i.e. almost every turn) silently defeated
+    # caching for the entire prompt with no test/metric catching it.
+    user_prompt = f"""{qualification_section}
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
 ═══════════════════════════════════════════════════════
@@ -2824,7 +2842,7 @@ CONVERSATION HISTORY
 USER QUESTION: {question}
 ═══════════════════════════════════════════════════════
 """
-    return hybrid_system_prompt
+    return hybrid_system_prompt, user_prompt
 
 
 def rewrite_query(session_id: str, question: str, history: list) -> str:
@@ -3724,7 +3742,7 @@ def rag_pipeline(
             is_bant_enabled = getattr(client, "bant_enabled", True)
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 
-            prompt = build_hybrid_prompt(
+            system_prompt, prompt = build_hybrid_prompt(
                 client,
                 question,
                 context_text,
@@ -3757,6 +3775,7 @@ def rag_pipeline(
             # cannot trick the refund into firing on a real answer.
             answer, _generation_failed = generate_response_checked(
                 prompt,
+                system_prompt=system_prompt,
                 temperature=0.3,
                 max_tokens=1500,
                 metadata={"generation_name": "rag-generation", "context_chunks": len(final_results), "bot_id": bid},
@@ -4459,7 +4478,7 @@ async def rag_pipeline_stream(
             is_bant_enabled = getattr(client, "bant_enabled", True)
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 
-            prompt = build_hybrid_prompt(
+            system_prompt, prompt = build_hybrid_prompt(
                 client,
                 question,
                 context_text,
@@ -4496,6 +4515,7 @@ async def rag_pipeline_stream(
             try:
                 async for chunk in generate_response_stream(
                     prompt,
+                    system_prompt=system_prompt,
                     temperature=0.3,
                     max_tokens=1500,
                     metadata={

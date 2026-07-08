@@ -208,6 +208,7 @@ def _apply_model_family_kwargs(kwargs: dict, model: str) -> None:
 def _generate_response(
     prompt: str,
     *,
+    system_prompt: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
@@ -221,6 +222,12 @@ def _generate_response(
     the returned text, so a caller that refunds a per-answer credit cannot be
     tricked by a bot whose system prompt is crafted to echo a canned failure
     string.
+
+    ``system_prompt``: when set, sent as a separate ``role: system`` message
+    ahead of ``prompt`` (``role: user``) instead of folding everything into
+    one message (AR-27) — lets a provider's prefix-based prompt cache match
+    the stable system message turn over turn even as ``prompt`` (per-turn
+    state/context/history/question) changes.
 
     ``model``: override the resolved primary model for this call only (e.g.
     ``runtime_config.get_gate_model()`` for non-generative classification/
@@ -238,9 +245,14 @@ def _generate_response(
         return LLM_CONFIG_ERROR_MESSAGE, True
     try:
         logger.info(f"Generating LLM response | model={resolved_model} | prompt_length={len(prompt)}")
+        messages = (
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+            if system_prompt
+            else [{"role": "user", "content": prompt}]
+        )
         kwargs: dict = {
             "model": resolved_model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }
         # Only include optional kwargs when they're set. LiteLLM's
         # fallback path internally iterates over ``metadata`` and crashes
@@ -285,6 +297,7 @@ def _generate_response(
 def generate_response(
     prompt: str,
     *,
+    system_prompt: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
@@ -292,15 +305,25 @@ def generate_response(
 ) -> str:
     """Generate a non-streaming response via LiteLLM (text only).
 
+    ``system_prompt``: see :func:`_generate_response` (AR-27).
+
     ``model``: see :func:`_generate_response` — override for non-generative
     (classification/rewrite) callers that should use a cheaper tier.
     """
-    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata, model=model)[0]
+    return _generate_response(
+        prompt,
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        metadata=metadata,
+        model=model,
+    )[0]
 
 
 def generate_response_checked(
     prompt: str,
     *,
+    system_prompt: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
@@ -310,7 +333,14 @@ def generate_response_checked(
     flag (True when generation produced only a canned error, i.e. no real
     answer). Use this on the credit-charged chat path so a failed reply can be
     refunded without relying on forgeable answer-text matching."""
-    return _generate_response(prompt, max_tokens=max_tokens, temperature=temperature, metadata=metadata, model=model)
+    return _generate_response(
+        prompt,
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        metadata=metadata,
+        model=model,
+    )
 
 
 def extract_brand_tone(content_sample: str, *, metadata: dict | None = None) -> str | None:
@@ -450,6 +480,7 @@ async def _stream_from_model(
     max_tokens: int | None,
     metadata: dict | None,
     temperature: float | None = None,
+    system_prompt: str | None = None,
 ):
     """Async inner generator: stream chunks from ``model``, enforcing per-chunk timeout.
 
@@ -469,9 +500,14 @@ async def _stream_from_model(
     _output = ""
     with langfuse_generation(generation_name, model=model, prompt=prompt) as gen:
         try:
+            messages = (
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+                if system_prompt
+                else [{"role": "user", "content": prompt}]
+            )
             kwargs: dict = {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "stream": True,
                 # AR-26: ask the provider for a final usage-only chunk (empty
                 # ``choices``, populated ``usage``) so streamed replies can be
@@ -524,11 +560,15 @@ async def _stream_from_model(
 async def generate_response_stream(
     prompt: str,
     *,
+    system_prompt: str | None = None,
     max_tokens: int | None = None,
     temperature: float | None = None,
     metadata: dict | None = None,
 ):
     """Async generator: stream text chunks via LiteLLM.
+
+    ``system_prompt``: see :func:`_generate_response` (AR-27) — sent as a
+    separate ``role: system`` message on both the primary and fallback calls.
 
     Fallback chain:
     1. Primary model (``LLM_MODEL`` — default: OpenAI gpt-5.4-mini)
@@ -552,7 +592,9 @@ async def generate_response_stream(
     # responses. In that case we end gracefully instead of falling back.
     primary_chunks_yielded = 0
     try:
-        async for chunk in _stream_from_model(_primary_model(), prompt, max_tokens, metadata, temperature):
+        async for chunk in _stream_from_model(
+            _primary_model(), prompt, max_tokens, metadata, temperature, system_prompt
+        ):
             primary_chunks_yielded += 1
             yield chunk
         return
@@ -584,7 +626,9 @@ async def generate_response_stream(
     try:
         logger.info(f"LLM stream fallback | model={_fallback_model()}")
         increment_metric_counter("llm_fallback_triggered")
-        async for chunk in _stream_from_model(_fallback_model(), prompt, max_tokens, metadata, temperature):
+        async for chunk in _stream_from_model(
+            _fallback_model(), prompt, max_tokens, metadata, temperature, system_prompt
+        ):
             yield chunk
     except TimeoutError as e:
         logger.error(f"Fallback stream timed out: {e}")
