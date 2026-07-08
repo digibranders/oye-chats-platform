@@ -60,6 +60,27 @@ def _classify_and_log_llm_error(exc: Exception, *, context: str) -> None:
         increment_metric_counter("llm_unknown_error")
 
 
+def _meter_fallback_if_used(requested_model: str, response) -> None:
+    """AR-16: detect and meter a silent primary->fallback degradation.
+
+    When litellm's own ``fallbacks`` kwarg transparently recovers from a
+    primary-model failure, the caller sees a normal successful response —
+    there was previously no counter/log marker distinguishing "primary
+    answered" from "primary was flaky and fallback quietly saved the turn".
+    A primary provider degraded for an hour would recover silently on every
+    request with zero visibility. Best-effort: compares the model litellm
+    reports as having produced the completion (``response.model``) against
+    the model actually requested.
+    """
+    try:
+        actual_model = getattr(response, "model", None)
+        if actual_model and actual_model != requested_model:
+            logger.warning(f"llm_fallback_triggered | requested={requested_model} actual={actual_model}")
+            increment_metric_counter("llm_fallback_triggered")
+    except Exception as exc:  # noqa: BLE001 - metering must never break the caller
+        logger.debug("Fallback metering failed (non-blocking): %s", exc)
+
+
 def _primary_model() -> str:
     """Resolve the primary LLM model at call time so super-admins can swap it
     via /superadmin/model-config without a restart."""
@@ -184,6 +205,8 @@ def _generate_response(
             response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
             gen.record_litellm(response, output=content)
+
+        _meter_fallback_if_used(resolved_model, response)
 
         if content:
             logger.info(f"LLM response received | length={len(content)}")
@@ -487,6 +510,7 @@ async def generate_response_stream(
 
     try:
         logger.info(f"LLM stream fallback | model={_fallback_model()}")
+        increment_metric_counter("llm_fallback_triggered")
         async for chunk in _stream_from_model(_fallback_model(), prompt, max_tokens, metadata, temperature):
             yield chunk
     except TimeoutError as e:

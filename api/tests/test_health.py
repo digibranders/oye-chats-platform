@@ -165,6 +165,7 @@ class TestHealthFullEndpoint:
         assert body["worker"]["status"] == "alive"
         assert body["llm"]["status"] == "ready"
         assert body["llm"]["probe_ok"] is True
+        assert "fallback_count_1h" in body["llm"]
 
 
 # ── LLM readiness (the 2026-07-01 outage regression guard) ─────────────────
@@ -357,4 +358,38 @@ class TestGatherHealth:
         ):
             payload, ready_to_serve, fully_ok = _gather_health()
         assert ready_to_serve is False
-        assert fully_ok is False
+
+
+# ── _fallback_count_1h (AR-16) ──────────────────────────────────────────────
+
+
+class TestFallbackCount1h:
+    def test_sums_the_last_hour_of_fallback_events(self):
+        from app.main import _fallback_count_1h
+
+        with patch("app.core.metrics.get_metric_counts", return_value={"2026070812": 3, "2026070811": 2}):
+            assert _fallback_count_1h() == 5
+
+    def test_returns_none_not_zero_when_unreadable(self):
+        """Distinguish 'confirmed zero fallbacks' from 'couldn't check' — a
+        silent Redis outage must not read as a false-positive clean bill of
+        health."""
+        from app.main import _fallback_count_1h
+
+        with patch("app.core.metrics.get_metric_counts", side_effect=RuntimeError("redis down")):
+            assert _fallback_count_1h() is None
+
+    def test_health_full_includes_fallback_count(self, healthy_engine):
+        from datetime import UTC, datetime
+
+        recent = datetime.now(UTC).isoformat()
+        with (
+            patch("app.main.engine", healthy_engine),
+            patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(recent)),
+            patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
+            patch("app.main._fallback_count_1h", return_value=7),
+        ):
+            response = health_check_full()
+        body = json.loads(response.body)
+        assert body["llm"]["fallback_count_1h"] == 7

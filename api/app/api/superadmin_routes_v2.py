@@ -1130,6 +1130,13 @@ _SAFETY_NET_METRIC_NAMES = [
     "no_info_pivot",
     "off_topic_refusal",
     "system_prompt_leak",
+    # AR-15/AR-16: LLM call-outcome metrics (llm_service.py), included here
+    # for a single unified reporting endpoint even though they're not
+    # rag_service.py safety-net firings.
+    "llm_config_error",
+    "llm_transient_error",
+    "llm_unknown_error",
+    "llm_fallback_triggered",
 ]
 
 

@@ -291,6 +291,22 @@ def _llm_probe() -> tuple[bool, str | None]:
     return ok, detail
 
 
+def _fallback_count_1h() -> int | None:
+    """Rolling count of primary->fallback LLM degradations in the last hour
+    (AR-16) — surfaced here so a flaky primary provider recovering silently
+    via fallback on every request is visible in `/health/full` instead of
+    only discoverable by manually inspecting logs or the safety-net-metrics
+    endpoint. Returns None (not 0) if the counter can't be read, so callers
+    can distinguish "confirmed zero" from "unknown".
+    """
+    try:
+        from app.core.metrics import get_metric_counts
+
+        return sum(get_metric_counts("llm_fallback_triggered", hours=1).values())
+    except Exception:  # noqa: BLE001 - health checks must never fail on this
+        return None
+
+
 def _gather_health() -> tuple[dict, bool, bool]:
     """Collect subsystem health.
 
@@ -391,6 +407,7 @@ def _gather_health() -> tuple[dict, bool, bool]:
             "import_ok": _llm_ready(),
             "probe_ok": llm_ok,
             "detail": llm_detail,
+            "fallback_count_1h": _fallback_count_1h(),
         },
         "pool": pool_stats,
         "version": "1.0.0",
