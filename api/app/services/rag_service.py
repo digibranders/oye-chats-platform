@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload
 from app import config
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.langfuse_client import get_langfuse, langfuse_generation
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
@@ -725,14 +726,19 @@ def _mark_card_shown(chat_session, card_key: str) -> None:
 
 
 def _safety_net_metric(name: str, **tags) -> None:
-    """Structured log line for aggregation (Grafana/Loki/Sentry breadcrumb).
+    """Structured log line + rolling counter (AR-13) for aggregation.
 
-    Emits a single `rag.metric` line with key=value tag pairs so log-based
-    alerts can count safety-net firings without regex-scraping freeform text.
-    Interim measure until LLM observability (Langfuse or OTEL) is restored.
+    Emits a single `rag.metric` log line (log-based alerts can still count
+    firings by regex if needed), increments an hourly Redis counter queryable
+    via ``/superadmin/safety-net-metrics``, and forwards security-relevant
+    events (injection attempts, prompt leaks, moderation blocks) to Sentry —
+    the platform's already-established alert channel — so an actual spike
+    pages oncall instead of only being visible after someone goes looking.
     """
     tag_str = " ".join(f"{k}={v}" for k, v in tags.items())
     logger.info("rag.metric name=%s %s", name, tag_str)
+    increment_metric_counter(name, bot_id=tags.get("bot_id"))
+    forward_to_sentry_if_alertable(name, **tags)
 
 
 # Prompt injection guard — patterns that attempt to override the system prompt

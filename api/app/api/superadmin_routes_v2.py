@@ -1114,6 +1114,46 @@ def patch_model_config(
     }
 
 
+# ── Safety-net metrics (AR-13) ───────────────────────────────────────────────
+
+# Mirrors the `_safety_net_metric` call sites in rag_service.py. Kept as a
+# plain list here (not imported) to avoid a superadmin_routes_v2 <-> rag_service
+# coupling for what is otherwise a self-contained read-only reporting route.
+_SAFETY_NET_METRIC_NAMES = [
+    "groundedness_check",
+    "handoff_safety_net_triggered",
+    "injection_attempt",
+    "intent_router_short_circuit",
+    "leave_message_card_rendered",
+    "leave_message_safety_net_triggered",
+    "moderation_block",
+    "no_info_pivot",
+    "off_topic_refusal",
+    "system_prompt_leak",
+]
+
+
+@router.get("/safety-net-metrics")
+def safety_net_metrics(
+    hours: int = Query(default=24, ge=1, le=168),
+    bot_id: int | None = Query(default=None),
+    _admin: Client = Depends(get_superadmin),
+):
+    """Rolling hourly counts for every safety-net metric (AR-13) — the
+    previously-missing "consumer" for `_safety_net_metric`'s log lines.
+    Optionally scoped to a single bot via ``bot_id``."""
+    from app.core.metrics import get_metric_counts
+
+    totals: dict[str, int] = {}
+    series: dict[str, dict[str, int]] = {}
+    for name in _SAFETY_NET_METRIC_NAMES:
+        counts = get_metric_counts(name, bot_id=bot_id, hours=hours)
+        series[name] = counts
+        totals[name] = sum(counts.values())
+
+    return {"hours": hours, "bot_id": bot_id, "totals": totals, "series": series}
+
+
 # ── Email templates (Brevo) ─────────────────────────────────────────────────
 
 

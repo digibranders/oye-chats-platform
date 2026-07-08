@@ -5,6 +5,34 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# ── _safety_net_metric (AR-13) ───────────────────────────────────────────────
+
+
+class TestSafetyNetMetric:
+    def test_increments_counter_and_forwards_to_sentry(self):
+        from app.services.rag_service import _safety_net_metric
+
+        with (
+            patch("app.services.rag_service.increment_metric_counter") as mock_incr,
+            patch("app.services.rag_service.forward_to_sentry_if_alertable") as mock_forward,
+        ):
+            _safety_net_metric("moderation_block", bot_id=7, session="s1")
+
+        mock_incr.assert_called_once_with("moderation_block", bot_id=7)
+        mock_forward.assert_called_once_with("moderation_block", bot_id=7, session="s1")
+
+    def test_works_without_bot_id_tag(self):
+        from app.services.rag_service import _safety_net_metric
+
+        with (
+            patch("app.services.rag_service.increment_metric_counter") as mock_incr,
+            patch("app.services.rag_service.forward_to_sentry_if_alertable"),
+        ):
+            _safety_net_metric("intent_router_short_circuit", session="s1")
+
+        mock_incr.assert_called_once_with("intent_router_short_circuit", bot_id=None)
+
+
 # ── _background_groundedness_check (AR-12) ──────────────────────────────────
 
 
