@@ -60,8 +60,8 @@ async def task_crawl_and_ingest(
 ) -> dict:
     """Run a full website crawl + ingestion pipeline in the background.
 
-    Decouples the crawl (Playwright + Chromium, multi-minute, memory-heavy)
-    from the HTTP request that triggered it. The route handler enqueues this
+    Decouples the crawl (Spider.cloud + Jina Reader, multi-minute, can involve
+    hundreds of pages) from the HTTP request that triggered it. The route handler enqueues this
     task and returns 202 immediately; the worker owns the lock for the
     duration of the crawl and publishes terminal status to Redis so the
     frontend can pick it up via ``GET /crawl/progress``.

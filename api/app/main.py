@@ -5,7 +5,12 @@ import sys
 import threading
 import time
 
-# Fix for Playwright on Windows:
+# AR-43: this predates the Spider.cloud/Jina Reader crawl stack — it was
+# originally needed for Playwright's subprocess-based browser automation on
+# Windows (removed; the crawler is now pure HTTP against Spider/Jina, no
+# local browser process). Harmless to leave in place for local Windows dev
+# regardless, so not removed, just corrected here since the "Playwright"
+# comment was stale.
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 

@@ -301,7 +301,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Repository (queries / CRUD) | `api/app/db/repository.py` |
 | Document ingestion | `api/app/ingestion/pipeline.py` |
 | Embedding generation | `api/app/ingestion/embedder.py` |
-| Crawler (Playwright + crawl4ai) | `api/app/ingestion/crawler.py` |
+| Crawler (Spider.cloud + Jina Reader) | `api/app/services/spider_service.py`, `api/app/services/jina_service.py`, `api/app/services/crawl_orchestrator.py` |
 | ARQ worker tasks | `api/app/worker/tasks.py` |
 | WebSocket live chat | `api/app/api/ws_routes.py` |
 | Chat routes (SSE) | `api/app/api/chat_routes.py` |
@@ -337,7 +337,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Backend | FastAPI · SQLAlchemy 2.0 · Alembic | Python 3.11; `uv` for deps |
 | Background queue | ARQ on Redis | `oyechats-worker.service` |
 | Frontend | React 19 · Vite 7/8 · Tailwind v4 | Widget = IIFE; Admin = SPA |
-| Web Scraping | Playwright (Chromium) + crawl4ai | URL ingestion |
+| Web Scraping | Spider.cloud (primary) + Jina Reader (fallback) | URL ingestion, HTTP-only (no local browser) |
 | File Storage | Cloudflare R2 (S3-compatible) | Env vars use `R2_` prefix; internal code module name is still `b2_service.py` for legacy reasons but the bucket is on Cloudflare R2 in production |
 | Email | Brevo (Sendinblue) | Transactional |
 | Payments | Razorpay (primary, INR) + Stripe (fallback) | Webhook idempotency via `processed_webhooks` |
