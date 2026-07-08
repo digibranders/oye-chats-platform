@@ -1142,6 +1142,9 @@ _SAFETY_NET_METRIC_NAMES = [
     # 1-credit `ai_chat` charge — see `_meter_token_usage` (llm_service.py).
     "llm_tokens_prompt",
     "llm_tokens_completion",
+    # AR-40: how often the zero-result multi-query fallback actually
+    # recovers chunks a single embedding shot missed.
+    "multi_query_fallback_recovered",
 ]
 
 

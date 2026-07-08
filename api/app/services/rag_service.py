@@ -2898,6 +2898,81 @@ USER QUESTION: {question}
     return hybrid_system_prompt, user_prompt
 
 
+# AR-40: how many paraphrases to generate for the zero-result multi-query
+# fallback. Kept small — this only fires on an already-bad turn (zero
+# chunks found), so the cost is bounded to the rare case, not every query.
+_MULTI_QUERY_FALLBACK_PARAPHRASES = 2
+
+
+def _generate_query_paraphrases(question: str, n: int = _MULTI_QUERY_FALLBACK_PARAPHRASES) -> list[str]:
+    """Generate ``n`` alternate phrasings of ``question`` via the gate-tier
+    model, one LLM call. Fails safe (empty list) on any error — a caller
+    that gets nothing back should behave exactly as if this function didn't
+    exist."""
+    prompt = f"""Rewrite the following question in {n} different ways that preserve its exact meaning but use different wording and vocabulary, to help find matching documents that may use different phrasing than the original.
+
+Question: {question}
+
+Respond with EXACTLY {n} lines, one paraphrase per line, nothing else — no numbering, no bullets, no explanation."""
+    try:
+        raw = generate_response(
+            prompt,
+            model=runtime_config.get_gate_model(),
+            max_tokens=200,
+            metadata={"generation_name": "query-paraphrase-fallback"},
+        )
+        lines = [ln.strip() for ln in (raw or "").splitlines() if ln.strip()]
+        return lines[:n]
+    except Exception as e:
+        logger.warning(f"Query paraphrase generation failed (non-blocking): {e}")
+        return []
+
+
+def _zero_result_multi_query_fallback(question: str, cid: int | None, bid: int | None, retrieval_k: int) -> list:
+    """AR-40: when the primary single-embedding retrieval finds ZERO chunks,
+    try a small multi-query fan-out before giving up.
+
+    Query transformation was previously limited to a single conditional LLM
+    rewrite (``rewrite_query``) — a vaguely-worded question with poor
+    lexical/semantic overlap to source phrasing gets exactly one embedding
+    shot, and a miss on the cosine cutoff falls straight to the empty-
+    retrieval refusal even though a differently-phrased retrieval attempt
+    might have found the chunk. This generates a couple of paraphrases,
+    embeds and vector-searches each, and merges results by keeping each
+    document's best (lowest) distance across all paraphrase attempts.
+
+    Only ever called on an already-zero-result turn, so the extra LLM call +
+    embeds are bounded to the rare, already-bad case — never added cost on a
+    turn that would have succeeded anyway. Fails safe: any error, or still
+    finding nothing, returns ``[]`` and the caller's existing empty-
+    retrieval refusal path is unchanged — never worse than the status quo.
+    """
+    try:
+        paraphrases = _generate_query_paraphrases(question)
+        if not paraphrases:
+            return []
+
+        best_by_id: dict[int, tuple] = {}
+        for paraphrase in paraphrases:
+            embedding = _embed_query_cached(bid, cid, paraphrase)
+            if embedding is None:
+                continue
+            for doc, distance in _vector_search(cid, bid, embedding, k=retrieval_k):
+                if doc.id not in best_by_id or distance < best_by_id[doc.id][1]:
+                    best_by_id[doc.id] = (doc, distance)
+
+        if not best_by_id:
+            return []
+
+        ordered = sorted(best_by_id.values(), key=lambda pair: pair[1])
+        recovered = [doc for doc, _distance in ordered[:retrieval_k]]
+        _safety_net_metric("multi_query_fallback_recovered", bot_id=bid, count=len(recovered))
+        return recovered
+    except Exception as e:  # noqa: BLE001 - fallback must never break the pipeline
+        logger.warning(f"Multi-query fallback failed (non-blocking): {e}")
+        return []
+
+
 def rewrite_query(session_id: str, question: str, history: list) -> str:
     """Rewrite a follow-up question into a standalone search query using conversation history."""
     if not history or len(history) < 2:
@@ -3669,6 +3744,8 @@ def rag_pipeline(
 
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
+                if not final_results:
+                    final_results = _zero_result_multi_query_fallback(question, cid, bid, _retrieval_k)
                 if RERANK_ENABLED:
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
@@ -4404,6 +4481,10 @@ async def rag_pipeline_stream(
                 _fuse_start = _t.perf_counter()
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
+                if not final_results:
+                    final_results = await asyncio.to_thread(
+                        _zero_result_multi_query_fallback, question, cid, bid, _retrieval_k
+                    )
                 _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
 
                 _rerank_ms = 0.0
