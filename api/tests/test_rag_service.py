@@ -562,6 +562,292 @@ class TestExtractMediaCard:
         assert "[DOWNLOAD_CARD" in text
 
 
+class TestPromoteLooseUrlToMediaCard:
+    """`_promote_loose_url_to_media_card` is the safety net for when the LLM
+    writes a bare/markdown URL instead of the ``[DOWNLOAD_CARD:...]`` sentinel.
+
+    The regression these tests pin: on a confirmation turn ("download pls")
+    the query text matches no document, so retrieval returns unrelated chunks
+    and the file the bot had just named is absent from ``retrieved_chunks``.
+    The promoter must fall back to the caller-supplied bot-wide whitelist —
+    the same set the hallucination guard trusts — or the card silently never
+    renders. Promotion stays bounded by that whitelist so a URL the bot does
+    not own is never turned into a card."""
+
+    _PDF = "https://cdn.oyechats.com/bot-x/dependency-management-attack-surface-reduction-fcd0df53.pdf"
+
+    def test_promotes_bare_url_from_bot_wide_whitelist_when_not_retrieved(self):
+        from app.services.rag_service import _promote_loose_url_to_media_card
+
+        answer = f"Sure — here you go: {self._PDF}"
+        cleaned, card = _promote_loose_url_to_media_card(
+            answer, retrieved_chunks=[], allowed_video_ids=set(), allowed_file_urls={self._PDF}
+        )
+        assert card == {
+            "type": "download",
+            "url": self._PDF,
+            "name": "dependency-management-attack-surface-reduction-fcd0df53.pdf",
+        }
+        assert self._PDF not in cleaned
+
+    def test_promotes_markdown_linked_url_from_bot_wide_whitelist(self):
+        from app.services.rag_service import _promote_loose_url_to_media_card
+
+        answer = f"Here's the file: [download]({self._PDF})"
+        cleaned, card = _promote_loose_url_to_media_card(
+            answer, retrieved_chunks=[], allowed_video_ids=set(), allowed_file_urls={self._PDF}
+        )
+        assert card is not None
+        assert card["type"] == "download"
+        assert card["url"] == self._PDF
+        assert "download](" not in cleaned
+
+    def test_does_not_promote_url_outside_whitelist(self):
+        # A URL the bot does not own (visitor pasted it, or LLM hallucinated
+        # it) must never become a card — the whitelist is the trust boundary.
+        from app.services.rag_service import _promote_loose_url_to_media_card
+
+        answer = "Check https://evil.example.com/not-ours.pdf for that."
+        cleaned, card = _promote_loose_url_to_media_card(
+            answer, retrieved_chunks=[], allowed_video_ids=set(), allowed_file_urls={self._PDF}
+        )
+        assert card is None
+        assert cleaned == answer
+
+    def test_empty_whitelist_promotes_nothing(self):
+        from app.services.rag_service import _promote_loose_url_to_media_card
+
+        answer = f"Here: {self._PDF}"
+        cleaned, card = _promote_loose_url_to_media_card(
+            answer, retrieved_chunks=[], allowed_video_ids=set(), allowed_file_urls=set()
+        )
+        assert card is None
+        assert cleaned == answer
+
+    def test_falls_back_to_retrieved_chunks_when_sets_omitted(self):
+        # Backward-compatible path: with no explicit whitelist, the promoter
+        # derives it from the retrieved chunks' Available media (legacy shape).
+        from types import SimpleNamespace
+
+        from app.services.rag_service import _promote_loose_url_to_media_card
+
+        chunk = SimpleNamespace(metadata_info={"media_urls": {"files": [{"url": self._PDF, "name": "report.pdf"}]}})
+        answer = f"Grab it here: {self._PDF}"
+        cleaned, card = _promote_loose_url_to_media_card(answer, retrieved_chunks=[chunk])
+        assert card is not None
+        assert card["url"] == self._PDF
+        assert self._PDF not in cleaned
+
+
+class TestHandleTrailingMediaAsk:
+    """`_handle_trailing_media_ask` — product decision: the card IS the
+    offer. The bot must never ask "want the X?" — every trailing ask
+    (vague OR named) is a slip against the FORBIDDEN OUTPUT SHAPES prompt
+    rule and gets stripped, regardless of whether an existing card was
+    emitted this turn.
+
+    These tests pin the strip-all contract that replaced the earlier
+    preserve-when-named branch.
+    """
+
+    _TITLES = {"base images walkthrough", "clean libraries deep dive"}
+    _NAMES = {"cve-triage-playbook.pdf", "cve-triage-playbook"}
+
+    def test_strips_named_video_offer(self):
+        # Even when the ask names a real catalog asset, strip it. The
+        # bot should have emitted the card directly, not asked.
+        from app.services.rag_service import _handle_trailing_media_ask
+
+        text = (
+            "Yes, we work with base images — hardened containers, near-zero-CVE "
+            "alternatives. Want the Base Images walkthrough video?"
+        )
+        out_text, card = _handle_trailing_media_ask(
+            text,
+            retrieved_chunks=[],
+            existing_card=None,
+            allowed_video_titles=self._TITLES,
+            allowed_file_names=self._NAMES,
+        )
+        assert "Want the Base Images walkthrough video" not in out_text
+        assert "Yes, we work with base images" in out_text
+        assert card is None
+
+    def test_strips_named_file_offer(self):
+        from app.services.rag_service import _handle_trailing_media_ask
+
+        text = "We handle CVE triage across your base. Want the cve-triage-playbook PDF?"
+        out_text, card = _handle_trailing_media_ask(
+            text,
+            retrieved_chunks=[],
+            existing_card=None,
+            allowed_video_titles=self._TITLES,
+            allowed_file_names=self._NAMES,
+        )
+        assert "cve-triage-playbook" not in out_text
+        assert "We handle CVE triage" in out_text
+        assert card is None
+
+    def test_strips_vague_ask(self):
+        from app.services.rag_service import _handle_trailing_media_ask
+
+        text = "Base images are core to what we do. Want a video on this?"
+        out_text, card = _handle_trailing_media_ask(
+            text,
+            retrieved_chunks=[],
+            existing_card=None,
+            allowed_video_titles=self._TITLES,
+            allowed_file_names=self._NAMES,
+        )
+        assert "Want a video" not in out_text
+        assert "Base images are core to what we do" in out_text
+        assert card is None
+
+    def test_strips_ask_when_card_already_emitted(self):
+        # Card was already emitted this turn — trailing "want the other
+        # thing too?" is redundant hedging. Strip and keep existing card.
+        from app.services.rag_service import _handle_trailing_media_ask
+
+        text = "Here's the walkthrough. Would you like the Clean Libraries deep dive video as well?"
+        existing = {"type": "download", "url": "https://x.com/a.pdf", "name": "a.pdf"}
+        out_text, card = _handle_trailing_media_ask(
+            text,
+            retrieved_chunks=[],
+            existing_card=existing,
+            allowed_video_titles=self._TITLES,
+            allowed_file_names=self._NAMES,
+        )
+        assert "Clean Libraries" not in out_text
+        assert card == existing
+
+    def test_ignores_non_ask_sentences(self):
+        # No trailing question mark → not an ask at all, leave alone.
+        from app.services.rag_service import _handle_trailing_media_ask
+
+        text = "We work with base images across the stack."
+        out_text, card = _handle_trailing_media_ask(
+            text,
+            retrieved_chunks=[],
+            existing_card=None,
+            allowed_video_titles=self._TITLES,
+            allowed_file_names=self._NAMES,
+        )
+        assert out_text == text
+        assert card is None
+
+    def test_legacy_signature_still_works(self):
+        # Backward-compat: existing callers that don't pass the whitelist
+        # kwargs must still work. The strip-all contract applies either way.
+        from app.services.rag_service import _handle_trailing_media_ask
+
+        text = "Yes. Want the Base Images Walkthrough video?"
+        out_text, card = _handle_trailing_media_ask(text, retrieved_chunks=[])
+        assert "Want the Base Images Walkthrough" not in out_text
+        assert card is None
+
+
+class TestPickSecondaryMedia:
+    """`_pick_secondary_media` — Option E: primary card + a small secondary
+    chip of the OPPOSITE type when it topically matches. Contract:
+
+      * primary=video with a real title → pick the file whose name has the
+        strongest content-word overlap (>= 2 tokens, stopwords excluded).
+      * primary=download → pick the video with the strongest overlap.
+      * If nothing overlaps at the threshold, return [] (no chip beats a
+        weak chip).
+      * Never return the primary itself.
+      * At most one item — the list shape is future-proofing.
+    """
+
+    def test_picks_related_pdf_for_video_primary(self):
+        from app.services.rag_service import _pick_secondary_media
+
+        primary = {
+            "type": "youtube",
+            "video_id": "abc123",
+            "title": "Base Images Walkthrough with CleanStart",
+        }
+        payload = {
+            "youtube": [{"video_id": "abc123", "title": "Base Images Walkthrough with CleanStart"}],
+            "files": [
+                {"url": "https://x.com/base-images-datasheet.pdf", "name": "base-images-datasheet.pdf"},
+                {"url": "https://x.com/pricing.pdf", "name": "pricing.pdf"},
+            ],
+        }
+        secondary = _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload])
+        assert len(secondary) == 1
+        assert secondary[0]["type"] == "download"
+        assert secondary[0]["name"] == "base-images-datasheet.pdf"
+
+    def test_picks_related_video_for_pdf_primary(self):
+        from app.services.rag_service import _pick_secondary_media
+
+        primary = {
+            "type": "download",
+            "url": "https://x.com/cve-triage-playbook.pdf",
+            "name": "cve-triage-playbook.pdf",
+        }
+        payload = {
+            "youtube": [
+                {"video_id": "vid1", "title": "CVE Triage Walkthrough"},
+                {"video_id": "vid2", "title": "Introduction to Compliance"},
+            ],
+            "files": [{"url": "https://x.com/cve-triage-playbook.pdf", "name": "cve-triage-playbook.pdf"}],
+        }
+        secondary = _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload])
+        assert len(secondary) == 1
+        assert secondary[0]["type"] == "youtube"
+        assert secondary[0]["video_id"] == "vid1"
+
+    def test_returns_empty_when_no_topical_match(self):
+        # Primary is Base Images; only unrelated files exist → no chip.
+        # A weak chip would be worse than no chip.
+        from app.services.rag_service import _pick_secondary_media
+
+        primary = {"type": "youtube", "video_id": "abc", "title": "Base Images Walkthrough"}
+        payload = {
+            "youtube": [{"video_id": "abc", "title": "Base Images Walkthrough"}],
+            "files": [
+                {"url": "https://x.com/pricing.pdf", "name": "pricing.pdf"},
+                {"url": "https://x.com/team.pdf", "name": "team-bios.pdf"},
+            ],
+        }
+        assert _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload]) == []
+
+    def test_never_returns_primary_itself(self):
+        # Same asset appearing under both keys shouldn't ever be picked.
+        from app.services.rag_service import _pick_secondary_media
+
+        primary = {"type": "download", "url": "https://x.com/base-images.pdf", "name": "base-images.pdf"}
+        payload = {
+            "youtube": [{"video_id": "vid1", "title": "Base Images Walkthrough"}],
+            "files": [{"url": "https://x.com/base-images.pdf", "name": "base-images.pdf"}],
+        }
+        secondary = _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload])
+        assert len(secondary) == 1
+        assert secondary[0]["type"] == "youtube"
+        assert secondary[0]["video_id"] == "vid1"
+
+    def test_returns_empty_when_primary_missing_or_typeless(self):
+        from app.services.rag_service import _pick_secondary_media
+
+        assert _pick_secondary_media(None, retrieved_chunks=[], extra_payloads=[]) == []
+        assert _pick_secondary_media({}, retrieved_chunks=[], extra_payloads=[]) == []
+        assert _pick_secondary_media({"type": "meeting"}, retrieved_chunks=[], extra_payloads=[]) == []
+
+    def test_stopwords_dont_cause_false_matches(self):
+        # Both titles share "the", "video", "overview" — all stopwords.
+        # Real content words are disjoint. Must reject.
+        from app.services.rag_service import _pick_secondary_media
+
+        primary = {"type": "youtube", "video_id": "abc", "title": "Overview video: pricing"}
+        payload = {
+            "youtube": [{"video_id": "abc", "title": "Overview video: pricing"}],
+            "files": [{"url": "https://x.com/team.pdf", "name": "team overview video pdf"}],
+        }
+        assert _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload]) == []
+
+
 class TestStripLlmCardProse:
     """Leaked-card-placeholder stripper — removes ONLY the actual media-card
     markers this codebase emits (``[YOUTUBE_CARD:...]`` / ``[DOWNLOAD_CARD:...]``)

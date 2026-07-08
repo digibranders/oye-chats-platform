@@ -158,6 +158,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     const [inputText, setInputText] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [isInitializing, setIsInitializing] = useState(true);
+    // Wall-clock tick so the header timestamp re-renders while the widget
+    // stays open. Without this, `new Date()` is only evaluated on mount and
+    // the clock silently freezes until the visitor refreshes the page.
+    const [now, setNow] = useState(() => new Date());
     // Track whether the messages list is anchored to the bottom so we can
     // show a "scroll to latest" affordance only when the user has scrolled
     // up. Default true matches the natural mount state (auto-scrolled).
@@ -727,6 +731,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [chatMode]);
 
+    // Tick the header clock every 30 s so the wall-clock label stays fresh
+    // while the widget stays open. 30 s cadence keeps the minute-precision
+    // label at most ~half a minute stale without waking the tab too often.
+    useEffect(() => {
+        const id = setInterval(() => setNow(new Date()), 30000);
+        return () => clearInterval(id);
+    }, []);
+
     // Waiting timer + auto-timeout.
     //
     // Product policy: never make a visitor stare at the spinner for more
@@ -1055,8 +1067,11 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     // can render the inline card beneath the answer text.
                     if (finalMeta.media_card && (finalMeta.message_id || placeholderId !== null)) {
                         const targetId = finalMeta.message_id ?? placeholderId;
+                        const secondary = Array.isArray(finalMeta.media_secondary) ? finalMeta.media_secondary : null;
                         setMessages(prev => prev.map(msg =>
-                            msg.id === targetId ? { ...msg, media_card: finalMeta.media_card } : msg
+                            msg.id === targetId
+                                ? { ...msg, media_card: finalMeta.media_card, media_secondary: secondary }
+                                : msg
                         ));
                     }
                     if (finalMeta.suggest_handoff && !handoffTriggeredRef.current) {
@@ -1789,7 +1804,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
         }
         return (
             <span className="text-[11px] text-gray-400 font-medium tracking-wide">
-                {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} &middot; {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
             </span>
         );
     };
@@ -1808,15 +1823,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
             >
                 <BotAvatar settings={settings} size="sm" />
-                <div className="flex flex-col">
-                    <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
-                        {settings.bot_name || 'AI Assistant'}
-                    </span>
-                    <span className="text-[10px] text-gray-400 leading-tight">
-                        AI Assistant
-                    </span>
-                </div>
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+                <span className="text-[12px] font-semibold text-[#16202C] leading-tight">
+                    {settings.bot_name || 'AI Assistant'}
+                </span>
             </div>
         );
     };
@@ -2018,7 +2027,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 bot?"). Restored automatically when the operator leaves and
                 chatMode falls back to 'bot'. */}
             {!isInitializing && !showLeadForm && chatMode === 'bot' && (
-                <div className="shrink-0 flex justify-center -mb-5 relative z-30" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                <div className="shrink-0 flex justify-center -mt-3 -mb-5 relative z-30" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                     {renderAgentBadge()}
                 </div>
             )}
@@ -2745,6 +2754,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     uploadProgress={uploadProgress}
                     onInputFocus={scrollToBottom}
                     onInputBlur={resyncViewport}
+                    userHasSent={messages.some((m) => m.sender === 'user')}
                     meetingBookingEnabled={!!settings.meeting_booking_enabled && !meetingBooked}
                     onBookMeeting={() => {
                         if (settings.meeting_booking_enabled && !meetingBooked) {

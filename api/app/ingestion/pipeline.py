@@ -382,6 +382,7 @@ def batch_web_ingestion(
     deduct_reference_id: int | None = None,
     embed_progress_cb: Callable[[int, int], None] | None = None,
     crawl_started_at: float | None = None,
+    force_reingest: bool = False,
 ) -> dict:
     """
     Batch ingest multiple web pages: chunk all, embed all at once, insert all.
@@ -401,6 +402,14 @@ def batch_web_ingestion(
             is 0. Defaults to ``"url_scan"``.
         deduct_reference_id: Optional reference id to write on the ledger row
             (typically ``bot_id``); ignored when ``cost_per_page`` is 0.
+        force_reingest: When True, skip the SHA-256 content dedup check so every
+            page is re-embedded and re-charged even if its content is identical
+            to what's already stored. Set by the ``mode=full`` path on
+            ``POST /crawl`` — the intended behavior on Free/Starter, where a
+            "recrawl the entire website" action must bill for the entire
+            website regardless of what actually changed. Standard+ delta-mode
+            leaves this False so the dedup skip continues to make unchanged
+            pages free.
 
     Returns:
         ``{"chunks": int, "pages_charged": int, "credits_deducted": int,
@@ -451,7 +460,12 @@ def batch_web_ingestion(
             cleaned = clean_text(content)
             file_hash = calculate_hash(_normalize_for_dedup_hash(cleaned))
 
-            if is_document_processed(session, client_id, file_hash, bot_id=bot_id):
+            # ``force_reingest`` (mode=full recrawl) skips the dedup skip on
+            # purpose: Free/Starter's "full recrawl" is spec'd to charge for
+            # every page, even ones whose content hasn't changed since the
+            # last crawl. Delta-mode (Standard+) leaves this False so the
+            # dedup skip still makes truly-unchanged pages a no-op.
+            if not force_reingest and is_document_processed(session, client_id, file_hash, bot_id=bot_id):
                 logger.info(f"Skipping {url} (already processed)")
                 continue
 

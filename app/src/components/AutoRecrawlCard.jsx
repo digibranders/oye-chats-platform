@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
     RefreshCw,
     CalendarClock,
     CheckCircle2,
     AlertCircle,
     Loader2,
-    Lock,
-    ArrowRight,
 } from 'lucide-react';
 import { getRecrawlStatus, updateRecrawl } from '../services/api';
 import useEntitlements from '../hooks/useEntitlements';
+import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { cn } from '../lib/utils';
 
 /**
@@ -18,8 +16,9 @@ import { cn } from '../lib/utils';
  *
  * Standard / Enterprise plans see a working toggle plus the last-run
  * summary and the next scheduled run. Free / Starter plans see the same
- * layout with the toggle disabled and a persistent upsell banner in
- * place of a transient error.
+ * layout with the toggle rendered as OFF; clicking it opens the shared
+ * upgrade modal via ``requestUpgrade('auto_recrawl')`` instead of hitting
+ * the backend (which would 403 anyway).
  *
  * There is no manual "Recrawl now" trigger — the ARQ sweep at :05 past
  * every hour fires the per-bot task the moment ``next_recrawl_at`` has
@@ -33,6 +32,7 @@ import { cn } from '../lib/utils';
 export default function AutoRecrawlCard({ botId }) {
     const { entitlements, loading: entitlementsLoading } = useEntitlements();
     const featureAvailable = entitlements.hasFeature('auto_recrawl');
+    const { requestUpgrade } = useUpgradeModal();
 
     const [status, setStatus] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -68,6 +68,13 @@ export default function AutoRecrawlCard({ botId }) {
     }, [flash]);
 
     const handleToggle = async (nextEnabled) => {
+        // Free / Starter never actually flip the flag — the click is
+        // captured here and redirected to the upgrade modal instead of
+        // hitting the backend (which would reject with 403 anyway).
+        if (autoRecrawlLocked) {
+            requestUpgrade('auto_recrawl');
+            return;
+        }
         // Turning off shows a confirmation first — the customer might be
         // one click away from losing their weekly refresh cadence and
         // should hear the "next enable resets the 7-day clock" caveat.
@@ -108,7 +115,6 @@ export default function AutoRecrawlCard({ botId }) {
     const backendLocked = status && status.feature_available === false;
     const clientLocked = !entitlementsLoading && !featureAvailable;
     const autoRecrawlLocked = Boolean(backendLocked || clientLocked);
-    const upsellPlanSlug = status?.current_plan || entitlements.planSlug;
 
     if (loading) {
         return (
@@ -147,12 +153,12 @@ export default function AutoRecrawlCard({ botId }) {
                     </div>
 
                     <ToggleSwitch
-                        enabled={enabled}
-                        disabled={saving || autoRecrawlLocked}
+                        enabled={autoRecrawlLocked ? false : enabled}
+                        disabled={saving}
                         onChange={handleToggle}
                         label={
                             autoRecrawlLocked
-                                ? 'Weekly auto-recrawl requires Standard or Enterprise'
+                                ? 'Upgrade to Standard to enable weekly auto-recrawl'
                                 : 'Toggle weekly auto-recrawl'
                         }
                     />
@@ -185,10 +191,6 @@ export default function AutoRecrawlCard({ botId }) {
                         <span>{sourcesCount} URL{sourcesCount === 1 ? '' : 's'} in the recrawl set</span>
                     )}
                 </div>
-
-                {/* Persistent upsell banner — shown for Free / Starter with a link
-                    to /billing so the customer isn't stranded. */}
-                {autoRecrawlLocked && <UpsellBanner currentPlan={upsellPlanSlug} />}
 
                 {flash && (
                     <div
@@ -304,49 +306,6 @@ function ConfirmDisableDialog({ onCancel, onConfirm }) {
                     </button>
                 </div>
             </div>
-        </div>
-    );
-}
-
-// ─── Upsell banner (persistent, inside the live card) ───────────────────────
-
-function UpsellBanner({ currentPlan }) {
-    return (
-        <div
-            className={cn(
-                'flex items-start gap-3 px-4 py-3 rounded-xl',
-                'bg-gradient-to-r from-primary-50 to-surface-50 dark:from-primary-900/20 dark:to-surface-900/40',
-                'border border-primary-100 dark:border-primary-800/40',
-            )}
-            role="status"
-        >
-            <div className="w-8 h-8 rounded-lg bg-primary-100 dark:bg-primary-900/40 flex items-center justify-center flex-shrink-0">
-                <Lock size={14} className="text-primary-600 dark:text-primary-400" />
-            </div>
-            <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-surface-900 dark:text-white">
-                    Auto-recrawl is a Standard feature
-                </div>
-                <div className="text-xs text-surface-500 dark:text-surface-400 mt-0.5">
-                    You&apos;re on{' '}
-                    <strong className="text-surface-700 dark:text-surface-300">
-                        {capitalize(currentPlan)}
-                    </strong>{' '}
-                    — upgrade to Standard or Enterprise to have the bot refresh your crawled URLs
-                    automatically every 7 days.
-                </div>
-            </div>
-            <Link
-                to="/billing"
-                className={cn(
-                    'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium',
-                    'bg-primary-600 hover:bg-primary-700 text-white',
-                    'transition-colors shadow-sm shadow-primary-500/20 flex-shrink-0',
-                )}
-            >
-                Upgrade
-                <ArrowRight size={12} />
-            </Link>
         </div>
     );
 }

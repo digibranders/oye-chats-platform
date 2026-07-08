@@ -56,6 +56,7 @@ async def task_crawl_and_ingest(
     max_depth: int | None = None,
     concurrency: int | None = None,
     ordered_urls: list[str] | None = None,
+    force_reingest: bool = False,
     **_unused_kwargs,
 ) -> dict:
     """Run a full website crawl + ingestion pipeline in the background.
@@ -102,6 +103,7 @@ async def task_crawl_and_ingest(
         max_depth=max_depth,
         concurrency=concurrency,
         ordered_urls=ordered_urls,
+        force_reingest=force_reingest,
     )
 
 

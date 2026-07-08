@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getFeedbackData } from '../services/api';
 import { ThumbsUp, ThumbsDown, MessageSquare, ChevronDown, ChevronUp, Download, Clock } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import { useBotContext } from '../context/BotContext';
 import { cn } from '../lib/utils';
 import PageHeader from '../components/ui/PageHeader';
@@ -34,33 +34,30 @@ function buildTrendData(feedback, days) {
     }));
 }
 
-function buildCategoryData(feedback) {
-    const CATEGORIES = {
-        'Pricing': ['price', 'cost', 'expensive', 'cheap', 'affordable', 'plan', 'subscription'],
-        'Support': ['help', 'support', 'assist', 'guide', 'how to', 'problem', 'issue'],
-        'Features': ['feature', 'function', 'capability', 'can it', 'does it', 'able to'],
-        'General': [],
-    };
-
-    const counts = { Pricing: 0, Support: 0, Features: 0, General: 0 };
+// Group negatives by (normalized) question text and return the top N most
+// frequently downvoted prompts. This surfaces the answers customers should
+// actually improve — replaces the earlier keyword-based category donut,
+// which was cosmetic rather than actionable.
+function buildTopDownvoted(feedback, limit = 5) {
+    const buckets = new Map();
     feedback.forEach(f => {
-        const q = (f.question || '').toLowerCase();
-        let matched = false;
-        for (const [cat, keywords] of Object.entries(CATEGORIES)) {
-            if (cat === 'General') continue;
-            if (keywords.some(kw => q.includes(kw))) {
-                counts[cat]++;
-                matched = true;
-                break;
-            }
+        if (f.feedback === 1) return;
+        const raw = (f.question || '').trim();
+        if (!raw) return;
+        const key = raw.toLowerCase().replace(/\s+/g, ' ');
+        const existing = buckets.get(key);
+        if (existing) {
+            existing.count += 1;
+            const existingAt = new Date(existing.lastAt).getTime();
+            const currentAt = new Date(f.created_at).getTime();
+            if (currentAt > existingAt) existing.lastAt = f.created_at;
+        } else {
+            buckets.set(key, { question: raw, count: 1, lastAt: f.created_at });
         }
-        if (!matched) counts.General++;
     });
-
-    const COLORS = ['#6366f1', '#22c55e', '#f97316', '#94a3b8'];
-    return Object.entries(counts)
-        .filter(([, v]) => v > 0)
-        .map(([name, value], i) => ({ name, value, fill: COLORS[i % COLORS.length] }));
+    return Array.from(buckets.values())
+        .sort((a, b) => b.count - a.count || new Date(b.lastAt) - new Date(a.lastAt))
+        .slice(0, limit);
 }
 
 function exportFeedbackCsv(feedback) {
@@ -119,7 +116,8 @@ export default function Feedback({ embedded = false }) {
     }, [dateFiltered]);
 
     const trendData = useMemo(() => buildTrendData(feedback, dateFilter), [feedback, dateFilter]);
-    const categoryData = useMemo(() => buildCategoryData(dateFiltered), [dateFiltered]);
+    const topDownvoted = useMemo(() => buildTopDownvoted(dateFiltered), [dateFiltered]);
+    const maxDownvotes = topDownvoted[0]?.count || 0;
 
     if (!botsLoading && bots.length === 0) {
         return <EmptyState title="Feedback" description="Create a chatbot first to start collecting user feedback on responses." actionLabel="Create Chatbot" actionTo="/chatbot" />;
@@ -223,11 +221,13 @@ export default function Feedback({ embedded = false }) {
                             <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
                                 <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200 mb-4">Satisfaction Trend</h3>
                                 <ResponsiveContainer width="100%" height={160}>
-                                    <LineChart data={trendData}>
-                                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                                        <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} width={32} />
+                                    <LineChart data={trendData} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+                                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} padding={{ left: 12, right: 12 }} />
+                                        <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} width={40} />
                                         <ReTooltip
-                                            contentStyle={{ background: 'var(--color-surface-900, #0f172a)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: 8, fontSize: 11 }}
+                                            contentStyle={{ background: 'var(--color-surface-900, #0f172a)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: 8, fontSize: 11, color: 'var(--color-surface-50, #f8fafc)' }}
+                                            itemStyle={{ color: 'var(--color-surface-50, #f8fafc)' }}
+                                            labelStyle={{ color: 'var(--color-surface-300, #d6d3d1)' }}
                                             formatter={(v) => [`${v}%`, 'Positive rate']}
                                         />
                                         <Line type="monotone" dataKey="rate" stroke="#22c55e" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
@@ -236,33 +236,57 @@ export default function Feedback({ embedded = false }) {
                             </div>
                         )}
 
-                        {/* Category Donut */}
-                        {categoryData.length > 0 && (
+                        {/* Top Downvoted Questions — actionable: these are the answers
+                            the bot is losing users on and should be improved. Clicking
+                            a row jumps into the detailed card below by matching the
+                            question to any one negative feedback entry. */}
+                        {topDownvoted.length > 0 && (
                             <div className="bg-white dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
-                                <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200 mb-4">Question Categories</h3>
-                                <div className="flex items-center gap-4">
-                                    <ResponsiveContainer width="50%" height={160}>
-                                        <PieChart>
-                                            <Pie data={categoryData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" strokeWidth={0}>
-                                                {categoryData.map((entry, i) => (
-                                                    <Cell key={i} fill={entry.fill} />
-                                                ))}
-                                            </Pie>
-                                            <ReTooltip
-                                                contentStyle={{ background: 'var(--color-surface-900, #0f172a)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: 8, fontSize: 11 }}
-                                            />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                    <div className="flex-1 space-y-2">
-                                        {categoryData.map(cat => (
-                                            <div key={cat.name} className="flex items-center gap-2">
-                                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: cat.fill }} />
-                                                <span className="text-xs text-surface-600 dark:text-surface-400 flex-1">{cat.name}</span>
-                                                <span className="text-xs font-bold text-surface-800 dark:text-surface-200">{cat.value}</span>
-                                            </div>
-                                        ))}
-                                    </div>
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200">Top downvoted questions</h3>
+                                    <span className="text-[10px] font-medium uppercase tracking-wider text-surface-400 dark:text-surface-500">Fix these first</span>
                                 </div>
+                                <ul className="space-y-2.5">
+                                    {topDownvoted.map((item) => {
+                                        const width = maxDownvotes > 0 ? Math.max(6, Math.round((item.count / maxDownvotes) * 100)) : 0;
+                                        return (
+                                            <li key={item.question}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const key = item.question.toLowerCase().replace(/\s+/g, ' ');
+                                                        const match = dateFiltered.find(
+                                                            f => f.feedback !== 1 && (f.question || '').trim().toLowerCase().replace(/\s+/g, ' ') === key
+                                                        );
+                                                        if (match) {
+                                                            setFilter('negative');
+                                                            setExpandedId(match.message_id);
+                                                            requestAnimationFrame(() => {
+                                                                document.querySelector(`[data-feedback-id="${match.message_id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                            });
+                                                        }
+                                                    }}
+                                                    className="w-full text-left group"
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <p className="flex-1 text-sm text-surface-800 dark:text-surface-200 group-hover:text-primary-500 dark:group-hover:text-primary-400 truncate transition-colors">
+                                                            {item.question}
+                                                        </p>
+                                                        <span className="text-xs font-bold text-rose-500 tabular-nums shrink-0">
+                                                            {item.count}
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-1.5 h-1.5 w-full bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full bg-rose-500/80 group-hover:bg-rose-500 rounded-full transition-all duration-500"
+                                                            style={{ width: `${width}%` }}
+                                                        />
+                                                    </div>
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
                             </div>
                         )}
                     </div>
@@ -278,6 +302,7 @@ export default function Feedback({ embedded = false }) {
                             return (
                                 <div
                                     key={item.message_id}
+                                    data-feedback-id={item.message_id}
                                     className="bg-white dark:bg-surface-900 rounded-xl border border-surface-200 dark:border-surface-800 overflow-hidden hover:shadow-sm dark:hover:shadow-surface-950/30 transition-all"
                                 >
                                     <button
