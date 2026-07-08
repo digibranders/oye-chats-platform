@@ -31,6 +31,7 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
+from app.security.injection_patterns import compile_detection_pattern
 from app.services import runtime_config
 from app.services.email_service import send_qualified_lead_email
 from app.services.groundedness_gate import check_groundedness, should_sample
@@ -741,19 +742,11 @@ def _safety_net_metric(name: str, **tags) -> None:
     forward_to_sentry_if_alertable(name, **tags)
 
 
-# Prompt injection guard — patterns that attempt to override the system prompt
-_INJECTION_PATTERNS = re.compile(
-    r"(ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context))|"
-    r"(disregard\s+(all\s+)?(previous|prior|above|earlier))|"
-    r"(override\s+(the\s+)?(system|all)\s+(prompt|instructions?))|"
-    r"(you\s+are\s+now\s+(a\s+)?(?!assistant|support))|"
-    r"(new\s+persona\s*:)|"
-    r"(act\s+as\s+(?!a\s+support|a\s+helpful))|"
-    r"(pretend\s+(you\s+are|to\s+be))|"
-    r"(SYSTEM\s*:)|"
-    r"(<<<|>>>|\[\[|\]\]|<\||\|>)",  # common injection delimiters
-    re.IGNORECASE,
-)
+# Prompt injection guard — patterns that attempt to override the system
+# prompt. Phrase list is shared with app/ingestion/cleaner.py's ingest-time
+# strip (AR-17) — see app/security/injection_patterns.py for why and where
+# to add a new phrase when incident response turns one up.
+_INJECTION_PATTERNS = compile_detection_pattern()
 # Maximum chars accepted for a custom system prompt (validated at API boundary too)
 _MAX_CUSTOM_PROMPT_CHARS = 2000
 

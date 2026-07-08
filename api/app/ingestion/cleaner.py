@@ -1,5 +1,7 @@
 import re
 
+from app.security.injection_patterns import compile_line_anchored_strip_pattern
+
 # A "cell" that is nothing but a single markdown link — i.e. a nav-bar entry.
 # Used to distinguish pipe-separated nav rows from real markdown data tables.
 _NAV_LINK_CELL_RE = re.compile(r"^\s*\[[^\]]+\]\([^)]+\)\s*$")
@@ -159,18 +161,10 @@ _CONTROL_TOKEN_RE = re.compile(
 
 # Phrases that try to override the system prompt. Anchored to start-of-line
 # (after optional whitespace and quote/punctuation) to avoid false positives
-# in legitimate writing like "we should not ignore previous feedback".
-_INJECTION_PHRASES_RE = re.compile(
-    r"(?im)^[\s>\-*\"']*\b("
-    r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|prompts?|context|rules)|"
-    r"disregard\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|prompts?|context)|"
-    r"forget\s+(?:everything|all)\s+(?:above|before|previous)|"
-    r"your\s+new\s+(?:instructions|system\s+prompt|role)\s+(?:is|are)|"
-    r"you\s+are\s+now\s+(?:a\s+)?(?:different|new)|"
-    r"system\s+prompt\s*:|"
-    r"new\s+instructions\s*:"
-    r")\b.*$"
-)
+# in legitimate writing like "we should not ignore previous feedback". Phrase
+# list is shared with rag_service.py's visitor-input detector (AR-17) —
+# see app/security/injection_patterns.py for why and where to add a new one.
+_INJECTION_PHRASES_RE = compile_line_anchored_strip_pattern()
 
 
 def _strip_injection_markers(text: str) -> str:
