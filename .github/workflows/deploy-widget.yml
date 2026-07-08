@@ -86,7 +86,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         working-directory: widget
         run: |
-          npx wrangler r2 object put \
+          bash scripts/r2-put.sh \
             "${{ env.R2_BUCKET }}/versions/oyechats-widget-${{ github.sha }}.js" \
             --file=dist/oyechats-widget.js \
             --content-type="text/javascript" \
@@ -117,7 +117,7 @@ jobs:
             ctype="text/javascript"
             [ "$ext" = "css" ] && ctype="text/css"
             echo "↑ $base"
-            npx wrangler r2 object put \
+            bash scripts/r2-put.sh \
               "${{ env.R2_BUCKET }}/app/$base" \
               --file="$file" \
               --content-type="$ctype" \
@@ -130,7 +130,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         working-directory: widget
         run: |
-          npx wrangler r2 object put \
+          bash scripts/r2-put.sh \
             "${{ env.R2_BUCKET }}/app/manifest.json" \
             --file=dist/app/manifest.json \
             --content-type="application/json" \
@@ -142,7 +142,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         working-directory: widget
         run: |
-          npx wrangler r2 object put \
+          bash scripts/r2-put.sh \
             "${{ env.R2_BUCKET }}/oyechats-widget.js" \
             --file=dist/oyechats-widget.js \
             --content-type="text/javascript" \
