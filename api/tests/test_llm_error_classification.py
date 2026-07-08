@@ -64,6 +64,49 @@ class TestClassifyAndLogLlmError:
             )
         mock_incr.assert_called_once_with("llm_config_error")
 
+    def test_context_window_exceeded_is_its_own_distinct_tag_not_config_error(self):
+        """AR-20: ContextWindowExceededError IS a BadRequestError subclass in
+        litellm, so it must be checked BEFORE the generic config-error branch
+        — otherwise a retryable-with-trimmed-prompt overflow gets silently
+        lumped in with "someone revoked the API key"."""
+        with (
+            patch("app.services.llm_service.increment_metric_counter") as mock_incr,
+            patch("app.services.llm_service.forward_to_sentry_if_alertable") as mock_forward,
+        ):
+            _classify_and_log_llm_error(
+                litellm.ContextWindowExceededError(
+                    "context length exceeded", llm_provider="openai", model="gpt-5.4-mini"
+                ),
+                context="test",
+            )
+        mock_incr.assert_called_once_with("llm_context_overflow")
+        mock_incr.assert_called_once()  # never ALSO counted as llm_config_error
+        mock_forward.assert_not_called()  # not a config error — no Sentry page needed
+
+
+class TestContextOverflowMessage:
+    def test_generate_response_returns_distinct_message_on_context_overflow(self):
+        """Must not say 'please try again' — see LLM_CONTEXT_OVERFLOW_MESSAGE
+        docstring for why. This test wholesale-mocks `litellm` (the same
+        pattern used throughout this test file/codebase) specifically to
+        prove the except clause survives that — a live `litellm.XxxError`
+        attribute lookup inside `except` would raise TypeError against a
+        Mock instead of catching the raised exception."""
+        from app.services.llm_service import LLM_API_ERROR_MESSAGE, LLM_CONTEXT_OVERFLOW_MESSAGE
+
+        with (
+            patch("app.services.llm_service.litellm") as mock_litellm,
+            patch("app.services.llm_service.PRIMARY_MODEL_KEY_SET", True),
+        ):
+            mock_litellm.completion.side_effect = litellm.ContextWindowExceededError(
+                "too long", llm_provider="openai", model="gpt-5.4-mini"
+            )
+            text, failed = _generate_response("a very long prompt")
+
+        assert failed is True
+        assert text == LLM_CONTEXT_OVERFLOW_MESSAGE
+        assert text != LLM_API_ERROR_MESSAGE
+
 
 class TestNumRetriesWiring:
     def test_generate_response_passes_num_retries(self):

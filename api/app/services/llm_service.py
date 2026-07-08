@@ -42,13 +42,31 @@ _LLM_TRANSIENT_ERROR_TYPES = (
     litellm.ServiceUnavailableError,
     litellm.InternalServerError,
 )
+# AR-20: captured at import time (like the tuples above), NOT looked up live
+# as `litellm.ContextWindowExceededError` inside an `except` clause — tests
+# that mock the whole `litellm` module (patch("...llm_service.litellm"))
+# would otherwise turn that live lookup into a Mock, and Python raises
+# TypeError for an `except` clause that isn't a real exception class.
+_LLM_CONTEXT_OVERFLOW_ERROR_TYPE = litellm.ContextWindowExceededError
 
 
 def _classify_and_log_llm_error(exc: Exception, *, context: str) -> None:
     """Log + meter an LLM call failure under a distinct tag by error class,
     forwarding config-type errors to Sentry (AR-13's alerting channel) since
-    those need a human, not a retry."""
-    if isinstance(exc, _LLM_CONFIG_ERROR_TYPES):
+    those need a human, not a retry.
+
+    AR-20: context-window overflow was previously indistinguishable from any
+    other config/bad-request error, and unrecoverable — the SAME prompt that
+    just overflowed reproduces the identical failure on a naive retry, so a
+    visitor who retries after seeing "please try again" gets stuck in a
+    deterministic loop with no differentiating log signal. Checked BEFORE
+    the generic config-error branch since ``ContextWindowExceededError`` is
+    itself a ``BadRequestError`` subclass in litellm.
+    """
+    if isinstance(exc, _LLM_CONTEXT_OVERFLOW_ERROR_TYPE):
+        logger.error(f"LLM context overflow ({context}): {exc}")
+        increment_metric_counter("llm_context_overflow")
+    elif isinstance(exc, _LLM_CONFIG_ERROR_TYPES):
         logger.error(f"LLM config error ({context}, {type(exc).__name__}): {exc}", exc_info=True)
         increment_metric_counter("llm_config_error")
         forward_to_sentry_if_alertable("llm_config_error")
@@ -112,6 +130,14 @@ logger = logging.getLogger(__name__)
 LLM_CONFIG_ERROR_MESSAGE = "Configuration error: AI service is not configured. Please contact the administrator."
 LLM_EMPTY_RESPONSE_MESSAGE = "I'm sorry, I couldn't generate a response. Please try again."
 LLM_API_ERROR_MESSAGE = "I encountered an error generating the response. Please try again."
+# AR-20: deliberately does NOT say "please try again" — a context-window
+# overflow is deterministic for the same conversation; a naive retry
+# reproduces the identical failure, trapping the visitor in an unrecoverable
+# loop with no differentiating signal that "try again" won't help this time.
+LLM_CONTEXT_OVERFLOW_MESSAGE = (
+    "This conversation has gotten quite long for me to process at once. "
+    "Could you start a new conversation, or ask a shorter, more specific question?"
+)
 
 
 def _bare_model(model: str) -> str:
@@ -214,6 +240,9 @@ def _generate_response(
         else:
             logger.warning("LLM returned empty response.")
             return LLM_EMPTY_RESPONSE_MESSAGE, True
+    except _LLM_CONTEXT_OVERFLOW_ERROR_TYPE as e:
+        _classify_and_log_llm_error(e, context=generation_name)
+        return LLM_CONTEXT_OVERFLOW_MESSAGE, True
     except Exception as e:
         _classify_and_log_llm_error(e, context=generation_name)
         return LLM_API_ERROR_MESSAGE, True
@@ -516,6 +545,12 @@ async def generate_response_stream(
     except TimeoutError as e:
         logger.error(f"Fallback stream timed out: {e}")
         yield " [Response timed out. Please try again.]"
+    except _LLM_CONTEXT_OVERFLOW_ERROR_TYPE as fallback_err:
+        # AR-20: both primary and fallback overflowed — same conversation
+        # reproduces this deterministically, so don't tell the visitor to
+        # "try again" (see LLM_CONTEXT_OVERFLOW_MESSAGE for why).
+        _classify_and_log_llm_error(fallback_err, context="stream-fallback")
+        yield f" [{LLM_CONTEXT_OVERFLOW_MESSAGE}]"
     except Exception as fallback_err:
         _classify_and_log_llm_error(fallback_err, context="stream-fallback")
         yield " [I encountered an error. Please try again.]"
