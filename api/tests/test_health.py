@@ -74,6 +74,7 @@ class TestHealthEndpoint:
             patch("app.main.engine", healthy_engine),
             patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
             patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             response = health_check()
         body = json.loads(response.body)
@@ -90,6 +91,7 @@ class TestHealthEndpoint:
             patch("app.main.engine", healthy_engine),
             patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
             patch("app.worker.enqueue.WORKER_ENABLED", False),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             response = health_check()
         body = json.loads(response.body)
@@ -102,6 +104,7 @@ class TestHealthEndpoint:
             patch("app.main.engine", broken_engine),
             patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
             patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             response = health_check()
         body = json.loads(response.body)
@@ -114,6 +117,7 @@ class TestHealthEndpoint:
             patch("app.main.engine", healthy_engine),
             patch("app.core.cache.get_redis", return_value=_broken_redis()),
             patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             response = health_check()
         body = json.loads(response.body)
@@ -136,6 +140,7 @@ class TestHealthFullEndpoint:
             patch("app.main.engine", healthy_engine),
             patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
             patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             response = health_check_full()
         body = json.loads(response.body)
@@ -151,7 +156,7 @@ class TestHealthFullEndpoint:
             patch("app.main.engine", healthy_engine),
             patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(recent)),
             patch("app.worker.enqueue.WORKER_ENABLED", True),
-            patch("app.main._llm_ready", return_value=True),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             response = health_check_full()
         body = json.loads(response.body)
@@ -159,6 +164,8 @@ class TestHealthFullEndpoint:
         assert body["status"] == "healthy"
         assert body["worker"]["status"] == "alive"
         assert body["llm"]["status"] == "ready"
+        assert body["llm"]["probe_ok"] is True
+        assert "fallback_count_1h" in body["llm"]
 
 
 # ── LLM readiness (the 2026-07-01 outage regression guard) ─────────────────
@@ -189,6 +196,7 @@ class TestLlmReadiness:
         assert body["status"] == "degraded"
         assert body["llm"]["status"] == "unavailable"
         assert body["llm"]["import_ok"] is False
+        assert body["llm"]["probe_ok"] is False
         assert body["llm"]["detail"]  # non-empty diagnostic string
 
     def test_health_readiness_stays_200_when_llm_unavailable(self, healthy_engine):
@@ -222,6 +230,107 @@ class TestLlmReadiness:
             assert _llm_ready() is True
 
 
+# ── _llm_probe (the real, TTL-cached completion probe) ─────────────────────
+
+
+class TestLlmProbe:
+    """The 2026-07-07 ~4h production incident (OpenAI `insufficient_quota`)
+    ran the whole time with `/health/full` reporting healthy, because the only
+    LLM signal was the import-attribute check (`_llm_ready`), which can't see
+    a revoked key, billing block, or provider outage. `_llm_probe` makes one
+    real, tiny completion call — these tests pin that it actually calls out,
+    caches the result, and never spends money re-probing within the TTL."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_probe_cache(self):
+        """Every test in this class gets a clean cache — otherwise test order
+        (or a slow CI box) could leak a cached result across tests."""
+        import app.main as main_module
+
+        main_module._llm_probe_cache["ts"] = 0.0
+        main_module._llm_probe_cache["ok"] = True
+        main_module._llm_probe_cache["detail"] = None
+        yield
+
+    def test_short_circuits_without_network_call_when_import_check_fails(self):
+        """A hollow litellm install can't make a completion call at all —
+        don't even try; this must never make a network call."""
+        from app.main import _llm_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=False),
+            patch("app.main._litellm.completion") as mock_completion,
+        ):
+            ok, detail = _llm_probe()
+
+        assert ok is False
+        assert detail
+        mock_completion.assert_not_called()
+
+    def test_returns_true_on_successful_completion(self):
+        from app.main import _llm_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_primary_model", return_value="openai/gpt-5.4-mini"),
+            patch("app.main._litellm.completion", return_value=MagicMock()) as mock_completion,
+        ):
+            ok, detail = _llm_probe()
+
+        assert ok is True
+        assert detail is None
+        mock_completion.assert_called_once()
+        _, kwargs = mock_completion.call_args
+        assert kwargs["model"] == "openai/gpt-5.4-mini"
+        assert kwargs["max_tokens"] >= 2  # must not regress to the max_tokens=1 false-negative bug
+
+    def test_returns_false_with_detail_on_provider_error(self):
+        from app.main import _llm_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_primary_model", return_value="openai/gpt-5.4-mini"),
+            patch(
+                "app.main._litellm.completion",
+                side_effect=RuntimeError("insufficient_quota"),
+            ),
+        ):
+            ok, detail = _llm_probe()
+
+        assert ok is False
+        assert "insufficient_quota" in detail
+
+    def test_caches_result_within_ttl_and_does_not_recall(self):
+        from app.main import _llm_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_primary_model", return_value="openai/gpt-5.4-mini"),
+            patch("app.main._litellm.completion", return_value=MagicMock()) as mock_completion,
+        ):
+            ok1, _ = _llm_probe()
+            ok2, _ = _llm_probe()
+
+        assert ok1 is True
+        assert ok2 is True
+        mock_completion.assert_called_once()  # second call served from cache, not a re-probe
+
+    def test_reprobes_after_ttl_expires(self):
+        import app.main as main_module
+        from app.main import _llm_probe
+
+        with (
+            patch("app.main._llm_ready", return_value=True),
+            patch("app.services.runtime_config.get_primary_model", return_value="openai/gpt-5.4-mini"),
+            patch("app.main._litellm.completion", return_value=MagicMock()) as mock_completion,
+        ):
+            _llm_probe()
+            main_module._llm_probe_cache["ts"] -= main_module._LLM_PROBE_TTL_SECONDS + 1
+            _llm_probe()
+
+        assert mock_completion.call_count == 2
+
+
 # ── _gather_health (the shared collector) ──────────────────────────────────
 
 
@@ -233,6 +342,7 @@ class TestGatherHealth:
             patch("app.main.engine", healthy_engine),
             patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
             patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             payload, ready_to_serve, fully_ok = _gather_health()
         assert ready_to_serve is True
@@ -244,7 +354,42 @@ class TestGatherHealth:
             patch("app.main.engine", broken_engine),
             patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(None)),
             patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
         ):
             payload, ready_to_serve, fully_ok = _gather_health()
         assert ready_to_serve is False
-        assert fully_ok is False
+
+
+# ── _fallback_count_1h (AR-16) ──────────────────────────────────────────────
+
+
+class TestFallbackCount1h:
+    def test_sums_the_last_hour_of_fallback_events(self):
+        from app.main import _fallback_count_1h
+
+        with patch("app.core.metrics.get_metric_counts", return_value={"2026070812": 3, "2026070811": 2}):
+            assert _fallback_count_1h() == 5
+
+    def test_returns_none_not_zero_when_unreadable(self):
+        """Distinguish 'confirmed zero fallbacks' from 'couldn't check' — a
+        silent Redis outage must not read as a false-positive clean bill of
+        health."""
+        from app.main import _fallback_count_1h
+
+        with patch("app.core.metrics.get_metric_counts", side_effect=RuntimeError("redis down")):
+            assert _fallback_count_1h() is None
+
+    def test_health_full_includes_fallback_count(self, healthy_engine):
+        from datetime import UTC, datetime
+
+        recent = datetime.now(UTC).isoformat()
+        with (
+            patch("app.main.engine", healthy_engine),
+            patch("app.core.cache.get_redis", return_value=_redis_with_heartbeat(recent)),
+            patch("app.worker.enqueue.WORKER_ENABLED", True),
+            patch("app.main._llm_probe", return_value=(True, None)),
+            patch("app.main._fallback_count_1h", return_value=7),
+        ):
+            response = health_check_full()
+        body = json.loads(response.body)
+        assert body["llm"]["fallback_count_1h"] == 7

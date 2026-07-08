@@ -114,7 +114,7 @@ Document Upload/Crawl
   → Extraction      (PDF via pypdf · DOCX via python-docx · TXT — extraction.py)
   → Cleaning        (cleaner.py)
   → Chunking        (recursive splitting, default 1000 chars, 200 overlap — chunking.py, env-configurable)
-  → Embedding       (OpenAI text-embedding-3-small, 1536-dim — embedder.py)
+  → Embedding       (Google gemini-embedding-001, 768-dim — embedder.py)
   → Storage         (PostgreSQL pgvector + TSVECTOR — repository.py)
 
 User Question
@@ -133,7 +133,7 @@ User Question
 **Core**
 - **Client** — Account (email, hashed_password, api_key, max_bots, is_superadmin, is_bot_manager)
 - **Bot** — Chatbot instance (bot_key, system_prompt, colors, logos, business_hours, live_chat_enabled, qualification_framework)
-- **Document** — Ingested content chunks (text + `Vector(1536)` + TSVECTOR)
+- **Document** — Ingested content chunks (text + `Vector(768)` + TSVECTOR)
 - **ChatSession** — Conversation (status: bot|waiting|live|closed, BANT scores/tier, visitor_rating, assigned_operator_id)
 - **ChatMessage** — Individual messages (role: user|bot|operator|system, trace_id)
 - **LeadInfo** — Captured contact (1:1 with session)
@@ -301,7 +301,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Repository (queries / CRUD) | `api/app/db/repository.py` |
 | Document ingestion | `api/app/ingestion/pipeline.py` |
 | Embedding generation | `api/app/ingestion/embedder.py` |
-| Crawler (Playwright + crawl4ai) | `api/app/ingestion/crawler.py` |
+| Crawler (Spider.cloud + Jina Reader) | `api/app/services/spider_service.py`, `api/app/services/jina_service.py`, `api/app/services/crawl_orchestrator.py` |
 | ARQ worker tasks | `api/app/worker/tasks.py` |
 | WebSocket live chat | `api/app/api/ws_routes.py` |
 | Chat routes (SSE) | `api/app/api/chat_routes.py` |
@@ -332,12 +332,12 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | LLM (primary) | OpenAI `gpt-5.4-mini` | Routed via LiteLLM |
 | LLM (fallback) | Google `gemini-2.5-flash` | Auto-fallback in LiteLLM |
 | Gate / enrichment LLM | `gemini-2.5-flash` | CRAG relevance gate + chunk enrichment (off by default) |
-| Embeddings | OpenAI `text-embedding-3-small` | 1536-dim, batched |
-| Vector DB | PostgreSQL 16 + pgvector | Hybrid search: `Vector(1536)` + `TSVECTOR` |
+| Embeddings | Google `gemini-embedding-001` | 768-dim, Matryoshka-truncated, client-side L2-normalized; 1 text/request (no batch API) |
+| Vector DB | PostgreSQL 16 + pgvector | Hybrid search: `Vector(768)` + `TSVECTOR` |
 | Backend | FastAPI · SQLAlchemy 2.0 · Alembic | Python 3.11; `uv` for deps |
 | Background queue | ARQ on Redis | `oyechats-worker.service` |
 | Frontend | React 19 · Vite 7/8 · Tailwind v4 | Widget = IIFE; Admin = SPA |
-| Web Scraping | Playwright (Chromium) + crawl4ai | URL ingestion |
+| Web Scraping | Spider.cloud (primary) + Jina Reader (fallback) | URL ingestion, HTTP-only (no local browser) |
 | File Storage | Cloudflare R2 (S3-compatible) | Env vars use `R2_` prefix; internal code module name is still `b2_service.py` for legacy reasons but the bucket is on Cloudflare R2 in production |
 | Email | Brevo (Sendinblue) | Transactional |
 | Payments | Razorpay (primary, INR) + Stripe (fallback) | Webhook idempotency via `processed_webhooks` |

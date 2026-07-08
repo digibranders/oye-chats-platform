@@ -593,10 +593,12 @@ def search_similar_documents(
     Uses raw SQL for the vector distance calculation to bypass pgvector Python
     package version incompatibilities with the Vector type processor.
 
-    ``max_distance`` is **cosine** distance (the ``<=>`` operator). Both
-    BAAI/bge-base-en-v1.5 (primary) and OpenAI text-embedding-3-small (fallback)
-    produce L2-normalised vectors, so cosine distance equals L2 rank ordering
-    and is the correct metric for either model.
+    ``max_distance`` is **cosine** distance (the ``<=>`` operator). The sole
+    embedding provider is Google ``gemini-embedding-001`` (768-dim,
+    Matryoshka-truncated, client-side L2-normalized — see
+    ``gemini_embedding.py``; AR-37, replacing the stale BAAI/bge-base-en-v1.5 +
+    OpenAI text-embedding-3-small pair this docstring used to describe), so
+    cosine distance equals L2 rank ordering and is the correct metric here.
 
     The default 0.78 is the math-equivalent of the previously tuned
     ``L2 = 1.25`` (for unit vectors, ``cos_dist = L2² / 2``). That threshold
@@ -618,7 +620,29 @@ def search_similar_documents(
     # Execute raw SQL — bypasses pgvector Python type processor entirely.
     # Use separate static SQL strings (never interpolate into SQL text).
     # ``<=>`` is pgvector's cosine distance operator (0 = identical, 2 = opposite).
-    if bot_id:
+    #
+    # AR-21: when both bot_id and client_id are available, AND both into the
+    # WHERE clause — defense-in-depth matching the `_owner_filter` pattern
+    # search_keyword_documents (and every other owner-scoped query in this
+    # module) already applies. Not currently exploitable (bot_id and client_id
+    # are both derived from the same authenticated Bot row on every existing
+    # call path), but this is the single hottest query path in the system —
+    # a future caller passing an attacker-influenced bot_id with a fixed
+    # client_id would otherwise have no second gate.
+    params = {"emb": emb_str, "max_dist": max_distance, "k": k}
+    if bot_id and client_id:
+        sql = text(
+            """SELECT id, client_id, bot_id, document_name, content, metadata_info,
+                      embedding <=> CAST(:emb AS vector) AS distance
+               FROM documents
+               WHERE bot_id = :bot_id AND client_id = :client_id
+                     AND embedding <=> CAST(:emb AS vector) < :max_dist
+               ORDER BY distance
+               LIMIT :k"""
+        )
+        params["bot_id"] = bot_id
+        params["client_id"] = client_id
+    elif bot_id:
         sql = text(
             """SELECT id, client_id, bot_id, document_name, content, metadata_info,
                       embedding <=> CAST(:emb AS vector) AS distance
@@ -627,7 +651,7 @@ def search_similar_documents(
                ORDER BY distance
                LIMIT :k"""
         )
-        owner_id = bot_id
+        params["owner_id"] = bot_id
     else:
         sql = text(
             """SELECT id, client_id, bot_id, document_name, content, metadata_info,
@@ -637,12 +661,9 @@ def search_similar_documents(
                ORDER BY distance
                LIMIT :k"""
         )
-        owner_id = client_id
+        params["owner_id"] = client_id
 
-    results = session.execute(
-        sql,
-        {"emb": emb_str, "owner_id": owner_id, "max_dist": max_distance, "k": k},
-    ).fetchall()
+    results = session.execute(sql, params).fetchall()
 
     # Wrap in SimpleNamespace so callers can access .id, .content, .document_name
     from types import SimpleNamespace

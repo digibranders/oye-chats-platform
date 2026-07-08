@@ -7,7 +7,9 @@ score below the threshold, the gate fires and the pipeline returns a
 "can't help" response without generating an answer from irrelevant context.
 
 Feature flag: ``RELEVANCE_GATE_ENABLED`` (default: true — scope-enforcement on by default)
-Model:        ``GATE_MODEL`` (default: gemini/gemini-2.5-flash — cheap & fast)
+Model:        resolved per-call via ``runtime_config.get_gate_model()`` (DB-backed,
+              super-admin tunable via the ``gate_model`` setting); falls back to
+              ``GATE_MODEL`` env default (gemini/gemini-2.5-flash — cheap & fast)
 Threshold:    ``RELEVANCE_THRESHOLD`` (default: 0.55 — tunable per-bot via ``Bot.relevance_threshold``)
 
 Gate results are cached in Redis to avoid redundant LLM calls for repeated
@@ -17,22 +19,55 @@ Key: ``oyechats:gate:{bot_id}:{question_hash}`` (TTL: 3600s)
 """
 
 import hashlib
-import json
 import logging
 import os
 
 import litellm
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.cache import cache_get, cache_set
 from app.core.langfuse_client import langfuse_generation
+from app.services import runtime_config
 
 logger = logging.getLogger(__name__)
+
+
+class _RelevanceScoreResult(BaseModel):
+    """AR-33: strict structured output for the gate judge, mirroring the BANT
+    extraction pattern (rag_service.QualificationExtractionResult).
+
+    Before this, the gate used the loose ``json_object`` format with no
+    schema enforcement — any parse exception (malformed JSON, wrong shape,
+    non-numeric score) fell through to the blanket ``except Exception`` and
+    failed open, identically to a chunk that successfully manipulated the
+    score to 1.0. Combined with AR-18's chunk-content injection gap, a chunk
+    engineered to break JSON parsing bypassed the gate exactly like one that
+    manipulated the score directly. A schema-enforced response makes that a
+    provider-level guarantee instead of something this code has to defend
+    against after the fact.
+    """
+
+    # ``extra='forbid'`` → ``additionalProperties: false`` in the emitted
+    # JSON schema — required by OpenAI/Gemini structured-output strict mode
+    # (see QualificationSignalExtraction's identical comment in rag_service.py).
+    model_config = ConfigDict(extra="forbid")
+
+    score: float = Field(ge=0.0, le=1.0, description="Relevance score from 0.0 (unrelated) to 1.0 (directly answers)")
+
 
 RELEVANCE_GATE_ENABLED: bool = os.getenv("RELEVANCE_GATE_ENABLED", "true").lower() in (
     "1",
     "true",
     "yes",
 )
+
+# Deployed in production via deploy-api.yml, and documented in
+# docs/system-design/docs/06-rag/pipeline.md. Kept for reference/back-compat,
+# but the effective model is resolved at call time by `_gate_model()` below —
+# `runtime_config.get_gate_model()`'s own fallback chain resolves to
+# `model.fallback`/`FALLBACK_MODEL`, not this constant, if `model.gate` isn't
+# set in the DB. Read `_gate_model()`'s docstring before assuming this env
+# var is authoritative.
 GATE_MODEL: str = os.getenv("GATE_MODEL", "gemini/gemini-2.5-flash")
 RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.55"))
 
@@ -44,6 +79,19 @@ _MAX_CHUNK_PREVIEW = 300  # Characters per chunk shown to the judge
 # The existing `except Exception` below fails open on timeout, so a slow
 # gate degrades to "treat as relevant" rather than dead-air.
 _GATE_LLM_TIMEOUT_S = float(os.getenv("GATE_LLM_TIMEOUT_S", "2.0"))
+
+
+def _gate_model() -> str:
+    """Resolve the gate model at call time via ``runtime_config`` (DB-backed,
+    super-admin tunable), falling back to the ``GATE_MODEL`` env constant.
+
+    Mirrors ``llm_service._primary_model()``/``_fallback_model()``. Reading
+    the module-level ``GATE_MODEL`` constant directly would freeze it at
+    import time — an admin swapping the gate model via the dashboard during
+    an incident would see the change "save" successfully while the gate kept
+    calling the old (possibly broken) model indefinitely.
+    """
+    return runtime_config.get_gate_model()
 
 
 def _gate_cache_key(bot_id: int | None, client_id: int | None, question: str) -> str:
@@ -128,24 +176,41 @@ def check_relevance(
         return is_relevant, score
 
     prompt = _build_gate_prompt(question, chunks)
+    model = _gate_model()
     try:
-        with langfuse_generation("relevance-gate", model=GATE_MODEL, prompt=prompt) as gen:
+        with langfuse_generation("relevance-gate", model=model, prompt=prompt) as gen:
             response = litellm.completion(
-                model=GATE_MODEL,
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=20,
-                response_format={"type": "json_object"},
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "RelevanceScoreResult",
+                        "strict": True,
+                        "schema": _RelevanceScoreResult.model_json_schema(),
+                    },
+                },
                 timeout=_GATE_LLM_TIMEOUT_S,
                 metadata={"generation_name": "relevance-gate"},
             )
             raw = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=raw)
-        data = json.loads(raw)
-        score = float(data.get("score", 1.0))
-        score = max(0.0, min(1.0, score))  # clamp to [0, 1]
+        score = _RelevanceScoreResult.model_validate_json(raw).score
     except Exception as exc:
-        # Timeout, rate limit, JSON parse error, network — all fail open.
-        # Visitor gets a possibly-irrelevant answer instead of 30s of silence.
+        # AR-33: still fails open on timeout/rate-limit/network errors — a
+        # blanket switch to fail-closed was considered and deliberately NOT
+        # made, because those failure modes are common, transient, and not
+        # attacker-controlled; failing closed there would turn an ordinary
+        # provider blip into "refuses every question" for every bot, a much
+        # worse and more frequent outage than an occasional irrelevant
+        # answer. What strict-schema output DOES close is the actual
+        # exploitable path this finding flagged: a chunk engineered to break
+        # JSON parsing (or the schema shape) no longer differs from any
+        # other malformed-response case — the provider guarantees valid,
+        # in-schema JSON or raises, so there is no longer a parse-exception
+        # branch a chunk's content can deliberately trigger to force
+        # fail-open the same way a successfully-manipulated score would.
         logger.warning("Relevance gate failed (non-blocking, fail-open): %s", exc)
         return True, 1.0
 

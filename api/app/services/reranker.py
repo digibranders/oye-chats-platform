@@ -1,6 +1,6 @@
 """FlashRank cross-encoder reranker.
 
-Lazy-loads the ms-marco-MiniLM-L-2-v2 model on first use (~8 MB RAM).
+Lazy-loads the ms-marco-TinyBERT-L-2-v2 model on first use (~8 MB RAM).
 The model stays resident in memory for the lifetime of the process.
 
 Feature flag: ``RERANK_ENABLED`` (default: false).
@@ -8,6 +8,20 @@ Set ``RERANK_ENABLED=true`` in .env to activate.
 
 Falls back silently to the original document order on any error so the
 RAG pipeline is never blocked by a reranker failure.
+
+AR-39: investigating whether to A/B-enable ``RERANK_ENABLED`` found a more
+fundamental bug first — the model name previously requested here,
+``ms-marco-MiniLM-L-2-v2``, is not a real FlashRank model (it doesn't exist
+in flashrank's own ``model_file_map``; confirmed the HuggingFace zip 404s).
+The reranker had been silently non-functional in EVERY environment since it
+was added: `_get_ranker()`'s own well-designed transient-failure handling
+made this invisible (fails open to unchanged RRF order every call, with
+only a warning log), and since ``RERANK_ENABLED`` defaults false, no request
+path was affected — but any admin who turned the flag on to test reranking
+would have gotten zero actual reranking, silently, forever. Fixed to
+``ms-marco-TinyBERT-L-2-v2`` — the smallest real model in flashrank's map,
+matching the original ~8MB-model intent, and confirmed to load successfully
+(see the AR-39 A/B result below on whether to also flip the default).
 """
 
 import logging
@@ -15,6 +29,16 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# AR-39 decision: kept the DEFAULT at false. A manual A/B check after fixing
+# the model-name bug above showed real, correct-direction reordering (e.g. a
+# "business hours" query moved the actual hours document from rank 5 to
+# rank 1 ahead of unrelated pricing/team docs) — reranking works and helps
+# once the model loads. But flipping the global default adds cross-encoder
+# inference latency + an ~8MB resident model to every query for every
+# existing customer; that's a product/latency tradeoff needing sign-off, not
+# something to change unilaterally in a bug-fix pass. Recommend enabling via
+# this env var for a real production A/B once the fixed model name has
+# baked, rather than flipping the default here.
 RERANK_ENABLED: bool = os.getenv("RERANK_ENABLED", "false").lower() in ("1", "true", "yes")
 RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "5"))
 
@@ -47,8 +71,8 @@ def _get_ranker():
     try:
         from flashrank import Ranker
 
-        _ranker = Ranker(model_name="ms-marco-MiniLM-L-2-v2", cache_dir="/tmp/flashrank_cache")
-        logger.info("FlashRank reranker loaded (ms-marco-MiniLM-L-2-v2)")
+        _ranker = Ranker(model_name="ms-marco-TinyBERT-L-2-v2", cache_dir="/tmp/flashrank_cache")
+        logger.info("FlashRank reranker loaded (ms-marco-TinyBERT-L-2-v2)")
         return _ranker
     except ImportError as exc:
         logger.warning(

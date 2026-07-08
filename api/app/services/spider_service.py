@@ -16,7 +16,7 @@ local Chromium — that is the whole point of the migration.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -31,10 +31,15 @@ from app.services.crawler_service import CrawlerError, is_cancellation_requested
 # Called once per page as it finishes fetching: ``(url, ok)`` where ``ok`` is
 # True if the page yielded content. Lets the orchestrator emit live progress.
 PageProgressCallback = Callable[[str, bool], None]
-# Called with the full ``{"url", "content"}`` dict for every *successful* page,
-# as it lands. Lets the orchestrator stream pages into ingestion while the rest
-# of the crawl is still fetching (see crawl_orchestrator).
-PageResultCallback = Callable[[dict], None]
+# Called (and awaited — AR-23) with the full ``{"url", "content"}`` dict for
+# every *successful* page, as it lands. Lets the orchestrator stream pages
+# into ingestion while the rest of the crawl is still fetching (see
+# crawl_orchestrator). Async so the orchestrator can put pages onto a
+# bounded queue and have this await naturally suspend just this page's fetch
+# slot when the ingest side falls behind — real producer-side backpressure
+# instead of unbounded buffering, without blocking the event loop or other
+# concurrent fetches (asyncio.gather keeps running the rest).
+PageResultCallback = Callable[[dict], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +260,7 @@ async def fetch_urls(
                 on_page(url, page is not None)
         if on_result is not None and page is not None:
             with contextlib.suppress(Exception):
-                on_result(page)
+                await on_result(page)
         return page
 
     try:

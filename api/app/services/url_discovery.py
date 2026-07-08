@@ -26,12 +26,41 @@ import asyncio
 import logging
 import re
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+from urllib.robotparser import RobotFileParser
 
 from app.core.ssrf import SSRFError, fetch_text_safely, validate_public_url
 
 logger = logging.getLogger(__name__)
 
 _USER_AGENT = "OyeChats-Bot/1.0 (+https://oyechats.com)"
+
+
+def _parse_robots_rules(robots_text: str | None) -> RobotFileParser:
+    """Parse ``Disallow``/``Allow`` rules from an already-fetched robots.txt
+    body (AR-24) — never a second network fetch of our own; both discovery
+    functions already fetch robots.txt (for Sitemap: directives, or need to
+    start doing so) via the SSRF-guarded ``fetch_text_safely``, so the same
+    body is reused here.
+
+    Before this, the crawler was sitemap-aware only and never honored
+    ``Disallow`` — a site owner excluding e.g. ``/admin/*`` via robots.txt
+    had no guarantee that page wouldn't still be crawled, embedded, and
+    later surfaced via RAG if a stale sitemap or internal link referenced it.
+
+    ``RobotFileParser.parse()`` (not ``.read()``) is used deliberately —
+    ``.read()`` does its own blocking, unguarded network fetch, which would
+    both duplicate the request and bypass the SSRF guard entirely.
+    """
+    parser = RobotFileParser()
+    if robots_text:
+        parser.parse(robots_text.splitlines())
+    else:
+        # No robots.txt (or fetch failed) — RobotFileParser with no rules
+        # parsed defaults to allow-all, which is the correct "absence of a
+        # robots.txt means no restrictions" behavior.
+        parser.parse([])
+    return parser
+
 
 # Query params dropped during URL normalization (tracking/analytics noise).
 TRACKING_PARAMS: frozenset[str] = frozenset(
@@ -218,8 +247,9 @@ async def discover_website_urls(
         # SSRF guard: non-public hosts and redirect-to-internal are refused, and
         # the body is size-capped (audit F07/F25).
         robots = await fetch_text_safely(session, f"{base}/robots.txt")
-        if robots and robots[0] == 200:
-            for line in robots[1].splitlines():
+        robots_text = robots[1] if robots and robots[0] == 200 else None
+        if robots_text:
+            for line in robots_text.splitlines():
                 if line.lower().startswith("sitemap:"):
                     s = line[8:].strip()
                     if s:
@@ -231,6 +261,11 @@ async def discover_website_urls(
                 f"{base}/sitemap.xml",
                 f"{base}/sitemap_index.xml",
             ]
+
+        # AR-24: Disallow/Allow rules from the same robots.txt fetch above —
+        # filters both the sitemap-derived list and the guaranteed-seed
+        # fallback below.
+        robots_rules = _parse_robots_rules(robots_text)
 
         # ── Step 2: parse sitemaps (one level of index recursion) ────────────
         page_urls: list[str] = []
@@ -259,7 +294,12 @@ async def discover_website_urls(
                     await _parse_sitemap(loc, depth + 1)
                 else:
                     loc_netloc = _norm_netloc(urlparse(loc).netloc)
-                    if loc_netloc == base_netloc and _is_html_url(loc) and loc not in seen_pages:
+                    if (
+                        loc_netloc == base_netloc
+                        and _is_html_url(loc)
+                        and loc not in seen_pages
+                        and robots_rules.can_fetch(_USER_AGENT, loc)
+                    ):
                         seen_pages.add(loc)
                         page_urls.append(loc)
                         if len(page_urls) >= max_urls:
@@ -277,7 +317,7 @@ async def discover_website_urls(
         # discoverable set. No further expansion — same-domain HTML link
         # scanning was removed so the discovery scope is exactly
         # "robots.txt-declared sitemap ∪ {seed_url}".
-        if _is_html_url(seed_url) and seed_url not in seen_pages:
+        if _is_html_url(seed_url) and seed_url not in seen_pages and robots_rules.can_fetch(_USER_AGENT, seed_url):
             seen_pages.add(seed_url)
             page_urls.insert(0, seed_url)
 
@@ -358,16 +398,24 @@ async def discover_via_links(
 
     parsed = urlparse(seed_url)
     base_netloc = _norm_netloc(parsed.netloc)
-
-    found: list[str] = [seed_url]
-    seen: set[str] = {normalize_url(seed_url)}
-    frontier: list[tuple[str, int]] = [(seed_url, 0)]
-    fetched = 0
+    base = f"{parsed.scheme}://{parsed.netloc}"
 
     headers = {"User-Agent": _USER_AGENT}
     client_timeout = aiohttp.ClientTimeout(total=timeout, connect=8, sock_read=12)
 
     async with aiohttp.ClientSession(headers=headers, timeout=client_timeout) as session:
+        # AR-24: robots.txt Disallow/Allow, same SSRF-guarded fetch pattern as
+        # discover_website_urls — this path previously never checked robots.txt
+        # at all.
+        robots = await fetch_text_safely(session, f"{base}/robots.txt")
+        robots_text = robots[1] if robots and robots[0] == 200 else None
+        robots_rules = _parse_robots_rules(robots_text)
+
+        found: list[str] = [seed_url] if robots_rules.can_fetch(_USER_AGENT, seed_url) else []
+        seen: set[str] = {normalize_url(seed_url)}
+        frontier: list[tuple[str, int]] = [(seed_url, 0)] if found else []
+        fetched = 0
+
         while frontier and fetched < max_fetch and len(found) < max_urls:
             url, depth = frontier.pop(0)
             if depth >= max_depth:
@@ -390,6 +438,8 @@ async def discover_via_links(
                 if key in seen:
                     continue
                 seen.add(key)
+                if not robots_rules.can_fetch(_USER_AGENT, link):
+                    continue
                 found.append(link)
                 if depth + 1 < max_depth:
                     frontier.append((link, depth + 1))

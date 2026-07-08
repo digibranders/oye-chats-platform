@@ -100,10 +100,22 @@ def get_chunk_size() -> int:
 
 
 def get_chunk_overlap() -> int:
+    """Chunk overlap, clamped to always be strictly less than ``get_chunk_size()``.
+
+    Defense-in-depth backstop (AR-07): the super-admin PUT endpoint validates
+    chunk_size/chunk_overlap cross-field at write time, but this getter is the
+    last line of defense against any invalid combo already stored (e.g. a
+    direct DB edit, or a value written before the write-time check existed).
+    ``RecursiveCharacterTextSplitter`` raises an uncaught ``ValueError`` on
+    ``overlap >= size``, which would otherwise crash every ingestion (upload
+    and crawl) platform-wide.
+    """
     try:
-        return int(get("rag.chunk_overlap", CHUNK_OVERLAP))
+        overlap = int(get("rag.chunk_overlap", CHUNK_OVERLAP))
     except (TypeError, ValueError):
-        return CHUNK_OVERLAP
+        overlap = CHUNK_OVERLAP
+    size = get_chunk_size()
+    return min(overlap, size - 1) if size > 0 else 0
 
 
 # Embed-batch parallelism bounds: 1 keeps embedding functional, 64 is a safe

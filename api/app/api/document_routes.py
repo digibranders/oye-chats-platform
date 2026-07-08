@@ -854,6 +854,23 @@ async def crawl_endpoint(
     # ``max_pages`` (or whose credit balance happens to be huge after a
     # large top-up) can't accidentally spawn a multi-day crawl. Sits well
     # above the largest practical customer sitemap.
+    #
+    # AR-45 decision: the review asked whether "unlimited pages" needs a
+    # SEPARATE per-billing-period embedded-chunk quota beyond this per-crawl
+    # cap, since embed_rate_limiter.py only paces shared project-wide
+    # throughput (latency), not per-tenant spend volume. Evaluated and
+    # deferred, not built: (1) credits already are a real per-tenant cost
+    # ceiling — every page charges `cost_per_page` credits at ingestion
+    # time, so a customer literally cannot cause unbounded embedding spend
+    # without first buying more credits; (2) AR-41 (pipeline.py,
+    # _cap_crawled_page_content) now bounds the worst-case embed-call
+    # variance PER credit-charged page — the original concern ("1 page
+    # charged, but that page silently balloons into thousands of embed
+    # calls") is the gap AR-41 closes, not something a separate quota
+    # mechanism is needed for on top. If real usage data ever shows credits
+    # aren't tracking actual Gemini spend closely enough, revisit as a
+    # dedicated billing-period quota — but building one speculatively here
+    # would be a new billing/product surface without evidence it's needed.
     _UNLIMITED_PLAN_SAFETY_CEILING = 10_000
 
     with get_session() as db:

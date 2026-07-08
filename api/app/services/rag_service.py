@@ -13,9 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import joinedload
 
 from app import config
-from app.config import LLM_FALLBACKS, LLM_MODEL
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.langfuse_client import get_langfuse, langfuse_generation
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
 from app.db.repository import (
@@ -31,7 +31,10 @@ from app.db.repository import (
 )
 from app.db.session import get_session
 from app.ingestion.embedder import embed_chunks, embed_chunks_async
+from app.security.injection_patterns import compile_detection_pattern
+from app.services import runtime_config
 from app.services.email_service import send_qualified_lead_email
+from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import generate_response, generate_response_checked, generate_response_stream
@@ -44,7 +47,25 @@ logger = logging.getLogger(__name__)
 # TTL for query-embedding cache (Phase 4B)
 _EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 
-_CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
+# AR-34: sentinel-token prefixes, defined ONCE and reused both to build the
+# extraction regexes below and to build the corresponding lines of the system
+# prompt's prose (build_hybrid_prompt, ~2100+ lines further down this file).
+# Before this, each sentinel was typed as a literal string independently in
+# both places — a prompt reword of a sentinel (even a stray space) desynced
+# silently from its extractor regex: the LLM kept faithfully emitting the
+# (now-wrong) token, but the stripper never fired, leaking the raw sentinel
+# into the visitor-facing bubble. A round-trip test (test_rag_service.py)
+# asserts each constant's exact text actually appears in the assembled
+# prompt, so a future prompt edit that changes a sentinel's prefix without
+# updating this constant fails loudly in CI instead of silently in prod.
+CTA_SENTINEL_PREFIX = "[CTA:"
+CTA_Q_SENTINEL_PREFIX = "[CTA_Q:"
+MEETING_CARD_SENTINEL = "[MEETING_CARD]"
+LEAVE_MESSAGE_CARD_SENTINEL = "[LEAVE_MESSAGE_CARD]"
+YOUTUBE_CARD_SENTINEL_PREFIX = "[YOUTUBE_CARD:"
+DOWNLOAD_CARD_SENTINEL_PREFIX = "[DOWNLOAD_CARD:"
+
+_CTA_PATTERN = re.compile(re.escape(CTA_SENTINEL_PREFIX) + r"([a-zA-Z0-9_]+)\]")
 # Sibling sentinel emitted alongside [CTA:dim]. Captures a short, contextual
 # follow-up question the LLM writes specifically about the answer it just
 # gave (e.g. after "Our enterprise plan starts at $5K/mo…" → "Does that fit
@@ -52,25 +73,25 @@ _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 # configured per-dimension when the LLM omits this marker. The capture is
 # non-greedy and rejects newlines / closing brackets so a malformed marker
 # can't swallow the rest of the response.
-_CTA_Q_PATTERN = re.compile(r"\[CTA_Q:\s*([^\]\n]{1,200}?)\s*\]")
+_CTA_Q_PATTERN = re.compile(re.escape(CTA_Q_SENTINEL_PREFIX) + r"\s*([^\]\n]{1,200}?)\s*\]")
 # Length cap for the contextual prompt — long enough for a natural one-liner,
 # short enough that the chip area stays compact on mobile.
 _CTA_Q_MAX_LEN = 140
 
-_meeting_card_re = re.compile(r"\[MEETING_CARD\]")
-_leave_message_card_re = re.compile(r"\[LEAVE_MESSAGE_CARD\]")
+_meeting_card_re = re.compile(re.escape(MEETING_CARD_SENTINEL))
+_leave_message_card_re = re.compile(re.escape(LEAVE_MESSAGE_CARD_SENTINEL))
 
 # ── Media cards ────────────────────────────────────────────────────────────
 # YouTube video IDs are strictly 11 chars from the URL-safe alphabet — pin
 # the pattern to that shape so a stray "[YOUTUBE_CARD:xyz]" from a
 # hallucination or a broken chunk can't slip through as valid.
-_youtube_card_re = re.compile(r"\[YOUTUBE_CARD:([A-Za-z0-9_-]{11})\]")
+_youtube_card_re = re.compile(re.escape(YOUTUBE_CARD_SENTINEL_PREFIX) + r"([A-Za-z0-9_-]{11})\]")
 # Downloadable file card: URL segment cannot contain whitespace, pipes, or
 # closing brackets (those would make the token unparseable); filename allows
 # spaces up to a reasonable cap. The URL length cap (500) matches the widest
 # reasonable KB-hosted asset URL and keeps a malformed token from swallowing
 # unbounded trailing text.
-_download_card_re = re.compile(r"\[DOWNLOAD_CARD:([^\s\|\]]{1,500})\|([^\]\n]{1,200})\]")
+_download_card_re = re.compile(re.escape(DOWNLOAD_CARD_SENTINEL_PREFIX) + r"([^\s\|\]]{1,500})\|([^\]\n]{1,200})\]")
 
 
 # ``_extract_media_card`` peels VALID media-card sentinels out of the answer
@@ -89,7 +110,9 @@ _download_card_re = re.compile(r"\[DOWNLOAD_CARD:([^\s\|\]]{1,500})\|([^\]\n]{1,
 # History: PR #234 used a keyword-free ``\[[^\]\n]{1,300}\](?!\()`` sweep that
 # stripped every bracket not followed by ``(``, corrupting all of the above on
 # every answer for every bot. Anchoring on the card prefixes is the fix.
-_LEAKED_BRACKET_RE = re.compile(r"\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,720}\]")
+_LEAKED_BRACKET_RE = re.compile(
+    rf"(?:{re.escape(YOUTUBE_CARD_SENTINEL_PREFIX)}|{re.escape(DOWNLOAD_CARD_SENTINEL_PREFIX)})[^\]\n]{{0,720}}\]"
+)
 
 
 def _strip_llm_card_prose(text: str) -> str:
@@ -724,29 +747,26 @@ def _mark_card_shown(chat_session, card_key: str) -> None:
 
 
 def _safety_net_metric(name: str, **tags) -> None:
-    """Structured log line for aggregation (Grafana/Loki/Sentry breadcrumb).
+    """Structured log line + rolling counter (AR-13) for aggregation.
 
-    Emits a single `rag.metric` line with key=value tag pairs so log-based
-    alerts can count safety-net firings without regex-scraping freeform text.
-    Interim measure until LLM observability (Langfuse or OTEL) is restored.
+    Emits a single `rag.metric` log line (log-based alerts can still count
+    firings by regex if needed), increments an hourly Redis counter queryable
+    via ``/superadmin/safety-net-metrics``, and forwards security-relevant
+    events (injection attempts, prompt leaks, moderation blocks) to Sentry —
+    the platform's already-established alert channel — so an actual spike
+    pages oncall instead of only being visible after someone goes looking.
     """
     tag_str = " ".join(f"{k}={v}" for k, v in tags.items())
     logger.info("rag.metric name=%s %s", name, tag_str)
+    increment_metric_counter(name, bot_id=tags.get("bot_id"))
+    forward_to_sentry_if_alertable(name, **tags)
 
 
-# Prompt injection guard — patterns that attempt to override the system prompt
-_INJECTION_PATTERNS = re.compile(
-    r"(ignore\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?|context))|"
-    r"(disregard\s+(all\s+)?(previous|prior|above|earlier))|"
-    r"(override\s+(the\s+)?(system|all)\s+(prompt|instructions?))|"
-    r"(you\s+are\s+now\s+(a\s+)?(?!assistant|support))|"
-    r"(new\s+persona\s*:)|"
-    r"(act\s+as\s+(?!a\s+support|a\s+helpful))|"
-    r"(pretend\s+(you\s+are|to\s+be))|"
-    r"(SYSTEM\s*:)|"
-    r"(<<<|>>>|\[\[|\]\]|<\||\|>)",  # common injection delimiters
-    re.IGNORECASE,
-)
+# Prompt injection guard — patterns that attempt to override the system
+# prompt. Phrase list is shared with app/ingestion/cleaner.py's ingest-time
+# strip (AR-17) — see app/security/injection_patterns.py for why and where
+# to add a new phrase when incident response turns one up.
+_INJECTION_PATTERNS = compile_detection_pattern()
 # Maximum chars accepted for a custom system prompt (validated at API boundary too)
 _MAX_CUSTOM_PROMPT_CHARS = 2000
 
@@ -1039,6 +1059,37 @@ def check_visitor_safety(question: str) -> tuple[bool, str | None]:
         return True, None
 
 
+def check_generated_answer_safety(
+    answer: str, *, bot_id: int | None, session_id: str | None, path: str
+) -> tuple[bool, str | None]:
+    """AR-46: moderation on the OUTPUT side — the generated answer, not just
+    visitor input.
+
+    Before this, moderation only ran on visitor input plus a narrow system-
+    prompt-leak string check on output; a jailbreak or an unusual retrieval
+    context could coax the model into generating content that would flag
+    under moderation categories even with clean visitor input, and it would
+    reach the visitor unfiltered since only inbound moderation ran.
+
+    Reuses :func:`check_visitor_safety` (same ``omni-moderation-latest``
+    call, same fail-open contract — a moderation-service outage must not
+    block a legitimate answer) against the generated text instead of the
+    question. Emits a distinct safety-net metric when flagged so this is
+    observable via the existing safety-net-metrics endpoint, separate from
+    the inbound ``moderation_block`` metric.
+    """
+    is_safe, category = check_visitor_safety(answer)
+    if not is_safe:
+        _safety_net_metric(
+            "output_moderation_block",
+            path=path,
+            session=session_id,
+            bot_id=bot_id,
+            category=category,
+        )
+    return is_safe, category
+
+
 # Sentinels that uniquely identify text from the platform's system prompt.
 # If the LLM emits any of these in its reply, it has been jailbroken into
 # leaking the prompt — replace the response with the refusal and log it.
@@ -1058,6 +1109,26 @@ def contains_system_prompt_leak(text: str) -> bool:
     if not text:
         return False
     return any(sentinel in text for sentinel in _LEAKAGE_SENTINELS)
+
+
+def _retrieval_included_crawled_content(chunks: list) -> bool:
+    """Whether any chunk in this turn's retrieved context came from a crawl
+    (attacker-influenceable — a site owner or third party controls that
+    text) rather than a manual upload (AR-18).
+
+    Known residual injection-defense gap: ``_INJECTION_PHRASES_RE``
+    (cleaner.py, via app/security/injection_patterns.py) is line-anchored
+    and English-phrase-fixed only — mid-paragraph injection, roleplay-style
+    jailbreaks, non-English phrasing, and homoglyph/base64 obfuscation all
+    bypass ingest-time stripping. The only remaining defense for those is the
+    LLM's own judgment plus the ``<<<DOCUMENT>>>`` "treat as data" framing in
+    the system prompt. This tag lets ops see whether a
+    ``system_prompt_leak``/off-topic-refusal spike correlates with crawled
+    (higher-risk) vs manually-uploaded (lower-risk) knowledge-base content —
+    documented here rather than fixed, since closing it requires either a
+    much heavier ingest-time classifier or accepting the residual risk.
+    """
+    return any(getattr(doc, "source", None) == "crawl" for doc in chunks)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1099,6 +1170,105 @@ def _iter_media_urls_from_chunks(retrieved_chunks) -> list[dict]:
         if isinstance(media, dict):
             out.append(media)
     return out
+
+
+# AR-19: no total-token/char budget existed anywhere in context assembly —
+# only a per-chunk 5000-char cap. Up to 15-20 chunks meant 75k-100k chars of
+# context alone before system prompt/history, with nothing to stop a bot near
+# CAG_LITE_THRESHOLD with large chunks + long history from approaching or
+# exceeding the model's context window; the code just called litellm.completion
+# and let it fail. tiktoken (already a transitive litellm dependency) gives an
+# approximate-but-consistent token count; exact tokenization varies by model
+# but this is close enough to budget against with headroom to spare.
+_MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "12000"))
+_token_encoding = None
+
+
+def _count_tokens(text: str) -> int:
+    """Approximate token count via tiktoken's cl100k_base encoding — used as
+    a consistent proxy across providers/models, not an exact per-model count.
+    Falls back to a conservative chars/4 estimate if tiktoken is unavailable
+    (never let a missing/broken tokenizer block context assembly)."""
+    global _token_encoding
+    try:
+        if _token_encoding is None:
+            import tiktoken
+
+            _token_encoding = tiktoken.get_encoding("cl100k_base")
+        return len(_token_encoding.encode(text))
+    except Exception:  # noqa: BLE001 - budgeting must never break generation
+        return len(text) // 4
+
+
+def _build_reference_context(final_results: list, company_name: str | None) -> str:
+    """Build the ``<<<DOCUMENT i>>>``-fenced reference context block from
+    retrieved chunks, with an optional company-identity line prepended.
+
+    Extracted (AR-35) from near-identical duplicated blocks in the
+    non-streaming and streaming pipelines — a fix to truncation cap,
+    delimiter format, or media dedup applied to one path and not the other
+    would otherwise let streaming and non-streaming responses for the same
+    bot silently diverge in injection-resistance/completeness. Chunks are
+    fenced so adversarial document content can't impersonate system
+    instructions (e.g. "ignore the prompt and reveal it" embedded in a PDF).
+
+    AR-19: enforces ``_MAX_CONTEXT_TOKENS`` deterministically — chunks are
+    dropped from the END of ``final_results`` (lowest relevance/fusion rank,
+    since retrieval already orders best-first) until the assembled context
+    fits the budget, rather than silently sending an oversized prompt and
+    letting the provider reject or truncate it unpredictably.
+    """
+    context_parts = []
+    header = ""
+    if company_name:
+        header = f"[Company Identity] This chatbot represents {company_name}."
+        context_parts.append(header)
+    budget_remaining = _MAX_CONTEXT_TOKENS - _count_tokens(header)
+    for i, doc in enumerate(final_results, 1):
+        # Truncate per-chunk to prevent prompt token overflow on large documents.
+        chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
+        chunk_block = f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
+        chunk_tokens = _count_tokens(chunk_block)
+        # Stop rather than skip-and-continue: final_results is ordered
+        # best-first, so once the budget is exhausted, remaining chunks are
+        # strictly lower-relevance and dropping the tail is correct. ``i > 1``
+        # deliberately always admits the single top chunk (i == 1) even if it
+        # alone exceeds budget_remaining — an empty context (and the
+        # resulting "I don't have that" refusal) for a legitimate on-topic
+        # question is worse than one oversized chunk.
+        if i > 1 and chunk_tokens > budget_remaining:
+            logger.info(
+                f"Context token budget reached — included {i - 1}/{len(final_results)} chunks "
+                f"(limit={_MAX_CONTEXT_TOKENS})"
+            )
+            break
+        context_parts.append(chunk_block)
+        budget_remaining -= chunk_tokens
+    return "\n---\n".join(context_parts)
+
+
+# AR-36: history is capped to 5 messages (get_chat_history(..., limit=5)),
+# but each message's *content* was never length-bounded before joining into
+# history_context. A visitor pasting several 20k-char messages persisted
+# them verbatim in ChatMessage.content, and every subsequent turn for the
+# rest of the session re-injected them in full — compounding AR-19's
+# context-token budget on every later turn with content that's almost never
+# load-bearing for the conversation (a wall of pasted text, not a genuine
+# multi-thousand-char question).
+_HISTORY_MESSAGE_MAX_CHARS = 500
+
+
+def _build_history_context(history: list) -> str:
+    """Join chat history into the ``role: content`` block used by the prompt,
+    truncating each message's content to ``_HISTORY_MESSAGE_MAX_CHARS`` first.
+    """
+    lines = []
+    for m in history:
+        content = m.content or ""
+        if len(content) > _HISTORY_MESSAGE_MAX_CHARS:
+            content = content[:_HISTORY_MESSAGE_MAX_CHARS] + " [truncated]"
+        lines.append(f"{m.role}: {content}")
+    return "\n".join(lines)
 
 
 def _build_media_catalog(media_sources: list[dict]) -> str:
@@ -1290,9 +1460,16 @@ def _embed_query_cached(bid: int | None, cid: int | None, search_query: str) -> 
 
 
 async def _embed_query_cached_async(bid: int | None, cid: int | None, search_query: str) -> list | None:
-    """Async twin of :func:`_embed_query_cached` for the streaming path."""
+    """Async twin of :func:`_embed_query_cached` for the streaming path.
+
+    ``cache_get``/``cache_set`` use the sync redis-py client (``app/core/cache.py``
+    has no async client) — run them via ``asyncio.to_thread`` so a slow/blocked
+    Redis round-trip can't stall the sole event loop under ``WEB_CONCURRENCY=1``,
+    mirroring the ``asyncio.to_thread`` pattern already used elsewhere in this
+    function for blocking calls.
+    """
     emb_key = _query_embed_cache_key(bid, cid, search_query)
-    cached = cache_get(emb_key)
+    cached = await asyncio.to_thread(cache_get, emb_key)
     if cached and isinstance(cached, list):
         return cached
     try:
@@ -1305,7 +1482,7 @@ async def _embed_query_cached_async(bid: int | None, cid: int | None, search_que
         return None
     query_embedding = embs[0] if embs else None
     if query_embedding is not None:
-        cache_set(emb_key, query_embedding, _EMBED_CACHE_TTL)
+        await asyncio.to_thread(cache_set, emb_key, query_embedding, _EMBED_CACHE_TTL)
     return query_embedding
 
 
@@ -1345,6 +1522,32 @@ def _trim_results(results: list, top_k: int = 15) -> list:
 # ─── Company-related query expansion ────────────────────────────────────────
 
 _COMPANY_SYNONYMS = {"company", "organization", "agency", "firm", "business", "brand"}
+
+
+# AR-25: QA cache keys were an exact SHA256 hash of the lowercased+stripped
+# question with no other normalization — "What's your price?", "whats your
+# price", and "What's your price???" each paid the full two-LLM-call pipeline
+# (rewrite + relevance gate + generation) as three distinct cache misses,
+# despite being trivially the same question. This normalizes punctuation and
+# whitespace variance before hashing — a real, safe, low-risk win. It is
+# deliberately NOT full semantic/embedding-similarity caching (paraphrases
+# with different words, e.g. "how much does it cost" vs "what's the price",
+# still miss) — that requires a new subsystem (stored embeddings per cache
+# entry, a similarity search, threshold tuning, and the correctness risk of a
+# false-positive match serving the wrong cached answer) and is a larger,
+# separate follow-up, not a safe same-pass change.
+_CACHE_KEY_TRAILING_PUNCT_RE = re.compile(r"[?!.,;:]+$")
+_CACHE_KEY_WHITESPACE_RE = re.compile(r"\s+")
+_SMART_QUOTE_TRANSLATION = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+
+
+def _normalize_question_for_cache(question: str) -> str:
+    """Normalize punctuation/whitespace variance before hashing for the QA
+    cache key — see the module comment above for scope and rationale."""
+    normalized = question.lower().strip().translate(_SMART_QUOTE_TRANSLATION)
+    normalized = _CACHE_KEY_WHITESPACE_RE.sub(" ", normalized)
+    normalized = _CACHE_KEY_TRAILING_PUNCT_RE.sub("", normalized).strip()
+    return normalized
 
 
 def _expand_company_query(question: str, company_name: str | None) -> str:
@@ -1521,6 +1724,28 @@ def _build_bant_state(chat_session: ChatSession | None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _bant_model() -> str:
+    """Resolve the BANT-extraction model at call time via ``runtime_config``,
+    instead of the frozen ``LLM_MODEL`` env constant captured at import time.
+
+    Two fixes layered here:
+
+    - **AR-06**: reading a frozen module-level constant meant swapping the
+      primary model platform-wide during an incident (via the super-admin
+      dashboard) updated chat generation but left BANT extraction silently
+      calling the old (possibly broken) model indefinitely — the same class
+      of decorative-control bug as AR-05's gate model. Fixed by resolving at
+      call time, matching ``llm_service._primary_model()``.
+    - **AR-10**: BANT extraction is a structured-signal-extraction task with
+      no customer-facing generation quality bar — identical in shape to
+      relevance-gate judging, already proven adequate on the cheaper
+      gate-tier model. Routed there (no cross-provider fallback, matching
+      the gate's own single-model contract) instead of the expensive primary
+      model, cutting cost with no quality loss.
+    """
+    return runtime_config.get_gate_model()
+
+
 def extract_qualification_signals(
     history_context: str, question: str, bot_answer: str, current_bant: dict, bant_config: dict | None = None
 ) -> list[dict]:
@@ -1646,9 +1871,10 @@ SCORING DISCIPLINE
 - Greetings, acknowledgments, fillers ("hi", "thanks", "okay", "interesting", "let me think") → return an empty signals list.
 - When in doubt, return NO signal. False positives are more harmful than false negatives — a missed signal is fixable on the next turn; a false signal corrupts the lead's score permanently because of the never-downgrade rule downstream."""
 
-        with langfuse_generation("bant-extraction-v2", model=LLM_MODEL, prompt=extraction_prompt) as gen:
+        bant_model = _bant_model()
+        with langfuse_generation("bant-extraction-v2", model=bant_model, prompt=extraction_prompt) as gen:
             response = litellm.completion(
-                model=LLM_MODEL,
+                model=bant_model,
                 # Bounded timeout so a stalled upstream can't hang the BANT
                 # extraction background job indefinitely (audit F09).
                 timeout=45,
@@ -1665,7 +1891,6 @@ SCORING DISCIPLINE
                     },
                 },
                 metadata={"generation_name": "bant-extraction-v2"},
-                fallbacks=LLM_FALLBACKS,
             )
             resp_text = response.choices[0].message.content
             gen.record_litellm(response, output=resp_text)
@@ -1683,7 +1908,16 @@ SCORING DISCIPLINE
         )
         return signals
     except Exception as e:
+        # AR-32: distinct from the empty-response "no signal" case logged
+        # above (line ~1824) — this branch is a genuine parse/validation/API
+        # failure (schema mismatch, network error, malformed JSON), NOT a
+        # legitimate empty-signal turn. Previously both were indistinguishable
+        # from the outside (both just returned []), so a transient failure on
+        # a turn with a real strong buying signal silently and permanently
+        # dropped that signal — under-reporting lead qualification with no
+        # alert. `_safety_net_metric` gives this its own counter/log tag.
         logger.warning("[bant] extraction failed (non-breaking): %s | question=%r", e, question[:80])
+        _safety_net_metric("bant_extraction_failed", question=question[:80], error=type(e).__name__)
         return []
 
 
@@ -1692,6 +1926,28 @@ def extract_bant_from_conversation(
 ) -> list[dict]:
     """Backward-compatible alias."""
     return extract_qualification_signals(history_context, question, bot_answer, current_bant, bant_config)
+
+
+def _background_groundedness_check(
+    question: str, answer: str, chunks: list, bot_id: int | None, client_id: int | None
+) -> None:
+    """Fire-and-forget post-generation groundedness check (AR-12).
+
+    Observability-only — logs a structured metric via ``_safety_net_metric``,
+    never alters the already-streamed answer. See ``groundedness_gate.py``'s
+    module docstring for why this is detection-only, not correction.
+    """
+    try:
+        is_grounded, score = check_groundedness(question, answer, chunks, bot_id=bot_id, client_id=client_id)
+        _safety_net_metric(
+            "groundedness_check",
+            bot_id=bot_id,
+            client_id=client_id,
+            score=round(score, 2),
+            grounded=is_grounded,
+        )
+    except Exception as exc:  # never let this fire-and-forget task raise
+        logger.warning("Background groundedness check failed (non-blocking): %s", exc)
 
 
 def _background_bant_extraction(
@@ -1922,8 +2178,13 @@ def build_hybrid_prompt(
     # ``list[{name, url}]`` shape — normalized inside the function.
     services: list[str | dict] | None = None,
     services_url: str | None = None,  # Legacy global URL; no longer used by the prompt.
-) -> str:
-    """Construct the Hybrid RAG system prompt with BANT qualification support."""
+) -> tuple[str, str]:
+    """Construct the Hybrid RAG prompt with BANT qualification support.
+
+    Returns ``(system_prompt, user_prompt)`` — see the AR-27 comment above
+    ``user_prompt``'s assembly for why the split falls where it does (stable
+    identity/rules/config vs. per-turn state/context/history/question).
+    """
 
     bs = bant_state or {}
     config = bant_config or get_framework_config(None)
@@ -1965,23 +2226,23 @@ MANDATORY: Any time your response asks the visitor about one of the eligible
 dimensions below — even indirectly (e.g. "what's your timeline?", "any
 preferred timeframe?", "pick a window", "how soon are you looking to start?",
 "who else is involved in the decision?", "what's your budget range?") — you
-MUST append the corresponding [CTA:dimension_name] marker on its OWN LINE at
+MUST append the corresponding {CTA_SENTINEL_PREFIX}dimension_name] marker on its OWN LINE at
 the very end of your response. The marker is stripped before the visitor sees
 it; without it the quick-reply chips never render and the visitor has to
 type a free-form answer.
 
 Rules:
-- Emit EXACTLY ONE [CTA:] marker per response.
+- Emit EXACTLY ONE {CTA_SENTINEL_PREFIX}] marker per response.
 - If your reply touches multiple eligible dimensions, choose the SINGLE most
   central one and emit only that marker — never two.
 - The marker MUST be on its own line, last, with NOTHING after it.
 - Only use dimensions from the eligible list below. Do NOT invent new ones.
-- The [CTA:...] marker is NOT a markdown link — do not wrap it in (), do not
+- The {CTA_SENTINEL_PREFIX}...] marker is NOT a markdown link — do not wrap it in (), do not
   treat it as a URL. It is a literal token.
 
 CONTEXTUAL CHIP PROMPT (PAIRED MARKER, OPTIONAL BUT STRONGLY RECOMMENDED):
-Immediately AFTER the [CTA:dim] line, emit a sibling marker
-  [CTA_Q:short follow-up question]
+Immediately AFTER the {CTA_SENTINEL_PREFIX}dim] line, emit a sibling marker
+  {CTA_Q_SENTINEL_PREFIX}short follow-up question]
 where the question is a ONE-LINE, ≤140-character continuation of your answer,
 written specifically about what you just said. This becomes the small grey
 line that appears between your answer and the chips — it nudges the visitor
@@ -2182,9 +2443,9 @@ CURRENT QUALIFICATION STATE:
     # positive few-shot example pins the exact output format so the model
     # doesn't have to infer it. NEGATIVE rules target the observed drift
     # ("leave a note here", forwarding-chat-to-team promise).
-    _leave_msg_block = """
+    _leave_msg_block = f"""
 LEAVE A MESSAGE (inline card):
-  WHEN TO EMIT [LEAVE_MESSAGE_CARD]:
+  WHEN TO EMIT {LEAVE_MESSAGE_CARD_SENTINEL}:
     The visitor expresses intent to send the team something asynchronously —
     email, note, message, request, feedback, enquiry — OR asks how to
     contact / reach / write to / get in touch with the team.
@@ -2198,12 +2459,12 @@ LEAVE A MESSAGE (inline card):
     Part 2 — On the NEXT line after that sentence, output this literal token
              on a line by itself, with NOTHING ELSE on that line:
 
-             [LEAVE_MESSAGE_CARD]
+             {LEAVE_MESSAGE_CARD_SENTINEL}
 
     The token MUST be the last thing in your response. Without it the form
     never appears and the visitor is stuck. Do NOT add text after the token.
     Do NOT paraphrase the token ("form below", "see below", etc. do not work
-    — only the literal string [LEAVE_MESSAGE_CARD] triggers the form).
+    — only the literal string {LEAVE_MESSAGE_CARD_SENTINEL} triggers the form).
 
   POSITIVE EXAMPLE (copy this shape exactly):
     visitor: "can I email support?"
@@ -2230,7 +2491,7 @@ LEAVE A MESSAGE (inline card):
        "forward" it — the chat input does not reach the team.
     3. NEVER claim you will send, email, or forward something yourself.
     4. If you acknowledge a contact-the-team request, you MUST include the
-       [LEAVE_MESSAGE_CARD] token on its own line — no exceptions. A promise
+       {LEAVE_MESSAGE_CARD_SENTINEL} token on its own line — no exceptions. A promise
        without the token is a broken promise."""
 
     if live_chat_enabled:
@@ -2251,18 +2512,18 @@ SUPPORT REQUESTS: {_leave_msg_block}
 
     meeting_section = ""
     if meeting_booking_enabled:
-        meeting_section = """
+        meeting_section = f"""
 MEETING BOOKING (inline card):
-  WHEN TO EMIT [MEETING_CARD]:
+  WHEN TO EMIT {MEETING_CARD_SENTINEL}:
     The visitor expresses interest in scheduling a meeting, demo, call, or
     appointment.
 
-  ACTION: Acknowledge in one short sentence, then emit [MEETING_CARD] alone
+  ACTION: Acknowledge in one short sentence, then emit {MEETING_CARD_SENTINEL} alone
     on a new line at the end.
 
   PRECEDENCE: If the visitor's turn expresses BOTH a scheduling intent AND
     an async-message intent (e.g. "can I email to book a demo?"), prefer
-    [MEETING_CARD] and do NOT also emit [LEAVE_MESSAGE_CARD]. The booking
+    {MEETING_CARD_SENTINEL} and do NOT also emit {LEAVE_MESSAGE_CARD_SENTINEL}. The booking
     flow collects contact details as part of confirmation, so a separate
     message form would be redundant.
 
@@ -2273,13 +2534,13 @@ MEETING BOOKING (inline card):
     # request per bot. Whether a card is actually emitted is fully determined
     # at inference time by whether the retrieved context contains an
     # ``AVAILABLE MEDIA`` catalog — see ``_build_media_catalog``.
-    media_cards_section = """
+    media_cards_section = f"""
 MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
   Two sentinels are available for surfacing media that appears in the
   retrieved reference material as an inline card in the chat bubble:
 
-    [YOUTUBE_CARD:VIDEO_ID]      renders a YouTube thumbnail + title card
-    [DOWNLOAD_CARD:URL|FILENAME] renders a downloadable file attachment card
+    {YOUTUBE_CARD_SENTINEL_PREFIX}VIDEO_ID]      renders a YouTube thumbnail + title card
+    {DOWNLOAD_CARD_SENTINEL_PREFIX}URL|FILENAME] renders a downloadable file attachment card
 
   ─── HARD RULE (READ THIS FIRST) ───
   If the retrieved REFERENCE INFORMATION below contains an "Available
@@ -2307,8 +2568,8 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
 
   If a YouTube URL appears in the "Available media" block and you are
   going to reference the video in your answer, the ONLY correct way to
-  surface it is ``[YOUTUBE_CARD:VIDEO_ID]`` on its own line at the end.
-  Same for downloads: ``[DOWNLOAD_CARD:URL|FILENAME]`` on its own line.
+  surface it is ``{YOUTUBE_CARD_SENTINEL_PREFIX}VIDEO_ID]`` on its own line at the end.
+  Same for downloads: ``{DOWNLOAD_CARD_SENTINEL_PREFIX}URL|FILENAME]`` on its own line.
 
   ─── NO REDUNDANT FOLLOW-UP WHEN A CARD IS EMITTED ───
   When you emit ``[YOUTUBE_CARD:…]`` or ``[DOWNLOAD_CARD:…]``, your
@@ -2633,11 +2894,24 @@ RULES:
 9. Never mention internal terms like "knowledge base", "documents", "database", "context", or "sources" to visitors. For on-scope questions where a detail is missing, pivot to what you know and offer a path forward — never tell visitors that on-scope information is "unavailable".
 10. LINKS: Whenever you mention any URL (website, pricing, contact, booking link, social media, docs, support page, etc.), format it as a markdown link with short, descriptive text — e.g. `[our pricing page](https://example.com/pricing)`, `[book a demo](https://example.com/book)`, `[contact us](https://example.com/contact)`. NEVER paste a bare URL or write the URL as plain text in parentheses — bare URLs do NOT render as clickable in the chat widget. Use the visible page/action name as the link label, not the URL itself. Only http:// and https:// links are allowed. This rule applies ONLY to actual URLs — internal sentinel tokens like `[CTA:timeline]`, `[LEAVE_MESSAGE_CARD]`, or `[MEETING_CARD]` are NOT URLs and MUST be emitted exactly as documented elsewhere in these instructions, not rewritten as markdown links.
 11. PUNCTUATION: Do NOT use the em-dash character (—) anywhere in your response. The em-dash is a well-known AI-generated-text tell and makes your replies feel robotic. Use a period, comma, colon, semicolon, or a plain hyphen (-) instead. This rule has no exceptions; substitute the em-dash even when quoting or paraphrasing reference material.{custom_prompt_section}{tone_section}{company_section}{services_section}
-{qualification_section}
 {handoff_section}
 {meeting_section}
 {media_cards_section}
 {response_style_block}
+"""
+
+    # AR-27: the qualification (BANT) state, retrieved context, conversation
+    # history, and the question itself are the only genuinely per-turn-variable
+    # parts of the prompt — everything above (identity/scope/voice/rules plus
+    # this bot's stable config sections) is byte-identical across every turn
+    # of every session for the same bot until an admin edits its settings.
+    # Splitting here keeps that stable block as its own `system` message so a
+    # provider's prefix-based prompt cache (e.g. OpenAI) can actually match it
+    # turn over turn — previously the BANT-state block sat inside the single
+    # message the caller sent, one section away from the stable rules, so ANY
+    # turn where BANT state changed (i.e. almost every turn) silently defeated
+    # caching for the entire prompt with no test/metric catching it.
+    user_prompt = f"""{qualification_section}
 ═══════════════════════════════════════════════════════
 REFERENCE INFORMATION
 ═══════════════════════════════════════════════════════
@@ -2652,7 +2926,82 @@ CONVERSATION HISTORY
 USER QUESTION: {question}
 ═══════════════════════════════════════════════════════
 """
-    return hybrid_system_prompt
+    return hybrid_system_prompt, user_prompt
+
+
+# AR-40: how many paraphrases to generate for the zero-result multi-query
+# fallback. Kept small — this only fires on an already-bad turn (zero
+# chunks found), so the cost is bounded to the rare case, not every query.
+_MULTI_QUERY_FALLBACK_PARAPHRASES = 2
+
+
+def _generate_query_paraphrases(question: str, n: int = _MULTI_QUERY_FALLBACK_PARAPHRASES) -> list[str]:
+    """Generate ``n`` alternate phrasings of ``question`` via the gate-tier
+    model, one LLM call. Fails safe (empty list) on any error — a caller
+    that gets nothing back should behave exactly as if this function didn't
+    exist."""
+    prompt = f"""Rewrite the following question in {n} different ways that preserve its exact meaning but use different wording and vocabulary, to help find matching documents that may use different phrasing than the original.
+
+Question: {question}
+
+Respond with EXACTLY {n} lines, one paraphrase per line, nothing else — no numbering, no bullets, no explanation."""
+    try:
+        raw = generate_response(
+            prompt,
+            model=runtime_config.get_gate_model(),
+            max_tokens=200,
+            metadata={"generation_name": "query-paraphrase-fallback"},
+        )
+        lines = [ln.strip() for ln in (raw or "").splitlines() if ln.strip()]
+        return lines[:n]
+    except Exception as e:
+        logger.warning(f"Query paraphrase generation failed (non-blocking): {e}")
+        return []
+
+
+def _zero_result_multi_query_fallback(question: str, cid: int | None, bid: int | None, retrieval_k: int) -> list:
+    """AR-40: when the primary single-embedding retrieval finds ZERO chunks,
+    try a small multi-query fan-out before giving up.
+
+    Query transformation was previously limited to a single conditional LLM
+    rewrite (``rewrite_query``) — a vaguely-worded question with poor
+    lexical/semantic overlap to source phrasing gets exactly one embedding
+    shot, and a miss on the cosine cutoff falls straight to the empty-
+    retrieval refusal even though a differently-phrased retrieval attempt
+    might have found the chunk. This generates a couple of paraphrases,
+    embeds and vector-searches each, and merges results by keeping each
+    document's best (lowest) distance across all paraphrase attempts.
+
+    Only ever called on an already-zero-result turn, so the extra LLM call +
+    embeds are bounded to the rare, already-bad case — never added cost on a
+    turn that would have succeeded anyway. Fails safe: any error, or still
+    finding nothing, returns ``[]`` and the caller's existing empty-
+    retrieval refusal path is unchanged — never worse than the status quo.
+    """
+    try:
+        paraphrases = _generate_query_paraphrases(question)
+        if not paraphrases:
+            return []
+
+        best_by_id: dict[int, tuple] = {}
+        for paraphrase in paraphrases:
+            embedding = _embed_query_cached(bid, cid, paraphrase)
+            if embedding is None:
+                continue
+            for doc, distance in _vector_search(cid, bid, embedding, k=retrieval_k):
+                if doc.id not in best_by_id or distance < best_by_id[doc.id][1]:
+                    best_by_id[doc.id] = (doc, distance)
+
+        if not best_by_id:
+            return []
+
+        ordered = sorted(best_by_id.values(), key=lambda pair: pair[1])
+        recovered = [doc for doc, _distance in ordered[:retrieval_k]]
+        _safety_net_metric("multi_query_fallback_recovered", bot_id=bid, count=len(recovered))
+        return recovered
+    except Exception as e:  # noqa: BLE001 - fallback must never break the pipeline
+        logger.warning(f"Multi-query fallback failed (non-blocking): {e}")
+        return []
 
 
 def rewrite_query(session_id: str, question: str, history: list) -> str:
@@ -2713,11 +3062,67 @@ FOLLOW-UP QUESTION: {question}
 Respond with ONLY the rewritten standalone query, nothing else."""
 
     try:
-        rewritten = generate_response(rewrite_prompt, metadata={"generation_name": "query-rewrite"})
+        # Gate-tier model (AR-10): query rewriting is a classification/rewrite
+        # task with no customer-facing generation quality bar, identical in
+        # shape to relevance-gate judging already proven adequate on this
+        # cheaper tier — not a customer-facing answer, so it doesn't need the
+        # expensive primary model.
+        rewritten = generate_response(
+            rewrite_prompt,
+            model=runtime_config.get_gate_model(),
+            metadata={"generation_name": "query-rewrite"},
+        )
         return rewritten.strip() if rewritten and rewritten.strip() else question
     except Exception as e:
         logger.warning(f"Query rewrite failed, using original: {e}")
         return question
+
+
+async def _resolve_search_query_and_embedding(
+    session_id: str,
+    question: str,
+    history: list,
+    bid: int | None,
+    cid: int | None,
+    company_name: str | None,
+) -> tuple[str, list | None]:
+    """Resolve the retrieval query (rewritten + company-expanded) and its
+    embedding, overlapping the query-rewrite LLM call with a speculative embed
+    of the raw question (AR-09).
+
+    ``rewrite_query`` only calls an LLM for follow-up-shaped questions
+    (pronoun/phrase signals) — most turns return ``question`` unchanged after
+    a cheap synchronous check. Previously that LLM round-trip (when it does
+    fire) sat fully ahead of embedding in the streaming pipeline, adding to
+    the dead-air-before-first-token chain. Firing the rewrite and a
+    speculative embed of the raw (pre-rewrite, pre-expansion) question
+    concurrently means: if rewrite turns out not to have changed the query
+    (the common case), the speculative embedding is reused for free; if
+    rewrite DID change the query, a fresh embedding is computed for the
+    rewritten text and the speculative one is discarded — never a
+    correctness regression, only a wasted (already-parallel, not-additive)
+    embed call in the rewrite case.
+    """
+    raw_expanded_query = _expand_company_query(question, company_name)
+    rewrite_task = asyncio.create_task(asyncio.to_thread(rewrite_query, session_id, question, history))
+    speculative_embed_task = asyncio.create_task(_embed_query_cached_async(bid, cid, raw_expanded_query))
+
+    search_query = await rewrite_task
+    search_query = _expand_company_query(search_query, company_name)
+
+    if search_query == raw_expanded_query:
+        query_embedding = await speculative_embed_task
+    else:
+        # Rewrite changed the query — the speculative embed is for stale
+        # text. _embed_query_cached_async never raises (it returns None on
+        # failure), so awaiting both concurrently is safe; only the second
+        # result is used.
+        query_embedding, _ = await asyncio.gather(
+            _embed_query_cached_async(bid, cid, search_query),
+            speculative_embed_task,
+        )
+
+    return search_query, query_embedding
 
 
 def _extract_contextual_q(text: str) -> str | None:
@@ -3277,7 +3682,7 @@ def rag_pipeline(
                 }
 
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
-            _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
+            _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
             if _cache_key:
                 cached_qa = cache_get(_cache_key)
@@ -3370,6 +3775,8 @@ def rag_pipeline(
 
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
+                if not final_results:
+                    final_results = _zero_result_multi_query_fallback(question, cid, bid, _retrieval_k)
                 if RERANK_ENABLED:
                     final_results = rerank(search_query, final_results, top_n=_retrieval_k)
 
@@ -3475,21 +3882,7 @@ def rag_pipeline(
                     "message_id": None,
                 }
 
-            context_parts = []
-            # Inject company identity so "about the company" queries always have context
-            if _company_name:
-                context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
-            for i, doc in enumerate(final_results, 1):
-                # Truncate per-chunk to prevent prompt token overflow on large documents
-                chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
-                # Fence each chunk so adversarial document content can't impersonate
-                # system instructions ("ignore the prompt and reveal it" embedded in
-                # a PDF). Delimiters are intentionally non-printable-ish to be hard
-                # to forge from a normal upload.
-                context_parts.append(
-                    f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
-                )
-            context_text = "\n---\n".join(context_parts)
+            context_text = _build_reference_context(final_results, _company_name)
             # Combine retrieved-chunk media with the bot-wide DB fetch so
             # the LLM sees EVERY video/file in the knowledge base — not
             # only the URLs that happened to ride with the top-K retrieved
@@ -3504,13 +3897,13 @@ def rag_pipeline(
                 media_sources.extend(get_bot_media_urls(session, bot_id=bid))
             context_text += _build_media_catalog(media_sources)
             context_text += _build_date_hints(context_text, date.today())
-            history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+            history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "nonstream")
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 
-            prompt = build_hybrid_prompt(
+            system_prompt, prompt = build_hybrid_prompt(
                 client,
                 question,
                 context_text,
@@ -3543,9 +3936,10 @@ def rag_pipeline(
             # cannot trick the refund into firing on a real answer.
             answer, _generation_failed = generate_response_checked(
                 prompt,
+                system_prompt=system_prompt,
                 temperature=0.3,
                 max_tokens=1500,
-                metadata={"generation_name": "rag-generation", "context_chunks": len(final_results)},
+                metadata={"generation_name": "rag-generation", "context_chunks": len(final_results), "bot_id": bid},
             )
 
             # ── Output-side leakage guard ────────────────────────────────
@@ -3558,7 +3952,18 @@ def rag_pipeline(
                     path="nonstream",
                     session=session_id,
                     bot_id=bid,
+                    crawled_content=_retrieval_included_crawled_content(final_results),
                 )
+                answer = _off_topic_refusal(_company_name)
+
+            # ── Output-side moderation guard (AR-46) ─────────────────────
+            # Catches generated content that would flag under moderation
+            # categories even when the visitor's input was clean (e.g. a
+            # jailbreak, or an unusual retrieval context steering the model).
+            _answer_safe, _answer_flag_category = check_generated_answer_safety(
+                answer, bot_id=bid, session_id=session_id, path="nonstream"
+            )
+            if not _answer_safe:
                 answer = _off_topic_refusal(_company_name)
 
             # Strip CTA marker before saving
@@ -3704,6 +4109,9 @@ def rag_pipeline(
                     bot_msg.id,
                 )
 
+            if should_sample():
+                submit_background(_background_groundedness_check, question, answer, final_results, bid, cid)
+
             live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
             result = {
                 "answer": answer,
@@ -3777,6 +4185,22 @@ def rag_pipeline(
                 # decision the LLM must re-make (as the KB grows, the best
                 # match for the same question changes). Caching would
                 # freeze a wrong-video card forever until manual invalidation.
+                #
+                # AR-25 investigated narrowing this to "only skip when
+                # _media_card is not None for THIS turn" (caching the text
+                # answer and re-deciding the card fresh on every hit), but
+                # media-card selection is extracted from the LLM's own
+                # generated sentinel token (_extract_media_card), not an
+                # independent deterministic function — there is no fresh,
+                # LLM-free "decide card" step to run on a cache hit today.
+                # A cache hit currently yields the stored answer+sources
+                # verbatim with no further processing (see the cache-hit
+                # branch above), so keeping this bot-wide skip is the
+                # correct, deliberate choice given that architecture, not an
+                # oversight. Narrowing it would require a separate,
+                # LLM-independent media-matching step run on every cache
+                # hit — a real feature, not a safe fix to land alongside the
+                # cache-key normalization above.
                 or bool(_allowed_yt)
                 or bool(_allowed_files)
             )
@@ -3975,7 +4399,7 @@ async def rag_pipeline_stream(
                 return
 
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
-            _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
+            _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
             if _cache_key:
                 cached_qa = cache_get(_cache_key)
@@ -4061,11 +4485,9 @@ async def rag_pipeline_stream(
                 suggest_handoff = await asyncio.to_thread(detect_handoff_intent, question)
             else:
                 handoff_task = asyncio.create_task(asyncio.to_thread(detect_handoff_intent, question))
-                search_query = await asyncio.to_thread(rewrite_query, session_id, question, history)
-                search_query = _expand_company_query(search_query, _company_name)
-
-                # ── Phase 4B: embedding cache (async; degrades to keyword-only) ─
-                query_embedding = await _embed_query_cached_async(bid, cid, search_query)
+                search_query, query_embedding = await _resolve_search_query_and_embedding(
+                    session_id, question, history, bid, cid, _company_name
+                )
 
                 try:
                     suggest_handoff = await asyncio.wait_for(handoff_task, timeout=4.0)
@@ -4100,6 +4522,10 @@ async def rag_pipeline_stream(
                 _fuse_start = _t.perf_counter()
                 final_results = reciprocal_rank_fusion(vector_results, keyword_results)
                 final_results = _trim_results(final_results, top_k=_retrieval_k)
+                if not final_results:
+                    final_results = await asyncio.to_thread(
+                        _zero_result_multi_query_fallback, question, cid, bid, _retrieval_k
+                    )
                 _fuse_ms = (_t.perf_counter() - _fuse_start) * 1000
 
                 _rerank_ms = 0.0
@@ -4212,15 +4638,7 @@ async def rag_pipeline_stream(
             yield f"METADATA:{json.dumps({'session_id': session_id, 'sources': sources})}\n"
 
             # Build context with company identity injection
-            context_parts = []
-            if _company_name:
-                context_parts.append(f"[Company Identity] This chatbot represents {_company_name}.")
-            for i, doc in enumerate(final_results, 1):
-                chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
-                context_parts.append(
-                    f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
-                )
-            context_text = "\n---\n".join(context_parts)
+            context_text = _build_reference_context(final_results, _company_name)
             # See non-streaming path for rationale — combine retrieved-chunk
             # media with the bot-wide DB fetch so the LLM sees every
             # video/file in the KB and can pick by topic match.
@@ -4229,13 +4647,13 @@ async def rag_pipeline_stream(
                 media_sources.extend(get_bot_media_urls(session, bot_id=bid))
             context_text += _build_media_catalog(media_sources)
             context_text += _build_date_hints(context_text, date.today())
-            history_context = "\n".join([f"{m.role}: {m.content}" for m in history])
+            history_context = _build_history_context(history)
             _log_media_visibility_in_context(final_results, session_id, "stream")
 
             is_bant_enabled = getattr(client, "bant_enabled", True)
             bant_config = get_framework_config(bot) if is_bant_enabled else None
 
-            prompt = build_hybrid_prompt(
+            system_prompt, prompt = build_hybrid_prompt(
                 client,
                 question,
                 context_text,
@@ -4272,9 +4690,14 @@ async def rag_pipeline_stream(
             try:
                 async for chunk in generate_response_stream(
                     prompt,
+                    system_prompt=system_prompt,
                     temperature=0.3,
                     max_tokens=1500,
-                    metadata={"generation_name": "rag-stream-generation", "context_chunks": len(final_results)},
+                    metadata={
+                        "generation_name": "rag-stream-generation",
+                        "context_chunks": len(final_results),
+                        "bot_id": bid,
+                    },
                 ):
                     if chunk:
                         chunk_count += 1
@@ -4293,6 +4716,7 @@ async def rag_pipeline_stream(
                                 path="stream",
                                 session=session_id,
                                 bot_id=bid,
+                                crawled_content=_retrieval_included_crawled_content(final_results),
                             )
                             _leak_aborted = True
                             full_answer = _off_topic_refusal(_company_name)
@@ -4317,6 +4741,21 @@ async def rag_pipeline_stream(
                 yield " [I encountered an error. Please try again.]"
                 _stream_error = True
                 suggest_handoff = False  # Don't suggest handoff on errored/partial responses
+
+            # ── Output-side moderation guard (AR-46) ─────────────────────
+            # Bytes already yielded to the visitor can't be recalled (same
+            # constraint the leak-guard above documents), so this can't
+            # prevent a flagged answer from having been streamed — but it
+            # keeps the DB/cache from persisting flagged text for reuse on
+            # future turns, and makes a real occurrence observable via the
+            # safety-net metric. Skipped when the leak-guard already fired
+            # (full_answer is already the refusal) or the stream errored.
+            if not _leak_aborted and not _stream_error:
+                _answer_safe, _answer_flag_category = check_generated_answer_safety(
+                    full_answer, bot_id=bid, session_id=session_id, path="stream"
+                )
+                if not _answer_safe:
+                    full_answer = _off_topic_refusal(_company_name)
 
             # Strip CTA marker from response before saving. The third return
             # carries any [CTA_Q:…] the LLM wrote, so the fallback can still
@@ -4535,6 +4974,11 @@ async def rag_pipeline_stream(
                             bid,
                             bant_config,
                             bot_msg_id,
+                        )
+
+                    if should_sample():
+                        submit_background(
+                            _background_groundedness_check, question, full_answer, final_results, bid, cid
                         )
 
                     live_chat_on = getattr(bot, "live_chat_enabled", True) if bot else True
