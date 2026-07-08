@@ -47,7 +47,25 @@ logger = logging.getLogger(__name__)
 # TTL for query-embedding cache (Phase 4B)
 _EMBED_CACHE_TTL = 300  # 5 minutes — short; rewrites vary
 
-_CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
+# AR-34: sentinel-token prefixes, defined ONCE and reused both to build the
+# extraction regexes below and to build the corresponding lines of the system
+# prompt's prose (build_hybrid_prompt, ~2100+ lines further down this file).
+# Before this, each sentinel was typed as a literal string independently in
+# both places — a prompt reword of a sentinel (even a stray space) desynced
+# silently from its extractor regex: the LLM kept faithfully emitting the
+# (now-wrong) token, but the stripper never fired, leaking the raw sentinel
+# into the visitor-facing bubble. A round-trip test (test_rag_service.py)
+# asserts each constant's exact text actually appears in the assembled
+# prompt, so a future prompt edit that changes a sentinel's prefix without
+# updating this constant fails loudly in CI instead of silently in prod.
+CTA_SENTINEL_PREFIX = "[CTA:"
+CTA_Q_SENTINEL_PREFIX = "[CTA_Q:"
+MEETING_CARD_SENTINEL = "[MEETING_CARD]"
+LEAVE_MESSAGE_CARD_SENTINEL = "[LEAVE_MESSAGE_CARD]"
+YOUTUBE_CARD_SENTINEL_PREFIX = "[YOUTUBE_CARD:"
+DOWNLOAD_CARD_SENTINEL_PREFIX = "[DOWNLOAD_CARD:"
+
+_CTA_PATTERN = re.compile(re.escape(CTA_SENTINEL_PREFIX) + r"([a-zA-Z0-9_]+)\]")
 # Sibling sentinel emitted alongside [CTA:dim]. Captures a short, contextual
 # follow-up question the LLM writes specifically about the answer it just
 # gave (e.g. after "Our enterprise plan starts at $5K/mo…" → "Does that fit
@@ -55,25 +73,25 @@ _CTA_PATTERN = re.compile(r"\[CTA:([a-zA-Z0-9_]+)\]")
 # configured per-dimension when the LLM omits this marker. The capture is
 # non-greedy and rejects newlines / closing brackets so a malformed marker
 # can't swallow the rest of the response.
-_CTA_Q_PATTERN = re.compile(r"\[CTA_Q:\s*([^\]\n]{1,200}?)\s*\]")
+_CTA_Q_PATTERN = re.compile(re.escape(CTA_Q_SENTINEL_PREFIX) + r"\s*([^\]\n]{1,200}?)\s*\]")
 # Length cap for the contextual prompt — long enough for a natural one-liner,
 # short enough that the chip area stays compact on mobile.
 _CTA_Q_MAX_LEN = 140
 
-_meeting_card_re = re.compile(r"\[MEETING_CARD\]")
-_leave_message_card_re = re.compile(r"\[LEAVE_MESSAGE_CARD\]")
+_meeting_card_re = re.compile(re.escape(MEETING_CARD_SENTINEL))
+_leave_message_card_re = re.compile(re.escape(LEAVE_MESSAGE_CARD_SENTINEL))
 
 # ── Media cards ────────────────────────────────────────────────────────────
 # YouTube video IDs are strictly 11 chars from the URL-safe alphabet — pin
 # the pattern to that shape so a stray "[YOUTUBE_CARD:xyz]" from a
 # hallucination or a broken chunk can't slip through as valid.
-_youtube_card_re = re.compile(r"\[YOUTUBE_CARD:([A-Za-z0-9_-]{11})\]")
+_youtube_card_re = re.compile(re.escape(YOUTUBE_CARD_SENTINEL_PREFIX) + r"([A-Za-z0-9_-]{11})\]")
 # Downloadable file card: URL segment cannot contain whitespace, pipes, or
 # closing brackets (those would make the token unparseable); filename allows
 # spaces up to a reasonable cap. The URL length cap (500) matches the widest
 # reasonable KB-hosted asset URL and keeps a malformed token from swallowing
 # unbounded trailing text.
-_download_card_re = re.compile(r"\[DOWNLOAD_CARD:([^\s\|\]]{1,500})\|([^\]\n]{1,200})\]")
+_download_card_re = re.compile(re.escape(DOWNLOAD_CARD_SENTINEL_PREFIX) + r"([^\s\|\]]{1,500})\|([^\]\n]{1,200})\]")
 
 
 # ``_extract_media_card`` peels VALID media-card sentinels out of the answer
@@ -92,7 +110,9 @@ _download_card_re = re.compile(r"\[DOWNLOAD_CARD:([^\s\|\]]{1,500})\|([^\]\n]{1,
 # History: PR #234 used a keyword-free ``\[[^\]\n]{1,300}\](?!\()`` sweep that
 # stripped every bracket not followed by ``(``, corrupting all of the above on
 # every answer for every bot. Anchoring on the card prefixes is the fix.
-_LEAKED_BRACKET_RE = re.compile(r"\[(?:YOUTUBE_CARD|DOWNLOAD_CARD):[^\]\n]{0,720}\]")
+_LEAKED_BRACKET_RE = re.compile(
+    rf"(?:{re.escape(YOUTUBE_CARD_SENTINEL_PREFIX)}|{re.escape(DOWNLOAD_CARD_SENTINEL_PREFIX)})[^\]\n]{{0,720}}\]"
+)
 
 
 def _strip_llm_card_prose(text: str) -> str:
@@ -2151,23 +2171,23 @@ MANDATORY: Any time your response asks the visitor about one of the eligible
 dimensions below — even indirectly (e.g. "what's your timeline?", "any
 preferred timeframe?", "pick a window", "how soon are you looking to start?",
 "who else is involved in the decision?", "what's your budget range?") — you
-MUST append the corresponding [CTA:dimension_name] marker on its OWN LINE at
+MUST append the corresponding {CTA_SENTINEL_PREFIX}dimension_name] marker on its OWN LINE at
 the very end of your response. The marker is stripped before the visitor sees
 it; without it the quick-reply chips never render and the visitor has to
 type a free-form answer.
 
 Rules:
-- Emit EXACTLY ONE [CTA:] marker per response.
+- Emit EXACTLY ONE {CTA_SENTINEL_PREFIX}] marker per response.
 - If your reply touches multiple eligible dimensions, choose the SINGLE most
   central one and emit only that marker — never two.
 - The marker MUST be on its own line, last, with NOTHING after it.
 - Only use dimensions from the eligible list below. Do NOT invent new ones.
-- The [CTA:...] marker is NOT a markdown link — do not wrap it in (), do not
+- The {CTA_SENTINEL_PREFIX}...] marker is NOT a markdown link — do not wrap it in (), do not
   treat it as a URL. It is a literal token.
 
 CONTEXTUAL CHIP PROMPT (PAIRED MARKER, OPTIONAL BUT STRONGLY RECOMMENDED):
-Immediately AFTER the [CTA:dim] line, emit a sibling marker
-  [CTA_Q:short follow-up question]
+Immediately AFTER the {CTA_SENTINEL_PREFIX}dim] line, emit a sibling marker
+  {CTA_Q_SENTINEL_PREFIX}short follow-up question]
 where the question is a ONE-LINE, ≤140-character continuation of your answer,
 written specifically about what you just said. This becomes the small grey
 line that appears between your answer and the chips — it nudges the visitor
@@ -2368,9 +2388,9 @@ CURRENT QUALIFICATION STATE:
     # positive few-shot example pins the exact output format so the model
     # doesn't have to infer it. NEGATIVE rules target the observed drift
     # ("leave a note here", forwarding-chat-to-team promise).
-    _leave_msg_block = """
+    _leave_msg_block = f"""
 LEAVE A MESSAGE (inline card):
-  WHEN TO EMIT [LEAVE_MESSAGE_CARD]:
+  WHEN TO EMIT {LEAVE_MESSAGE_CARD_SENTINEL}:
     The visitor expresses intent to send the team something asynchronously —
     email, note, message, request, feedback, enquiry — OR asks how to
     contact / reach / write to / get in touch with the team.
@@ -2384,12 +2404,12 @@ LEAVE A MESSAGE (inline card):
     Part 2 — On the NEXT line after that sentence, output this literal token
              on a line by itself, with NOTHING ELSE on that line:
 
-             [LEAVE_MESSAGE_CARD]
+             {LEAVE_MESSAGE_CARD_SENTINEL}
 
     The token MUST be the last thing in your response. Without it the form
     never appears and the visitor is stuck. Do NOT add text after the token.
     Do NOT paraphrase the token ("form below", "see below", etc. do not work
-    — only the literal string [LEAVE_MESSAGE_CARD] triggers the form).
+    — only the literal string {LEAVE_MESSAGE_CARD_SENTINEL} triggers the form).
 
   POSITIVE EXAMPLE (copy this shape exactly):
     visitor: "can I email support?"
@@ -2416,7 +2436,7 @@ LEAVE A MESSAGE (inline card):
        "forward" it — the chat input does not reach the team.
     3. NEVER claim you will send, email, or forward something yourself.
     4. If you acknowledge a contact-the-team request, you MUST include the
-       [LEAVE_MESSAGE_CARD] token on its own line — no exceptions. A promise
+       {LEAVE_MESSAGE_CARD_SENTINEL} token on its own line — no exceptions. A promise
        without the token is a broken promise."""
 
     if live_chat_enabled:
@@ -2437,18 +2457,18 @@ SUPPORT REQUESTS: {_leave_msg_block}
 
     meeting_section = ""
     if meeting_booking_enabled:
-        meeting_section = """
+        meeting_section = f"""
 MEETING BOOKING (inline card):
-  WHEN TO EMIT [MEETING_CARD]:
+  WHEN TO EMIT {MEETING_CARD_SENTINEL}:
     The visitor expresses interest in scheduling a meeting, demo, call, or
     appointment.
 
-  ACTION: Acknowledge in one short sentence, then emit [MEETING_CARD] alone
+  ACTION: Acknowledge in one short sentence, then emit {MEETING_CARD_SENTINEL} alone
     on a new line at the end.
 
   PRECEDENCE: If the visitor's turn expresses BOTH a scheduling intent AND
     an async-message intent (e.g. "can I email to book a demo?"), prefer
-    [MEETING_CARD] and do NOT also emit [LEAVE_MESSAGE_CARD]. The booking
+    {MEETING_CARD_SENTINEL} and do NOT also emit {LEAVE_MESSAGE_CARD_SENTINEL}. The booking
     flow collects contact details as part of confirmation, so a separate
     message form would be redundant.
 
@@ -2459,13 +2479,13 @@ MEETING BOOKING (inline card):
     # request per bot. Whether a card is actually emitted is fully determined
     # at inference time by whether the retrieved context contains an
     # ``AVAILABLE MEDIA`` catalog — see ``_build_media_catalog``.
-    media_cards_section = """
+    media_cards_section = f"""
 MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
   Two sentinels are available for surfacing media that appears in the
   retrieved reference material as an inline card in the chat bubble:
 
-    [YOUTUBE_CARD:VIDEO_ID]      renders a YouTube thumbnail + title card
-    [DOWNLOAD_CARD:URL|FILENAME] renders a downloadable file attachment card
+    {YOUTUBE_CARD_SENTINEL_PREFIX}VIDEO_ID]      renders a YouTube thumbnail + title card
+    {DOWNLOAD_CARD_SENTINEL_PREFIX}URL|FILENAME] renders a downloadable file attachment card
 
   ─── HARD RULE (READ THIS FIRST) ───
   If the retrieved REFERENCE INFORMATION below contains an "Available
@@ -2493,8 +2513,8 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
 
   If a YouTube URL appears in the "Available media" block and you are
   going to reference the video in your answer, the ONLY correct way to
-  surface it is ``[YOUTUBE_CARD:VIDEO_ID]`` on its own line at the end.
-  Same for downloads: ``[DOWNLOAD_CARD:URL|FILENAME]`` on its own line.
+  surface it is ``{YOUTUBE_CARD_SENTINEL_PREFIX}VIDEO_ID]`` on its own line at the end.
+  Same for downloads: ``{DOWNLOAD_CARD_SENTINEL_PREFIX}URL|FILENAME]`` on its own line.
 
   ─── NO REDUNDANT FOLLOW-UP WHEN A CARD IS EMITTED ───
   When you emit ``[YOUTUBE_CARD:…]`` or ``[DOWNLOAD_CARD:…]``, your
