@@ -368,12 +368,12 @@ const MessageBubble = ({
                             so it only renders on completed replies — never
                             mid-stream — and never on user turns. */}
                         {msg.media_card && !isStreaming && (
-                            <MediaCard card={msg.media_card} />
+                            <MediaCard card={msg.media_card} secondary={msg.media_secondary} />
                         )}
                     </div>
                     {showActions && (
                         <div
-                            className="flex items-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
+                            className="flex items-center gap-1 mt-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-150"
                             aria-label="Message actions"
                         >
                             <MessageActionButton

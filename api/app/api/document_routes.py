@@ -649,7 +649,7 @@ async def crawl_diff_endpoint(
 
     from urllib.parse import urlparse
 
-    from app.services import plan_service
+    from app.services import credit_service, plan_service
     from app.services.plan_service import UNLIMITED
     from app.services.url_discovery import check_urls_alive, discover_website_urls, normalize_url
 
@@ -657,6 +657,26 @@ async def crawl_diff_endpoint(
         plan = plan_service.get_client_plan(db, client_id)
         crawl_limits = plan_service.get_crawl_limits(plan)
         plan_max = crawl_limits["max_crawl_pages"]
+        # Delta preview is a Standard+ feature. Free/Starter still see the
+        # button, but hitting the endpoint has to fail closed — the frontend
+        # can't be the security boundary. Raised as a 403 with the same shape
+        # ``plan_service.enforce_feature`` uses so the UI's shared upgrade
+        # handler picks it up unchanged.
+        if diff_request.mode == "delta":
+            plan_service.enforce_delta_recrawl(db, client_id)
+
+        # Credit inputs for the pre-crawl warning surfaced in the confirmation
+        # banner. Read inside the ``get_session`` block so we never hold a DB
+        # connection across the later (network) discovery calls. Resolve the
+        # SAME ledger bucket the actual /crawl will drain — a per-bot
+        # subscription drains its own bucket, everything else drains the
+        # client pool — so the balance the user sees here matches what
+        # gets charged. Mirrors the resolution in /crawl/discover:569-573.
+        cost_per_page = credit_service.get_credit_cost(db, "url_scan")
+        ledger_bot_id = None
+        if bot_id is not None:
+            ledger_bot_id = credit_service.resolve_bot_ledger_bot_id(db.get(Bot, bot_id))
+        balance = credit_service.get_balance(db, client_id, bot_id=ledger_bot_id)
 
     _DISCOVERY_HARD_CAP = 1000
     discovery_cap = _DISCOVERY_HARD_CAP if plan_max == UNLIMITED else min(plan_max, _DISCOVERY_HARD_CAP)
@@ -790,9 +810,21 @@ async def crawl_diff_endpoint(
         # Show the raw URL the customer would recognise, sorted for stability.
         return sorted({lookup[n] for n in norm_set if n in lookup})[:_PREVIEW_CAP]
 
+    # Credit preview — surfaced in the confirmation banner. ``credits_required``
+    # is the exact upper bound the caller will be billed for a full recrawl
+    # (sitemap_total × cost_per_page). For delta mode the true billed amount
+    # depends on how many pages actually changed at ingest time, so we don't
+    # try to invent a number: the frontend only shows the exact "will charge"
+    # copy for ``mode == 'full'``. ``per_page`` is clamped to ``>= 1`` so a
+    # zero-cost misconfiguration in ``pricing_configs`` still produces a
+    # non-zero credits_required (matching the /crawl route's own guard).
+    per_page = max(int(cost_per_page), 1)
+    credits_required_full = len(discovery_norm_to_raw) * per_page
+
     return {
         "url": diff_request.url,
         "replace_source": diff_request.replace_source,
+        "mode": diff_request.mode,
         "sitemap_total": len(discovery_norm_to_raw),
         "existing_total": len(stored_norm_to_raw),
         "unchanged": len(unchanged_norm),
@@ -808,6 +840,14 @@ async def crawl_diff_endpoint(
         # back to "assume alive" for some/all stored URLs. The UI uses this
         # to hint the removed-count may be undercounted.
         "head_partial": head_partial,
+        # Credit preview inputs — used by the frontend confirmation banner
+        # to render "will charge X credits · you have Y" copy on the full
+        # recrawl path. Emitted for both modes so the UI can show balance
+        # in either flow; only the full-mode banner uses ``credits_required``.
+        "cost_per_page": cost_per_page,
+        "balance": balance,
+        "credits_required_full": credits_required_full,
+        "exceeds_balance": credits_required_full > balance,
     }
 
 
@@ -881,6 +921,14 @@ async def crawl_endpoint(
         plan_js_max_pages = crawl_limits["max_crawl_js_pages"]
         plan_concurrency = crawl_limits["max_crawl_concurrency"]
         unlimited_pages = plan_max_pages == UNLIMITED
+
+        # Delta ("updated pages only") mode is gated to Standard+. Free/Starter
+        # see the option in the UI as an upsell, but the endpoint has to fail
+        # closed — the frontend can't be the security boundary. First-time
+        # crawls (no ``replace_source``) are always full-mode by definition
+        # and skip this gate: there is nothing to diff against yet.
+        if crawl_request.mode == "delta" and crawl_request.replace_source:
+            plan_service.enforce_delta_recrawl(db, client_id)
 
         requested_pages = crawl_request.max_pages
         # Hard plan cap rejection only fires for plans that actually have
@@ -989,6 +1037,14 @@ async def crawl_endpoint(
                 },
             )
 
+    # Full-mode recrawl: bypass the ingestion pipeline's SHA-256 dedup so
+    # every discovered page is re-embedded and re-billed — the intended
+    # behavior on Free/Starter, where "recrawl the entire website" must
+    # charge the entire website even if only 2 pages actually changed.
+    # First-time crawls (no ``replace_source``) never force-reingest: the
+    # dedup skip on a fresh site is a no-op anyway.
+    force_reingest = crawl_request.mode == "full" and crawl_request.replace_source is not None
+
     # Explicit ordered-URL slice (credit-aware partial crawl). Validate the
     # client-supplied list is same-origin as the seed (blocks SSRF / crawling
     # someone else's domain on this client's credits) and cap it to what the
@@ -1044,6 +1100,7 @@ async def crawl_endpoint(
                 plan_max_depth,
                 plan_concurrency,
                 ordered_urls=ordered_urls,
+                force_reingest=force_reingest,
             )
             job_id = job.job_id if job is not None else None
             logger.info(
@@ -1073,6 +1130,7 @@ async def crawl_endpoint(
                 max_depth=plan_max_depth,
                 concurrency=plan_concurrency,
                 ordered_urls=ordered_urls,
+                force_reingest=force_reingest,
             )
             logger.info(
                 "Crawl scheduled inline (WORKER_ENABLED=false) for client %s (plan=%s, pages=%d, depth=%d)",

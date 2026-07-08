@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Play, FileDown } from 'lucide-react';
+import { Play } from 'lucide-react';
 
 /**
  * MediaCard — inline chat card for a single YouTube video OR a downloadable
@@ -173,51 +173,266 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
     );
 };
 
+// File-type presentation table. Each entry maps an uppercased extension to
+// the tint used for the icon badge and the short label shown in the meta row.
+// Anything not listed falls back to ``_DEFAULT_FILE_META`` — a neutral slate
+// badge labelled with the raw extension — so the card degrades gracefully for
+// file types we haven't styled explicitly.
+const _FILE_META = {
+    PDF: { tint: '#E4483D', label: 'PDF' },
+    DOC: { tint: '#2B6FD6', label: 'DOC' },
+    DOCX: { tint: '#2B6FD6', label: 'DOC' },
+    XLS: { tint: '#1E9E58', label: 'XLS' },
+    XLSX: { tint: '#1E9E58', label: 'XLS' },
+    CSV: { tint: '#1E9E58', label: 'CSV' },
+    PPT: { tint: '#D2542C', label: 'PPT' },
+    PPTX: { tint: '#D2542C', label: 'PPT' },
+    ZIP: { tint: '#8A7CE0', label: 'ZIP' },
+    RAR: { tint: '#8A7CE0', label: 'RAR' },
+    PNG: { tint: '#6366F1', label: 'PNG' },
+    JPG: { tint: '#6366F1', label: 'JPG' },
+    JPEG: { tint: '#6366F1', label: 'JPG' },
+    GIF: { tint: '#6366F1', label: 'GIF' },
+    WEBP: { tint: '#6366F1', label: 'WEBP' },
+    SVG: { tint: '#6366F1', label: 'SVG' },
+    TXT: { tint: '#64748B', label: 'TXT' },
+    MD: { tint: '#64748B', label: 'MD' },
+};
+const _DEFAULT_FILE_META = { tint: '#64748B', label: 'FILE' };
+
+// Extensions the browser can render inline (open in a new tab) rather than
+// force-download. Drives the action verb ("View" vs "Download") and whether we
+// set the ``download`` attribute — we only hint a save for non-viewable types.
+const _OPENABLE_EXTS = new Set([
+    'PDF', 'PNG', 'JPG', 'JPEG', 'GIF', 'WEBP', 'SVG', 'TXT', 'MD',
+]);
+
+// Cross-instance cache of resolved file sizes, keyed by URL. Stores the
+// formatted label (e.g. "1.5 MB") on success, or ``null`` when the size can't
+// be determined — so a file whose host blocks the HEAD probe is asked about
+// only once per widget lifetime, not on every re-render. Never touches
+// localStorage; the widget runs on the customer's page.
+const _fileSizeCache = new Map();
+
+// Format a byte count as a compact human label ("512 B", "1.5 MB"). Bytes and
+// KB read as whole numbers; MB and up keep one decimal so "1.5 MB" doesn't
+// collapse to "2 MB". Returns ``null`` for anything unusable so the caller can
+// omit the chip rather than render "NaN".
+const _formatBytes = (bytes) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return null;
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    const rounded = unit <= 1 ? Math.round(value) : Math.round(value * 10) / 10;
+    return `${rounded} ${units[unit]}`;
+};
+
+// Adobe-style document glyph: a white sheet with a folded top-right corner and
+// the file-type label across the body, sitting on the tinted badge. Purely
+// decorative — the surrounding anchor carries the accessible label.
+const _FileGlyph = ({ tint, label }) => (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+            d="M7 2.75h6.19L19 8.56V19a2.25 2.25 0 0 1-2.25 2.25h-9.5A2.25 2.25 0 0 1 5 19V5A2.25 2.25 0 0 1 7 2.75Z"
+            fill="#fff"
+        />
+        <path d="M13 2.9v4.4A1.3 1.3 0 0 0 14.3 8.6h4.4L13 2.9Z" fill="rgba(0,0,0,0.16)" />
+        <text
+            x="11.6"
+            y="17.2"
+            textAnchor="middle"
+            fontSize="4.9"
+            fontWeight="700"
+            letterSpacing="-0.2"
+            fill={tint}
+            style={{ fontFamily: 'inherit' }}
+        >
+            {label}
+        </text>
+    </svg>
+);
+
 const DownloadCard = ({ url, name }) => {
-    const displayName = (typeof name === 'string' && name.trim()) || 'download';
-    const ext = displayName.includes('.') ? displayName.split('.').pop().toUpperCase() : 'FILE';
+    const rawName = (typeof name === 'string' && name.trim()) || 'download';
+    const dotIndex = rawName.lastIndexOf('.');
+    const ext = dotIndex > 0 ? rawName.slice(dotIndex + 1).toUpperCase() : '';
+    const { tint, label } = _FILE_META[ext] || (ext ? { ..._DEFAULT_FILE_META, label: ext } : _DEFAULT_FILE_META);
+    const openable = _OPENABLE_EXTS.has(ext);
+    const action = openable ? 'View' : 'Download';
+
+    // File size is not in the card payload (the backend only stores url + name),
+    // so we probe it client-side with a HEAD request and read Content-Length.
+    // It's a progressive enhancement: when the host blocks HEAD, hides the
+    // header via CORS, or omits Content-Length, ``sizeLabel`` stays null and the
+    // size chip is simply not rendered. React's "reset state on prop change"
+    // pattern (mirroring YouTubeCard) keeps the label correct if the same card
+    // instance is reused for a different URL.
+    const [renderedUrl, setRenderedUrl] = useState(url);
+    const [sizeLabel, setSizeLabel] = useState(() => _fileSizeCache.get(url) ?? null);
+
+    if (renderedUrl !== url) {
+        setRenderedUrl(url);
+        setSizeLabel(_fileSizeCache.get(url) ?? null);
+    }
+
+    useEffect(() => {
+        // Cache hit (success or a cached "unknown") — no probe needed.
+        if (_fileSizeCache.has(url)) return undefined;
+        let cancelled = false;
+        const controller = new AbortController();
+        fetch(url, { method: 'HEAD', signal: controller.signal })
+            .then((res) => {
+                if (!res.ok) return null;
+                const len = res.headers.get('content-length');
+                return len ? _formatBytes(Number(len)) : null;
+            })
+            .then((resolved) => {
+                if (cancelled) return;
+                _fileSizeCache.set(url, resolved);
+                setSizeLabel(resolved);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                // Cache the miss too so we don't re-probe a host that blocks us.
+                _fileSizeCache.set(url, null);
+                setSizeLabel(null);
+            });
+        return () => {
+            cancelled = true;
+            controller.abort();
+        };
+    }, [url]);
 
     return (
         <a
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            // ``download`` is a hint only — cross-origin servers ignore it,
-            // so the browser falls back to native handling (open PDF in a
-            // tab, prompt for save on unknown types). Either behaviour is
-            // acceptable; we just want the click to work everywhere.
-            download={displayName}
-            className="oyechats-media-card oyechats-media-card--download mt-2 flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
-            aria-label={`Download ${displayName}`}
+            // ``download`` is a hint only — cross-origin servers ignore it, so
+            // the browser falls back to native handling. We only set it for
+            // non-viewable types; viewable ones (PDF, images) open in a tab.
+            download={openable ? undefined : rawName}
+            className="oyechats-media-card oyechats-media-card--download group mt-2 flex max-w-full items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 pl-2 pr-2 shadow-sm transition-all hover:border-gray-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
+            aria-label={`${action} ${rawName}${sizeLabel ? `, ${sizeLabel}` : ''}`}
         >
-            <span className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                <FileDown className="h-5 w-5" aria-hidden="true" />
+            <span
+                className="flex h-8 w-8 flex-none items-center justify-center rounded-lg shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]"
+                style={{ backgroundColor: tint }}
+            >
+                <_FileGlyph tint={tint} label={label} />
             </span>
-            <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-sm font-medium text-gray-900">{displayName}</span>
-                <span className="text-xs uppercase tracking-wide text-gray-500">{ext} · Download</span>
+            {/* Title wraps to two lines so long, hyphenated filenames stay
+                readable — ``line-clamp-2`` keeps the card height bounded and
+                ``break-all`` lets the browser wrap mid-hyphen when the
+                filename contains no whitespace (common: kebab-case slugs).
+                Size drops to a small caption below the title so the title
+                gets both lines to itself; it renders only when the HEAD
+                probe surfaced a Content-Length. */}
+            <span className="flex min-w-0 flex-1 flex-col leading-tight">
+                <span className="line-clamp-2 break-all text-sm font-semibold text-gray-900">{rawName}</span>
+                {sizeLabel && <span className="mt-0.5 text-[11px] text-gray-400">{sizeLabel}</span>}
+            </span>
+            <span className="flex-none rounded-md bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-blue-600 transition-colors group-hover:bg-blue-100">
+                {action}
             </span>
         </a>
     );
 };
 
-const MediaCard = ({ card }) => {
-    if (!card || typeof card !== 'object') return null;
-    if (card.type === 'youtube' && typeof card.video_id === 'string' && card.video_id) {
+// Compact secondary chip — one small row per related asset, rendered under
+// the primary card. Purely an opt-in pointer ("here's a related file/video
+// if you want it"); intentionally quiet so it never competes with the
+// primary card for attention. Same visual weight as a caption. Kept
+// self-contained so it renders without pulling in the full DownloadCard /
+// YouTubeCard layouts.
+const _SecondaryChip = ({ item }) => {
+    if (!item || typeof item !== 'object') return null;
+    if (item.type === 'youtube' && typeof item.video_id === 'string' && item.video_id) {
+        const href = item.url || `https://www.youtube.com/watch?v=${item.video_id}`;
+        const label = (typeof item.title === 'string' && item.title.trim()) || 'Related video';
         return (
+            <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="oyechats-media-secondary group mt-1.5 inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-800"
+                aria-label={`Related video: ${label}`}
+            >
+                <span className="flex h-4 w-4 flex-none items-center justify-center rounded-sm bg-red-600 text-[8px] font-bold uppercase leading-none text-white">▶</span>
+                <span className="truncate">
+                    Also available: <span className="font-medium text-gray-700 group-hover:text-gray-900">{label}</span>
+                </span>
+            </a>
+        );
+    }
+    if (item.type === 'download' && typeof item.url === 'string' && item.url) {
+        const label = (typeof item.name === 'string' && item.name.trim()) || 'Related file';
+        return (
+            <a
+                href={item.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="oyechats-media-secondary group mt-1.5 inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500 transition-colors hover:text-gray-800"
+                aria-label={`Related file: ${label}`}
+            >
+                <span className="flex h-4 w-4 flex-none items-center justify-center rounded-sm bg-gray-800 text-[8px] font-bold uppercase leading-none text-white">
+                    PDF
+                </span>
+                <span className="truncate">
+                    Also available: <span className="font-medium text-gray-700 group-hover:text-gray-900">{label}</span>
+                </span>
+            </a>
+        );
+    }
+    return null;
+};
+
+const MediaCard = ({ card, secondary }) => {
+    if (!card || typeof card !== 'object') return null;
+    let primary = null;
+    if (card.type === 'youtube' && typeof card.video_id === 'string' && card.video_id) {
+        primary = (
             <YouTubeCard
                 videoId={card.video_id}
                 durationSeconds={card.duration_seconds}
                 title={card.title}
             />
         );
+    } else if (card.type === 'download' && typeof card.url === 'string' && card.url) {
+        primary = <DownloadCard url={card.url} name={card.name} />;
     }
-    if (card.type === 'download' && typeof card.url === 'string' && card.url) {
-        return <DownloadCard url={card.url} name={card.name} />;
+    if (!primary) {
+        // Unknown card type — silently render nothing so a future backend
+        // addition doesn't break existing widget bundles in the wild.
+        return null;
     }
-    // Unknown card type — silently render nothing so a future backend
-    // addition doesn't break existing widget bundles in the wild.
-    return null;
+    // ``secondary`` is a list (0 or 1 element today) shaped like the primary
+    // ``card`` payload — see ``_pick_secondary_media`` in rag_service.py.
+    // Keeping it as a list means the server can later relax the one-chip cap
+    // without another metadata migration on the wire.
+    const chips = Array.isArray(secondary) ? secondary.filter(Boolean) : [];
+    if (chips.length === 0) return primary;
+    return (
+        <div className="flex flex-col">
+            {primary}
+            {chips.map((item, i) => (
+                <_SecondaryChip
+                    key={
+                        item.type === 'youtube'
+                            ? `yt:${item.video_id}`
+                            : item.type === 'download'
+                                ? `dl:${item.url}`
+                                : `x:${i}`
+                    }
+                    item={item}
+                />
+            ))}
+        </div>
+    );
 };
 
 export default MediaCard;

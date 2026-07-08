@@ -333,15 +333,22 @@ export const discoverCrawlUrls = async (url, botId) => {
  * @param {string} url - The root URL being recrawled
  * @param {string} replaceSource - The bare domain whose existing pages to diff against
  * @param {number|undefined} botId - Optional bot ID scope
- * @returns {Promise<{url: string, replace_source: string, sitemap_total: number, existing_total: number, unchanged: number, new_pages: number, removed_pages: number, capped: boolean, plan_max: number}>}
+ * @param {'full'|'delta'} mode - 'delta' (default) is Standard+ only and returns 403 for
+ *   Free/Starter with detail.error === 'feature_not_available'. 'full' works for any tier
+ *   and previews the total pages a full re-crawl would fetch.
+ * @returns {Promise<{url: string, replace_source: string, mode: string, sitemap_total: number, existing_total: number, unchanged: number, new_pages: number, removed_pages: number, capped: boolean, plan_max: number}>}
  */
-export const diffRecrawl = async (url, replaceSource, botId) => {
+export const diffRecrawl = async (url, replaceSource, botId, mode = 'delta') => {
     try {
         const endpoint = botId ? `/crawl/diff?bot_id=${botId}` : '/crawl/diff';
         // The backend caps HEAD-liveness + sitemap discovery at ~22s each and
         // runs them concurrently, so ~45s gives headroom for TLS + auth +
         // serialization without the client tripping on its own timeout.
-        const response = await api.post(endpoint, { url, replace_source: replaceSource }, { timeout: 60000 });
+        const response = await api.post(
+            endpoint,
+            { url, replace_source: replaceSource, mode },
+            { timeout: 60000 },
+        );
         return response.data;
     } catch (error) {
         console.error('API Error during recrawl diff:', error);
@@ -364,10 +371,11 @@ export const crawlWebsite = async (
     expectedNewPages = null,
     orderedUrls = null,
     maxPages = null,
+    mode = 'delta',
 ) => {
     try {
         const endpoint = botId ? `/crawl?bot_id=${botId}` : '/crawl';
-        const body = { url, use_js: useJs };
+        const body = { url, use_js: useJs, mode };
         if (replaceSource) body.replace_source = replaceSource;
         // Recrawls send the diff's new-page count so the backend pre-flight
         // sizes the credit reservation to (new_pages + buffer) instead of the

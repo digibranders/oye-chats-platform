@@ -232,6 +232,19 @@ export const UPGRADE_INTENTS = {
         ],
         recommendedPlan: 'Standard',
     }),
+    auto_recrawl: () => ({
+        intentKey: 'auto_recrawl',
+        eyebrow: 'Auto-recrawl is a Standard feature',
+        title: 'Keep your knowledge base fresh, automatically',
+        description:
+            'Free and Starter bots crawl once and stop. Upgrade to Standard and OyeChats refreshes every crawled URL for you on a weekly cycle, re-embedding only the pages whose content actually changed.',
+        highlights: [
+            'Weekly auto-refresh of every crawled URL',
+            'Content-diff so unchanged pages skip re-embedding',
+            'Per-bot toggle with a clean run history',
+        ],
+        recommendedPlan: 'Standard',
+    }),
     live_chat_appearance: () => ({
         intentKey: 'live_chat_appearance',
         eyebrow: 'Live chat is a paid feature',

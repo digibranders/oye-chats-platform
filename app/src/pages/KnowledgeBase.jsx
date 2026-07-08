@@ -1,10 +1,12 @@
 import { Fragment, useState, useRef, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye, ChevronsUp, ChevronDown, ChevronRight } from 'lucide-react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { UploadCloud, Link as LinkIcon, FileText, X, CheckCircle2, AlertCircle, Loader2, List as ListIcon, Trash2, Check, RefreshCw, Globe, ExternalLink, Zap, StopCircle, Eye, ChevronsUp, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { uploadDocuments, getDocuments, deleteDocument, getCurrentSubscription, discoverCrawlUrls, diffRecrawl, getRecrawlStatus } from '../services/api';
 import SourcePagesDrawer from '../components/SourcePagesDrawer';
 import AutoRecrawlCard from '../components/AutoRecrawlCard';
+import RecrawlMenu from '../components/RecrawlMenu';
+import CreditCoin from '../components/icons/CreditCoin';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { useCrawl } from '../context/CrawlContext';
@@ -61,10 +63,15 @@ const formatDuration = (seconds) => {
 };
 
 export default function KnowledgeBase() {
+  const navigate = useNavigate();
   const { selectedBot, bots, loading: botsLoading } = useBotContext();
   const { showToast } = useToast();
   const { crawl, startCrawl, cancelCrawl, isActive: isCrawlActive } = useCrawl();
   const { entitlements, refresh: refreshEntitlements } = useEntitlements();
+  // Delta recrawl ("Updated pages only") is a Standard+ perk. The RecrawlMenu
+  // still shows the option to non-entitled tiers so it's discoverable, but
+  // clicks route to /billing instead of the diff endpoint.
+  const canUseDeltaRecrawl = entitlements.planSlug === 'standard' || entitlements.planSlug === 'enterprise';
   const docsLimit = entitlements.limitFor('documents');
   const docsUsed = Number(entitlements.usage?.documents ?? 0);
   const isUnlimitedDocs = docsLimit === -1;
@@ -361,45 +368,98 @@ export default function KnowledgeBase() {
     } finally { setDeletingDoc(null); setConfirmingDelete(null); }
   };
 
-  // Step 1 of recrawl: fetch the URL-level diff (unchanged / new / removed)
-  // and surface it in a confirmation banner. Falls back to a plain confirm if
-  // the diff endpoint fails so the user is never blocked from recrawling.
-  const handleRequestRecrawl = async (docName) => {
+  // Recrawl modes — see RecrawlMenu for the UX. Both handlers reach the
+  // same diff endpoint; only the ``mode`` payload differs. The mode also
+  // determines what ``handleConfirmRecrawl`` sends to /crawl:
+  //   full  → force_reingest=True, no ordered_urls  (recursive re-crawl,
+  //           charge for every page — Free/Starter's only recrawl option)
+  //   delta → force_reingest=False, no ordered_urls (recursive re-crawl,
+  //           pipeline dedup skips unchanged pages so only new/changed
+  //           pages bill — Standard+ perk)
+  const _requestRecrawl = async (docName, mode) => {
     const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
     const replaceSource = docName.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
 
     setRecrawlDiffLoading(docName);
     setRecrawlDiff(null);
     try {
-      const diff = await diffRecrawl(crawlUrl, replaceSource, selectedBot?.id);
-      setRecrawlDiff({ docName, crawlUrl, replaceSource, ...diff });
+      const diff = await diffRecrawl(crawlUrl, replaceSource, selectedBot?.id, mode);
+      setRecrawlDiff({ docName, crawlUrl, replaceSource, mode, ...diff });
       setActiveTab('urls');
     } catch (err) {
       if (err?.status === 429) {
         showToast('error', 'Too many scan requests — please wait a few minutes before scanning again.');
         return;
       }
+      // Plan-gate 403 from the backend — surface the upsell rather than a raw error.
+      const detail = err?.detail || {};
+      if (err?.status === 403 && detail?.error === 'feature_not_available' && detail?.feature === 'delta_recrawl') {
+        showToast('error', 'Updated-pages-only recrawl requires the Standard plan.');
+        navigate('/billing?tab=seats');
+        return;
+      }
       // Network/auth failure — still let the user proceed with a plain confirm.
       const errorMessage = err?.message || err?.detail || (typeof err === 'string' ? err : null);
-      setRecrawlDiff({ docName, crawlUrl, replaceSource, error: true, errorMessage });
+      setRecrawlDiff({ docName, crawlUrl, replaceSource, mode, error: true, errorMessage });
       setActiveTab('urls');
     } finally {
       setRecrawlDiffLoading(null);
     }
   };
 
+  const handleRequestFullRecrawl = (docName) => _requestRecrawl(docName, 'full');
+  const handleRequestDeltaRecrawl = (docName) => _requestRecrawl(docName, 'delta');
+  // Backwards-compat alias — the pre-existing "URL already ingested" submit
+  // path (handleCrawlSubmit) still calls this by name. Default to delta for
+  // entitled tiers so behavior matches the pre-mode-split flow; fall through
+  // to full for tiers that can't use delta so they still get a confirmation
+  // banner instead of a 403.
+  const handleRequestRecrawl = (docName) =>
+    _requestRecrawl(docName, canUseDeltaRecrawl ? 'delta' : 'full');
+
+  const handleUpgradeForDelta = () => {
+    showToast('info', 'Delta recrawl is available on the Standard plan.');
+    navigate('/billing?tab=seats');
+  };
+
   const handleConfirmRecrawl = async () => {
     if (!recrawlDiff) return;
-    const { docName, new_pages: expectedNewPages = null, new_urls: newUrls = [] } = recrawlDiff;
+    const {
+      docName,
+      mode = 'delta',
+      new_pages: newPages = 0,
+      sitemap_total: sitemapTotal = 0,
+      new_urls: newUrls = [],
+      unchanged_urls: unchangedUrls = [],
+      capped = false,
+    } = recrawlDiff;
     setRecrawlDiff(null);
     setRecrawlDiffViewing(null);
-    // Diff-based re-crawl: fetch ONLY the new pages so unchanged pages aren't
-    // re-scraped or re-billed. If nothing is new, there's nothing to do.
-    if (!newUrls.length) {
-      showToast('success', 'Knowledge base is already up to date — no new pages to crawl.');
+    if (mode === 'delta' && newPages === 0) {
+      // Delta mode with zero new URLs still crawls to catch content-changed
+      // pages on existing URLs — the pipeline dedup skips truly unchanged
+      // pages for free. Tell the user what we're doing so they don't think
+      // the button is a no-op.
+      showToast('info', 'Scanning existing pages for content changes — only changed pages will be billed.');
+    }
+    if (mode === 'full' && sitemapTotal === 0) {
+      showToast('error', 'No pages discovered on this website. Try again in a minute.');
       return;
     }
-    await handleRecrawl(docName, expectedNewPages, newUrls);
+    // Prefer the diff's exact URL list over the recursive crawler. Two wins:
+    //   1) Reliability — some sites (bot-detection landing pages, JS-only
+    //      shells) return 0 pages to the recursive Playwright crawl even
+    //      when direct GETs work fine. That path bubbles up as "target site
+    //      unreachable" and torches the whole recrawl. fetch_urls hits each
+    //      URL individually and tolerates partial failures.
+    //   2) Speed — no sitemap re-discovery, no BFS enumeration.
+    // Fall back to the recursive crawler only when the diff was capped
+    // (>500 pages): the diff response's URL lists are truncated at that
+    // point, so passing them would silently drop the tail.
+    const orderedUrls = capped
+      ? null
+      : Array.from(new Set([...(newUrls || []), ...(unchangedUrls || [])])).filter(Boolean);
+    await handleRecrawl(docName, mode, orderedUrls, newPages);
   };
 
   const dismissRecrawlDiff = () => {
@@ -407,7 +467,7 @@ export default function KnowledgeBase() {
     setRecrawlDiffViewing(null);
   };
 
-  const handleRecrawl = async (docName, expectedNewPages = null, orderedUrls = null) => {
+  const handleRecrawl = async (docName, mode = 'delta', orderedUrls = null, expectedNewPages = null) => {
     setRecrawlingDoc(docName);
     const crawlUrl = docName.startsWith('http') ? docName : `https://${docName}`;
     // Normalize to root domain so the backend knows what stale chunks to sweep after success
@@ -418,20 +478,28 @@ export default function KnowledgeBase() {
       setActiveTab('urls');
       // Delegate to CrawlContext — it owns the lifecycle, the global toast
       // follows the user across routes, and the page just observes state.
-      // expectedNewPages comes from the /crawl/diff result and right-sizes
-      // the backend's credit pre-flight so a recrawl with 9 new pages isn't
-      // blocked by the plan's worst-case (e.g. 1200-page) reservation.
       //
-      // orderedUrls (diff-based re-crawl): when set, ONLY these new pages are
-      // fetched + charged — unchanged pages are never re-scraped or re-billed.
+      // orderedUrls (when set) skips the recursive crawler in favor of a
+      // direct fetch of exactly this list — mirrors the pre-recrawl-menu
+      // recrawl flow which was more reliable on JS-shell sites. When null
+      // (diff was capped), the backend runs the recursive crawler instead.
+      //
+      //   full  → backend sets force_reingest=True; pipeline bills every page.
+      //   delta → backend sets force_reingest=False; pipeline dedup skips
+      //           unchanged pages so only new + content-changed pages bill.
       await startCrawl({
         url: crawlUrl,
         botId: selectedBot?.id,
         botName: selectedBot?.name,
         useJs: false,
         replaceSource,
-        expectedNewPages,
-        orderedUrls,
+        mode,
+        orderedUrls: orderedUrls && orderedUrls.length ? orderedUrls : null,
+        // For delta mode with a known-small change set, right-size the
+        // credit pre-flight to the new-page count instead of the plan's
+        // worst-case ceiling. Full mode intentionally passes null so the
+        // pre-flight reserves the whole ordered_urls list (== every page).
+        expectedNewPages: mode === 'delta' && Number.isFinite(expectedNewPages) ? expectedNewPages : null,
       });
     } catch (err) {
       // buildApiError flattens structured FastAPI errors (e.g. 402 insufficient_credits)
@@ -950,15 +1018,26 @@ export default function KnowledgeBase() {
                   className="p-6 rounded-2xl border border-slate-200 dark:border-[#1F2C47]/50 bg-slate-50 dark:bg-[#0B1329] shadow-sm"
                 >
                   <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-[#20274B] text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                      <RefreshCw size={22} className="text-[#6366F1] dark:text-[#818CF8]" />
+                    <div className={cn(
+                      'w-12 h-12 rounded-xl flex items-center justify-center shrink-0',
+                      recrawlDiff.mode === 'delta'
+                        ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                        : 'bg-indigo-50 dark:bg-[#20274B] text-indigo-600 dark:text-indigo-400',
+                    )}>
+                      {recrawlDiff.mode === 'delta'
+                        ? <Sparkles size={22} />
+                        : <RefreshCw size={22} className="text-[#6366F1] dark:text-[#818CF8]" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="text-base font-semibold text-slate-900 dark:text-white leading-tight">
-                        Re-crawl this website?
+                        {recrawlDiff.mode === 'delta'
+                          ? 'Re-crawl only updated pages?'
+                          : 'Re-crawl the entire website?'}
                       </h3>
                       <p className="text-sm text-surface-500 dark:text-[#8F9BB3] mt-1">
-                        This will update your website data with the latest content.
+                        {recrawlDiff.mode === 'delta'
+                          ? "Unchanged pages are free — you'll only be billed for pages whose content changed since the last crawl."
+                          : 'Every discovered page will be re-scraped and re-embedded, and every page will be charged.'}
                       </p>
                       <a
                         href={recrawlDiff.crawlUrl}
@@ -978,8 +1057,10 @@ export default function KnowledgeBase() {
                   {recrawlDiff.error ? (
                     <div className="p-4 rounded-xl border border-rose-200 dark:border-rose-500/20 bg-rose-50/50 dark:bg-rose-500/5 text-rose-700 dark:text-rose-300 text-xs sm:text-sm space-y-1.5">
                       <div>
-                        Couldn&apos;t fetch the page diff. You can still proceed — only
-                        changed pages will be re-embedded.
+                        Couldn&apos;t fetch the page diff. You can still proceed — the
+                        crawl will {recrawlDiff.mode === 'delta'
+                          ? 'skip unchanged pages during ingestion.'
+                          : 're-scrape and re-bill every page.'}
                       </div>
                       {recrawlDiff.errorMessage && (
                         <div className="font-mono text-[11px] leading-snug break-words opacity-80">
@@ -1066,6 +1147,86 @@ export default function KnowledgeBase() {
                         })}
                       </div>
 
+                      {/* Pre-crawl credit warning — full mode only. Delta's
+                          actual bill depends on how many pages the pipeline
+                          detects as content-changed at ingest time, so we
+                          don't invent a number the user can't hold us to.
+                          For full mode the math is exact: sitemap_total ×
+                          cost_per_page = credits_required. Turns red when
+                          the caller can't afford the crawl so the confirm
+                          button below reads as an obvious dead end. */}
+                      {recrawlDiff.mode === 'full' && recrawlDiff.sitemap_total > 0 && (() => {
+                        const perPage = Number(recrawlDiff.cost_per_page ?? 1);
+                        const pages = Number(recrawlDiff.sitemap_total ?? 0);
+                        const required = Number(recrawlDiff.credits_required_full ?? perPage * pages);
+                        const balance = Number(recrawlDiff.balance ?? 0);
+                        const exceeds = Boolean(recrawlDiff.exceeds_balance) || required > balance;
+                        return (
+                          <div
+                            className={cn(
+                              'mt-4 rounded-xl border p-4 flex items-start gap-3',
+                              exceeds
+                                ? 'border-rose-200 dark:border-rose-500/30 bg-rose-50/60 dark:bg-rose-500/5'
+                                : 'border-slate-200 dark:border-[#1E2B4B] bg-white/60 dark:bg-[#0C152B]/40',
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                'shrink-0 w-9 h-9 rounded-lg flex items-center justify-center',
+                                exceeds
+                                  ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                                  : 'bg-primary-500/10 text-primary-600 dark:text-primary-300',
+                              )}
+                            >
+                              <CreditCoin className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className={cn(
+                                'text-sm font-semibold',
+                                exceeds
+                                  ? 'text-rose-700 dark:text-rose-200'
+                                  : 'text-slate-900 dark:text-white',
+                              )}>
+                                {exceeds ? (
+                                  <>
+                                    Not enough credits — this recrawl needs{' '}
+                                    <span className="tabular-nums">{required.toLocaleString()}</span>{' '}
+                                    credit{required === 1 ? '' : 's'}
+                                  </>
+                                ) : (
+                                  <>
+                                    This will charge{' '}
+                                    <span className="tabular-nums">{required.toLocaleString()}</span>{' '}
+                                    credit{required === 1 ? '' : 's'}
+                                  </>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-[#8F9BB3] tabular-nums">
+                                {perPage.toLocaleString()} credit{perPage === 1 ? '' : 's'} per page
+                                {' × '}
+                                {pages.toLocaleString()} page{pages === 1 ? '' : 's'}
+                                {' — '}
+                                you have{' '}
+                                <span className={cn(
+                                  'font-semibold',
+                                  exceeds
+                                    ? 'text-rose-600 dark:text-rose-300'
+                                    : 'text-slate-900 dark:text-white',
+                                )}>
+                                  {balance.toLocaleString()}
+                                </span>{' '}
+                                credit{balance === 1 ? '' : 's'} available
+                              </div>
+                              {exceeds && (
+                                <div className="text-[11px] text-rose-600 dark:text-rose-300/90 pt-1">
+                                  Upgrade your plan or buy a top-up to unlock this recrawl.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
                       {recrawlDiffViewing && (() => {
                         const buckets = {
                           unchanged: { label: 'Unchanged pages', urls: recrawlDiff.unchanged_urls || [], count: recrawlDiff.unchanged },
@@ -1124,13 +1285,33 @@ export default function KnowledgeBase() {
                   )}
 
                   <div className="flex items-center gap-3 mt-6">
-                    <button
-                      type="button"
-                      onClick={handleConfirmRecrawl}
-                      className="flex items-center justify-center bg-primary-600 hover:bg-primary-700 dark:bg-[#4F46E5] dark:hover:bg-[#4338CA] text-white font-medium px-4 py-2 rounded-xl transition-all text-sm shadow-sm"
-                    >
-                      Re-crawl
-                    </button>
+                    {/* Full-mode insufficient-balance is the only case we
+                        can gate up front — delta's actual bill isn't
+                        knowable until ingest. The route enforces the same
+                        gate server-side (402 insufficient_credits), so this
+                        is UX polish, not the security boundary. */}
+                    {(() => {
+                      const isFullBlocked =
+                        recrawlDiff.mode === 'full' && Boolean(recrawlDiff.exceeds_balance);
+                      return (
+                        <button
+                          type="button"
+                          onClick={isFullBlocked ? () => navigate('/billing?tab=seats') : handleConfirmRecrawl}
+                          className={cn(
+                            'flex items-center justify-center font-medium px-4 py-2 rounded-xl transition-all text-sm shadow-sm text-white',
+                            isFullBlocked
+                              ? 'bg-rose-600 hover:bg-rose-700 dark:bg-rose-500 dark:hover:bg-rose-600'
+                              : 'bg-primary-600 hover:bg-primary-700 dark:bg-[#4F46E5] dark:hover:bg-[#4338CA]',
+                          )}
+                        >
+                          {isFullBlocked
+                            ? 'Get more credits'
+                            : recrawlDiff.mode === 'delta'
+                              ? 'Re-crawl changed pages'
+                              : 'Re-crawl all pages'}
+                        </button>
+                      );
+                    })()}
                     <button
                       type="button"
                       onClick={dismissRecrawlDiff}
@@ -1517,20 +1698,13 @@ export default function KnowledgeBase() {
                                   </div>
                                 )}
                                 {isUrl && (
-                                  <div className="relative group">
-                                    <button
-                                      onClick={() => handleRequestRecrawl(doc.name)}
-                                      disabled={recrawlingDoc === doc.name || recrawlDiffLoading === doc.name}
-                                      className="p-1.5 rounded-lg text-surface-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors disabled:opacity-50"
-                                    >
-                                      {recrawlingDoc === doc.name || recrawlDiffLoading === doc.name
-                                        ? <Loader2 size={14} className="animate-spin text-primary-500" />
-                                        : <RefreshCw size={14} />}
-                                    </button>
-                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-surface-900 dark:bg-surface-700 text-white whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
-                                      Re-crawl
-                                    </span>
-                                  </div>
+                                  <RecrawlMenu
+                                    planSlug={entitlements.planSlug}
+                                    loading={recrawlingDoc === doc.name || recrawlDiffLoading === doc.name}
+                                    onFullRecrawl={() => handleRequestFullRecrawl(doc.name)}
+                                    onDeltaRecrawl={() => handleRequestDeltaRecrawl(doc.name)}
+                                    onUpgradeClick={handleUpgradeForDelta}
+                                  />
                                 )}
                                 <div className="relative group">
                                   <button

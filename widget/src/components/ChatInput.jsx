@@ -39,10 +39,14 @@ const ChatInput = ({
     // Mobile keyboard
     onInputFocus,
     onInputBlur,
+    // True once the visitor has sent at least one message. Drives the
+    // mobile-only privacy-notice collapse so the tiny mobile viewport
+    // reclaims the vertical space above the input after the conversation
+    // has started (desktop keeps the notice visible throughout).
+    userHasSent = false,
 }) => {
     const messages = settings?.widget_messages || {};
     const inputPlaceholder = messages.input_placeholder || placeholder || 'Write a message...';
-    const liveChatLabel = messages.live_chat_label || 'Live chat';
 
     const isWaiting = chatMode === 'waiting';
     const isLive = chatMode === 'live';
@@ -183,7 +187,7 @@ const ChatInput = ({
                 message. Hidden in live/waiting modes where the consent has
                 effectively already been given via the handoff flow. */}
             {!isLive && !isWaiting && (
-                <p className="text-[10px] text-gray-400 leading-snug mt-2 px-1">
+                <p className={`text-[10px] text-gray-400 leading-snug mt-2 px-1 ${userHasSent ? 'hidden md:block' : ''}`}>
                     This chat may be monitored and recorded according to our{' '}
                     <a
                         href="https://www.oyechats.com/legal/privacy"
@@ -219,9 +223,6 @@ const ChatInput = ({
                                         />
                                     )}
                                 </span>
-                                <span className={showProminentHandoff ? 'font-semibold' : 'font-normal'}>
-                                    {liveChatLabel}
-                                </span>
                             </button>
                         )}
                         {meetingBookingEnabled && onBookMeeting && (
@@ -233,7 +234,6 @@ const ChatInput = ({
                                 className="flex items-center gap-1 text-[11px] transition-colors cursor-pointer text-gray-400 hover:text-gray-600"
                             >
                                 <CalendarDays size={12} />
-                                <span>Book meeting</span>
                             </button>
                         )}
                     </div>

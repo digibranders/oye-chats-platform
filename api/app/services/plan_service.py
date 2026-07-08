@@ -245,6 +245,50 @@ def enforce_feature(session: Session, client_id: int, feature: str) -> None:
         )
 
 
+# Plans that unlock the "updated pages only" (delta) recrawl mode. Free/Starter
+# get the option in the UI but see an upgrade CTA — the backend enforces the
+# same gate so a forged request from an older tier is still rejected.
+_DELTA_RECRAWL_PLAN_SLUGS: frozenset[str] = frozenset({"standard", "enterprise"})
+
+
+def can_use_delta_recrawl(plan: Plan) -> bool:
+    """Return True iff this plan unlocks delta ("updated pages only") recrawl.
+
+    Delta recrawl fetches every existing URL to compare content hashes and
+    only re-embeds pages that actually changed. Free/Starter tiers always
+    run a full recrawl (every discovered URL is charged), which keeps the
+    delta feature as a concrete Standard upsell.
+    """
+    slug = (plan.slug or "").strip().lower()
+    return slug in _DELTA_RECRAWL_PLAN_SLUGS
+
+
+def enforce_delta_recrawl(session: Session, client_id: int) -> None:
+    """Raise HTTP 403 if the client's plan does not unlock delta recrawl.
+
+    Uses the same error shape as ``enforce_feature`` so the frontend can
+    treat it as any other plan-gated capability. The ``required_plan`` hint
+    lets the upgrade CTA link straight to the right billing target.
+    """
+    from fastapi import HTTPException, status
+
+    plan = get_client_plan(session, client_id)
+    if not can_use_delta_recrawl(plan):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "feature_not_available",
+                "feature": "delta_recrawl",
+                "required_plan": "standard",
+                "message": (
+                    "Delta recrawl (updated pages only) is available on the "
+                    "Standard plan and above. Upgrade to re-crawl only the "
+                    "pages that changed."
+                ),
+            },
+        )
+
+
 def get_current_usage_record(session: Session, client_id: int) -> UsageRecord | None:
     """Get the usage record for the current billing period."""
     now = datetime.now(UTC)

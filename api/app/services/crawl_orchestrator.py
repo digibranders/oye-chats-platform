@@ -103,6 +103,7 @@ async def run_full_crawl(
     max_depth: int | None = None,
     concurrency: int | None = None,
     ordered_urls: list[str] | None = None,
+    force_reingest: bool = False,
 ) -> dict:
     """Execute the full crawl pipeline end-to-end. Returns the result payload.
 
@@ -203,6 +204,7 @@ async def run_full_crawl(
             deduct_reference_id=bot_id,
             embed_progress_cb=lambda done, _total: _report_embed_stream(chunk_offset + done),
             crawl_started_at=started_at,
+            force_reingest=force_reingest,
         )
 
     async def _ingest_consumer() -> None:
@@ -372,6 +374,7 @@ async def run_full_crawl(
                         deduct_reference_id=bot_id,
                         embed_progress_cb=_report_embed,
                         crawl_started_at=started_at,
+                        force_reingest=force_reingest,
                     ),
                 )
             ingest_totals["chunks"] += ingest_result["chunks"]

@@ -1446,7 +1446,7 @@ export default function LiveChat({ embedded = false }) {
                                     : "Your current plan doesn't include live chat. Upgrade to start taking conversations with your visitors."}
                             </p>
                             <button
-                                onClick={() => navigateRouter('/billing')}
+                                onClick={() => navigateRouter('/billing?tab=seats')}
                                 className="inline-flex items-center gap-2 px-6 py-2.5 bg-primary-600 dark:bg-primary-500 text-white rounded-xl text-sm font-medium hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
                             >
                                 <Sparkles className="w-4 h-4" />
@@ -2445,7 +2445,7 @@ export default function LiveChat({ embedded = false }) {
                         </p>
                         <div className="flex flex-col gap-2">
                             <button
-                                onClick={() => { setShowUpgradeModal(false); navigateRouter('/billing'); }}
+                                onClick={() => { setShowUpgradeModal(false); navigateRouter('/billing?tab=seats'); }}
                                 className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-xl bg-primary-600 dark:bg-primary-500 text-white hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
                             >
                                 <Sparkles className="w-4 h-4" />

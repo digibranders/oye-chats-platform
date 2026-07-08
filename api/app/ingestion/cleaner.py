@@ -31,8 +31,26 @@ _YOUTUBE_URL_RE = re.compile(
 # chat. Kept conservative on purpose: only formats a visitor would expect
 # to open or download from a business site.
 _DOWNLOAD_EXTENSIONS = ("pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv", "zip", "rtf", "odt", "ods", "odp")
+# The trailing lookahead pins the extension to a URL terminator, not to
+# a domain label or a longer word. Three failure modes it blocks:
+#   1. ``https://hub.docker.com`` → greedy body backtracked until ``.doc``
+#      matched inside the domain. The ``k`` after ``.doc`` is a letter.
+#   2. ``https://help.xlsx.io/guide`` → ``.xlsx`` matched with ``.io``
+#      still to follow. The ``.i`` after the extension is a domain-label
+#      start (``.`` + letter), not a URL terminator.
+#   3. ``https://cdn.x.com/foo.pdf.backup`` → ``.pdf.backup`` isn't a
+#      PDF; the extension is followed by ``.b`` which is another label.
+# The lookahead rejects a following alphanumeric OR a ``.<alphanumeric>``
+# sequence — but ALLOWS a trailing ``.`` at the end of a sentence
+# (``.pdf.`` followed by whitespace or end of string), which is
+# subsequently swept off by ``_URL_TRAILING_PUNCT`` on the caller side.
+# Result: real URLs — ``foo.pdf``, ``foo.pdf/preview``, ``foo.pdf?v=1``,
+# ``foo.pdf#page=3``, ``foo.pdf.`` at end of sentence — all match; domain
+# labels containing an extension prefix — ``hub.docker.com``,
+# ``help.xlsx.io`` — do not.
 _FILE_URL_RE = re.compile(
     r"https?://[^\s\"'<>()\[\]]+\.(?:" + "|".join(_DOWNLOAD_EXTENSIONS) + r")"
+    r"(?!(?:[A-Za-z0-9]|\.[A-Za-z0-9]))"
     r"(?:\?[^\s\"'<>()\[\]]*)?",
     re.IGNORECASE,
 )
