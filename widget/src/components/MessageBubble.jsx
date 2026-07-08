@@ -1,14 +1,18 @@
-import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useCallback, useEffect, useRef, Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react';
 import BotAvatar from './BotAvatar';
+import ErrorBoundary from './ErrorBoundary';
+import { lazyWithRetry } from '../services/lazyWithRetry';
 import { sanitizeColor } from '../services/sanitize';
 
 // MediaCard (YouTube/downloadable-file cards) is lazy-loaded: it only renders on
 // completed bot replies that carry a media_card, so keeping it out of the Chat
 // chunk keeps the first-open payload lean — consistent with the other on-demand
-// cards (HandoffForm, MeetingBooking) that ChatWindow lazy-imports.
-const MediaCard = lazy(() => import('./MediaCard'));
+// cards (HandoffForm, MeetingBooking) that ChatWindow lazy-imports. lazyWithRetry
+// + the ErrorBoundary at the render site keep a failed card load from taking the
+// whole message (and widget) down — it just renders the answer text without the card.
+const MediaCard = lazyWithRetry(() => import('./MediaCard'));
 
 // Link rendering modes:
 //   1. Inline icon — link text is just an arrow glyph (↗, →, »). Used by the
@@ -373,9 +377,11 @@ const MessageBubble = ({
                             so it only renders on completed replies — never
                             mid-stream — and never on user turns. */}
                         {msg.media_card && !isStreaming && (
-                            <Suspense fallback={null}>
-                                <MediaCard card={msg.media_card} secondary={msg.media_secondary} />
-                            </Suspense>
+                            <ErrorBoundary label="MediaCard" fallback={null}>
+                                <Suspense fallback={null}>
+                                    <MediaCard card={msg.media_card} secondary={msg.media_secondary} />
+                                </Suspense>
+                            </ErrorBoundary>
                         )}
                     </div>
                     {showActions && (

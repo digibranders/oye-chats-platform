@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { getController } from './widget-controller.js'
 
 // Lazy-loaded only on first error or when OYECHATS_DEBUG=true.
@@ -123,7 +124,13 @@ const mount = () => {
   _root = createRoot(target)
   _root.render(
     <StrictMode>
-      <App />
+      {/* Last-resort catch-all: the per-Suspense boundaries inside ChatWindow
+          handle lazy-chunk failures locally, but this guarantees no render
+          throw anywhere in the tree can ever unmount the whole widget and
+          leave the visitor staring at nothing. */}
+      <ErrorBoundary label="root" fallback={null}>
+        <App />
+      </ErrorBoundary>
     </StrictMode>
   )
   // Fire ready on next tick so any synchronous handlers attached during init

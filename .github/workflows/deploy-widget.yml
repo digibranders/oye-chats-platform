@@ -124,6 +124,43 @@ jobs:
               --cache-control="${{ env.IMMUTABLE_CACHE }}"
           done
 
+      # ── Integrity gate: every hashed chunk must be live BEFORE the manifest
+      #    and loader (which reference them) are flipped. This closes the gap
+      #    that shipped a broken widget on 2026-07-08: an R2 503 dropped one
+      #    chunk (oyechats-arrow-right.*.js) mid-upload, yet the manifest still
+      #    went live pointing at it — so a lazy import() 404'd and, with no
+      #    error boundary, unmounted the whole widget. Never point the manifest
+      #    at a chunk the CDN can't serve.
+      - name: Verify all chunks are live on CDN
+        working-directory: widget
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          missing=0
+          for file in dist/app/oyechats-*.js dist/app/oyechats-*.css; do
+            base=$(basename "$file")
+            url="https://cdn.oyechats.com/app/$base"
+            code=""
+            # Retry a few times: a just-PUT immutable object proxies straight
+            # from R2 (cf-cache DYNAMIC), but allow for brief edge propagation.
+            for attempt in 1 2 3 4 5; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" || echo "000")
+              [ "$code" = "200" ] && break
+              sleep $((attempt * 2))
+            done
+            if [ "$code" = "200" ]; then
+              echo "✅ $base"
+            else
+              echo "❌ $base — CDN returned $code (expected 200)"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "❌ $missing chunk(s) missing on the CDN — aborting before manifest/loader go live."
+            exit 1
+          fi
+          echo "✅ All hashed chunks verified live on the CDN."
+
       - name: Upload manifest (mutable)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
