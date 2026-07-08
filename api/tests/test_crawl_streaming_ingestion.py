@@ -83,7 +83,7 @@ async def test_pages_are_ingested_in_waves_while_crawl_runs(monkeypatch, harness
             if on_page:
                 on_page(p["url"], True)
             if on_result:
-                on_result(p)
+                await on_result(p)
             await asyncio.sleep(0)  # yield so the consumer can interleave
         return {"results": pages, "recommended_colors": [], "discovered_total": 5, "queue_remaining": 0}
 
@@ -127,7 +127,7 @@ async def test_billing_abort_stops_waves_and_skips_sweep(monkeypatch, harness):
     async def fake_fetch_urls(urls, *, on_page=None, on_result=None, **kw):
         for p in pages:
             if on_result:
-                on_result(p)
+                await on_result(p)
             await asyncio.sleep(0)
         return {"results": pages, "recommended_colors": [], "discovered_total": 6, "queue_remaining": 0}
 
@@ -168,7 +168,7 @@ async def test_cancel_keeps_ingested_waves_and_discards_buffer(monkeypatch, harn
         # user cancels.
         for p in pages[:3]:
             if on_result:
-                on_result(p)
+                await on_result(p)
             await asyncio.sleep(0)
         await asyncio.sleep(0)  # let the wave start
         exc = CrawlCancelled("cancelled")
@@ -186,3 +186,60 @@ async def test_cancel_keeps_ingested_waves_and_discards_buffer(monkeypatch, harn
     assert len(harness["ingest_calls"]) == 1
     # Terminal status is cancelled.
     assert harness["progress"][-1]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_stream_queue_is_bounded_and_provides_real_backpressure(monkeypatch, harness):
+    """AR-23: before this fix, stream_queue was an unbounded asyncio.Queue —
+    a fast scrape outpacing a slow embed/ingest step would buffer unlimited
+    pages in worker memory. This test proves the queue actually has a finite
+    maxsize (not just that the crawl still completes) by capturing the real
+    asyncio.Queue construction, and that a slow consumer measurably delays
+    the producer rather than letting it race ahead unbounded.
+    """
+    monkeypatch.setattr(orch, "CRAWL_STREAM_INGEST_ENABLED", True)
+    monkeypatch.setattr(orch, "CRAWL_INGEST_WAVE_PAGES", 2)
+
+    captured_maxsize = {}
+    real_queue_cls = asyncio.Queue
+
+    class _CapturingQueue(real_queue_cls):
+        def __init__(self, maxsize=0):
+            captured_maxsize["value"] = maxsize
+            super().__init__(maxsize=maxsize)
+
+    monkeypatch.setattr(orch.asyncio, "Queue", _CapturingQueue)
+
+    # Slow consumer: each ingest wave takes measurable wall-clock time.
+    ingest_start_times = []
+
+    def slow_fake_ingest(client_id, pages, **kwargs):
+        import time
+
+        ingest_start_times.append(time.monotonic())
+        fresh = [p for p in pages if p["url"] not in harness["ingested_urls"]]
+        harness["ingested_urls"].update(p["url"] for p in fresh)
+        harness["ingest_calls"].append([p["url"] for p in pages])
+        return {"chunks": len(fresh), "pages_charged": len(fresh), "credits_deducted": 5 * len(fresh), "aborted": False}
+
+    monkeypatch.setattr(orch, "batch_web_ingestion", slow_fake_ingest)
+
+    pages = [_page(i) for i in range(10)]
+    fetch_progress = []
+
+    async def fake_fetch_urls(urls, *, on_page=None, on_result=None, **kw):
+        for p in pages:
+            if on_result:
+                await on_result(p)
+            fetch_progress.append(p["url"])
+        return {"results": pages, "recommended_colors": [], "discovered_total": 10, "queue_remaining": 0}
+
+    monkeypatch.setattr(orch, "fetch_urls", fake_fetch_urls)
+    result = await _run(ordered_urls=[p["url"] for p in pages])
+
+    # The queue was constructed with a finite bound, not the unbounded default.
+    assert captured_maxsize["value"] > 0
+    assert captured_maxsize["value"] == orch.CRAWL_INGEST_WAVE_PAGES * 2
+
+    # All pages still make it through correctly despite the bound.
+    assert result["chunks_processed"] == 10

@@ -156,14 +156,29 @@ async def run_full_crawl(
     # a wave already ingested is skipped by the hash check for free. So the
     # recursive-crawl path (which can't stream) and any page that slips past
     # the queue are still ingested exactly once.
-    stream_queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    #
+    # AR-23: bounded to a small multiple of the wave size. Fetch throughput
+    # structurally outpaces embed throughput for any reasonably-sized site
+    # (10-15 concurrent HTTP fetches vs. a shared, rate-limited embed budget),
+    # so an unbounded queue here means the mismatch shows up as unbounded
+    # worker-process memory growth instead of real backpressure. `_on_result`
+    # is now async and awaited by the provider (spider_service.py /
+    # jina_service.py) from inside its own per-page fetch coroutine, so
+    # `await stream_queue.put(page)` naturally suspends just THAT page's
+    # fetch slot when the queue is full — other concurrent fetches (bounded
+    # by the provider's own semaphore) keep running, and the event loop is
+    # never blocked.
+    stream_queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=CRAWL_INGEST_WAVE_PAGES * 2)
     ingest_totals = {"chunks": 0, "pages_charged": 0, "credits_deducted": 0}
     billing_aborted = False  # insufficient credits / kill switch → stop embedding
     streaming = CRAWL_STREAM_INGEST_ENABLED
 
-    def _on_result(page: dict) -> None:
-        """Provider callback (event-loop thread): queue a finished page."""
-        stream_queue.put_nowait(page)
+    async def _on_result(page: dict) -> None:
+        """Provider callback — awaited from inside the provider's per-page
+        fetch coroutine (see spider_service.py/jina_service.py). Suspends
+        (does not block the event loop) once the bounded queue is full,
+        providing real producer-side backpressure."""
+        await stream_queue.put(page)
 
     def _report_embed_stream(done_cum: int) -> None:
         """Live cumulative embed progress while the scrape may still be running."""
@@ -236,7 +251,9 @@ async def run_full_crawl(
             return
         if discard_pending:
             billing_aborted = True
-        stream_queue.put_nowait(None)
+        # await, not put_nowait — the queue is now bounded (AR-23) and could
+        # legitimately be full at this exact moment.
+        await stream_queue.put(None)
         await consumer
 
     consumer_task: asyncio.Task | None = None

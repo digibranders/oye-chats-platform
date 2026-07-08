@@ -16,7 +16,7 @@ only for signature parity with the Spider provider.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -30,8 +30,9 @@ _TIMEOUT = 60.0
 # the crawl fallback reports live progress the same way the primary does.
 PageProgressCallback = Callable[[str, bool], None]
 # Full page dict per successful page, as it lands — mirrors spider_service so
-# streaming ingestion works identically on the fallback path.
-PageResultCallback = Callable[[dict], None]
+# streaming ingestion works identically on the fallback path. Async (AR-23) —
+# see spider_service.py's PageResultCallback docstring for why.
+PageResultCallback = Callable[[dict], Awaitable[None]]
 
 
 def _empty() -> dict:
@@ -86,7 +87,7 @@ async def fetch_urls(
                 on_page(url, page is not None)
         if on_result is not None and page is not None:
             with contextlib.suppress(Exception):
-                on_result(page)
+                await on_result(page)
         return page
 
     try:

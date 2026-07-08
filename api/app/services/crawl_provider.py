@@ -25,7 +25,7 @@ provider-agnostic.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from app.config import JINA_FALLBACK_ENABLED
 from app.services.crawler_service import CrawlerError
@@ -63,7 +63,7 @@ async def crawl_website(
     use_js: bool = False,
     client_id: int | None = None,
     on_page: Callable[[str, bool], None] | None = None,
-    on_result: Callable[[dict], None] | None = None,
+    on_result: Callable[[dict], Awaitable[None]] | None = None,
     max_depth: int | None = None,
     concurrency: int | None = None,
 ) -> dict:
