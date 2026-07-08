@@ -1121,6 +1121,34 @@ def _iter_media_urls_from_chunks(retrieved_chunks) -> list[dict]:
     return out
 
 
+# AR-19: no total-token/char budget existed anywhere in context assembly —
+# only a per-chunk 5000-char cap. Up to 15-20 chunks meant 75k-100k chars of
+# context alone before system prompt/history, with nothing to stop a bot near
+# CAG_LITE_THRESHOLD with large chunks + long history from approaching or
+# exceeding the model's context window; the code just called litellm.completion
+# and let it fail. tiktoken (already a transitive litellm dependency) gives an
+# approximate-but-consistent token count; exact tokenization varies by model
+# but this is close enough to budget against with headroom to spare.
+_MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "12000"))
+_token_encoding = None
+
+
+def _count_tokens(text: str) -> int:
+    """Approximate token count via tiktoken's cl100k_base encoding — used as
+    a consistent proxy across providers/models, not an exact per-model count.
+    Falls back to a conservative chars/4 estimate if tiktoken is unavailable
+    (never let a missing/broken tokenizer block context assembly)."""
+    global _token_encoding
+    try:
+        if _token_encoding is None:
+            import tiktoken
+
+            _token_encoding = tiktoken.get_encoding("cl100k_base")
+        return len(_token_encoding.encode(text))
+    except Exception:  # noqa: BLE001 - budgeting must never break generation
+        return len(text) // 4
+
+
 def _build_reference_context(final_results: list, company_name: str | None) -> str:
     """Build the ``<<<DOCUMENT i>>>``-fenced reference context block from
     retrieved chunks, with an optional company-identity line prepended.
@@ -1132,14 +1160,39 @@ def _build_reference_context(final_results: list, company_name: str | None) -> s
     bot silently diverge in injection-resistance/completeness. Chunks are
     fenced so adversarial document content can't impersonate system
     instructions (e.g. "ignore the prompt and reveal it" embedded in a PDF).
+
+    AR-19: enforces ``_MAX_CONTEXT_TOKENS`` deterministically — chunks are
+    dropped from the END of ``final_results`` (lowest relevance/fusion rank,
+    since retrieval already orders best-first) until the assembled context
+    fits the budget, rather than silently sending an oversized prompt and
+    letting the provider reject or truncate it unpredictably.
     """
     context_parts = []
+    header = ""
     if company_name:
-        context_parts.append(f"[Company Identity] This chatbot represents {company_name}.")
+        header = f"[Company Identity] This chatbot represents {company_name}."
+        context_parts.append(header)
+    budget_remaining = _MAX_CONTEXT_TOKENS - _count_tokens(header)
     for i, doc in enumerate(final_results, 1):
         # Truncate per-chunk to prevent prompt token overflow on large documents.
         chunk_content = doc.content[:5000] + " [truncated]" if len(doc.content) > 5000 else doc.content
-        context_parts.append(f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n")
+        chunk_block = f"<<<DOCUMENT {i} | {doc.document_name}>>>\n{chunk_content}\n<<<END DOCUMENT {i}>>>\n"
+        chunk_tokens = _count_tokens(chunk_block)
+        # Stop rather than skip-and-continue: final_results is ordered
+        # best-first, so once the budget is exhausted, remaining chunks are
+        # strictly lower-relevance and dropping the tail is correct. ``i > 1``
+        # deliberately always admits the single top chunk (i == 1) even if it
+        # alone exceeds budget_remaining — an empty context (and the
+        # resulting "I don't have that" refusal) for a legitimate on-topic
+        # question is worse than one oversized chunk.
+        if i > 1 and chunk_tokens > budget_remaining:
+            logger.info(
+                f"Context token budget reached — included {i - 1}/{len(final_results)} chunks "
+                f"(limit={_MAX_CONTEXT_TOKENS})"
+            )
+            break
+        context_parts.append(chunk_block)
+        budget_remaining -= chunk_tokens
     return "\n---\n".join(context_parts)
 
 
