@@ -20,6 +20,16 @@ The bucket uses *reservation* semantics: an ``acquire`` that can't be satisfied
 now still succeeds, going into token debt and returning how long the caller must
 sleep before proceeding. Concurrent callers therefore queue fairly and the
 aggregate rate converges on the configured ceiling, with no re-check spin loop.
+
+AR-45 (decision, not a gap): this limiter protects shared Gemini quota
+project-wide — it bounds LATENCY (how fast requests are paced), not any one
+tenant's total spend VOLUME. That's intentional, not missing: the credit
+ledger is the actual per-tenant cost ceiling (every crawled page charges
+credits at ingestion time), and AR-41 (``pipeline._cap_crawled_page_content``)
+bounds the worst-case embed-call count per credit-charged page. See the
+``_UNLIMITED_PLAN_SAFETY_CEILING`` comment in ``document_routes.py`` for the
+full evaluation of whether a separate per-billing-period embedded-chunk quota
+is also needed (deferred pending real usage evidence).
 """
 
 import logging
