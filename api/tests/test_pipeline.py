@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from app.ingestion.pipeline import (
+    _MAX_CRAWLED_PAGE_CHARS,
+    _cap_crawled_page_content,
     _extract_title_from_markdown,
     batch_web_ingestion,
     calculate_hash,
@@ -255,7 +257,36 @@ class TestRunFolderIngestion:
 # ── run_web_ingestion ────────────────────────────────────────────────────────
 
 
+# ── Crawled page content cap (AR-41) ─────────────────────────────────────────
+
+
+class TestCapCrawledPageContent:
+    def test_short_content_is_unchanged(self):
+        content = "a" * 100
+        assert _cap_crawled_page_content(content, "https://a.test") == content
+
+    def test_oversized_content_is_truncated_to_the_cap(self):
+        content = "a" * (_MAX_CRAWLED_PAGE_CHARS + 1000)
+        result = _cap_crawled_page_content(content, "https://a.test")
+        assert len(result) == _MAX_CRAWLED_PAGE_CHARS
+
+    def test_content_exactly_at_the_cap_is_unchanged(self):
+        content = "a" * _MAX_CRAWLED_PAGE_CHARS
+        assert _cap_crawled_page_content(content, "https://a.test") == content
+
+
 class TestRunWebIngestion:
+    def test_oversized_content_is_capped_before_ingestion(self):
+        oversized = "a" * (_MAX_CRAWLED_PAGE_CHARS + 1000)
+        with patch("app.ingestion.pipeline._ingest_document", return_value=1) as mock_ingest:
+            run_web_ingestion(1, "https://example.com", oversized)
+
+        # arg 2 is `full_text`, arg 3 is `pages_data` — both must see the
+        # capped content, not the original oversized string.
+        args = mock_ingest.call_args[0]
+        assert len(args[2]) == _MAX_CRAWLED_PAGE_CHARS
+        assert len(args[3][0]["text"]) == _MAX_CRAWLED_PAGE_CHARS
+
     def test_ingests_url_content(self):
         with patch("app.ingestion.pipeline._ingest_document", return_value=10) as mock_ingest:
             result = run_web_ingestion(1, "https://example.com/page", "# Title\nContent here", bot_id=5)
@@ -286,6 +317,24 @@ class TestBatchWebIngestion:
     def test_empty_pages_returns_zero(self):
         result = batch_web_ingestion(1, [])
         assert result == {"chunks": 0, "pages_charged": 0, "credits_deducted": 0, "aborted": False}
+
+    def test_oversized_page_content_is_capped_before_cleaning(self):
+        session = MagicMock()
+        oversized = "a" * (_MAX_CRAWLED_PAGE_CHARS + 1000)
+        captured = {}
+
+        def capture_clean_text(text):
+            captured["len"] = len(text)
+            return text
+
+        with (
+            patch("app.ingestion.pipeline.get_session", return_value=_session_ctx(session)),
+            patch("app.ingestion.pipeline.clean_text", side_effect=capture_clean_text),
+            patch("app.ingestion.pipeline.is_document_processed", return_value=True),
+        ):
+            batch_web_ingestion(1, [{"url": "https://a.com", "content": oversized}])
+
+        assert captured["len"] == _MAX_CRAWLED_PAGE_CHARS
 
     def test_skips_already_processed(self):
         session = MagicMock()

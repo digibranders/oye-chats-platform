@@ -29,6 +29,31 @@ _TITLE_PATTERN = re.compile(r"^#\s+(.+)", re.MULTILINE)
 # present so those pages still carry a meaningful title metadata.
 _TITLE_FALLBACK_PATTERN = re.compile(r"^##\s+(.+)", re.MULTILINE)
 
+# AR-41: discovery fetches are size-capped (5MB/50MB via fetch_text_safely),
+# but the actual crawled page BODY (Spider/Jina scrape result) had no size
+# cap before clean_text/chunk_text/embed_chunks. A pathologically large page
+# (a mis-rendered SPA dump, or a maliciously crafted one) produced unbounded
+# chunks and embed calls for a single page — consuming disproportionate
+# embed-RPM quota — while the credit ledger still charged only one page's
+# worth, a cost/quota mismatch. 750KB is comfortably above any legitimate
+# marketing/docs page's text content (a 750KB *cleaned-text* page would
+# already be tens of thousands of words) while bounding the pathological case.
+_MAX_CRAWLED_PAGE_CHARS = 750_000
+
+
+def _cap_crawled_page_content(content: str, url: str) -> str:
+    """Truncate a single crawled page's raw content to ``_MAX_CRAWLED_PAGE_CHARS``,
+    logging when truncation actually occurs."""
+    if len(content) <= _MAX_CRAWLED_PAGE_CHARS:
+        return content
+    logger.warning(
+        "Crawled page content exceeds %d chars (%d) — truncating: %s",
+        _MAX_CRAWLED_PAGE_CHARS,
+        len(content),
+        url,
+    )
+    return content[:_MAX_CRAWLED_PAGE_CHARS]
+
 
 def _extract_title_from_markdown(content: str) -> str | None:
     """Extract the first top-level heading from markdown content as a page title."""
@@ -327,6 +352,7 @@ def run_web_ingestion(client_id: int, url: str, content: str, bot_id: int | None
     logger.info(f"Processing URL: {url} for client {client_id}, bot {bot_id}")
 
     try:
+        content = _cap_crawled_page_content(content, url)
         # Extract page title from markdown content
         title = _extract_title_from_markdown(content)
         meta = {"page": 1, "url": url}
@@ -411,7 +437,7 @@ def batch_web_ingestion(
 
         for page in pages:
             url = page["url"]
-            content = page["content"]
+            content = _cap_crawled_page_content(page["content"], url)
 
             # Clean and hash for dedup — and chunk on the SAME cleaned text so
             # the dedup fingerprint matches what's actually stored. Mismatched
