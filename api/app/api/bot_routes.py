@@ -439,12 +439,22 @@ def get_bot_settings_public(request: Request, bot: Bot = Depends(get_current_bot
 
 
 def _build_public_cta_options(bot) -> dict:
-    """Build sanitized CTA options for the widget (no scoring rubric exposed)."""
+    """Build sanitized CTA options for the widget (no scoring rubric exposed).
+
+    BR-01: previously hardcoded to BANT's own dimension names
+    (need/timeline/authority/budget) regardless of the bot's actual
+    ``framework`` — a MEDDIC/CHAMP/GPCTBA+C&I bot's CTA-enabled dimensions
+    (e.g. ``economic_buyer``, ``champion``) were silently never sent to the
+    widget at all, no matter how the admin configured ``cta_enabled``.
+    Iterates the bot's real framework dimensions instead.
+    """
     from app.services.lead_service import get_bant_config
+    from app.services.qualification_service import framework_dimension_keys
 
     config = get_bant_config(bot)
+    dimensions = framework_dimension_keys(config) or ["need", "timeline", "authority", "budget"]
     cta_options = {}
-    for dim in ["need", "timeline", "authority", "budget"]:
+    for dim in dimensions:
         dim_config = config.get(dim, {})
         if dim_config.get("cta_enabled", False):
             cta_options[dim] = {

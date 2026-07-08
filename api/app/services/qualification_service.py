@@ -350,6 +350,13 @@ def _dimension_keys(framework_config: dict) -> list[str]:
     return keys
 
 
+def framework_dimension_keys(framework_config: dict) -> list[str]:
+    """Public wrapper over ``_dimension_keys`` for cross-module callers
+    (e.g. ``lead_service``) that need to iterate a framework's actual
+    dimension names instead of assuming BANT's need/timeline/authority/budget."""
+    return _dimension_keys(framework_config)
+
+
 def get_framework_config(bot: Bot | None) -> dict:
     cfg = deepcopy(bot.bant_config) if (bot and bot.bant_config) else {}
     framework = _framework_name(bot)

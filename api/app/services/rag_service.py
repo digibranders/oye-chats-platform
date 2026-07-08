@@ -38,7 +38,7 @@ from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import generate_response, generate_response_checked, generate_response_stream
-from app.services.qualification_service import get_framework_config, get_tier
+from app.services.qualification_service import calculate_composite_score, get_framework_config, get_tier
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
 
@@ -2316,13 +2316,20 @@ def _background_bant_extraction(
             chat_session.dimension_scores = dimension_scores
             chat_session.qualification_framework = config.get("framework", "bant")
 
-            # Recalculate composite fields
-            chat_session.bant_score = (
-                (chat_session.bant_need_score or 0)
-                + (chat_session.bant_budget_score or 0)
-                + (chat_session.bant_authority_score or 0)
-                + (chat_session.bant_timeline_score or 0)
-            )
+            # Recalculate composite fields — framework-aware (BR-01).
+            #
+            # The legacy sum of the four bant_*_score columns only ever
+            # reflected the BANT preset: score_field_map above only writes
+            # those columns for dims literally named need/timeline/authority/
+            # budget, so for MEDDIC/CHAMP/GPCTBA+C&I bots this sum was always
+            # 0 — every lead on a non-BANT framework showed score 0/tier
+            # "unqualified" forever, even though dimension_scores (just above)
+            # was correctly populated. calculate_composite_score reads
+            # dimension_scores against the active framework's own weights, so
+            # it produces the right composite for every framework, including
+            # BANT (where it also normalizes to a true 0-100 scale instead of
+            # a raw point sum — a strict improvement, see qualification tests).
+            chat_session.bant_score = calculate_composite_score(dimension_scores, config)
 
             thresholds = config.get("thresholds")
             chat_session.bant_tier = get_tier(chat_session.bant_score, thresholds=thresholds)
