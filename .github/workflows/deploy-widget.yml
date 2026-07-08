@@ -73,13 +73,13 @@ jobs:
           echo "✅ Build outputs verified — loader ${LOADER_SIZE} bytes, entry chunk: $ENTRY"
 
       - name: Install wrangler
-        run: npm install --no-save wrangler@3
+        run: npm install --no-save wrangler@4
 
       # ── Versioned backup of loader (rollback safety) ──
-      # Note: `wrangler r2 object put` defaults to remote storage in current
-      # wrangler 3.x; `--local` is the opt-in for the local dev simulator.
-      # Older versions had a `--remote` flag — it was removed without a
-      # deprecation cycle, so we explicitly do NOT pass it.
+      # Note: on wrangler 4, `wrangler r2 object put` DEFAULTS TO LOCAL storage
+      # (it prints "Resource location: local" and silently uploads nothing to
+      # the real bucket). scripts/r2-put.sh forces `--remote` so every upload
+      # targets the production R2 bucket regardless of wrangler's default.
       - name: Upload versioned loader backup
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}

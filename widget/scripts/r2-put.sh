@@ -10,6 +10,12 @@
 #
 # Usage: mirrors `wrangler r2 object put` — all args are forwarded verbatim:
 #   bash scripts/r2-put.sh "$BUCKET/app/$base" --file="$file" --content-type=...
+#
+# --remote is forced here on purpose: wrangler 4's `r2 object put` defaults to
+# LOCAL storage ("Resource location: local") and silently succeeds without
+# touching the real bucket. Omitting --remote would make every deploy a no-op
+# that reports success. Passing it explicitly keeps behaviour correct and
+# version-independent (wrangler 3.114, which defaulted to remote, accepts it too).
 set -euo pipefail
 
 max_attempts=6
@@ -19,7 +25,7 @@ max_delay=30
 attempt=1
 while true; do
   # Run in a condition context so `set -e` doesn't abort on a failed attempt.
-  if npx wrangler r2 object put "$@"; then
+  if npx wrangler r2 object put --remote "$@"; then
     exit 0
   fi
   status=$?
