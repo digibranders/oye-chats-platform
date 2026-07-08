@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { X, Plus, Clock, MoreHorizontal, Mail, CheckCircle2, AlertCircle, User, Phone, MessageSquare, LogOut, Star, XCircle, ChevronDown, Headphones } from 'lucide-react';
 import { sendMessageStream, getChatHistory, submitLeadCapture, requestHandoff, cancelHandoff, getSessionStatus, getLeadInfo, submitOfflineMessage, collectPageContext, sendBehavioralSignals, sendTimeOnPage, submitMeetingBooked, sendTranscriptEmail, getPendingConnectRequest, respondToConnectRequest, submitFeedback } from '../services/api';
 import { getController } from '../widget-controller.js';
@@ -14,13 +14,18 @@ import WelcomeScreen from './WelcomeScreen';
 import QualificationCTA from './QualificationCTA';
 import OperatorJoinedToast from './OperatorJoinedToast';
 import ConnectRequestPopup from './ConnectRequestPopup';
+import ErrorBoundary from './ErrorBoundary';
+import ChunkLoadNotice from './ChunkLoadNotice';
+import { lazyWithRetry } from '../services/lazyWithRetry';
 
 // Lazy-loaded — only fetched when the user actually triggers handoff, lead capture, or booking.
-// Keeps the initial chat chunk lean.
-const LeadCaptureForm = lazy(() => import('./LeadCaptureForm'));
-const HandoffForm = lazy(() => import('./HandoffForm'));
-const LiveChatMode = lazy(() => import('./LiveChatMode'));
-const MeetingBooking = lazy(() => import('./MeetingBooking'));
+// Keeps the initial chat chunk lean. lazyWithRetry + the ErrorBoundary wrapping each
+// <Suspense> below mean a transient (or missing) chunk degrades locally instead of
+// unmounting the whole widget.
+const LeadCaptureForm = lazyWithRetry(() => import('./LeadCaptureForm'));
+const HandoffForm = lazyWithRetry(() => import('./HandoffForm'));
+const LiveChatMode = lazyWithRetry(() => import('./LiveChatMode'));
+const MeetingBooking = lazyWithRetry(() => import('./MeetingBooking'));
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.oyechats.com';
 
@@ -2070,12 +2075,14 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     here — the form renders content only, not its own chrome. */}
                 {showLeadForm && (
                     <div className="absolute inset-0 z-20 pointer-events-auto">
-                        <Suspense fallback={null}>
-                            <LeadCaptureForm
-                                settings={settings}
-                                onSubmit={handleLeadFormSubmit}
-                            />
-                        </Suspense>
+                        <ErrorBoundary label="LeadCaptureForm" fallback={(retry) => <ChunkLoadNotice onRetry={retry} />}>
+                            <Suspense fallback={null}>
+                                <LeadCaptureForm
+                                    settings={settings}
+                                    onSubmit={handleLeadFormSubmit}
+                                />
+                            </Suspense>
+                        </ErrorBoundary>
                     </div>
                 )}
 
@@ -2145,15 +2152,17 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
                             items.push(
                                 <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
-                                    <Suspense fallback={null}>
-                                        <HandoffForm
-                                            settings={settings}
-                                            onSubmit={handleHandoffSubmit}
-                                            onCancel={handleHandoffCancel}
-                                            existingLeadInfo={existingLeadInfo}
-                                            status={msg.status}
-                                        />
-                                    </Suspense>
+                                    <ErrorBoundary label="HandoffForm" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the connect form." />}>
+                                        <Suspense fallback={null}>
+                                            <HandoffForm
+                                                settings={settings}
+                                                onSubmit={handleHandoffSubmit}
+                                                onCancel={handleHandoffCancel}
+                                                existingLeadInfo={existingLeadInfo}
+                                                status={msg.status}
+                                            />
+                                        </Suspense>
+                                    </ErrorBoundary>
                                 </div>
                             );
                         } else if (msg.type === 'handoff_form') {
@@ -2686,6 +2695,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 here it pins to the widget shell (the fixed theme container)
                 and stays visible regardless of scroll position. */}
             {showBooking && calendlyUrl && (
+                <ErrorBoundary label="MeetingBooking" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the booking form." />}>
                 <Suspense fallback={null}>
                 <MeetingBooking
                     calendlyUrl={calendlyUrl}
@@ -2724,6 +2734,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     }}
                 />
                 </Suspense>
+                </ErrorBoundary>
             )}
 
             {/* ── Unified ChatInput — hidden when any form is active ── */}
@@ -2772,6 +2783,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
             {/* ── Headless LiveChatMode — WebSocket + file upload logic only ── */}
             {isLiveMode && sessionId && (
+                <ErrorBoundary label="LiveChatMode" fallback={null}>
                 <Suspense fallback={null}>
                     <LiveChatMode
                         sessionId={sessionId}
@@ -2793,6 +2805,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                         onUploadProgressChange={setUploadProgress}
                     />
                 </Suspense>
+                </ErrorBoundary>
             )}
 
             {/* ── Transcript Email Modal ── */}
