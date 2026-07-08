@@ -7,6 +7,15 @@ L2-normalized vectors matching the pgvector column.
 At 768-dim the API returns Matryoshka-truncated but *un-normalized* vectors
 (verified: raw L2 norm ~0.58), so cosine similarity requires client-side
 normalization — we do it here.
+
+AR-28: this is the ONLY embedding provider in the codebase today — there is
+no jina-embeddings-v3 provider, config flag, or eval harness anywhere in the
+repo, despite a standing engineering note about evaluating one (cheaper,
+true multi-text batching, same 768-dim Matryoshka shape so no pgvector
+schema change). That comparison has never been started; if it is picked up,
+extend the golden-set retrieval eval in `tests/test_golden_retrieval_eval.py`
+(AR-22) to run against both providers' embeddings on the same fixture before
+switching, and keep Gemini as the fallback.
 """
 
 import contextlib
