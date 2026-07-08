@@ -1359,3 +1359,44 @@ class TestBuildDateHints:
         hints = _build_date_hints(text, date(2026, 7, 2))
 
         assert hints.count("2025-03-15") == 1
+
+
+# ── _normalize_question_for_cache (AR-25) ────────────────────────────────────
+
+
+class TestNormalizeQuestionForCache:
+    def test_trailing_punctuation_variants_produce_same_key(self):
+        from app.services.rag_service import _normalize_question_for_cache
+
+        base = _normalize_question_for_cache("What's your price")
+        assert _normalize_question_for_cache("What's your price?") == base
+        assert _normalize_question_for_cache("What's your price???") == base
+        assert _normalize_question_for_cache("What's your price.") == base
+
+    def test_case_and_surrounding_whitespace_are_ignored(self):
+        from app.services.rag_service import _normalize_question_for_cache
+
+        base = _normalize_question_for_cache("What's your price?")
+        assert _normalize_question_for_cache("  WHAT'S YOUR PRICE?  ") == base
+
+    def test_internal_whitespace_runs_are_collapsed(self):
+        from app.services.rag_service import _normalize_question_for_cache
+
+        base = _normalize_question_for_cache("What's your price?")
+        assert _normalize_question_for_cache("What's   your\tprice?") == base
+
+    def test_smart_quotes_normalize_to_ascii_equivalents(self):
+        from app.services.rag_service import _normalize_question_for_cache
+
+        base = _normalize_question_for_cache("What's your price?")
+        assert _normalize_question_for_cache("What’s your price?") == base
+        assert _normalize_question_for_cache("“What is your price”") == _normalize_question_for_cache(
+            '"What is your price"'
+        )
+
+    def test_genuinely_different_questions_produce_different_keys(self):
+        from app.services.rag_service import _normalize_question_for_cache
+
+        assert _normalize_question_for_cache("What's your price?") != _normalize_question_for_cache(
+            "What's your refund policy?"
+        )

@@ -1449,6 +1449,32 @@ def _trim_results(results: list, top_k: int = 15) -> list:
 _COMPANY_SYNONYMS = {"company", "organization", "agency", "firm", "business", "brand"}
 
 
+# AR-25: QA cache keys were an exact SHA256 hash of the lowercased+stripped
+# question with no other normalization — "What's your price?", "whats your
+# price", and "What's your price???" each paid the full two-LLM-call pipeline
+# (rewrite + relevance gate + generation) as three distinct cache misses,
+# despite being trivially the same question. This normalizes punctuation and
+# whitespace variance before hashing — a real, safe, low-risk win. It is
+# deliberately NOT full semantic/embedding-similarity caching (paraphrases
+# with different words, e.g. "how much does it cost" vs "what's the price",
+# still miss) — that requires a new subsystem (stored embeddings per cache
+# entry, a similarity search, threshold tuning, and the correctness risk of a
+# false-positive match serving the wrong cached answer) and is a larger,
+# separate follow-up, not a safe same-pass change.
+_CACHE_KEY_TRAILING_PUNCT_RE = re.compile(r"[?!.,;:]+$")
+_CACHE_KEY_WHITESPACE_RE = re.compile(r"\s+")
+_SMART_QUOTE_TRANSLATION = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+
+
+def _normalize_question_for_cache(question: str) -> str:
+    """Normalize punctuation/whitespace variance before hashing for the QA
+    cache key — see the module comment above for scope and rationale."""
+    normalized = question.lower().strip().translate(_SMART_QUOTE_TRANSLATION)
+    normalized = _CACHE_KEY_WHITESPACE_RE.sub(" ", normalized)
+    normalized = _CACHE_KEY_TRAILING_PUNCT_RE.sub("", normalized).strip()
+    return normalized
+
+
 def _expand_company_query(question: str, company_name: str | None) -> str:
     """Append the actual company name when the question uses generic company terms.
 
@@ -3479,7 +3505,7 @@ def rag_pipeline(
                 }
 
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
-            _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
+            _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
             if _cache_key:
                 cached_qa = cache_get(_cache_key)
@@ -3969,6 +3995,22 @@ def rag_pipeline(
                 # decision the LLM must re-make (as the KB grows, the best
                 # match for the same question changes). Caching would
                 # freeze a wrong-video card forever until manual invalidation.
+                #
+                # AR-25 investigated narrowing this to "only skip when
+                # _media_card is not None for THIS turn" (caching the text
+                # answer and re-deciding the card fresh on every hit), but
+                # media-card selection is extracted from the LLM's own
+                # generated sentinel token (_extract_media_card), not an
+                # independent deterministic function — there is no fresh,
+                # LLM-free "decide card" step to run on a cache hit today.
+                # A cache hit currently yields the stored answer+sources
+                # verbatim with no further processing (see the cache-hit
+                # branch above), so keeping this bot-wide skip is the
+                # correct, deliberate choice given that architecture, not an
+                # oversight. Narrowing it would require a separate,
+                # LLM-independent media-matching step run on every cache
+                # hit — a real feature, not a safe fix to land alongside the
+                # cache-key normalization above.
                 or bool(_allowed_yt)
                 or bool(_allowed_files)
             )
@@ -4167,7 +4209,7 @@ async def rag_pipeline_stream(
                 return
 
             # ── Redis QA cache: check BEFORE expensive rewrite/embed/search ──
-            _q_hash = hashlib.sha256(question.lower().strip().encode()).hexdigest()[:32]
+            _q_hash = hashlib.sha256(_normalize_question_for_cache(question).encode()).hexdigest()[:32]
             _cache_key = qa_response_key(bid, _q_hash) if bid else None
             if _cache_key:
                 cached_qa = cache_get(_cache_key)
