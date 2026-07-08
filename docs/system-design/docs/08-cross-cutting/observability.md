@@ -1,10 +1,10 @@
 # Observability
 
-> **Audience:** Ops · CTO · **Read time:** 4 min · **Last updated:** 2026-04-28
+> **Audience:** Ops · CTO · **Read time:** 4 min · **Last updated:** 2026-07-08
 
 ## TL;DR
 
-Three layers: **Sentry** for errors and perf, **Langfuse** for LLM traces (currently disabled in prod due to memory pressure during streaming), **journalctl** for everything else. Three health endpoints (`/health`, `/health/full`, `/health/live`) cover external monitor / readiness / liveness needs.
+Three layers: **Sentry** for errors and perf, **Langfuse** for LLM traces, **journalctl** for everything else. Three health endpoints (`/health`, `/health/full`, `/health/live`) cover external monitor / readiness / liveness needs. **Confirmed live (2026-07-08): Better Stack polls `/health/full` and UptimeRobot polls `/health`, both independent of the CI deploy gate** — an earlier version of this doc claimed no such external monitor existed; that was wrong. `/health/full`'s `llm` field now includes a real, TTL-cached completion probe (not just an import check), so a provider outage/quota exhaustion is actually visible to those monitors.
 
 ## Diagram
 
@@ -31,25 +31,29 @@ flowchart LR
 
     subgraph Probes["Health probes"]
       direction TB
-      UpDown[/"Uptime probe<br/>external"/]:::probe
+      BetterStack[/"Better Stack<br/>external, continuous"/]:::probe
+      UptimeRobot[/"UptimeRobot<br/>external, continuous"/]:::probe
+      SentryUp[/"Sentry Uptime<br/>external, continuous"/]:::probe
       Deploy[/"Deploy gate<br/>CI"/]:::probe
       Nginx[/"Nginx upstream"/]:::probe
     end
 
     subgraph Sinks["Observability sinks (vertical stack)"]
       direction TB
-      Sentry[("Sentry<br/>errors + 10% perf")]:::ok
+      Sentry[("Sentry<br/>errors + 10% perf + safety-net alerts")]:::ok
       Journal[("systemd journalctl")]:::log
-      Langfuse[("Langfuse<br/>OFF in prod · memory")]:::off
+      Langfuse[("Langfuse<br/>traces")]:::ok
     end
 
-    API -- "errors · perf" --> Sentry
+    API -- "errors · perf · safety-net metrics" --> Sentry
     Worker -- "errors · perf" --> Sentry
     API -- "stdout · stderr" --> Journal
     Worker -- "stdout · stderr" --> Journal
-    LLM -. "trace events · disabled" .-> Langfuse
+    LLM -- "trace events" --> Langfuse
 
-    UpDown -- "GET /health/live" --> API
+    BetterStack -- "GET /health/full" --> API
+    UptimeRobot -- "GET /health" --> API
+    SentryUp -- "GET /" --> API
     Deploy -- "GET /health/full" --> API
     Nginx -- "GET /health" --> API
 ```
@@ -59,25 +63,34 @@ flowchart LR
 | Path | Purpose | What it checks | Returns |
 |---|---|---|---|
 | `/health/live` | Liveness — process alive | Nothing (just responds) | 200 OK if process serves |
-| `/health` | Readiness — can serve traffic | DB ping + Redis ping | 200 if both ok, 503 otherwise; body includes pool stats and Redis memory |
-| `/health/full` | Comprehensive | DB + Redis + worker heartbeat (≤ 60s old) | 200 if all green; 503 if any subsystem degraded; body includes `worker_heartbeat_age_seconds` |
+| `/health` | Readiness — can serve traffic | DB ping + Redis ping | 200 if both ok, 503 otherwise. Deliberately excludes the LLM signal so a hiccuping LLM never takes the load balancer down |
+| `/health/full` | Comprehensive | DB + Redis + worker heartbeat (≤ 60s old) + a real LLM completion probe (TTL-cached, not just an import check) | 200 if all green; 503 if any subsystem degraded, including a failed LLM probe |
 
-Useful response keys:
+Actual response shape (both `/health` and `/health/full` share `_gather_health()`; only the status-code gating differs):
 
 ```json
 {
   "status": "healthy",
-  "db_ok": true,
-  "db_pool_stats": {"size": 5, "checked_out": 1, "overflow": 0, "checked_in": 4},
-  "redis_ok": true,
-  "redis_used_memory_mb": 12.4,
-  "redis_evicted_keys": 0,
-  "worker_ok": true,
-  "worker_heartbeat_age_seconds": 18.2,
-  "worker_enabled": true,
-  "timestamp": "2026-04-28T09:00:00Z"
+  "database": "connected",
+  "redis": "connected",
+  "worker": {
+    "status": "alive",
+    "last_seen": "2026-07-08T09:00:00+00:00",
+    "age_seconds": 18.2,
+    "heartbeat_ttl_seconds": 120
+  },
+  "llm": {
+    "status": "ready",
+    "import_ok": true,
+    "probe_ok": true,
+    "detail": null
+  },
+  "pool": {"pool_size": 5, "checked_out": 1, "overflow": 0, "checked_in": 4},
+  "version": "1.0.0"
 }
 ```
+
+`llm.import_ok` is the cheap "is litellm still a real package" check (the exact signal that was missing during the 2026-07-01 outage). `llm.probe_ok` is a real `litellm.completion(...)` call, cached for `HEALTH_LLM_PROBE_TTL_SECONDS` (default 30s) so polling doesn't multiply into a burst of paid LLM calls — this is what actually catches a revoked key, billing block, or provider outage; `import_ok` alone cannot. When `probe_ok` is false, `detail` carries the exception type/message.
 
 Implemented in [`api/app/main.py`](../../../api/app/main.py).
 
@@ -98,9 +111,9 @@ Routes are auto-tagged so it's easy to find "which endpoint is failing 5% of the
 | Property | Value |
 |---|---|
 | Auth | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` |
-| Wired via | LiteLLM auto-callback |
+| Wired via | Langfuse v4 SDK directly (`app/core/langfuse_client.py`, `start_as_current_observation`/`propagate_attributes`) — **not** LiteLLM's built-in `"langfuse"` callback, which is incompatible with the v4 SDK (calls `langfuse.version.__version__`, absent in v4) and is intentionally never registered (commit `393a15d`, 2026-06-29) |
 | Stored | `chat_messages.trace_id` and the BANT extraction trace |
-| Status today | **Disabled in prod** — `LANGFUSE_FORCE_DISABLE=true` while we resolve memory pressure during streaming on the 2GB droplet (see CLAUDE.md note). Re-enabling is on the roadmap once the droplet is upsized or the memory bug is fixed. |
+| Status today | `LANGFUSE_FORCE_DISABLE` is a kill switch for memory pressure from the OTEL BatchSpanProcessor, **not currently set** in prod (confirmed via SSH 2026-07-08). An earlier version of this doc conflated a since-fixed litellm/langfuse SDK incompatibility with an intentional disable — that was inaccurate; see AI_ENGINEERING_REVIEW.md AR-04 for the full history. Recommend a live trace-arrival check in the Langfuse dashboard to confirm current end-to-end health, not just "the known bug is fixed." |
 
 When enabled, every chat turn becomes a viewable trace: input, retrieved chunks, LLM call, output, latency, token count.
 
@@ -143,17 +156,17 @@ From [runbooks](../../../runbooks/) and ops experience:
 
 ## What's missing
 
-- **No metrics pipeline** (Prometheus, CloudWatch, etc.). Health endpoints carry the basics; deeper metrics rely on Sentry transactions.
-- **No alerting** beyond Sentry → Slack. PagerDuty on roadmap.
+- **No metrics pipeline** (Prometheus, CloudWatch, etc.). Health endpoints carry the basics; RAG safety-net events (moderation blocks, injection attempts, groundedness scores) now have rolling hourly counters queryable via `GET /superadmin/safety-net-metrics`, but there's still no dashboarding/graphing layer over them.
+- **Alerting is Sentry-based, not a dedicated on-call platform.** Better Stack + UptimeRobot continuously probe `/health` and `/health/full` (confirmed live 2026-07-08 — see TL;DR); security-relevant safety-net events (injection attempts, prompt leaks, moderation blocks) now forward to Sentry as warning-level messages so Sentry's alert rules can page on them. There is still no PagerDuty/dedicated on-call rotation — Sentry → Slack is the full chain.
 - **No log aggregator** (Loki / ELK). One droplet means `journalctl` is sufficient today; multi-host requires shipping logs.
-- **Langfuse disabled** in prod — a regression on observability we need to fix.
 
 ## Why this matters
 
 When a customer says "the bot stopped responding," the answer order is:
-1. `/health/full` from your laptop — green or red?
+1. `/health/full` from your laptop — green or red? (the `llm` field now reflects a real completion probe, not just an import check)
 2. `journalctl -u oyechats-api -f` for last 5 minutes
 3. Sentry for spikes
-4. (when re-enabled) Langfuse trace for the specific session
+4. Langfuse trace for the specific session
+5. `GET /superadmin/safety-net-metrics` if the complaint is about answer quality (hallucination, off-topic refusals) rather than availability
 
 If any step fails, the runbook for that subsystem kicks in. See [Reliability](/08-cross-cutting/reliability) for failure-mode matrix and links to runbooks.
