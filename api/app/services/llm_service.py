@@ -6,6 +6,7 @@ import litellm
 
 from app.config import FALLBACK_MODEL_KEY_SET, PRIMARY_MODEL_KEY_SET
 from app.core.langfuse_client import langfuse_generation
+from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter
 from app.services import runtime_config
 
 # Client-side timeout for non-streaming LLM calls (seconds). Without it a hung
@@ -14,6 +15,49 @@ from app.services import runtime_config
 # slow large-context completion while still bounding a hung socket (code-review
 # RV9).
 _LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "60"))
+
+# AR-15: same-model retries for TRANSIENT errors (rate limit, timeout,
+# connection blip) before litellm's fallback chain kicks in. Without this, a
+# brief 429 burst permanently downgrades the turn to the (weaker) fallback
+# model with no chance to recover on the primary within the same request.
+_LLM_NUM_RETRIES = int(os.getenv("LLM_NUM_RETRIES", "2"))
+
+# Exception classes that indicate a MISCONFIGURATION (bad/revoked key, malformed
+# request) rather than a transient provider hiccup. Retrying these is pointless
+# (they'll fail identically every time) and silently falling back masks an
+# incident that needs a human — these get a distinct log tag + Sentry alert.
+_LLM_CONFIG_ERROR_TYPES = (
+    litellm.AuthenticationError,
+    litellm.BadRequestError,
+    litellm.PermissionDeniedError,
+)
+# Transient/retryable — same-model retry (via num_retries) already covers
+# these; distinguished here only for metric/log-tag purposes so an on-call
+# engineer can tell "quota exhaustion" apart from "someone revoked the key"
+# apart from "unknown error" at a glance.
+_LLM_TRANSIENT_ERROR_TYPES = (
+    litellm.RateLimitError,
+    litellm.Timeout,
+    litellm.APIConnectionError,
+    litellm.ServiceUnavailableError,
+    litellm.InternalServerError,
+)
+
+
+def _classify_and_log_llm_error(exc: Exception, *, context: str) -> None:
+    """Log + meter an LLM call failure under a distinct tag by error class,
+    forwarding config-type errors to Sentry (AR-13's alerting channel) since
+    those need a human, not a retry."""
+    if isinstance(exc, _LLM_CONFIG_ERROR_TYPES):
+        logger.error(f"LLM config error ({context}, {type(exc).__name__}): {exc}", exc_info=True)
+        increment_metric_counter("llm_config_error")
+        forward_to_sentry_if_alertable("llm_config_error")
+    elif isinstance(exc, _LLM_TRANSIENT_ERROR_TYPES):
+        logger.warning(f"LLM transient error ({context}, {type(exc).__name__}): {exc}")
+        increment_metric_counter("llm_transient_error")
+    else:
+        logger.error(f"LLM API Error ({context}, {type(exc).__name__}): {exc}", exc_info=True)
+        increment_metric_counter("llm_unknown_error")
 
 
 def _primary_model() -> str:
@@ -108,6 +152,7 @@ def _generate_response(
     needing fallback protection should leave this unset.
     """
     resolved_model = model or _primary_model()
+    generation_name = (metadata or {}).get("generation_name", "llm-generation")
     if model is None and not PRIMARY_MODEL_KEY_SET:
         logger.error(f"Cannot generate response: API key for primary model '{resolved_model}' is not set.")
         return LLM_CONFIG_ERROR_MESSAGE, True
@@ -133,9 +178,9 @@ def _generate_response(
             kwargs["temperature"] = temperature
         _apply_model_family_kwargs(kwargs, resolved_model)
 
-        generation_name = (metadata or {}).get("generation_name", "llm-generation")
         with langfuse_generation(generation_name, model=resolved_model, prompt=prompt) as gen:
             kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
             response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
             gen.record_litellm(response, output=content)
@@ -147,7 +192,7 @@ def _generate_response(
             logger.warning("LLM returned empty response.")
             return LLM_EMPTY_RESPONSE_MESSAGE, True
     except Exception as e:
-        logger.error(f"LLM API Error ({type(e).__name__}): {e}", exc_info=True)
+        _classify_and_log_llm_error(e, context=generation_name)
         return LLM_API_ERROR_MESSAGE, True
 
 
@@ -221,6 +266,7 @@ Return ONLY the tone description, nothing else."""
         _apply_model_family_kwargs(kwargs, _model)
         with langfuse_generation("brand-tone-extraction", model=_model, prompt=prompt) as gen:
             kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
             response = litellm.completion(**kwargs)
             tone = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=tone)
@@ -271,6 +317,7 @@ Website content:
         _apply_model_family_kwargs(kwargs, _model)
         with langfuse_generation("company-context-extraction", model=_model, prompt=prompt) as gen:
             kwargs.setdefault("timeout", _LLM_TIMEOUT_S)
+            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
             response = litellm.completion(**kwargs)
             text = (response.choices[0].message.content or "").strip()
             gen.record_litellm(response, output=text)
@@ -346,6 +393,7 @@ async def _stream_from_model(
                 kwargs["max_tokens"] = max_tokens
             if temperature is not None:
                 kwargs["temperature"] = temperature
+            kwargs.setdefault("num_retries", _LLM_NUM_RETRIES)
             _apply_model_family_kwargs(kwargs, model)
             response = await litellm.acompletion(**kwargs)
             try:
@@ -417,6 +465,7 @@ async def generate_response_stream(
         yield " [Response timed out. Please try again.]"
         return
     except Exception as primary_err:
+        _classify_and_log_llm_error(primary_err, context="stream-primary")
         if primary_chunks_yielded > 0:
             logger.warning(
                 f"Primary LLM stream failed mid-response after {primary_chunks_yielded} chunks "
@@ -444,8 +493,5 @@ async def generate_response_stream(
         logger.error(f"Fallback stream timed out: {e}")
         yield " [Response timed out. Please try again.]"
     except Exception as fallback_err:
-        logger.error(
-            f"Fallback LLM stream also failed ({type(fallback_err).__name__}): {fallback_err}",
-            exc_info=True,
-        )
+        _classify_and_log_llm_error(fallback_err, context="stream-fallback")
         yield " [I encountered an error. Please try again.]"

@@ -31,6 +31,9 @@ _SENTRY_FORWARD_METRICS = frozenset(
         "injection_attempt",
         "system_prompt_leak",
         "moderation_block",
+        # AR-15: a misconfiguration-class LLM error (revoked key, bad request)
+        # needs a human, not a retry — page on it like the security events above.
+        "llm_config_error",
     }
 )
 
