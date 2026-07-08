@@ -212,6 +212,48 @@ class TestExtractMediaUrls:
         # Filename is derived from the path segment, ignoring the query.
         assert result["files"][0]["name"] == "b.pdf"
 
+    def test_does_not_match_extension_inside_domain_label(self):
+        # Regression: without a boundary lookahead after the extension,
+        # ``https://hub.docker.com`` was being scraped as a fake
+        # ``hub.doc`` file because the greedy body backtracks until
+        # ``.doc`` matches inside the domain. Same trap for ``get.docker.com``,
+        # ``docs.docker.com``, ``docs.aws.amazon.com``, ``help.xlsx.io`` etc.
+        # These are DOMAINS, not files — nothing about them should surface
+        # as a downloadable card.
+        for url in (
+            "https://hub.docker.com",
+            "https://get.docker.com",
+            "https://docs.docker.com",
+            "https://docs.aws.amazon.com/ec2/",
+            "https://help.xlsx.io/guide",
+            "https://docs.example.com/page",
+        ):
+            result = extract_media_urls(f"See {url} for details.")
+            assert "files" not in result, f"false positive on {url!r} -> {result!r}"
+
+    def test_extracts_real_file_alongside_docker_domain(self):
+        # Positive-plus-negative case: a real ``.pdf`` link in the same
+        # text should still be captured even when a ``hub.docker.com``-
+        # style domain sits next to it. Guards against an over-eager
+        # boundary that would swallow legitimate URLs too.
+        text = "Check https://hub.docker.com and grab https://cdn.x.com/report.pdf."
+        result = extract_media_urls(text)
+        assert result["files"] == [{"url": "https://cdn.x.com/report.pdf", "name": "report.pdf"}]
+
+    def test_matches_extension_at_url_boundaries(self):
+        # The lookahead must still allow the extension to be followed by
+        # a slash (deep path), a query, a hash, whitespace, or end-of-URL.
+        cases = [
+            ("https://x.com/a.pdf", "a.pdf"),
+            ("https://x.com/a.pdf/preview", "a.pdf"),
+            ("https://x.com/a.pdf?ref=abc", "a.pdf"),
+            ("https://x.com/a.pdf#page=3", "a.pdf"),
+        ]
+        for url, expected_name in cases:
+            result = extract_media_urls(f"Link: {url} ok.")
+            assert result.get("files"), f"missed: {url!r}"
+            assert result["files"][0]["name"] == expected_name
+
     def test_combined_youtube_and_files(self):
         text = "Overview video: https://youtu.be/dQw4w9WgXcQ. Brochure: https://example.com/brochure.pdf. "
         result = extract_media_urls(text)

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, BookOpen, BarChart3, Target, Crosshair, Headphones,
   Bot, ChevronDown, Plus, Check, Settings, Plug, UsersRound, CreditCard,
-  Gift, Palette, Lock, List,
+  Gift, Palette, Lock, List, Sparkles,
 } from 'lucide-react';
 import OyeChatsMark from '../components/OyeChatsMark';
 import { useBotContext } from '../context/BotContext';
@@ -13,6 +13,10 @@ import { getOfflineMessages, getLeadStats, getCurrentUser } from '../services/ap
 import useEntitlements from '../hooks/useEntitlements';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
 import { cn } from '../lib/utils';
+
+const LATEST_CHANGELOG_VERSION = 'v3.2.0';
+const CHANGELOG_URL = 'https://oyechats.com/changelog';
+const CHANGELOG_SEEN_STORAGE_KEY = 'oyechats_last_seen_changelog';
 
 export default function Sidebar({ isOpen, isMobile, onClose }) {
   const location = useLocation();
@@ -28,6 +32,22 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
   // from the Sidebar — a component that mounts on every authenticated
   // page — is fine.
   const { entitlements: ent } = useEntitlements();
+  const [hasUnreadChangelog, setHasUnreadChangelog] = useState(() => {
+    try {
+      return localStorage.getItem(CHANGELOG_SEEN_STORAGE_KEY) !== LATEST_CHANGELOG_VERSION;
+    } catch {
+      return false;
+    }
+  });
+
+  const handleChangelogClick = () => {
+    try {
+      localStorage.setItem(CHANGELOG_SEEN_STORAGE_KEY, LATEST_CHANGELOG_VERSION);
+    } catch {
+      // localStorage unavailable (private mode, quota) — dot will re-appear next mount, non-fatal
+    }
+    setHasUnreadChangelog(false);
+  };
   // requestUpgrade is the global trigger for the premium upsell modal —
   // every gated click in this sidebar goes through it so the surface is
   // identical (copy, plan transition chip, CTA) wherever a free user hits
@@ -488,6 +508,44 @@ export default function Sidebar({ isOpen, isMobile, onClose }) {
           {configItems.map((item, i) => renderLink(item, i))}
         </div>
       </nav>
+
+      {/* What's new — sits flush against the Settings divider line below. */}
+      <div className={cn('shrink-0 pb-2', isOpen ? 'px-6' : 'px-0 flex justify-center')}>
+        {isOpen ? (
+          <a
+            href={CHANGELOG_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={handleChangelogClick}
+            className="inline-flex items-center gap-2 text-[12px] text-surface-500 dark:text-surface-500 hover:text-surface-800 dark:hover:text-surface-200 transition-colors"
+          >
+            <span>
+              What&apos;s new
+            </span>
+            {hasUnreadChangelog && (
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.7)]"
+                aria-label="New release available"
+              />
+            )}
+          </a>
+        ) : (
+          <a
+            href={CHANGELOG_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={handleChangelogClick}
+            title="What's new"
+            aria-label={hasUnreadChangelog ? "What's new (unread release)" : "What's new"}
+            className="relative flex items-center justify-center w-9 h-9 rounded-lg text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-white/[0.05] hover:text-surface-700 dark:hover:text-surface-200 transition-all"
+          >
+            <Sparkles size={16} className="shrink-0" />
+            {hasUnreadChangelog && (
+              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.7)]" />
+            )}
+          </a>
+        )}
+      </div>
 
       {/* Bottom: Settings link only — the user identity card lives in TopBar's
           profile dropdown, so showing the avatar + name here is duplicate. */}

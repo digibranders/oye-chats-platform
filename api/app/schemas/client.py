@@ -84,6 +84,22 @@ class CrawlDiffRequest(CrawlDiscoverRequest):
         min_length=1,
         description="Root domain whose existing pages should be diffed against the live sitemap (e.g. 'oyechats.com').",
     )
+    mode: str = Field(
+        default="delta",
+        description="Recrawl preview mode. ``full`` shows the totals for a re-scrape "
+        "of every URL (charged per page regardless of content change). ``delta`` "
+        "shows the URL-level diff and defers content-change detection to the "
+        "ingestion pipeline's SHA-256 dedup — only new or changed pages are billed. "
+        "``delta`` is gated to Standard+; Free/Starter callers get 403.",
+    )
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        v = (v or "delta").strip().lower()
+        if v not in {"full", "delta"}:
+            raise ValueError("mode must be 'full' or 'delta'")
+        return v
 
 
 class CrawlRequest(BaseModel):
@@ -120,6 +136,23 @@ class CrawlRequest(BaseModel):
         "to the affordable count). When set, the recursive crawl is skipped and exactly "
         "these URLs are fetched in order. Validated same-origin and capped server-side.",
     )
+    mode: str = Field(
+        default="delta",
+        description="Recrawl mode. ``full`` forces re-embed + charge for every "
+        "discovered URL (Free/Starter's only option) — the ingestion pipeline's "
+        "SHA-256 dedup is bypassed so unchanged pages still bill. ``delta`` uses "
+        "the existing dedup so only new or content-changed pages bill. ``delta`` "
+        "is gated to Standard+; Free/Starter callers get 403. First-time crawls "
+        "(no ``replace_source``) always run as full — the mode field is ignored.",
+    )
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        v = (v or "delta").strip().lower()
+        if v not in {"full", "delta"}:
+            raise ValueError("mode must be 'full' or 'delta'")
+        return v
 
     @field_validator("url")
     @classmethod

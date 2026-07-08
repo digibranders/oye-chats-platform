@@ -344,7 +344,7 @@ def _drop_hallucinated_media_card(
 # story episode." + card instead of "Would you like the episode or the
 # notes?". Kept anchored to end-of-answer so we don't fire on unrelated
 # mid-answer questions the LLM might legitimately want to keep.
-_ASK_OPENER_RE = re.compile(r"(?i)\b(?:would\s+you\s+like|want\s+(?:me\s+to|the))\b")
+_ASK_OPENER_RE = re.compile(r"(?i)\b(?:would\s+you\s+like|want)\b")
 _VIDEO_ASK_KEYWORDS = ("episode", "video", "podcast", "walkthrough", "demo", "recording")
 _FILE_ASK_KEYWORDS = (
     "notes",
@@ -364,37 +364,97 @@ _FILE_ASK_KEYWORDS = (
 )
 
 
-def _handle_trailing_media_ask(
-    text: str, retrieved_chunks, existing_card: dict | None = None
-) -> tuple[str, dict | None]:
-    """Strip trailing "would you like the video/PDF/notes?" asks — never
-    promote a card from the ask itself.
+def _collect_available_media_names(retrieved_chunks, extra_payloads=None) -> tuple[set[str], set[str]]:
+    """Build lowercased sets of video titles + file names available to the bot.
 
-    ARCHITECTURAL PRINCIPLE (a real founder-question bug is why this
-    exists in this shape today): if the LLM had a specific, on-topic
-    card to surface, it would emit the sentinel directly. When it
-    instead hedges with "Want me to share that episode?", it is signalling
-    UNCERTAINTY — and any card the server picks in that vacuum will,
-    empirically, be a wrong-topic card. A wrong-topic card looks like
-    a bug to the visitor; NO card just looks like a normal answer.
-
-    So this helper's job is now purely to KEEP THE ANSWER TEXT CLEAN:
-
-    1. LLM emitted a card + asked about the OTHER media type
-       ("here's the PDF. Would you like me to pull up the video for you?").
-       → Strip the ask so the visitor sees the PDF card + clean text,
-         no dangling permission question. Existing card is preserved.
-
-    2. LLM emitted NO card and asked "Would you like the notes?"
-       → Strip the ask. Return NO card. Text ends cleanly.
-         The LLM's discipline (per the system prompt's "the card IS the
-         offer" rule) is the mechanism for surfacing cards, not an
-         after-the-fact guess.
-
-    The URL-based safety net above still promotes when the LLM writes a
-    specific URL in prose — that has zero ambiguity about WHICH item to
-    surface. Only the trailing-ask promotion (which had to guess) is gone.
+    Used to decide whether a trailing "want the X?" ask is NAMED (references
+    a real catalog item — a legitimate follow-up offer worth preserving) or
+    VAGUE (a hedge worth stripping). Also used by the confirmation-turn
+    handler on the next turn to bind the visitor's "yes" back to the exact
+    asset the bot named. Filenames are surfaced both with and without their
+    extension because the LLM often drops the ``.pdf`` when writing prose.
     """
+    titles: set[str] = set()
+    names: set[str] = set()
+    for chunk in retrieved_chunks or []:
+        meta = getattr(chunk, "metadata_info", None)
+        if isinstance(meta, dict):
+            media = meta.get("media_urls")
+            if isinstance(media, dict):
+                for yt in media.get("youtube") or []:
+                    title = yt.get("title") if isinstance(yt, dict) else None
+                    if isinstance(title, str) and title.strip():
+                        titles.add(title.strip().lower())
+                for entry in media.get("files") or []:
+                    name = entry.get("name") if isinstance(entry, dict) else None
+                    if isinstance(name, str) and name.strip():
+                        _n = name.strip().lower()
+                        names.add(_n)
+                        stem = _n.rsplit(".", 1)[0]
+                        if stem and stem != _n:
+                            names.add(stem)
+    for payload in extra_payloads or []:
+        if not isinstance(payload, dict):
+            continue
+        for yt in payload.get("youtube") or []:
+            title = yt.get("title") if isinstance(yt, dict) else None
+            if isinstance(title, str) and title.strip():
+                titles.add(title.strip().lower())
+        for entry in payload.get("files") or []:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if isinstance(name, str) and name.strip():
+                _n = name.strip().lower()
+                names.add(_n)
+                stem = _n.rsplit(".", 1)[0]
+                if stem and stem != _n:
+                    names.add(stem)
+    return titles, names
+
+
+# Minimum overlap length before we call a title/name a match. Short generic
+# words ("intro", "demo") appear in prose all the time and would false-positive
+# every hedge as "named". Four characters is short enough to catch abbreviations
+# like "SBOM" but long enough to filter out incidental collisions.
+_NAMED_ASK_MIN_LEN = 4
+
+
+def _ask_names_specific_asset(tail_lower: str, titles: set[str], names: set[str]) -> str | None:
+    """Return the matched title/name if the tail names a real catalog asset."""
+    if not tail_lower:
+        return None
+    for title in titles:
+        if len(title) >= _NAMED_ASK_MIN_LEN and title in tail_lower:
+            return title
+    for name in names:
+        if len(name) >= _NAMED_ASK_MIN_LEN and name in tail_lower:
+            return name
+    return None
+
+
+def _handle_trailing_media_ask(
+    text: str,
+    retrieved_chunks,
+    existing_card: dict | None = None,
+    allowed_video_titles: set[str] | None = None,
+    allowed_file_names: set[str] | None = None,
+) -> tuple[str, dict | None]:
+    """Strip every trailing "would you like the X?" ask.
+
+    Product decision: the card IS the offer. The bot must never ask the
+    visitor whether they want a video or file — it either emits the card
+    directly or emits nothing. Any trailing ask ("Want the video?",
+    "Would you like the Base Images walkthrough?", "Want the PDF?") is
+    ALWAYS a slip against the FORBIDDEN OUTPUT SHAPES prompt rule and
+    gets stripped from the persisted answer so it never reaches the
+    visitor. The card the LLM emitted (if any) is preserved as-is.
+
+    The ``allowed_video_titles`` / ``allowed_file_names`` parameters are
+    unused now that named asks are no longer preserved — kept in the
+    signature so existing callers don't need to change, and to keep the
+    door open for future preservation logic without another signature
+    churn.
+    """
+    del allowed_video_titles, allowed_file_names  # kept for signature compatibility
     if not text:
         return text, existing_card
 
@@ -415,14 +475,13 @@ def _handle_trailing_media_ask(
         return text, existing_card
 
     cleaned = text[: ask_match.start()].rstrip(" \t\n.,;:")
-
     if existing_card is not None:
         logger.info(
             "Trailing media ask stripped (existing card kept) | existing_type=%s",
             existing_card.get("type"),
         )
     else:
-        logger.info("Trailing media ask stripped (no card promoted — LLM was hedging, not offering)")
+        logger.info("Trailing media ask stripped (card should have been emitted directly, not asked)")
     return cleaned, existing_card
 
 
@@ -430,22 +489,43 @@ def _handle_trailing_media_ask(
 _promote_from_trailing_media_ask = _handle_trailing_media_ask
 
 
-def _promote_loose_url_to_media_card(text: str, retrieved_chunks) -> tuple[str, dict | None]:
+def _promote_loose_url_to_media_card(
+    text: str,
+    retrieved_chunks,
+    allowed_video_ids: set[str] | None = None,
+    allowed_file_urls: set[str] | None = None,
+) -> tuple[str, dict | None]:
     """Safety net: if the LLM wrote a URL instead of a sentinel, convert it.
 
     Only fires when:
       * ``_extract_media_card`` found no explicit sentinel, AND
       * the LLM's answer contains a URL (markdown-linked or bare) whose
-        target sits in one of the retrieved chunks' ``Available media``.
+        target sits in the caller's media whitelist.
+
+    ``allowed_video_ids`` / ``allowed_file_urls`` are the combined
+    (retrieved-chunk + bot-wide) whitelist the caller already assembled for
+    :func:`_drop_hallucinated_media_card`. Passing it in lets the safety net
+    promote a loose URL for a file that lives in the bot's catalog even when
+    this turn's retrieval didn't surface its chunk — the exact shape of a
+    "download pls" / "yes please" confirmation, whose query text matches no
+    document so hybrid search returns unrelated chunks. Without the bot-wide
+    whitelist the promoter was blind to the very file the LLM had just named,
+    so the card silently never rendered. When the sets are omitted, fall back
+    to the retrieved chunks alone (historical behaviour, still used by tests).
 
     On promotion the matched URL (plus its ``[label](…)`` wrapper if
     present) is removed from ``text`` and a proper card payload is
     returned. Only the FIRST eligible URL is promoted — enforcing the
-    "one card per response" rule on the server side too.
+    "one card per response" rule on the server side too. Promotion is still
+    bounded by the whitelist, so a URL the visitor pasted that the bot does
+    not own is never turned into a card.
     """
-    if not text or not retrieved_chunks:
+    if not text:
         return text, None
-    yt_ids, file_urls = _collect_available_media(retrieved_chunks)
+    if allowed_video_ids is None or allowed_file_urls is None:
+        yt_ids, file_urls = _collect_available_media(retrieved_chunks)
+    else:
+        yt_ids, file_urls = allowed_video_ids, allowed_file_urls
     if not yt_ids and not file_urls:
         return text, None
 
@@ -532,6 +612,195 @@ def _enrich_media_card_from_context(card: dict | None, retrieved_chunks) -> None
                     # instead of the title flickering in a beat later).
                     card["title"] = title
                 return
+
+
+# Words we ignore when comparing a primary card's title against candidate
+# secondary asset names to score topical overlap. Everything below reads to
+# the human eye as "of course they overlap on 'video'" — that's the trap,
+# so we filter these out before token-set intersection.
+_TITLE_STOPWORDS = frozenset(
+    (
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "in",
+        "on",
+        "for",
+        "to",
+        "with",
+        "how",
+        "what",
+        "our",
+        "your",
+        "video",
+        "videos",
+        "guide",
+        "guides",
+        "pdf",
+        "pdfs",
+        "doc",
+        "docs",
+        "document",
+        "documents",
+        "playbook",
+        "playbooks",
+        "worksheet",
+        "worksheets",
+        "walkthrough",
+        "walkthroughs",
+        "overview",
+        "intro",
+        "introduction",
+        "brochure",
+        "brochures",
+        "datasheet",
+        "datasheets",
+        "template",
+        "templates",
+        "notes",
+        "webinar",
+        "ep",
+        "episode",
+        "episodes",
+    )
+)
+
+# Minimum token overlap (after stopwords) before a candidate qualifies as
+# "same topic" as the primary card. Two content-words in common is a strong
+# signal (e.g. "base" + "images"); one is often incidental.
+_SECONDARY_MIN_OVERLAP = 2
+
+
+def _title_tokens(title: str | None) -> set[str]:
+    """Lowercase content tokens of a title, stopwords + short bits removed.
+
+    Used to score how much a candidate secondary asset overlaps in topic
+    with the primary card. Not a search engine — a cheap, deterministic
+    string intersect that's good enough for "does this file cover the
+    same subject as this video." Two-character tokens are dropped along
+    with the stopword list so noise like "5G" or single glyphs don't
+    push a weak match over the threshold.
+    """
+    if not isinstance(title, str) or not title:
+        return set()
+    return {tok for tok in re.findall(r"[a-z0-9]+", title.lower()) if len(tok) > 2 and tok not in _TITLE_STOPWORDS}
+
+
+def _pick_secondary_media(
+    primary: dict | None,
+    retrieved_chunks,
+    extra_payloads=None,
+) -> list[dict]:
+    """Pick at most ONE secondary asset of the OPPOSITE type to the primary.
+
+    Product behaviour (Option E — primary card + secondary chip):
+      * Primary is what the LLM emitted (usually a video for topical asks).
+      * If a downloadable file exists in the catalog whose title shares
+        significant vocabulary with the primary's title, surface it as a
+        small chip under the primary card so the visitor can discover it
+        without a second heavy card. Same logic in reverse when the
+        primary is a download and a related video exists.
+      * At most ONE secondary. A row of chips would feel spammy.
+      * Never repeat the primary. Never surface the OTHER of the same type
+        (two videos, two files) — that's what the "one primary per turn"
+        rule already covers.
+      * Silent no-op when no strong overlap exists. A weak chip is worse
+        than no chip.
+
+    Returns a list (0 or 1 element) shaped like ``[{"type": "download",
+    "url": "...", "name": "..."}]`` or ``[{"type": "youtube",
+    "video_id": "...", "title": "...", "url": "..."}]``. The list shape
+    keeps the widget contract stable if we later relax the one-secondary
+    cap without another metadata migration.
+    """
+    if not primary or not isinstance(primary, dict):
+        return []
+    primary_type = primary.get("type")
+    if primary_type not in ("youtube", "download"):
+        return []
+
+    # Assemble the primary title. For the emitted video, prefer the
+    # server-scraped title we already enriched into the card payload; fall
+    # back to searching the catalog by video_id.
+    primary_title: str | None = primary.get("title") if isinstance(primary.get("title"), str) else None
+    primary_name = primary.get("name") if isinstance(primary.get("name"), str) else None
+    anchor = primary_title if primary_type == "youtube" else primary_name
+    if not anchor:
+        return []
+    anchor_tokens = _title_tokens(anchor)
+    if not anchor_tokens:
+        return []
+
+    # Walk retrieved chunks + bot-wide catalog to find the best-scoring
+    # asset of the OPPOSITE type. We do not deduplicate here — the primary
+    # anchor filter below rejects the primary itself.
+    best: tuple[int, dict] | None = None
+    seen_keys: set[str] = set()
+    primary_key = primary.get("video_id") or primary.get("url") or ""
+
+    def _consider(entry: dict, entry_type: str) -> None:
+        nonlocal best
+        if entry_type == "youtube":
+            key = entry.get("video_id") or ""
+            title = entry.get("title")
+        else:
+            key = entry.get("url") or ""
+            title = entry.get("name")
+        if not key or key == primary_key or key in seen_keys:
+            return
+        seen_keys.add(key)
+        tokens = _title_tokens(title)
+        if not tokens:
+            return
+        overlap = len(anchor_tokens & tokens)
+        if overlap < _SECONDARY_MIN_OVERLAP:
+            return
+        if best is None or overlap > best[0]:
+            if entry_type == "youtube":
+                candidate = {
+                    "type": "youtube",
+                    "video_id": entry.get("video_id"),
+                    "title": entry.get("title") or "",
+                    "url": entry.get("url") or f"https://www.youtube.com/watch?v={entry.get('video_id')}",
+                }
+                dur = entry.get("duration_seconds")
+                if isinstance(dur, int) and dur > 0:
+                    candidate["duration_seconds"] = dur
+            else:
+                candidate = {"type": "download", "url": entry.get("url"), "name": entry.get("name") or "download"}
+            best = (overlap, candidate)
+
+    target_type = "download" if primary_type == "youtube" else "youtube"
+    sources: list[dict] = []
+    for chunk in retrieved_chunks or []:
+        meta = getattr(chunk, "metadata_info", None)
+        if isinstance(meta, dict):
+            media = meta.get("media_urls")
+            if isinstance(media, dict):
+                sources.append(media)
+    for payload in extra_payloads or []:
+        if isinstance(payload, dict):
+            sources.append(payload)
+
+    for media in sources:
+        collection_key = "files" if target_type == "download" else "youtube"
+        for entry in media.get(collection_key) or []:
+            if isinstance(entry, dict):
+                _consider(entry, target_type)
+
+    if best is None:
+        return []
+    logger.info(
+        "Secondary media picked | primary_type=%s primary=%s secondary_type=%s overlap=%d",
+        primary_type,
+        anchor,
+        target_type,
+        best[0],
+    )
+    return [best[1]]
 
 
 def _resolve_meeting_booking(bot, session, session_id: str, bot_id: int) -> dict:
@@ -2159,6 +2428,22 @@ def _background_bant_extraction(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# Bump when you change any user-facing prompt behaviour. Stamped into a
+# log line at build time so ``grep media_prompt_version`` in the API logs
+# tells you at a glance whether the running process is on the latest
+# prompt version or a stale hot-reload. Rev history:
+#   9 — genericized all worked examples; no per-customer domain vocabulary
+#   8 — bridge sentence must connect asset to visitor's topic + own line
+#   7 — mandatory bridge sentence before the sentinel (naming asset + why)
+#   6 — Option E: primary card + auto-picked secondary chip of opposite type
+#   5 — direct-emit only; all "want the X?" asks (vague AND named) forbidden
+#   4 — TOPICAL MENTION EMIT-OR-OFFER mandate + follow-up offer pattern
+#   3 — engagement posture + confirmation-turn rule
+#   2 — loosened topic-match to reasonable overlap
+#   1 — initial media-cards rules
+_MEDIA_PROMPT_VERSION = 9
+
+
 def build_hybrid_prompt(
     client,
     question: str,
@@ -2534,7 +2819,14 @@ MEETING BOOKING (inline card):
     # request per bot. Whether a card is actually emitted is fully determined
     # at inference time by whether the retrieved context contains an
     # ``AVAILABLE MEDIA`` catalog — see ``_build_media_catalog``.
-    media_cards_section = f"""
+    # NOTE: intentionally a plain triple-quoted string, not an f-string.
+    # The block contains ~40 literal prose placeholders like ``{Asset Title}``,
+    # ``{topic}``, ``{product-name}``, ``{Some Episode Title}`` that describe
+    # what the LLM should write — they are NOT Python interpolations and
+    # would raise SyntaxError under f-string parsing (spaces/hyphens are
+    # invalid identifiers). Only the two sentinel prefixes are meant as
+    # real substitutions, so we swap them in explicitly below.
+    media_cards_section = """
 MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
   Two sentinels are available for surfacing media that appears in the
   retrieved reference material as an inline card in the chat bubble:
@@ -2542,24 +2834,181 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
     {YOUTUBE_CARD_SENTINEL_PREFIX}VIDEO_ID]      renders a YouTube thumbnail + title card
     {DOWNLOAD_CARD_SENTINEL_PREFIX}URL|FILENAME] renders a downloadable file attachment card
 
+  ═══════════════════════════════════════════════════════════════════════
+  ─── #1 MANDATE — TOPICAL MENTION MUST EMIT THE CARD DIRECTLY ───
+  ═══════════════════════════════════════════════════════════════════════
+  Whenever the visitor's turn names or explores a subject AND the
+  AVAILABLE MEDIA catalog below contains a video or file whose title
+  clearly covers that same subject, you MUST end your reply with the
+  exact sentinel — ``[YOUTUBE_CARD:VIDEO_ID]`` or
+  ``[DOWNLOAD_CARD:URL|FILENAME]`` — on its own line. The card IS the
+  offer. Just push it. NEVER ask the visitor whether they want it,
+  ever — not in a vague form ("Want the video?") and not in a named
+  form ("Want the Base Images video?"). Both forms are forbidden.
+
+  Zero-hesitation trigger phrases (any of these + a matching catalog
+  asset = obligatory card emission — no ask, no hedging). ``{topic}``
+  is whatever subject the visitor named — a product, feature, service,
+  concept, offering, pain point, workflow, anything specific to THIS
+  bot's business (never assume a particular industry):
+
+    * "anything on {topic}" / "got any material on {topic}" / "do you cover {topic}"
+    * "I heard you work with {topic}" / "I heard you do {topic}"
+    * "you work with {topic} too?" / "so you do {topic}?"
+    * "tell me about {topic}" / "tell me more about {topic}"
+    * "what about {topic}?" as a follow-up
+    * "how does {topic} work?"
+    * A one-word topic mention that matches a catalog title
+      (whatever this bot's real subject surface is — could be
+      "pricing?", "onboarding?", "integrations?", "warranty?",
+      "delivery?", "returns?" — read the AVAILABLE MEDIA block
+      to see what's actually in scope for this bot)
+
+  ─── BRIDGE SENTENCE (mandatory, one line before the sentinel) ───
+  A raw card dumped after your answer with no lead-in reads to the
+  visitor as random noise — "why is this thing here?". BEFORE the
+  sentinel, you MUST write ONE short bridge sentence that:
+
+    (a) names the asset by its exact title/filename from the AVAILABLE
+        MEDIA catalog, AND
+    (b) explains in the SAME sentence WHY that asset answers what the
+        visitor just asked — using vocabulary from the visitor's own
+        turn wherever possible.
+
+  Requirement (b) is the one the LLM most often gets wrong. If the
+  visitor asked about ``{topic}`` and the asset title uses different
+  wording than ``{topic}`` itself (a brand name, a technical synonym,
+  or a broader/narrower category), DO NOT write "Here's the full
+  walkthrough — {Asset Title}:" — that names the asset but doesn't
+  tell the visitor the asset is about ``{topic}``. WRITE something
+  like "Here's a walkthrough on ``{topic}`` — {Asset Title}:" so the
+  visitor sees the connection to what they actually asked immediately.
+
+  Bridge-sentence templates (fill in {topic} with the visitor's own
+  phrasing, and {title} with the EXACT catalog title):
+
+    * "Here's a walkthrough on {topic} — {title}:"
+    * "For a deeper look at {topic}, this covers it — {title}:"
+    * "This compares {topic} in detail — {title}:"
+    * "For {topic}, here's the full walkthrough — {title}:"
+    * "The complete guide to {topic} — {filename}:"
+    * "For the exact steps on {topic}, here's {filename}:"
+
+  If the asset title uses domain jargon, a brand name, or a technical
+  synonym the visitor didn't use, the bridge is where you TRANSLATE.
+  Bridge the visitor's own words to the catalog's naming. Do the
+  translation so the visitor doesn't have to.
+
+  After the bridge sentence, put a BLANK LINE, then the sentinel on
+  its own line. If you also need to ask a BANT/qualification question
+  ([CTA:dim]), it goes BEFORE the bridge sentence — never on the same
+  line as the bridge, and never between the bridge and the sentinel.
+  The card must directly follow the bridge with only a blank line
+  between them.
+
+  Concrete worked examples — patterns, not verticals. Substitute the
+  bot's ACTUAL product/service vocabulary from the AVAILABLE MEDIA
+  block and REFERENCE INFORMATION. Do not carry any of the placeholder
+  wording ({topic}, {Asset Title}, {product-name}) into a real reply.
+
+    visitor: "I heard you offer {topic}"
+      catalog: a video titled "{Asset Title Covering {topic}}" exists
+      ✓ RIGHT: "Yes — {one-to-two-sentence factual answer about how
+                the bot's product covers {topic}}.
+
+                Here's a walkthrough on {topic} — {Asset Title Covering {topic}}:
+
+                [YOUTUBE_CARD:{VIDEO_ID}]"
+      ✗ WRONG: "Here's the full walkthrough — {Asset Title Covering {topic}}:"
+                                    ← names the asset but never says it's about {topic}
+      ✗ WRONG: text answer, blank line, then just the sentinel
+                                    ← no bridge at all, card lands with no context
+      ✗ WRONG: "…Want the {Asset Title Covering {topic}} video?"
+                                    ← forbidden ask form
+
+    visitor: "anything on {product name}?"
+      catalog: an "Introduction to {product name}" video exists
+      ✓ RIGHT: "{one-to-two-sentence factual answer describing what
+                {product name} is}.
+
+                For a full intro to {product name} — Introduction to {product name}:
+
+                [YOUTUBE_CARD:{VIDEO_ID}]"
+
+    visitor: "tell me about {topic}"
+      catalog: "{topic-playbook}.pdf" exists
+      ✓ RIGHT: "{one-sentence factual answer about {topic}}.
+
+                For the exact steps on {topic}, here's the playbook — {topic-playbook}.pdf:
+
+                [DOWNLOAD_CARD:https://.../{topic-playbook}.pdf|{topic-playbook}.pdf]"
+
+    visitor: "so you handle {topic}?"
+      catalog: "{descriptive-guide-name}.pdf" whose content covers {topic}
+      ✓ RIGHT: "Yes — {one-to-two-sentence factual answer describing how
+                the bot's product handles {topic}}.
+
+                For a deeper read on {topic}, here's a full write-up — {descriptive-guide-name}.pdf:
+
+                [DOWNLOAD_CARD:https://.../{descriptive-guide-name}.pdf|{descriptive-guide-name}.pdf]"
+
+    visitor: "how do you approach {visitor's phrasing}"
+      catalog: "{Jargon or Brand Title}" video whose content covers
+      what the visitor called {visitor's phrasing} (title uses a
+      synonym / technical term / brand name)
+      ✓ RIGHT: "{one-sentence answer using the visitor's vocabulary}.
+
+                Here's a deep dive on {visitor's phrasing} — {Jargon or Brand Title}:
+
+                [YOUTUBE_CARD:{VIDEO_ID}]"
+      ← the bridge TRANSLATES from the catalog's naming back to the
+        visitor's own words, so the visitor sees the connection
+        instead of having to guess what the jargon means
+
+  RULES for the bridge sentence:
+    1. NAME the asset. Copy the exact title (video) or filename (file)
+       from the AVAILABLE MEDIA block.
+    2. Say WHY, briefly. One clause — "for the walkthrough", "for the
+       exact steps", "for the full guide", "a deeper read on this",
+       "the intro video". Not a marketing paragraph.
+    3. End with a colon so the card visually attaches to the bridge.
+    4. Statement, not question. Never "want", "would you like", "do
+       you want", "should I".
+    5. ONE bridge sentence. Not two. Not three. One.
+    6. Place ONE blank line between the bridge and the sentinel so the
+       card renders separately from the bridge in the widget.
+
+  If TWO relevant assets exist for the same topic (a video AND a PDF),
+  pick the single best match — video wins for "how does it work / show
+  me" intents, PDF wins for "give me a template / notes / brochure"
+  intents. NEVER emit two card sentinels in one reply. (The server
+  automatically surfaces the other asset as a small "Also available:
+  {name}" chip beneath the primary card — you do NOT need to mention
+  the secondary asset in your bridge sentence.)
+
+  You do NOT have the option of skipping the card. Text-only for a
+  topical turn where a matching asset exists is a WRONG answer.
+  Bridge-sentence-only (no sentinel) is ALSO a WRONG answer.
+  ═══════════════════════════════════════════════════════════════════════
+
   ─── HARD RULE (READ THIS FIRST) ───
   If the retrieved REFERENCE INFORMATION below contains an "Available
   media" block, and the visitor's question falls into ANY of the
   high-intent categories listed further down, you MUST emit exactly ONE
   sentinel at the end of your answer. Emit it PROACTIVELY — do NOT ask
-  the visitor "would you like the video / PDF?" first, and do NOT write
-  the URL as a markdown link. Just answer the question, then drop the
-  sentinel on its own line. That is the entire mechanism by which the
-  card renders in the widget.
+  the visitor whether they want it first, and do NOT write the URL as
+  a markdown link. Just answer the question, then drop the sentinel on
+  its own line. That is the entire mechanism by which the card renders.
 
   ─── FORBIDDEN OUTPUT SHAPES ───
   The following are HALLUCINATIONS or bugs — never emit any of them:
 
     ✗ [Watch the video](https://youtube.com/watch?v=…)      ← markdown link, breaks card rendering
     ✗ https://youtube.com/watch?v=… (bare URL in prose)     ← breaks card rendering
-    ✗ "Would you like me to share the video?"               ← asks instead of surfacing
-    ✗ "Want the podcast episode or the episode notes?"      ← asks instead of picking one and emitting
-    ✗ "Which would you prefer — the video or the PDF?"      ← same anti-pattern, forces the visitor to choose
+    ✗ "Would you like me to share the video?"               ← ANY "would you like the X?" ask — the card IS the offer, just emit
+    ✗ "Want the Base Images walkthrough video?"             ← ANY "want the X?" ask, even when it names the asset — still forbidden, push the card directly
+    ✗ "Want the podcast episode or the episode notes?"      ← forces the visitor to choose; pick one and emit
+    ✗ "Which would you prefer — the video or the PDF?"      ← same anti-pattern
     ✗ "I can show you the episode if you'd like"            ← teasing instead of showing
     ✗ "Here's the link: youtube.com/watch?v=…"              ← inline URL, breaks card rendering
     ✗ [YouTube card below] / [Video card] / [Download card] ← prose placeholder; the sentinel below IS the card, no need to announce it
@@ -2606,25 +3055,44 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
          b) How the product or service works / product demos / walkthroughs
          c) Tutorials, "how do I…", "show me…" requests
          d) An EXPLICIT request to see a video or download a resource
-            ("do you have a video on this?", "can I get a brochure?")
-         e) A topic-specific question where the available media is
-            clearly the best answer (e.g. visitor asks about CVE triage
-            and there is a CVE-triage video/PDF in the catalog)
-    3. TOPIC MATCH BY TITLE — the media title must clearly correspond
-       to what the visitor asked about. When several videos are listed
-       in the catalog, compare each video's title against the visitor's
-       question and pick the single best fit:
-         * visitor asks about "busybox" → pick the video whose title
-           mentions Busybox, NOT a generic "container security" one.
-         * visitor asks about "compliance" → pick the Compliance-titled
-           video, not the CVE-titled one.
-         * visitor asks a BROAD introductory question ("what does the
-           company do", "give me an overview", "tell me about you") →
-           prefer a video whose title contains "Introduction",
-           "Overview", "About", or the company name. Skip narrow-topic
+            ("do you have a video on this?", "can I get a brochure?",
+            "anything on X?", "got any material on X?")
+         e) A TOPICAL question — any question that names or explores a
+            subject where the catalog has a video or file on that subject.
+            This includes casual mentions and exploratory statements, not
+            only crisp "explain X" asks. Pattern that qualifies:
+              * visitor names ANY subject and the AVAILABLE MEDIA block
+                has an asset covering that subject → emit the card.
+              * The subject can be anything specific to this bot's
+                business: a product name, a feature, a workflow, a
+                policy, a service tier, a use case, a pain point.
+            The visitor doesn't have to explicitly ask "do you have a
+            video?" — if they surface a topic and the catalog has an
+            asset on that exact topic, that IS the moment to emit the
+            card. Do NOT hold back waiting for a more explicit ask.
+    3. TOPIC MATCH BY TITLE — pick the media whose title has the
+       strongest overlap with the visitor's topic. Lean toward emitting
+       when there's a reasonable match — do NOT hold out for a
+       word-perfect title match. Guidance:
+         * When multiple titles in the catalog cover similar ground,
+           pick the one whose title most specifically names the
+           visitor's topic. A title that mentions the topic by name
+           beats a generic parent-category title.
+         * When the visitor asks a BROAD introductory question ("what
+           does the company do", "give me an overview", "tell me about
+           you") → prefer a title containing "Introduction", "Overview",
+           "About", or the company/product name. Skip narrow-topic
            videos for broad questions.
-       If NO title clearly matches the specific topic in the question,
-       do NOT emit a card — a wrong-topic card is worse than no card.
+         * When the visitor names a specific topic and a title clearly
+           covers that same topic → EMIT. A reasonable topic overlap
+           is enough; the title does not need to repeat the visitor's
+           phrasing verbatim (jargon vs. plain language, synonyms,
+           brand names all count as a match if the CONTENT is on
+           topic).
+       Only skip when the closest available media is on a DIFFERENT
+       topic — the visitor asks about compliance and the only assets
+       are about pricing. When the catalog contains an asset on the
+       same subject the visitor named, emit the card.
     4. You emit AT MOST ONE media card in the entire response. If both a
        relevant video and a relevant file exist, pick the single best
        match. Never emit two card sentinels in one reply.
@@ -2636,18 +3104,28 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
       "where are you based", "do you support X"). Answer in text.
     - Any turn where no "Available media" block is present in context.
     - Small talk, greetings, thanks, off-topic pivots, refusals.
-    - You are uncertain whether the media matches the question.
+    - The best available asset is CLEARLY on a different topic than
+      what the visitor asked about (compliance question, only pricing
+      assets exist). Weak-but-plausible overlaps are fine to emit —
+      the trigger is a topical mismatch, not general uncertainty.
     - The same card was already emitted earlier in this conversation.
 
   ─── FORMATTING ───
-    - Emit the sentinel on its OWN LINE at the end of your answer, with
-      a blank line separating it from the last paragraph of prose.
+    - Structure the end of your answer as THREE parts:
+        (1) your answer text
+        (2) a blank line
+        (3) the mandatory BRIDGE SENTENCE naming the asset + why,
+            ending in a colon (see BRIDGE SENTENCE section above)
+        (4) a blank line
+        (5) the sentinel on its OWN LINE
     - Use the video_id EXACTLY as it appears in the "Available media"
       block (11 characters, letters/digits/underscore/hyphen). Do NOT
       wrap the sentinel in a markdown link, parentheses, or backticks.
     - For [DOWNLOAD_CARD:URL|FILENAME], pass the full URL from the
       "Available media" block and its human-readable filename separated
-      by a single pipe. Example:
+      by a single pipe. Example (with bridge):
+        For the full walkthrough, here's the brochure:
+
         [DOWNLOAD_CARD:https://example.com/brochure.pdf|brochure.pdf]
 
   ─── DEFAULT POSTURE ───
@@ -2655,9 +3133,124 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
   high-intent, LEAN TOWARD emitting the card — proactively surface it
   rather than asking the visitor whether they'd like it. Asking "would
   you like the video?" when you already have the video is a worse
-  experience than just showing it. Reserve the "when in doubt, skip it"
-  discipline for cases where the media is a genuinely poor topical
-  match, not for hedging in general.
+  experience than just showing it.
+
+  When you are on the fence between emit and skip, EMIT. A weak-but-
+  topical card is a better visitor experience than a text-only wall
+  next to a catalog that had something relevant. The only case where
+  skipping wins is when the closest asset is on a genuinely different
+  topic (compliance question, only pricing assets exist). "The title
+  doesn't quote the visitor word-for-word" is NOT that case — a
+  reasonable topic overlap is enough. Reserve skip discipline for
+  actual topic mismatches, not for hedging in general.
+
+  ─── ENGAGEMENT POSTURE (cards as conversation hooks) ───
+  Media cards are one of the strongest engagement levers you have.
+  A visitor who watches a video or opens a PDF is 5-10× more likely
+  to convert than one who reads text. So think of cards not as
+  "answer the direct ask" but as "offer the natural next step in
+  the conversation."
+
+  Emit a card PROACTIVELY, even when the visitor did not explicitly
+  ask for one, whenever any of these hold:
+
+    * Your text answer names a subject that has a matching asset in
+      the AVAILABLE MEDIA catalog. If you're going to name a product,
+      feature, or topic in your prose AND the catalog has a video or
+      file on that same subject, the card belongs at the end of that
+      same answer — not withheld until the visitor pushes for it.
+    * The visitor is EXPLORING a topic (open-ended questions,
+      "tell me more", "what about X", casual mentions, follow-up
+      curiosity). Exploration is the moment to pull them deeper —
+      a card gives them somewhere to go.
+    * The visitor is EARLY in the conversation (turns 1-4) and the
+      answer is text-heavy. A card breaks the wall of prose and
+      lengthens the session.
+    * You just answered a question at a summary level and a matching
+      asset would deepen the answer ("here's what we do at a high
+      level" + intro video card).
+    * The visitor's mood is curious / interested / positive (words
+      like "cool", "interesting", "tell me more", "how does that
+      work"). Ride the interest — surface the card.
+
+  Concrete indirect triggers that MUST emit a card if the catalog has
+  a topical asset (``{topic}`` = whatever subject the visitor named,
+  from this specific bot's business surface):
+    * "anything on {topic}" / "got any material on {topic}" / "do you cover {topic}"
+    * "I heard you work with {topic}" / "I saw something about {topic}"
+    * "tell me more about {topic}" / "walk me through {topic}"
+    * "what about {topic}?" as a follow-up to a related answer
+    * A one-word topic mention that clearly names a subject the
+      catalog has an asset on. What that one word is depends entirely
+      on THIS bot's business — could be a product name, a policy, a
+      workflow, a service tier, anything specific to the bot's domain.
+
+  You are ALLOWED to emit a card when the visitor asked for a text
+  answer too — the card is a companion, not a substitute. Give the
+  short prose answer, then drop the sentinel. The visitor gets both.
+
+  ─── CADENCE — DON'T FLOOD THE CHAT ───
+  Cards are hooks; hooks lose meaning when they fire on every turn.
+  Guardrails:
+    * NEVER emit the SAME card twice in one conversation. Track
+      what you've already sent in prior turns of this thread —
+      if the visitor already saw an asset earlier, don't re-emit
+      the same card even if they mention the same topic again.
+      Pick a DIFFERENT relevant asset from the catalog, or none.
+    * Try not to emit a card on two back-to-back turns unless the
+      visitor's turns explicitly pivot to a new subject. Two cards
+      in a row for related topics reads as spam. If turn N already
+      showed a card and turn N+1 is a follow-up on the SAME topic,
+      answer in text — the previous card is still doing its job.
+    * When the visitor is deep in a factual detail exchange
+      ("what's the price", "when was it released", "how many seats"),
+      let text carry it. Cards are for topical / exploratory /
+      qualifying moments, not price-checks.
+
+  ─── CONFIRMATION TURN (safety net for the LLM slipping) ───
+  You must never ask "want the X?" (see MANDATE + FORBIDDEN OUTPUT
+  SHAPES). But if in an earlier turn you slipped and asked anyway —
+  or a listing you produced ended by pointing at one specific item
+  ("The 4th file is X.pdf…") — and the visitor's current turn is a
+  short affirmative ("yes", "yes please", "sure", "ok", "download
+  pls", "send it", "pull it up", "open the card", "the 4th one",
+  etc.), then the visitor's turn IS the explicit request from
+  high-intent category (d). You MUST emit the sentinel for the exact
+  item you named. Rules:
+
+    * If you named a filename ending in .pdf/.docx/.zip/etc. and the
+      visitor confirmed, emit ``[DOWNLOAD_CARD:URL|FILENAME]`` using
+      the full URL from the "Available media" block whose FILENAME
+      matches the one you named. The filename you emit must match
+      one from the Available media block character-for-character.
+    * If you named a YouTube video title/topic and the visitor
+      confirmed, emit ``[YOUTUBE_CARD:VIDEO_ID]`` using the video_id
+      from the "Available media" block whose title you referenced.
+    * Do NOT reply with just "Here you go!" or a bare acknowledgement.
+      The whole point of the visitor's confirmation is to receive the
+      card — omitting the sentinel here is the single most common
+      failure mode of this widget. Emit it every time.
+    * The confirmation may be lowercase, misspelled, or terse
+      ("download pls", "yep", "ya", "sure thing"). Interpret ANY
+      affirmative as consent; do not ask again.
+    * Keep your acknowledgement to one short line ("Sure — here it
+      is." / "Here you go.") and put the sentinel on its own line
+      after it.
+
+  Example — turn 1 hedged (against the rules, but it happens); the
+  visitor then confirms:
+
+    (previous assistant turn) "The 4th file is dependency-management-
+      attack-surface-reduction-fcd0df53.pdf. Want me to open the
+      download card for it?"
+    (visitor)                 "download pls"
+    ✓ RIGHT:
+      "Sure — here it is.
+
+      [DOWNLOAD_CARD:https://cdn.example.com/dependency-management-attack-surface-reduction-fcd0df53.pdf|dependency-management-attack-surface-reduction-fcd0df53.pdf]"
+    ✗ WRONG: "Here you go!"                        ← no sentinel = no card
+    ✗ WRONG: "Sure! [Download](https://…)"         ← markdown link = no card
+    ✗ WRONG: "Which file? I have four."            ← visitor already told you
 
   ─── COUNT / LIST QUESTIONS ARE NOT "SURFACE ONE" QUESTIONS ───
   If the visitor's question is about the QUANTITY, LIST, or CATALOG of
@@ -2671,16 +3264,20 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
 
     visitor: "how many videos do you have?"
     ✗ WRONG: [YOUTUBE_CARD:some-random-id]  ← surfaces one video only
-    ✓ RIGHT: "We have around 20 videos across the CleanStart channel —
-             topics range from container security basics (shell-less
-             containers, base images) to product deep-dives (CleanSight),
-             CVE management, and compliance. A good starting point is
-             our overview video below.
-             [YOUTUBE_CARD:IB7GGzCNy-U]"     ← count + summary + ONE intro card
+    ✓ RIGHT: "We have around {N} videos in the library — topics span
+             {2-4 topical clusters, derived from the actual AVAILABLE
+             MEDIA titles for THIS bot}. A good starting point is
+             the overview video below.
+
+             Here's a good place to start — {Overview / Introduction Video Title}:
+
+             [YOUTUBE_CARD:{OVERVIEW_VIDEO_ID}]"
+                                              ← count + summary + ONE intro card
 
     visitor: "list your podcast episodes"
     ✓ RIGHT: bullet the episodes by title from the Available Media
-             catalog; optionally end with ONE representative episode card.
+             catalog; optionally end with ONE representative episode
+             card, preceded by a bridge sentence naming which one.
 
   ─── HEDGE-BAN (READ TWICE) ───
   If your answer is a DEFLECTION or FALLBACK — the visitor asked about
@@ -2695,11 +3292,11 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
 
     visitor: "who are the founders?"
     ✗ WRONG: "That sits with our team. The founding team is discussed
-             in the From Stealth to Spotlight episode. Want me to
-             share that episode?"    ← names a specific episode + hedges
-    ✓ RIGHT: "That specific detail sits with our team. Our founders
-             worked on secure base images before coming out of stealth;
-             our team can share more if you'd like to connect."
+             in the {Some Episode Title} episode. Want me to share
+             that episode?"          ← names a specific episode + hedges
+    ✓ RIGHT: "That specific detail sits with our team. I can connect
+             you with someone who can share more if that would be
+             useful."
 
     visitor: "what's your revenue?"
     ✗ WRONG: "I don't have that figure. Would you like our investor
@@ -2715,7 +3312,13 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
   ─── PRECEDENCE ───
   [MEETING_CARD] and [LEAVE_MESSAGE_CARD] outrank media cards. If the
   visitor's turn qualifies for a booking or async-message card, emit
-  that one and do NOT also emit a media card."""
+  that one and do NOT also emit a media card.""".replace(
+        "{YOUTUBE_CARD_SENTINEL_PREFIX}",
+        YOUTUBE_CARD_SENTINEL_PREFIX,
+    ).replace(
+        "{DOWNLOAD_CARD_SENTINEL_PREFIX}",
+        DOWNLOAD_CARD_SENTINEL_PREFIX,
+    )
 
     # Build optional sections (truncate to prevent prompt bloat)
     if custom_system_prompt:
@@ -2926,6 +3529,7 @@ CONVERSATION HISTORY
 USER QUESTION: {question}
 ═══════════════════════════════════════════════════════
 """
+    logger.info("media_prompt_version=%d prompt built", _MEDIA_PROMPT_VERSION)
     return hybrid_system_prompt, user_prompt
 
 
@@ -3996,6 +4600,7 @@ def rag_pipeline(
             # data or an earlier turn's context. A wrong-video card is
             # worse than no card.
             _allowed_yt, _allowed_files = _collect_available_media(final_results)
+            _bot_media_for_validate: list[dict] = []
             if bid is not None:
                 _bot_media_for_validate = get_bot_media_urls(session, bot_id=bid)
                 for _bm in _bot_media_for_validate:
@@ -4005,21 +4610,35 @@ def rag_pipeline(
                     for _f in _bm.get("files") or []:
                         if isinstance(_f, dict) and isinstance(_f.get("url"), str):
                             _allowed_files.add(_f["url"])
+            _allowed_titles, _allowed_names = _collect_available_media_names(final_results, _bot_media_for_validate)
             _media_card = _drop_hallucinated_media_card(_media_card, _allowed_yt, _allowed_files)
             if _media_card is None:
                 # Safety net #1: LLM sometimes ignores the "emit the sentinel"
                 # rule and writes a markdown-linked or bare URL instead. When
-                # the referenced URL is in the retrieved Available media,
-                # promote it to a proper card and strip the loose URL so the
-                # answer text doesn't render a raw link next to nothing.
-                answer, _media_card = _promote_loose_url_to_media_card(answer, final_results)
-            # Trailing-ask handler runs UNCONDITIONALLY — it must strip the
-            # "Would you like me to pull up the video?" hedge even when a
-            # card is already set (the LLM's tic of emitting the PDF card
-            # then asking about the video, or vice-versa). Existing card
-            # wins; the ask about the other type is silently stripped.
-            answer, _media_card = _handle_trailing_media_ask(answer, final_results, _media_card)
+                # the referenced URL is in the bot's media catalog (retrieved
+                # OR bot-wide — same whitelist the hallucination guard trusts
+                # above), promote it to a proper card and strip the loose URL
+                # so the answer text doesn't render a raw link next to nothing.
+                # Passing the combined whitelist (not just ``final_results``)
+                # is what lets a confirmation turn like "download pls" — whose
+                # retrieval surfaces no matching chunk — still render the card.
+                answer, _media_card = _promote_loose_url_to_media_card(
+                    answer, final_results, _allowed_yt, _allowed_files
+                )
+            # Trailing-ask handler runs UNCONDITIONALLY — but its behaviour
+            # is three-way (see the docstring): a NAMED follow-up offer that
+            # references a real catalog asset is preserved so the next-turn
+            # confirmation can bind to it; vague or invented asks are still
+            # stripped; and any ask alongside an already-emitted card is
+            # stripped as redundant hedging.
+            answer, _media_card = _handle_trailing_media_ask(
+                answer, final_results, _media_card, _allowed_titles, _allowed_names
+            )
             _enrich_media_card_from_context(_media_card, final_results)
+            # Option E — after the primary card is settled and enriched,
+            # look for a topically-related asset of the OPPOSITE type to
+            # surface as a small secondary chip beneath the primary card.
+            _media_secondary = _pick_secondary_media(_media_card, final_results, _bot_media_for_validate)
             if _media_card:
                 logger.info(
                     "Media card token detected | session=%s type=%s",
@@ -4142,8 +4761,14 @@ def rag_pipeline(
 
             # Media card (YouTube / downloadable file): the widget renders one
             # inline card at the end of the message when this key is present.
+            # ``media_secondary`` is a list (0 or 1 element) of the OPPOSITE-type
+            # asset that topically matches the primary; the widget renders it as
+            # a small chip beneath the primary card so the visitor can discover
+            # a related file/video without a second heavy card.
             if _media_card:
                 result["media_card"] = _media_card
+                if _media_secondary:
+                    result["media_secondary"] = _media_secondary
 
             # Leave-message card: triggered by [LEAVE_MESSAGE_CARD] token from LLM.
             # Skipped when a live-chat handoff is already being suggested so the
@@ -4825,6 +5450,7 @@ async def rag_pipeline_stream(
             # path for rationale. Drops cards whose IDs the LLM recalled
             # from memory rather than the current turn's catalog.
             _allowed_yt, _allowed_files = _collect_available_media(final_results)
+            _bot_media_for_validate: list[dict] = []
             if bid is not None:
                 _bot_media_for_validate = get_bot_media_urls(session, bot_id=bid)
                 for _bm in _bot_media_for_validate:
@@ -4834,17 +5460,28 @@ async def rag_pipeline_stream(
                     for _f in _bm.get("files") or []:
                         if isinstance(_f, dict) and isinstance(_f.get("url"), str):
                             _allowed_files.add(_f["url"])
+            _allowed_titles, _allowed_names = _collect_available_media_names(final_results, _bot_media_for_validate)
             _media_card = _drop_hallucinated_media_card(_media_card, _allowed_yt, _allowed_files)
             if _media_card is None:
                 # Safety net #1 (streaming path): promote a loose URL to a
-                # card when the LLM skipped the sentinel but referenced a
-                # URL from the retrieved Available media.
-                full_answer, _media_card = _promote_loose_url_to_media_card(full_answer, final_results)
-            # Trailing-ask handler — same unconditional call as the non-
-            # streaming path. Strips "Would you like the video?" even
-            # when a PDF card is already set (or vice versa).
-            full_answer, _media_card = _handle_trailing_media_ask(full_answer, final_results, _media_card)
+                # card when the LLM skipped the sentinel but referenced a URL
+                # from the bot's media catalog. Uses the combined (retrieved +
+                # bot-wide) whitelist — same set the hallucination guard trusts
+                # above — so a "download pls" confirmation, whose retrieval
+                # returns no matching chunk, still promotes the named file.
+                full_answer, _media_card = _promote_loose_url_to_media_card(
+                    full_answer, final_results, _allowed_yt, _allowed_files
+                )
+            # Trailing-ask handler (streaming path). NAMED follow-up offers
+            # that reference a real catalog asset are preserved so the next
+            # turn's confirmation binds cleanly; vague/invented asks and
+            # redundant asks alongside an emitted card are stripped.
+            full_answer, _media_card = _handle_trailing_media_ask(
+                full_answer, final_results, _media_card, _allowed_titles, _allowed_names
+            )
             _enrich_media_card_from_context(_media_card, final_results)
+            # Option E secondary chip — see non-streaming path for detail.
+            _media_secondary = _pick_secondary_media(_media_card, final_results, _bot_media_for_validate)
             if _media_card:
                 logger.info(
                     "Media card token detected | session=%s type=%s",
@@ -4994,6 +5631,8 @@ async def rag_pipeline_stream(
                     # meeting / leave-message cards per system prompt rules.
                     if _media_card:
                         final_meta["media_card"] = _media_card
+                        if _media_secondary:
+                            final_meta["media_secondary"] = _media_secondary
 
                     # Mark meeting card as shown for per-session dedupe (only if
                     # resolution actually populated show_booking above).

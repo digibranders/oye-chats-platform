@@ -1,9 +1,14 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react';
 import BotAvatar from './BotAvatar';
-import MediaCard from './MediaCard';
 import { sanitizeColor } from '../services/sanitize';
+
+// MediaCard (YouTube/downloadable-file cards) is lazy-loaded: it only renders on
+// completed bot replies that carry a media_card, so keeping it out of the Chat
+// chunk keeps the first-open payload lean — consistent with the other on-demand
+// cards (HandoffForm, MeetingBooking) that ChatWindow lazy-imports.
+const MediaCard = lazy(() => import('./MediaCard'));
 
 // Link rendering modes:
 //   1. Inline icon — link text is just an arrow glyph (↗, →, »). Used by the
@@ -368,12 +373,14 @@ const MessageBubble = ({
                             so it only renders on completed replies — never
                             mid-stream — and never on user turns. */}
                         {msg.media_card && !isStreaming && (
-                            <MediaCard card={msg.media_card} />
+                            <Suspense fallback={null}>
+                                <MediaCard card={msg.media_card} secondary={msg.media_secondary} />
+                            </Suspense>
                         )}
                     </div>
                     {showActions && (
                         <div
-                            className="flex items-center gap-1 mt-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
+                            className="flex items-center gap-1 mt-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-150"
                             aria-label="Message actions"
                         >
                             <MessageActionButton

@@ -266,6 +266,7 @@ export const CrawlProvider = ({ children }) => {
             expectedNewPages = null,
             orderedUrls = null,
             maxPages = null,
+            mode = 'delta',
         } = {}) => {
             cancelledByUserRef.current = false;
             // Brand-new crawl → forget which terminal we already handled so
@@ -310,6 +311,7 @@ export const CrawlProvider = ({ children }) => {
                     expectedNewPages,
                     orderedUrls,
                     maxPages,
+                    mode,
                 );
                 // Kick a poll immediately so the bar advances faster than the
                 // background tick.

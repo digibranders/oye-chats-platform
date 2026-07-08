@@ -56,7 +56,10 @@ export default function UpgradeModal({ payload, onClose }) {
 
     const handleViewPlans = () => {
         onClose();
-        navigate('/billing');
+        // Land on the Plan & seats tab, not the Billing overview — this modal
+        // is exclusively an upgrade CTA, so the plan picker is what the user
+        // is looking for. See Billing.jsx: tab id ``seats`` = "Plan & seats".
+        navigate('/billing?tab=seats');
     };
 
     return (
