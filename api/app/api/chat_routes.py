@@ -385,6 +385,7 @@ def chat_endpoint(body: ChatRequest, request: Request, bot: Bot = Depends(get_cu
             location=location,
             device=formatted_device,
             bot_id=bot.id,
+            cta_dimension=body.cta_dimension,
         )
 
         ans_len = len(result.get("answer", ""))
@@ -508,6 +509,7 @@ async def chat_stream_endpoint(body: ChatRequest, request: Request, bot: Bot = D
             location=location,
             device=formatted_device,
             bot_id=bot.id,
+            cta_dimension=body.cta_dimension,
         ):
             if isinstance(chunk, str):
                 flag = _final_metadata_failure_flag(chunk)

@@ -38,7 +38,7 @@ from app.services.groundedness_gate import check_groundedness, should_sample
 from app.services.intent_router import route_intent
 from app.services.intent_service import detect_handoff_intent, detect_handoff_intent_keywords
 from app.services.llm_service import generate_response, generate_response_checked, generate_response_stream
-from app.services.qualification_service import get_framework_config, get_tier
+from app.services.qualification_service import calculate_composite_score, get_framework_config, get_tier
 from app.services.relevance_gate import check_relevance
 from app.services.reranker import RERANK_ENABLED, rerank
 
@@ -1956,6 +1956,43 @@ def _should_skip_bant_extraction(question: str, current_bant: dict, framework_co
     return all(s >= 20 for s in scores)
 
 
+def _score_cta_answer(cta_dimension: str | None, answer_text: str, framework_config: dict | None) -> dict | None:
+    """Deterministically score a qualification CTA pill click (BR-02).
+
+    Before this, a pill tap just resent the button's label as an ordinary
+    chat message, so it was scored (if at all) by the same probabilistic
+    free-text LLM extraction as anything a visitor typed — spending an LLM
+    call to re-derive a signal the frontend already knew exactly, with a real
+    chance of it being dropped or mis-scored. Worse, ``_should_skip_bant_extraction``'s
+    10-character floor silently ate some default option labels entirely
+    (e.g. "$1K-5K/mo", "$20K+/mo") before the LLM was even called.
+
+    When the frontend tags a message as having come from an active CTA for
+    ``cta_dimension``, match its exact text against that dimension's rubric
+    options and return a ready-made signal with no LLM round-trip — the
+    tapped button *is* the rubric answer, there is nothing to extract.
+    Returns ``None`` (falling back to normal extraction) if the dimension or
+    label doesn't resolve to a known option, e.g. a stale/edited rubric.
+    """
+    if not cta_dimension or not framework_config:
+        return None
+    dim_config = framework_config.get(cta_dimension)
+    if not isinstance(dim_config, dict):
+        return None
+    normalized_answer = answer_text.strip().lower()
+    for option in dim_config.get("options") or []:
+        label = str(option.get("label", ""))
+        if label.strip().lower() == normalized_answer:
+            return {
+                "dimension": cta_dimension,
+                "score": int(option.get("score", 0) or 0),
+                "confidence": "high",
+                "signal_text": answer_text,
+                "extracted_value": answer_text,
+            }
+    return None
+
+
 def _build_bant_state(chat_session: ChatSession | None) -> dict:
     """Build a unified BANT state dict with both text values and scores."""
     if not chat_session:
@@ -2220,7 +2257,17 @@ def _background_groundedness_check(
 
 
 def _background_bant_extraction(
-    session_id, cid, bid, history_context, question, answer, current_bant, bot_id, bant_config, message_id
+    session_id,
+    cid,
+    bid,
+    history_context,
+    question,
+    answer,
+    current_bant,
+    bot_id,
+    bant_config,
+    message_id,
+    cta_signal: dict | None = None,
 ):
     """Fire-and-forget BANT extraction with evidence trail. Opens its own DB session.
 
@@ -2228,9 +2275,17 @@ def _background_bant_extraction(
     worker's own session. Passing the outer detached Bot instance would raise
     ``DetachedInstanceError`` on any attribute access — silently breaking
     BANT scoring, sql-tier emails, and outbound webhooks.
+
+    ``cta_signal`` (BR-02): when the caller already deterministically resolved
+    a qualification-CTA pill click (see ``_score_cta_answer``), it's passed
+    here as a ready-made signal — no LLM extraction call, no risk of the
+    free-text extraction prompt mis-scoring or dropping a known-good answer.
     """
     try:
-        signals = extract_qualification_signals(history_context, question, answer, current_bant, bant_config)
+        if cta_signal is not None:
+            signals = [cta_signal]
+        else:
+            signals = extract_qualification_signals(history_context, question, answer, current_bant, bant_config)
         if not signals:
             return
 
@@ -2287,6 +2342,7 @@ def _background_bant_extraction(
                     confidence=signal["confidence"],
                     score_before=current_score,
                     score_after=max(new_score, current_score),
+                    source="cta_click" if cta_signal is not None else "llm",
                 )
                 session.add(bant_signal)
 
@@ -2316,13 +2372,20 @@ def _background_bant_extraction(
             chat_session.dimension_scores = dimension_scores
             chat_session.qualification_framework = config.get("framework", "bant")
 
-            # Recalculate composite fields
-            chat_session.bant_score = (
-                (chat_session.bant_need_score or 0)
-                + (chat_session.bant_budget_score or 0)
-                + (chat_session.bant_authority_score or 0)
-                + (chat_session.bant_timeline_score or 0)
-            )
+            # Recalculate composite fields — framework-aware (BR-01).
+            #
+            # The legacy sum of the four bant_*_score columns only ever
+            # reflected the BANT preset: score_field_map above only writes
+            # those columns for dims literally named need/timeline/authority/
+            # budget, so for MEDDIC/CHAMP/GPCTBA+C&I bots this sum was always
+            # 0 — every lead on a non-BANT framework showed score 0/tier
+            # "unqualified" forever, even though dimension_scores (just above)
+            # was correctly populated. calculate_composite_score reads
+            # dimension_scores against the active framework's own weights, so
+            # it produces the right composite for every framework, including
+            # BANT (where it also normalizes to a true 0-100 scale instead of
+            # a raw point sum — a strict improvement, see qualification tests).
+            chat_session.bant_score = calculate_composite_score(dimension_scores, config)
 
             thresholds = config.get("thresholds")
             chat_session.bant_tier = get_tier(chat_session.bant_score, thresholds=thresholds)
@@ -4148,11 +4211,15 @@ def rag_pipeline(
     location: str = None,
     device: str = None,
     bot_id: int = None,
+    cta_dimension: str | None = None,
 ):
     """
     Orchestrate the RAG flow with Chat Memory.
     Accepts Client or Bot object. If bot_id is provided, uses bot-scoped queries.
     Instrumented with Langfuse v4 when enabled.
+
+    ``cta_dimension`` (BR-02): set when ``question`` is the visitor's tap on an
+    active qualification CTA pill for that dimension — see ``_score_cta_answer``.
     """
     if bot_id:
         cid = getattr(client, "client_id", None) if isinstance(client, Bot) else getattr(client, "id", None)
@@ -4710,7 +4777,10 @@ def rag_pipeline(
 
             session.commit()
 
-            if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
+            _cta_signal = _score_cta_answer(cta_dimension, question, bant_config)
+            if is_bant_enabled and (
+                _cta_signal is not None or not _should_skip_bant_extraction(question, current_bant, bant_config)
+            ):
                 # Pass bid (id), not the bot ORM object. The worker reloads
                 # inside its own session — passing a detached instance raises
                 # DetachedInstanceError on attribute access.
@@ -4726,6 +4796,7 @@ def rag_pipeline(
                     bid,
                     bant_config,
                     bot_msg.id,
+                    _cta_signal,
                 )
 
             if should_sample():
@@ -4870,11 +4941,15 @@ async def rag_pipeline_stream(
     location: str = None,
     device: str = None,
     bot_id: int = None,
+    cta_dimension: str | None = None,
 ):
     """
     Streaming version of the Hybrid RAG flow.
     Accepts Client or Bot object. If bot_id is provided, uses bot-scoped queries.
     Instrumented with Langfuse v4 when enabled.
+
+    ``cta_dimension`` (BR-02): set when ``question`` is the visitor's tap on an
+    active qualification CTA pill for that dimension — see ``_score_cta_answer``.
     """
     if bot_id:
         cid = getattr(client, "client_id", None) if isinstance(client, Bot) else getattr(client, "id", None)
@@ -5596,7 +5671,10 @@ async def rag_pipeline_stream(
                     if _cache_key and full_answer and chunk_count > 0 and not _skip_cache_for_turn:
                         cache_set(_cache_key, {"answer": full_answer, "sources": sources}, QA_RESPONSE_TTL)
 
-                    if is_bant_enabled and not _should_skip_bant_extraction(question, current_bant, bant_config):
+                    _cta_signal = _score_cta_answer(cta_dimension, question, bant_config)
+                    if is_bant_enabled and (
+                        _cta_signal is not None or not _should_skip_bant_extraction(question, current_bant, bant_config)
+                    ):
                         # Pass bid (id), not the bot ORM object — see streaming
                         # path's equivalent call above for the rationale.
                         submit_background(
@@ -5611,6 +5689,7 @@ async def rag_pipeline_stream(
                             bid,
                             bant_config,
                             bot_msg_id,
+                            _cta_signal,
                         )
 
                     if should_sample():

@@ -551,7 +551,7 @@ class BANTSignal(Base):
     confidence = Column(String, default="medium", server_default="medium", nullable=False)
     score_before = Column(Integer, default=0, server_default="0", nullable=False)
     score_after = Column(Integer, default=0, server_default="0", nullable=False)
-    source = Column(String, default="llm", server_default="llm", nullable=False)  # llm|cta_click
+    source = Column(String, default="llm", server_default="llm", nullable=False)  # llm|cta_click|operator_override
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="bant_signals")
