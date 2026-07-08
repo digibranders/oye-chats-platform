@@ -3313,9 +3313,11 @@ MEDIA CARDS (inline cards — MANDATORY USAGE RULES):
   [MEETING_CARD] and [LEAVE_MESSAGE_CARD] outrank media cards. If the
   visitor's turn qualifies for a booking or async-message card, emit
   that one and do NOT also emit a media card.""".replace(
-        "{YOUTUBE_CARD_SENTINEL_PREFIX}", YOUTUBE_CARD_SENTINEL_PREFIX,
+        "{YOUTUBE_CARD_SENTINEL_PREFIX}",
+        YOUTUBE_CARD_SENTINEL_PREFIX,
     ).replace(
-        "{DOWNLOAD_CARD_SENTINEL_PREFIX}", DOWNLOAD_CARD_SENTINEL_PREFIX,
+        "{DOWNLOAD_CARD_SENTINEL_PREFIX}",
+        DOWNLOAD_CARD_SENTINEL_PREFIX,
     )
 
     # Build optional sections (truncate to prevent prompt bloat)

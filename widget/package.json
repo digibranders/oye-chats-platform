@@ -75,6 +75,12 @@
       "path": "dist/app/oyechats-markdown.*.js",
       "limit": "40 KB",
       "gzip": true
+    },
+    {
+      "name": "MediaCard (lazy on media reply)",
+      "path": "dist/app/oyechats-MediaCard.*.js",
+      "limit": "4 KB",
+      "gzip": true
     }
   ],
   "dependencies": {
