@@ -969,6 +969,44 @@ class TestExtractQualificationSignals:
 
         assert result == []
 
+    def test_emits_distinct_metric_on_parse_or_api_failure(self):
+        """AR-32: before this, a genuine parse/validation/API failure was
+        indistinguishable from a legitimate "no signal" turn — both just
+        returned []. A transient failure on a turn with a real buying signal
+        silently and permanently dropped it with zero alert. Must now emit
+        its own metric tag distinct from the empty-response case."""
+        from app.services.rag_service import extract_qualification_signals
+
+        with (
+            patch("app.services.rag_service.litellm") as mock_litellm,
+            patch("app.services.rag_service._safety_net_metric") as mock_metric,
+        ):
+            mock_litellm.completion.side_effect = RuntimeError("schema validation failed")
+            result = extract_qualification_signals("history", "question", "answer", {})
+
+        assert result == []
+        mock_metric.assert_called_once()
+        assert mock_metric.call_args[0][0] == "bant_extraction_failed"
+
+    def test_does_not_emit_failure_metric_on_legitimate_empty_response(self):
+        """A clean LLM response with an empty signals list is NOT a failure —
+        must not fire the AR-32 failure metric."""
+        from app.services.rag_service import extract_qualification_signals
+
+        with (
+            patch("app.services.rag_service.litellm") as mock_litellm,
+            patch("app.services.rag_service._safety_net_metric") as mock_metric,
+        ):
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock()]
+            mock_response.choices[0].message.content = '{"signals": []}'
+            mock_litellm.completion.return_value = mock_response
+
+            result = extract_qualification_signals("history", "question", "answer", {})
+
+        assert result == []
+        mock_metric.assert_not_called()
+
     def test_returns_empty_for_short_input(self):
         from app.services.rag_service import extract_qualification_signals
 

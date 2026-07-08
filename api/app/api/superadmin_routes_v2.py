@@ -1120,6 +1120,7 @@ def patch_model_config(
 # plain list here (not imported) to avoid a superadmin_routes_v2 <-> rag_service
 # coupling for what is otherwise a self-contained read-only reporting route.
 _SAFETY_NET_METRIC_NAMES = [
+    "bant_extraction_failed",
     "groundedness_check",
     "handoff_safety_net_triggered",
     "injection_attempt",

@@ -1833,7 +1833,16 @@ SCORING DISCIPLINE
         )
         return signals
     except Exception as e:
+        # AR-32: distinct from the empty-response "no signal" case logged
+        # above (line ~1824) — this branch is a genuine parse/validation/API
+        # failure (schema mismatch, network error, malformed JSON), NOT a
+        # legitimate empty-signal turn. Previously both were indistinguishable
+        # from the outside (both just returned []), so a transient failure on
+        # a turn with a real strong buying signal silently and permanently
+        # dropped that signal — under-reporting lead qualification with no
+        # alert. `_safety_net_metric` gives this its own counter/log tag.
         logger.warning("[bant] extraction failed (non-breaking): %s | question=%r", e, question[:80])
+        _safety_net_metric("bant_extraction_failed", question=question[:80], error=type(e).__name__)
         return []
 
 
