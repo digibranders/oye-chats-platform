@@ -20,7 +20,7 @@ the old hardcoded four-column sum.
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
-from app.db.models import Bot, ChatSession
+from app.db.models import BANTSignal, Bot, ChatSession
 from app.services.qualification_service import calculate_composite_score, get_framework_config, get_tier
 from app.services.rag_service import _background_bant_extraction
 
@@ -189,3 +189,48 @@ class TestBackgroundBantExtractionFrameworkAware:
         # BANT dimensions DO map to the legacy columns — back-compat preserved.
         assert chat_session.bant_need_score == 20
         assert chat_session.bant_budget_score == 15
+
+
+class TestBackgroundBantExtractionCtaSignal:
+    """BR-02: a deterministic ``cta_signal`` bypasses LLM extraction entirely
+    and is tagged with ``source="cta_click"`` in the audit log."""
+
+    def test_cta_signal_skips_llm_extraction_and_tags_source(self):
+        bot = _FakeBot()
+        bot.bant_config = {"framework": "bant"}
+        chat_session = _FakeChatSession()
+        session = _make_session(bot, chat_session)
+
+        cta_signal = {
+            "dimension": "budget",
+            "score": 25,
+            "confidence": "high",
+            "signal_text": "$20K+/mo",
+            "extracted_value": "$20K+/mo",
+        }
+
+        with (
+            patch("app.services.rag_service.get_session", return_value=_session_ctx(session)),
+            patch("app.services.rag_service.extract_qualification_signals") as mock_extract,
+        ):
+            _background_bant_extraction(
+                session_id=1,
+                cid=9,
+                bid=5,
+                history_context="",
+                question="$20K+/mo",
+                answer="Great, thanks for sharing.",
+                current_bant={},
+                bot_id=5,
+                bant_config=None,
+                message_id=None,
+                cta_signal=cta_signal,
+            )
+
+        # No LLM round-trip for a CTA-origin answer.
+        mock_extract.assert_not_called()
+        assert chat_session.bant_budget_score == 25
+
+        added_signals = [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], BANTSignal)]
+        assert len(added_signals) == 1
+        assert added_signals[0].source == "cta_click"

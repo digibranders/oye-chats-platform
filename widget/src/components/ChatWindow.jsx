@@ -952,7 +952,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
     };
 
     // ── Bot message send ─────────────────────────────────────────────────────────
-    const handleSend = async (e, prefillText) => {
+    const handleSend = async (e, prefillText, ctaDimension) => {
         if (e) e.preventDefault();
         const text = prefillText || inputText;
         if (!text.trim()) return;
@@ -983,6 +983,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
             await sendMessageStream(userMsg.text, sessionId, {
+                ctaDimension,
                 onMetadata: (metadata) => {
                     if (metadata.session_id && metadata.session_id !== sessionId) {
                         setSessionId(metadata.session_id);
@@ -2237,8 +2238,13 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     cta={activeCTA}
                     dismissed={!activeCTA}
                     onSelect={(option) => {
+                        // Tag this send with the CTA's dimension (BR-02) so the
+                        // backend scores the tapped option deterministically
+                        // from the rubric instead of re-interpreting it as
+                        // free text — the button IS the rubric answer.
+                        const ctaDimension = activeCTA?.dimension;
                         setActiveCTA(null);
-                        handleSend(null, option);
+                        handleSend(null, option, ctaDimension);
                     }}
                 />
 

@@ -60,14 +60,19 @@ const _readWithTimeout = (reader) =>
         );
     });
 
-export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError }) => {
+export const sendMessageStream = async (message, sessionId, { onMetadata, onChunk, onFinalMetadata, onError, ctaDimension }) => {
     try {
         const response = await fetch(`${API_URL}/chat/stream`, {
             method: 'POST',
             headers: getHeaders(),
             body: JSON.stringify({
                 question: message,
-                session_id: sessionId
+                session_id: sessionId,
+                // BR-02: tags this message as the visitor's tap on an active
+                // qualification CTA pill so the backend can score it
+                // deterministically from the rubric instead of re-interpreting
+                // it as free text (see rag_service._score_cta_answer).
+                ...(ctaDimension ? { cta_dimension: ctaDimension } : {}),
             }),
         });
 
