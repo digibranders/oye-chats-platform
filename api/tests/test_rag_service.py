@@ -33,6 +33,35 @@ class TestSafetyNetMetric:
         mock_incr.assert_called_once_with("intent_router_short_circuit", bot_id=None)
 
 
+# ── _retrieval_included_crawled_content (AR-18) ─────────────────────────────
+
+
+class TestRetrievalIncludedCrawledContent:
+    def test_true_when_any_chunk_is_from_crawl(self):
+        from app.services.rag_service import _retrieval_included_crawled_content
+
+        chunks = [SimpleNamespace(source="upload"), SimpleNamespace(source="crawl")]
+        assert _retrieval_included_crawled_content(chunks) is True
+
+    def test_false_when_all_chunks_are_manual_uploads(self):
+        from app.services.rag_service import _retrieval_included_crawled_content
+
+        chunks = [SimpleNamespace(source="upload"), SimpleNamespace(source="upload")]
+        assert _retrieval_included_crawled_content(chunks) is False
+
+    def test_false_for_empty_chunk_list(self):
+        from app.services.rag_service import _retrieval_included_crawled_content
+
+        assert _retrieval_included_crawled_content([]) is False
+
+    def test_false_when_source_attribute_missing(self):
+        """A chunk fixture/mock without a .source attribute must not crash
+        this — treated as non-crawl rather than raising."""
+        from app.services.rag_service import _retrieval_included_crawled_content
+
+        assert _retrieval_included_crawled_content([object()]) is False
+
+
 # ── _background_groundedness_check (AR-12) ──────────────────────────────────
 
 

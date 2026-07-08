@@ -1060,6 +1060,26 @@ def contains_system_prompt_leak(text: str) -> bool:
     return any(sentinel in text for sentinel in _LEAKAGE_SENTINELS)
 
 
+def _retrieval_included_crawled_content(chunks: list) -> bool:
+    """Whether any chunk in this turn's retrieved context came from a crawl
+    (attacker-influenceable — a site owner or third party controls that
+    text) rather than a manual upload (AR-18).
+
+    Known residual injection-defense gap: ``_INJECTION_PHRASES_RE``
+    (cleaner.py, via app/security/injection_patterns.py) is line-anchored
+    and English-phrase-fixed only — mid-paragraph injection, roleplay-style
+    jailbreaks, non-English phrasing, and homoglyph/base64 obfuscation all
+    bypass ingest-time stripping. The only remaining defense for those is the
+    LLM's own judgment plus the ``<<<DOCUMENT>>>`` "treat as data" framing in
+    the system prompt. This tag lets ops see whether a
+    ``system_prompt_leak``/off-topic-refusal spike correlates with crawled
+    (higher-risk) vs manually-uploaded (lower-risk) knowledge-base content —
+    documented here rather than fixed, since closing it requires either a
+    much heavier ingest-time classifier or accepting the residual risk.
+    """
+    return any(getattr(doc, "source", None) == "crawl" for doc in chunks)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Media card context helper
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3673,6 +3693,7 @@ def rag_pipeline(
                     path="nonstream",
                     session=session_id,
                     bot_id=bid,
+                    crawled_content=_retrieval_included_crawled_content(final_results),
                 )
                 answer = _off_topic_refusal(_company_name)
 
@@ -4401,6 +4422,7 @@ async def rag_pipeline_stream(
                                 path="stream",
                                 session=session_id,
                                 bot_id=bid,
+                                crawled_content=_retrieval_included_crawled_content(final_results),
                             )
                             _leak_aborted = True
                             full_answer = _off_topic_refusal(_company_name)
