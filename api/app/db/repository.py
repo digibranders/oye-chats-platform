@@ -13,6 +13,7 @@ from app.db.models import (
     ChatSession,
     Client,
     Document,
+    Event,
     LeadInfo,
     PlatformFeedback,
 )
@@ -1174,3 +1175,107 @@ def get_visitor_data(session, client_id: int = None, bot_id: int = None, *, limi
             }
         )
     return visitor_list
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Structured events (Tier 2 — SQL-backed answers to date-sensitive questions)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def upsert_events(
+    session,
+    *,
+    bot_id: int,
+    source_url: str,
+    events: list[dict],
+    source_chunk_id: int | None = None,
+) -> int:
+    """Idempotently write a page's extracted events for a bot.
+
+    Natural key is ``(bot_id, source_url, title)``: a re-crawl of the same
+    page bumps ``last_seen_at`` and refreshes mutable fields; a genuinely
+    new event on the same page gets inserted. Returns the number of rows
+    written (inserted + updated). Caller is responsible for the commit.
+
+    ``events`` is the list of dicts produced by
+    ``ingestion.event_extractor.extract_events``.
+    """
+    if not bot_id or not source_url or not events:
+        return 0
+    from sqlalchemy.dialects.postgresql import (
+        insert as pg_insert,  # local import to avoid pulling PG-specific syntax at import time in tests using SQLite
+    )
+
+    rows: list[dict] = []
+    now_ts = datetime.utcnow()
+    for ev in events:
+        title = (ev.get("title") or "").strip()
+        starts_at = ev.get("starts_at")
+        if not title or starts_at is None:
+            continue
+        rows.append(
+            {
+                "bot_id": bot_id,
+                "title": title,
+                "starts_at": starts_at,
+                "ends_at": ev.get("ends_at"),
+                "url": ev.get("url"),
+                "location": ev.get("location"),
+                "source_url": source_url,
+                "source_chunk_id": source_chunk_id,
+                "last_seen_at": now_ts,
+            }
+        )
+    if not rows:
+        return 0
+
+    stmt = pg_insert(Event).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_events_bot_source_title",
+        set_={
+            "starts_at": stmt.excluded.starts_at,
+            "ends_at": stmt.excluded.ends_at,
+            "url": stmt.excluded.url,
+            "location": stmt.excluded.location,
+            "source_chunk_id": stmt.excluded.source_chunk_id,
+            "last_seen_at": stmt.excluded.last_seen_at,
+        },
+    )
+    session.execute(stmt)
+    return len(rows)
+
+
+def get_upcoming_events(session, *, bot_id: int, limit: int = 10, now: datetime | None = None) -> list[Event]:
+    """Return upcoming events for a bot, soonest first.
+
+    ``now`` defaults to the server's current UTC time; pass an explicit
+    value in tests so the fixture data is deterministic.
+    """
+    if not bot_id:
+        return []
+    now = now or datetime.utcnow()
+    stmt = (
+        select(Event).where(Event.bot_id == bot_id, Event.starts_at >= now).order_by(Event.starts_at.asc()).limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
+
+
+def prune_stale_events(session, *, retention_days: int) -> int:
+    """Delete events whose source page hasn't mentioned them in a while.
+
+    Two paths get deleted:
+      * ``last_seen_at`` older than ``retention_days`` (customer removed
+        the event from their site — a re-crawl would have refreshed it).
+      * ``starts_at`` further than ``retention_days`` in the past
+        (aged-out row we no longer care to keep for answering).
+
+    Returns the number of rows deleted. Caller commits.
+    """
+    if retention_days <= 0:
+        return 0
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    from sqlalchemy import delete, or_
+
+    stmt = delete(Event).where(or_(Event.last_seen_at < cutoff, Event.starts_at < cutoff))
+    result = session.execute(stmt)
+    return int(result.rowcount or 0)

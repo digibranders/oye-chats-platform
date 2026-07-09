@@ -848,6 +848,89 @@ class TestPickSecondaryMedia:
         assert _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload]) == []
 
 
+class TestReadTimeJunkFilter:
+    """Junk entries left in ``metadata_info.media_urls`` by the pre-fix
+    ingestion (``hub.doc``, ``get.doc``, ``docs.doc`` from ``hub.docker.com``
+    / ``get.docker.com`` / ``docs.docker.com``) must NEVER reach the LLM,
+    the hallucination whitelist, or the secondary-chip picker. The lazy
+    read-time filter ``_is_valid_file_url`` is what makes that guarantee
+    hold without a DB migration or re-crawl.
+
+    These tests pin the filter behaviour at every consumer surface so a
+    future edit can't accidentally re-open the door.
+    """
+
+    _JUNK = [
+        {"url": "https://hub.doc", "name": "hub.doc"},
+        {"url": "https://get.doc", "name": "get.doc"},
+        {"url": "https://docs.doc", "name": "docs.doc"},
+    ]
+    _REAL = {"url": "https://cdn.x.com/real-report.pdf", "name": "real-report.pdf"}
+
+    def test_is_valid_file_url_rejects_domain_labels(self):
+        from app.services.rag_service import _is_valid_file_url
+
+        for junk in self._JUNK:
+            assert _is_valid_file_url(junk["url"]) is False, f"junk leaked: {junk['url']}"
+
+    def test_is_valid_file_url_accepts_real_files(self):
+        from app.services.rag_service import _is_valid_file_url
+
+        for url in (
+            "https://cdn.x.com/foo.pdf",
+            "https://cdn.x.com/foo.pdf?v=1",
+            "https://cdn.x.com/foo.pdf#page=3",
+            "https://cdn.x.com/foo.pdf/preview",
+            "https://x.com/report.docx",
+        ):
+            assert _is_valid_file_url(url) is True, f"real file rejected: {url}"
+
+    def test_collect_available_media_drops_junk(self):
+        # Whitelist used by the hallucination guard + safety-net promoter
+        # must not include the pre-fix junk URLs, so no card can ever bind
+        # to them even if the LLM emits them by accident.
+        from types import SimpleNamespace
+
+        from app.services.rag_service import _collect_available_media
+
+        chunk = SimpleNamespace(metadata_info={"media_urls": {"files": self._JUNK + [self._REAL]}})
+        yt_ids, file_urls = _collect_available_media([chunk])
+        assert yt_ids == set()
+        assert file_urls == {self._REAL["url"]}
+
+    def test_collect_available_media_names_drops_junk(self):
+        # Named-ask matching set must also skip junk so a "want the hub.doc?"
+        # style ask (from a hallucinating model) can never be preserved.
+        from types import SimpleNamespace
+
+        from app.services.rag_service import _collect_available_media_names
+
+        chunk = SimpleNamespace(metadata_info={"media_urls": {"files": self._JUNK}})
+        titles, names = _collect_available_media_names([chunk])
+        assert titles == set()
+        assert names == set()
+
+    def test_pick_secondary_media_ignores_junk_files(self):
+        # Even if the primary is a topical video and a junk file "matches"
+        # on some token, the secondary picker must reject invalid URLs.
+        from app.services.rag_service import _pick_secondary_media
+
+        primary = {"type": "youtube", "video_id": "abc", "title": "Docker Base Images Deep Dive"}
+        payload = {
+            "youtube": [{"video_id": "abc", "title": "Docker Base Images Deep Dive"}],
+            "files": [
+                # Junk entry whose "name" incidentally shares tokens with the primary.
+                {"url": "https://hub.doc", "name": "docker hub base"},
+                self._REAL,
+            ],
+        }
+        secondary = _pick_secondary_media(primary, retrieved_chunks=[], extra_payloads=[payload])
+        # Either the real report matches on tokens (secondary picked), or
+        # nothing matches strongly enough — but the junk MUST NEVER be it.
+        for item in secondary:
+            assert item.get("url") != "https://hub.doc"
+
+
 class TestStripLlmCardProse:
     """Leaked-card-placeholder stripper — removes ONLY the actual media-card
     markers this codebase emits (``[YOUTUBE_CARD:...]`` / ``[DOWNLOAD_CARD:...]``)
@@ -1735,6 +1818,59 @@ class TestBuildDateHints:
         hints = _build_date_hints(text, date(2026, 7, 2))
 
         assert hints.count("2025-03-15") == 1
+
+    def test_recognizes_ordinal_day_first_format(self):
+        """Real crawled content frequently writes '15th March 2026' — the old
+        regex missed this because it required a plain '\\d+' before the month,
+        so the DATE ANALYSIS block was silently empty and the LLM guessed."""
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        hints = _build_date_hints("Webinar on 15th March 2026", date(2026, 7, 2))
+
+        assert "2026-03-15" in hints
+        assert "PAST" in hints
+
+    def test_recognizes_european_dot_format(self):
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        hints = _build_date_hints("Konferenz am 18.08.2026", date(2026, 7, 2))
+
+        assert "2026-08-18" in hints
+        assert "UPCOMING" in hints
+
+    def test_recognizes_dash_day_first_format(self):
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        hints = _build_date_hints("Event on 18-08-2026", date(2026, 7, 2))
+
+        assert "2026-08-18" in hints
+        assert "UPCOMING" in hints
+
+    def test_recognizes_iso_slash_format(self):
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        hints = _build_date_hints("Scheduled: 2026/08/18", date(2026, 7, 2))
+
+        assert "2026-08-18" in hints
+        assert "UPCOMING" in hints
+
+    def test_ignores_version_numbers_not_dates(self):
+        """Dotted numbers without a 4-digit year (e.g. '1.2.3') must not be
+        parsed as dates — the year requirement in the dotted branch guards
+        against version strings polluting the DATE ANALYSIS block."""
+        from datetime import date
+
+        from app.services.rag_service import _build_date_hints
+
+        assert _build_date_hints("Widget v1.2.3 released", date(2026, 7, 2)) == ""
 
 
 # ── _normalize_question_for_cache (AR-25) ────────────────────────────────────
