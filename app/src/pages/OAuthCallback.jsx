@@ -171,7 +171,7 @@ export default function OAuthCallback() {
                     <button
                         type="button"
                         onClick={() => navigate('/login', { replace: true })}
-                        className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]"
+                        className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]"
                     >
                         Back to sign in
                     </button>
@@ -183,7 +183,7 @@ export default function OAuthCallback() {
     return (
         <div className="min-h-screen flex items-center justify-center bg-[#030D1F]">
             <div className="text-center">
-                <Loader2 size={28} className="animate-spin text-blue-400 mx-auto mb-4" />
+                <Loader2 size={28} className="animate-spin text-primary-400 mx-auto mb-4" />
                 <p className="text-white/60 text-sm">Signing you in…</p>
             </div>
         </div>

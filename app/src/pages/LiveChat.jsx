@@ -1418,7 +1418,7 @@ export default function LiveChat({ embedded = false }) {
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
                             isOnline
                                 ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
-                                : 'bg-surface-50 dark:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400'
+                                : 'bg-surface-50 dark:bg-surface-800 border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400'
                         }`}
                     >
                         <Circle className={`w-3 h-3 ${isOnline ? 'fill-emerald-500 text-emerald-500' : 'fill-surface-300 text-surface-300 dark:fill-surface-600 dark:text-surface-600'}`} />
@@ -1476,17 +1476,17 @@ export default function LiveChat({ embedded = false }) {
                 <div className="flex gap-3 flex-1 min-h-0">
 
                     {/* ── Left: Queue + Active Chats ── */}
-                    <div className="w-64 flex-shrink-0 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
+                    <div className="w-64 flex-shrink-0 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden flex flex-col">
                         {/* Waiting queue */}
                         {queue.length > 0 && (
-                            <div className="border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
+                            <div className="border-b border-surface-200 dark:border-surface-800 flex-shrink-0">
                                 <div className="px-4 py-3 bg-amber-50 dark:bg-amber-500/10">
                                     <h4 className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                                         Waiting ({queue.length})
                                     </h4>
                                 </div>
                                 {queue.map(item => (
-                                    <div key={item.session_id} className="px-4 py-3 border-b border-surface-100 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors">
+                                    <div key={item.session_id} className="px-4 py-3 border-b border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors">
                                         <div className="flex items-center justify-between mb-1">
                                             <span className="text-sm font-medium text-surface-900 dark:text-surface-100 truncate">
                                                 {item.name || 'Anonymous'}
@@ -1536,7 +1536,7 @@ export default function LiveChat({ embedded = false }) {
                                         <button
                                             key={sid}
                                             onClick={() => handleSelectChat(sid)}
-                                            className={`w-full px-4 py-3 text-left border-b border-surface-100 dark:border-surface-700 transition-colors ${
+                                            className={`w-full px-4 py-3 text-left border-b border-surface-100 dark:border-surface-800 transition-colors ${
                                                 selectedChat === sid
                                                     ? 'bg-primary-50 dark:bg-primary-500/10 border-l-2 border-l-primary-500'
                                                     : 'hover:bg-surface-50 dark:hover:bg-surface-800'
@@ -1577,7 +1577,7 @@ export default function LiveChat({ embedded = false }) {
                             )}
 
                             {/* ── Chatting with AI (BANT-qualified ≥2) ── */}
-                            <div className="border-t border-surface-200 dark:border-surface-700">
+                            <div className="border-t border-surface-200 dark:border-surface-800">
                                 <div className="px-4 py-3 flex items-center justify-between flex-shrink-0">
                                     <h4 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">
                                         Chatting with AI ({qualifiedBotSessions.length})
@@ -1606,7 +1606,7 @@ export default function LiveChat({ embedded = false }) {
                                         const tierStyles = (
                                             tier === 'sql' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
                                                 : tier === 'mql' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400'
-                                                : 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400'
+                                                : 'bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-400'
                                         );
                                         const score = qs.bant_score || 0;
                                         const sending = takeoverSessionId === qs.session_id;
@@ -1615,10 +1615,10 @@ export default function LiveChat({ embedded = false }) {
                                         return (
                                             <div
                                                 key={qs.session_id}
-                                                className={`px-4 py-3 border-b border-surface-100 dark:border-surface-700 transition-colors cursor-pointer ${
+                                                className={`px-4 py-3 border-b border-surface-100 dark:border-surface-800 transition-colors cursor-pointer ${
                                                     isPreviewed
-                                                        ? 'bg-violet-100/60 dark:bg-violet-500/10 border-l-2 border-l-violet-500'
-                                                        : 'hover:bg-violet-50/40 dark:hover:bg-violet-500/5'
+                                                        ? 'bg-primary-100/60 dark:bg-primary-500/10 border-l-2 border-l-primary-500'
+                                                        : 'hover:bg-primary-50/40 dark:hover:bg-primary-500/5'
                                                 }`}
                                                 onClick={() => openPreviewSession(qs)}
                                                 role="button"
@@ -1648,7 +1648,7 @@ export default function LiveChat({ embedded = false }) {
                                                         )}
                                                     </div>
                                                     <div className="flex items-center gap-1 text-[10px] font-semibold text-surface-600 dark:text-surface-300 flex-shrink-0">
-                                                        <TrendingUp className="w-3 h-3 text-violet-500" />
+                                                        <TrendingUp className="w-3 h-3 text-primary-500" />
                                                         {score}
                                                     </div>
                                                 </div>
@@ -1687,7 +1687,7 @@ export default function LiveChat({ embedded = false }) {
                                                     <span className="ml-auto text-[10px] text-surface-400 dark:text-surface-500">
                                                         {dimsCount}/4
                                                         {qs.bant_signal_total > 0 && (
-                                                            <span className="ml-1 text-violet-500 dark:text-violet-400" title={`${qs.bant_signal_total} total signals recorded`}>
+                                                            <span className="ml-1 text-primary-500 dark:text-primary-400" title={`${qs.bant_signal_total} total signals recorded`}>
                                                                 · {qs.bant_signal_total}
                                                             </span>
                                                         )}
@@ -1732,7 +1732,7 @@ export default function LiveChat({ embedded = false }) {
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleSendConnectRequest(qs.session_id, qs.name); }}
                                                         disabled={sending}
-                                                        className="w-full py-1.5 bg-violet-600 dark:bg-violet-500 text-white text-[11px] font-medium rounded-lg hover:bg-violet-700 dark:hover:bg-violet-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
+                                                        className="w-full py-1.5 bg-primary-600 dark:bg-primary-500 text-white text-[11px] font-medium rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
                                                     >
                                                         {sending ? (
                                                             <><Loader2 className="w-3 h-3 animate-spin" /> Sending...</>
@@ -1750,21 +1750,21 @@ export default function LiveChat({ embedded = false }) {
                     </div>
 
                     {/* ── Center: Chat Panel ── */}
-                    <div className="flex-1 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col min-w-0">
+                    <div className="flex-1 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden flex flex-col min-w-0">
                         {previewSession && !selectedChat ? (
                             <>
                                 {/* Preview header */}
-                                <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between flex-shrink-0 bg-violet-50/40 dark:bg-violet-500/5">
+                                <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-800 flex items-center justify-between flex-shrink-0 bg-primary-50/40 dark:bg-primary-500/5">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-500/10 flex items-center justify-center flex-shrink-0">
-                                            <User className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                                        <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+                                            <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                                         </div>
                                         <div className="min-w-0">
                                             <div className="flex items-center gap-2">
                                                 <h4 className="text-sm font-semibold text-surface-900 dark:text-surface-100 truncate">
                                                     {previewSession.name || 'Anonymous'}
                                                 </h4>
-                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400 flex-shrink-0">
+                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-400 flex-shrink-0">
                                                     Chatting with AI
                                                 </span>
                                             </div>
@@ -1799,7 +1799,7 @@ export default function LiveChat({ embedded = false }) {
                                                 <span className="text-[11px] text-surface-500 dark:text-surface-400">
                                                     Score {previewSession.bant_score || 0}
                                                     {previewSession.bant_signal_total > 0 && (
-                                                        <span className="ml-1 text-violet-500 dark:text-violet-400">
+                                                        <span className="ml-1 text-primary-500 dark:text-primary-400">
                                                             · {previewSession.bant_signal_total} signals
                                                         </span>
                                                     )}
@@ -1822,7 +1822,7 @@ export default function LiveChat({ embedded = false }) {
                                             <button
                                                 onClick={() => handleSendConnectRequest(previewSession.session_id, previewSession.name)}
                                                 disabled={takeoverSessionId === previewSession.session_id}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-white bg-violet-600 dark:bg-violet-500 rounded-lg hover:bg-violet-700 dark:hover:bg-violet-600 transition-colors disabled:opacity-60"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors disabled:opacity-60"
                                             >
                                                 {takeoverSessionId === previewSession.session_id ? (
                                                     <><Loader2 className="w-3 h-3 animate-spin" /> Sending</>
@@ -1842,7 +1842,7 @@ export default function LiveChat({ embedded = false }) {
                                 </div>
 
                                 {/* Preview banner */}
-                                <div className="px-4 py-2 bg-violet-50/40 dark:bg-violet-500/5 border-b border-violet-100 dark:border-violet-500/20 text-[11px] text-violet-700 dark:text-violet-300 flex items-center gap-1.5">
+                                <div className="px-4 py-2 bg-primary-50/40 dark:bg-primary-500/5 border-b border-primary-100 dark:border-primary-500/20 text-[11px] text-primary-700 dark:text-primary-300 flex items-center gap-1.5">
                                     <Info className="w-3 h-3" />
                                     Read-only · You'll see new messages as the visitor chats with the AI
                                 </div>
@@ -1861,7 +1861,7 @@ export default function LiveChat({ embedded = false }) {
                                                 msg.role === 'user'
                                                     ? 'bg-primary-600/10 dark:bg-primary-500/15 text-surface-900 dark:text-surface-100 rounded-br-md border border-primary-200 dark:border-primary-500/20'
                                                     : msg.role === 'bot'
-                                                    ? 'bg-violet-50 dark:bg-violet-500/10 text-surface-800 dark:text-surface-200 rounded-bl-md border border-violet-100 dark:border-violet-500/20'
+                                                    ? 'bg-primary-50 dark:bg-primary-500/10 text-surface-800 dark:text-surface-200 rounded-bl-md border border-primary-100 dark:border-primary-500/20'
                                                     : 'bg-surface-50 dark:bg-surface-800 text-surface-600 dark:text-surface-400 italic text-xs rounded-bl-md'
                                             }`}>
                                                 <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-0.5">
@@ -1876,7 +1876,7 @@ export default function LiveChat({ embedded = false }) {
                         ) : selectedChat ? (
                             <>
                                 {/* Chat header */}
-                                <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-700 flex items-center justify-between flex-shrink-0">
+                                <div className="px-4 py-3 border-b border-surface-200 dark:border-surface-800 flex items-center justify-between flex-shrink-0">
                                     <div className="flex items-center gap-3">
                                         <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-500/10 flex items-center justify-center flex-shrink-0">
                                             <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
@@ -1928,7 +1928,7 @@ export default function LiveChat({ embedded = false }) {
                                     </div>
                                 )}
                                 {fileError && (
-                                    <div className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 bg-orange-50 dark:bg-orange-500/10 border border-orange-200 dark:border-orange-500/30 rounded-lg text-xs text-orange-700 dark:text-orange-400">
+                                    <div className="mx-4 mt-1 flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg text-xs text-amber-700 dark:text-amber-400">
                                         <X className="w-3.5 h-3.5 flex-shrink-0" />
                                         {fileError}
                                     </div>
@@ -2008,15 +2008,15 @@ export default function LiveChat({ embedded = false }) {
                                 </div>
 
                                 {/* Message input */}
-                                <div className="border-t border-surface-200 dark:border-surface-700 px-4 py-3 relative flex-shrink-0">
+                                <div className="border-t border-surface-200 dark:border-surface-800 px-4 py-3 relative flex-shrink-0">
                                     {showCannedDropdown && filteredCanned.length > 0 && (
-                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-700 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
+                                        <div className="absolute bottom-full left-4 right-4 mb-1 bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10">
                                             {filteredCanned.slice(0, 8).map((r, idx) => (
                                                 <button
                                                     key={r.id}
                                                     onClick={() => selectCannedResponse(r)}
                                                     onMouseEnter={() => setCannedHighlightIndex(idx)}
-                                                    className={`w-full text-left px-4 py-2.5 transition-colors border-b border-surface-100 dark:border-surface-700 last:border-b-0 ${idx === cannedHighlightIndex ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-50 dark:hover:bg-surface-800'}`}
+                                                    className={`w-full text-left px-4 py-2.5 transition-colors border-b border-surface-100 dark:border-surface-800 last:border-b-0 ${idx === cannedHighlightIndex ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-50 dark:hover:bg-surface-800'}`}
                                                 >
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-sm font-medium text-surface-900 dark:text-surface-100">{r.title}</span>
@@ -2110,10 +2110,10 @@ export default function LiveChat({ embedded = false }) {
 
                     {/* ── Right: Session Info + Team Roster ── */}
                     {showRightPanel && (
-                        <div className="w-64 flex-shrink-0 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 overflow-hidden flex flex-col">
+                        <div className="w-64 flex-shrink-0 bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden flex flex-col">
                             {/* Tabs — only show tab bar when both tabs are relevant */}
                             {selectedChat ? (
-                                <div className="flex border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
+                                <div className="flex border-b border-surface-200 dark:border-surface-800 flex-shrink-0">
                                     <button
                                         onClick={() => setRightPanelTab('session')}
                                         className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[12px] font-medium transition-colors ${
@@ -2138,7 +2138,7 @@ export default function LiveChat({ embedded = false }) {
                                     </button>
                                 </div>
                             ) : (
-                                <div className="flex items-center gap-1.5 px-4 py-3 border-b border-surface-200 dark:border-surface-700 flex-shrink-0">
+                                <div className="flex items-center gap-1.5 px-4 py-3 border-b border-surface-200 dark:border-surface-800 flex-shrink-0">
                                     <Users className="w-3.5 h-3.5 text-primary-600 dark:text-primary-400" />
                                     <span className="text-[12px] font-medium text-primary-600 dark:text-primary-400">Team</span>
                                 </div>
@@ -2186,7 +2186,7 @@ export default function LiveChat({ embedded = false }) {
                                                     </div>
                                                 )}
 
-                                                <div className="space-y-2.5 pt-2 border-t border-surface-100 dark:border-surface-700">
+                                                <div className="space-y-2.5 pt-2 border-t border-surface-100 dark:border-surface-800">
                                                     <h5 className="text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Session</h5>
                                                     {formatVisitorLocation(sessionInfo.location) && (
                                                         <div className="flex items-center gap-2 text-sm text-surface-700 dark:text-surface-300">
@@ -2263,7 +2263,7 @@ export default function LiveChat({ embedded = false }) {
             {showTransferModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-label="Transfer chat">
                     <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-xl shadow-xl w-full max-w-md">
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-700">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-800">
                             <h2 className="font-semibold text-surface-900 dark:text-surface-100 flex items-center gap-2">
                                 <ArrowRightLeft className="w-4 h-4" />
                                 {transferTarget ? 'Confirm Transfer' : 'Transfer Chat'}
@@ -2286,7 +2286,7 @@ export default function LiveChat({ embedded = false }) {
                                     <div className="flex gap-3">
                                         <button
                                             onClick={() => setTransferTarget(null)}
-                                            className="flex-1 py-2 rounded-lg border border-surface-200 dark:border-surface-700 text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                                            className="flex-1 py-2 rounded-lg border border-surface-200 dark:border-surface-800 text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                                         >
                                             Back
                                         </button>
@@ -2358,7 +2358,7 @@ export default function LiveChat({ embedded = false }) {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
                     <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden flex flex-col">
                         {/* Header */}
-                        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-700">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-800">
                             <h3 className="text-sm font-semibold text-surface-900 dark:text-surface-100">Send file</h3>
                             <button
                                 type="button"
@@ -2402,7 +2402,7 @@ export default function LiveChat({ embedded = false }) {
                                 <button
                                     type="button"
                                     onClick={cancelPendingFile}
-                                    className="flex-1 py-2 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                                    className="flex-1 py-2 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-800 text-surface-600 dark:text-surface-400 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                                 >
                                     Cancel
                                 </button>
@@ -2428,7 +2428,7 @@ export default function LiveChat({ embedded = false }) {
                 403 the toggle either way, so this is purely UX. */}
             {showUpgradeModal && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 animate-fade-in" role="dialog" aria-modal="true" aria-labelledby="upgrade-modal-title">
-                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-xl p-6 max-w-sm w-full mx-4">
                         <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-500/15 flex items-center justify-center mx-auto mb-3">
                             <Lock className="w-6 h-6 text-amber-600 dark:text-amber-400" />
                         </div>
@@ -2453,7 +2453,7 @@ export default function LiveChat({ embedded = false }) {
                             </button>
                             <button
                                 onClick={() => setShowUpgradeModal(false)}
-                                className="w-full py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                                className="w-full py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-800 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                             >
                                 Not now
                             </button>
@@ -2465,13 +2465,13 @@ export default function LiveChat({ embedded = false }) {
             {/* ── Confirm modal (replaces window.confirm) ── */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" role="dialog" aria-modal="true">
-                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-xl p-6 max-w-sm w-full mx-4">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-xl p-6 max-w-sm w-full mx-4">
                         <h3 className="text-lg font-bold text-surface-900 dark:text-surface-100 mb-2">{confirmModal.title}</h3>
                         <p className="text-sm text-surface-600 dark:text-surface-400 mb-5">{confirmModal.message}</p>
                         <div className="flex gap-3">
                             <button
                                 onClick={() => setConfirmModal(null)}
-                                className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-700 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+                                className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-surface-200 dark:border-surface-800 text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
                             >
                                 Cancel
                             </button>

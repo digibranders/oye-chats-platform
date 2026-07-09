@@ -198,7 +198,7 @@ export default function AutoRecrawlCard({ botId }) {
                             'flex items-start gap-2 px-3 py-2 rounded-lg text-sm',
                             flash.type === 'success'
                                 ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                : 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300',
+                                : 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300',
                         )}
                         role="status"
                     >
@@ -213,7 +213,7 @@ export default function AutoRecrawlCard({ botId }) {
 
                 {/* Transient error — PATCH failures, network hiccups, etc. */}
                 {error && (
-                    <div className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300">
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-lg text-sm bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300">
                         <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
                         <span>{error}</span>
                     </div>
@@ -300,7 +300,7 @@ function ConfirmDisableDialog({ onCancel, onConfirm }) {
                     <button
                         type="button"
                         onClick={onConfirm}
-                        className="px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-red-600 hover:bg-red-700"
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-rose-600 hover:bg-rose-700"
                     >
                         Turn off
                     </button>

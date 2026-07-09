@@ -194,18 +194,18 @@ export default function Feedback({ embedded = false }) {
                     <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
                         <div className="flex items-center gap-6 flex-1">
                             <div>
-                                <p className="text-2xl font-bold text-surface-900 dark:text-white">{stats.total}</p>
+                                <p className="text-2xl font-bold text-surface-900 dark:text-white tabular-nums">{stats.total}</p>
                                 <p className="text-xs text-surface-400 dark:text-surface-500">Total ratings</p>
                             </div>
                             <div className="h-8 w-px bg-surface-200 dark:bg-surface-700" />
                             <div className="flex items-center gap-2">
                                 <ThumbsUp size={16} className="text-emerald-500" />
-                                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{stats.rate}%</span>
+                                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{stats.rate}%</span>
                                 <span className="text-xs text-surface-400 dark:text-surface-500">positive</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <ThumbsDown size={16} className="text-rose-500" />
-                                <span className="text-sm font-bold text-rose-600 dark:text-rose-400">{stats.negative}</span>
+                                <span className="text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums">{stats.negative}</span>
                                 <span className="text-xs text-surface-400 dark:text-surface-500">negative</span>
                             </div>
                         </div>
@@ -219,7 +219,7 @@ export default function Feedback({ embedded = false }) {
                         {/* CSAT Trend Line */}
                         {trendData.length > 1 && (
                             <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
-                                <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200 mb-4">Satisfaction Trend</h3>
+                                <h3 className="text-base font-bold text-surface-900 dark:text-surface-100 mb-4">Satisfaction Trend</h3>
                                 <ResponsiveContainer width="100%" height={160}>
                                     <LineChart data={trendData} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
                                         <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} padding={{ left: 12, right: 12 }} />
@@ -243,7 +243,7 @@ export default function Feedback({ embedded = false }) {
                         {topDownvoted.length > 0 && (
                             <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-5">
                                 <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-sm font-semibold text-surface-800 dark:text-surface-200">Top downvoted questions</h3>
+                                    <h3 className="text-base font-bold text-surface-900 dark:text-surface-100">Top downvoted questions</h3>
                                     <span className="text-[10px] font-medium uppercase tracking-wider text-surface-400 dark:text-surface-500">Fix these first</span>
                                 </div>
                                 <ul className="space-y-2.5">

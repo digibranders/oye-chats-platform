@@ -56,7 +56,7 @@ const INVOICE_TYPE_LABELS = {
 
 const INVOICE_STATUS_STYLES = {
   paid: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10',
-  issued: 'text-sky-600 dark:text-sky-400 bg-sky-500/10',
+  issued: 'text-primary-600 dark:text-primary-400 bg-primary-500/10',
 };
 
 function formatDate(iso) {
@@ -66,7 +66,7 @@ function formatDate(iso) {
 
 const STATUS_BADGES = {
   active: { label: 'Active', color: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  trialing: { label: 'Trial', color: 'bg-sky-500/10 text-sky-600 dark:text-sky-400' },
+  trialing: { label: 'Trial', color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
   past_due: { label: 'Past Due', color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
   canceled: { label: 'Canceled', color: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' },
   paused: { label: 'Paused', color: 'bg-surface-500/10 text-surface-600 dark:text-surface-400' },
@@ -175,7 +175,7 @@ export default function Subscription() {
       />
 
       {/* Current Plan Card */}
-      <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+      <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className={cn(
@@ -243,7 +243,7 @@ export default function Subscription() {
 
       {/* Usage Meters */}
       {usage && (
-        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
           <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-1">Usage This Period</h3>
           <p className="text-[12px] text-surface-500 dark:text-surface-400 mb-5">
             {formatDate(usage.period?.start)} — {formatDate(usage.period?.end)}
@@ -299,7 +299,7 @@ export default function Subscription() {
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
-          className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6"
+          className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6"
         >
           <div className="flex items-center justify-between mb-5">
             <h3 className="text-[15px] font-bold text-surface-900 dark:text-white">Choose a Plan</h3>
@@ -400,7 +400,7 @@ export default function Subscription() {
 
       {/* Features */}
       {plan?.features && (
-        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
           <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-4">Plan Features</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {[
@@ -446,7 +446,7 @@ export default function Subscription() {
 
       {/* Invoices */}
       {invoices.length > 0 && (
-        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 p-6">
+        <motion.div {...fadeUp} className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm p-6">
           <h3 className="text-[15px] font-bold text-surface-900 dark:text-white mb-4">Invoices</h3>
           <div className="space-y-2">
             {invoices.slice(0, 10).map(inv => {
@@ -476,7 +476,7 @@ export default function Subscription() {
                           <span className={cn(
                             'px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider',
                             isCreditNote
-                              ? 'text-sky-600 dark:text-sky-400 bg-sky-500/10'
+                              ? 'text-primary-600 dark:text-primary-400 bg-primary-500/10'
                               : 'text-surface-500 dark:text-surface-400 bg-surface-500/10',
                           )}>
                             {typeLabel}
@@ -498,7 +498,7 @@ export default function Subscription() {
                     <span className={cn(
                       'text-[13px] font-semibold tabular-nums',
                       isCreditNote
-                        ? 'text-sky-600 dark:text-sky-400'
+                        ? 'text-primary-600 dark:text-primary-400'
                         : 'text-surface-700 dark:text-surface-300',
                     )}>
                       {isCreditNote ? `−${amount}` : amount}

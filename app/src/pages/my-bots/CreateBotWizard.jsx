@@ -171,7 +171,7 @@ export default function CreateBotWizard({ open, isFirstBot, onClose, onCreated }
                 name: order.name || 'OyeChats',
                 description: order.description,
                 prefill: order.prefill || {},
-                theme: order.theme || { color: '#6366f1' },
+                theme: order.theme || { color: '#2F5CFF' },
             });
             const verifyResult = await verifyBotCheckout({
                 razorpay_payment_id: callback.razorpay_payment_id,

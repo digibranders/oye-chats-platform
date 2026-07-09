@@ -34,7 +34,7 @@ export default function ContactTab() {
                     </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                    <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50">
+                    <h2 className="text-base font-bold text-surface-900 dark:text-surface-50">
                         Need something custom?
                     </h2>
                     <p className="mt-1 text-sm text-surface-500 dark:text-surface-400">

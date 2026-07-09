@@ -20,7 +20,7 @@ export default function AppearanceTab() {
 
     return (
         <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-6 rounded-2xl border border-surface-200 dark:border-surface-700 shadow-sm">
-            <h2 className="text-base font-semibold text-surface-900 dark:text-surface-50 mb-1 flex items-center gap-2">
+            <h2 className="text-base font-bold text-surface-900 dark:text-surface-50 mb-1 flex items-center gap-2">
                 <Palette size={16} className="text-primary-600 dark:text-primary-400" />
                 Appearance
             </h2>

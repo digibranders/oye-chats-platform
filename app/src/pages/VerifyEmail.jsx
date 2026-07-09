@@ -148,8 +148,8 @@ export default function VerifyEmail() {
       <div className="hidden lg:flex lg:w-[48%] relative flex-col justify-between p-12 overflow-hidden">
         <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(37,99,235,0.18) 0%, rgba(37,99,235,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
-        <div className="absolute top-20 -left-20 w-96 h-96 bg-blue-600/15 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
-        <div className="absolute bottom-20 right-10 w-80 h-80 bg-blue-400/10 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
+        <div className="absolute top-20 -left-20 w-96 h-96 bg-primary-600/15 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
+        <div className="absolute bottom-20 right-10 w-80 h-80 bg-primary-400/10 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
 
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -157,7 +157,7 @@ export default function VerifyEmail() {
           transition={{ duration: 0.5 }}
           className="relative z-10 flex items-center gap-3"
         >
-          <div className="w-10 h-10 rounded-xl bg-blue-600/80 backdrop-blur-md border border-blue-400/30 flex items-center justify-center shadow-lg shadow-blue-500/30">
+          <div className="w-10 h-10 rounded-xl bg-primary-600/80 backdrop-blur-md border border-primary-400/30 flex items-center justify-center shadow-lg shadow-primary-500/30">
             <Sparkles size={20} className="text-white" />
           </div>
           <span className="text-xl font-bold text-white tracking-tight">OyeChats</span>
@@ -168,9 +168,9 @@ export default function VerifyEmail() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.1 }}
-            className="w-20 h-20 rounded-2xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center mb-8"
+            className="w-20 h-20 rounded-2xl bg-primary-500/15 border border-primary-400/20 flex items-center justify-center mb-8"
           >
-            <Mail size={36} className="text-blue-400" />
+            <Mail size={36} className="text-primary-400" />
           </motion.div>
           <motion.h2
             initial={{ opacity: 0, y: 20 }}
@@ -180,7 +180,7 @@ export default function VerifyEmail() {
           >
             One step
             <br />
-            <span className="bg-gradient-to-r from-blue-400 via-blue-300 to-cyan-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
               to go
             </span>
           </motion.h2>
@@ -207,15 +207,15 @@ export default function VerifyEmail() {
         >
           {/* Mobile logo */}
           <div className="flex items-center gap-3 mb-10 lg:hidden">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-600 to-primary-400 text-white flex items-center justify-center shadow-lg shadow-primary-500/30">
               <Sparkles size={18} />
             </div>
             <span className="text-lg font-bold text-white">OyeChats</span>
           </div>
 
           {/* Icon */}
-          <div className="w-14 h-14 rounded-2xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center mb-6">
-            <Mail size={26} className="text-blue-400" />
+          <div className="w-14 h-14 rounded-2xl bg-primary-500/15 border border-primary-400/20 flex items-center justify-center mb-6">
+            <Mail size={26} className="text-primary-400" />
           </div>
 
           <div className="mb-8">
@@ -264,8 +264,8 @@ export default function VerifyEmail() {
                   'w-full aspect-square text-center text-xl font-bold rounded-xl border bg-white/[.04] text-white',
                   'outline-none transition-all',
                   digit
-                    ? 'border-blue-500/60 ring-2 ring-blue-500/20'
-                    : 'border-white/[.08] focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/20',
+                    ? 'border-primary-500/60 ring-2 ring-primary-500/20'
+                    : 'border-white/[.08] focus:border-primary-500/60 focus:ring-2 focus:ring-primary-500/20',
                 )}
                 disabled={isVerifying}
                 aria-label={`Digit ${i + 1}`}
@@ -277,8 +277,8 @@ export default function VerifyEmail() {
             onClick={() => handleVerify(otp.join(''))}
             disabled={isVerifying || otp.some((d) => !d)}
             className={cn(
-              'w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl',
-              'shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]',
+              'w-full py-2.5 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
+              'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
               'flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm mb-4',
             )}
           >
@@ -318,7 +318,7 @@ export default function VerifyEmail() {
                 clearAuthStorage();
                 navigate('/login');
               }}
-              className="text-blue-400 hover:text-blue-300 transition-colors"
+              className="text-primary-400 hover:text-primary-300 transition-colors"
             >
               Sign out
             </button>

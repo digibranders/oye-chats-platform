@@ -25,7 +25,6 @@ import { cn } from '../lib/utils';
 // re-create the object on every render.
 const STAT_TINTS = {
     primary: 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400',
-    sky: 'bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400',
     emerald: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     amber: 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400',
 };
@@ -36,7 +35,7 @@ const STAT_TINTS = {
 // props, AND keeps the StatCard reusable for any icon library / inline SVG.
 function StatCard({ icon, label, value, hint, tint = 'primary' }) {
     return (
-        <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-4 rounded-2xl border border-surface-200 dark:border-surface-800">
+        <div className="bg-[var(--bg-card)] dark:bg-surface-900 p-4 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm">
             <div className="flex items-center gap-2 mb-2">
                 <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', STAT_TINTS[tint])}>
                     {icon}
@@ -262,7 +261,7 @@ export default function AffiliateDashboard() {
                         label="Total clicks"
                         value={(stats?.total_clicks ?? 0).toLocaleString()}
                         hint="All-time across every code"
-                        tint="sky"
+                        tint="primary"
                     />
                     <StatCard
                         icon={<Users size={14} />}
@@ -282,7 +281,7 @@ export default function AffiliateDashboard() {
             )}
 
             {/* Codes table */}
-            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 overflow-hidden">
+            <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl border border-surface-200 dark:border-surface-800 shadow-sm overflow-hidden">
                 {isLoading ? (
                     <SkeletonTable rows={5} cols={7} />
                 ) : codes.length === 0 ? (
@@ -379,7 +378,7 @@ export default function AffiliateDashboard() {
                                                     c.conversion_pct >= 10
                                                         ? 'text-emerald-600 dark:text-emerald-400'
                                                         : c.conversion_pct >= 3
-                                                            ? 'text-sky-600 dark:text-sky-400'
+                                                            ? 'text-primary-600 dark:text-primary-400'
                                                             : 'text-surface-700 dark:text-surface-300',
                                                 )}
                                             >

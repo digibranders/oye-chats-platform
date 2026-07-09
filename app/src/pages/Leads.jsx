@@ -15,13 +15,13 @@ import { SkeletonTable } from '../components/ui/SkeletonLoader';
 
 const STATUS_CONFIG = {
     unqualified: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    mql: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
-    sal: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
+    mql: { label: 'MQL', color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400' },
+    sal: { label: 'SAL', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' },
     sql: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
     // backward-compat aliases
     cold: { label: 'Unqualified', color: 'bg-surface-100 text-surface-600 dark:bg-surface-800 dark:text-surface-400' },
-    warm: { label: 'MQL', color: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400' },
-    hot: { label: 'SAL', color: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400' },
+    warm: { label: 'MQL', color: 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400' },
+    hot: { label: 'SAL', color: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' },
     qualified: { label: 'SQL', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' },
 };
 
@@ -84,7 +84,7 @@ const BantScoreGauge = ({ score }) => {
     
     // Smooth floating point value for sub-pixel circle stroke offsets
     const dashOffset = circumference - (animatedScore / 100) * circumference;
-    const color = score >= 75 ? '#22c55e' : score >= 50 ? '#f97316' : score >= 25 ? '#eab308' : '#94a3b8';
+    const color = score >= 75 ? '#10b981' : score >= 50 ? '#c99a3f' : score >= 25 ? '#3d66ff' : '#b0a894';
 
     return (
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
@@ -392,9 +392,9 @@ export default function Leads() {
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     {[
                         { label: 'Total', value: stats.total, color: 'text-surface-900 dark:text-surface-100' },
-                        { label: 'Cold', value: stats.cold, color: 'text-sky-600 dark:text-sky-400' },
-                        { label: 'Warm', value: stats.warm, color: 'text-yellow-600 dark:text-yellow-400' },
-                        { label: 'Hot', value: stats.hot, color: 'text-orange-600 dark:text-orange-400' },
+                        { label: 'Cold', value: stats.cold, color: 'text-surface-500 dark:text-surface-400' },
+                        { label: 'Warm', value: stats.warm, color: 'text-primary-600 dark:text-primary-400' },
+                        { label: 'Hot', value: stats.hot, color: 'text-amber-600 dark:text-amber-400' },
                         { label: 'Qualified', value: stats.qualified, color: 'text-emerald-600 dark:text-emerald-400' },
                     ].map(s => (
                         <button
@@ -408,7 +408,7 @@ export default function Leads() {
                             )}
                         >
                             <p className="text-[12px] font-medium text-surface-500 dark:text-surface-400">{s.label}</p>
-                            <p className={cn('text-2xl font-bold', s.color)}>{s.value}</p>
+                            <p className={cn('text-2xl font-bold tabular-nums', s.color)}>{s.value}</p>
                         </button>
                     ))}
                 </div>
@@ -508,12 +508,12 @@ export default function Leads() {
                                             : <Square size={15} className="text-surface-400 dark:text-surface-500" />}
                                     </button>
                                 </th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Contact</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Score</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Status</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Location</th>
-                                <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-surface-500 dark:text-surface-400">Last Active</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Contact</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Score</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Status</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">BANT</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Location</th>
+                                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-surface-400 dark:text-surface-500">Last Active</th>
                                 <th className="px-4 py-3"></th>
                             </tr>
                         </thead>
@@ -523,7 +523,7 @@ export default function Leads() {
                                 return (
                                     <tr
                                         key={lead.session_id}
-                                        className="border-b border-surface-50 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 cursor-pointer transition-colors"
+                                        className="border-b border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 cursor-pointer transition-colors"
                                     >
                                         <td className="px-4 py-3" onClick={(e) => { e.stopPropagation(); toggleSelect(lead.session_id); }}>
                                             {selectedIds.has(lead.session_id)
@@ -559,12 +559,12 @@ export default function Leads() {
                                                         className="h-full rounded-full transition-all"
                                                         style={{
                                                             width: `${lead.score}%`,
-                                                            backgroundColor: lead.score >= 75 ? '#22c55e' : lead.score >= 50 ? '#f97316' : lead.score >= 25 ? '#eab308' : '#94a3b8',
+                                                            backgroundColor: lead.score >= 75 ? '#10b981' : lead.score >= 50 ? '#c99a3f' : lead.score >= 25 ? '#3d66ff' : '#b0a894',
                                                         }}
                                                     />
                                                 </div>
                                                 <span
-                                                    className="text-[12px] font-bold text-surface-700 dark:text-surface-300"
+                                                    className="text-[12px] font-bold text-surface-700 dark:text-surface-300 tabular-nums"
                                                     title={`BANT: ${lead.bant_score ?? lead.score}${lead.behavioral_score ? ` + Behavioral: ${lead.behavioral_score}` : ''}`}
                                                 >
                                                     {lead.score}
@@ -742,13 +742,13 @@ export default function Leads() {
                                                     <div key={key} className="bg-surface-50 dark:bg-surface-800 rounded-lg px-4 py-3">
                                                         <div className="flex items-center justify-between mb-1">
                                                             <span className="text-[12px] font-bold text-surface-600 dark:text-surface-300">{label}</span>
-                                                            <span className="text-[11px] font-bold text-surface-500 dark:text-surface-400">{dimScore}/25</span>
+                                                            <span className="text-[11px] font-bold text-surface-500 dark:text-surface-400 tabular-nums">{dimScore}/25</span>
                                                         </div>
                                                         <div className="w-full bg-surface-200 dark:bg-surface-700 rounded-full h-1.5 mb-1.5">
                                                             <div
                                                                 className={cn(
                                                                     'h-1.5 rounded-full transition-all',
-                                                                    dimScore >= 20 ? 'bg-emerald-500' : dimScore >= 10 ? 'bg-sky-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
+                                                                    dimScore >= 20 ? 'bg-emerald-500' : dimScore >= 10 ? 'bg-primary-500' : dimScore > 0 ? 'bg-amber-400' : 'bg-surface-300 dark:bg-surface-600'
                                                                 )}
                                                                 style={{ width: `${(dimScore / 25) * 100}%` }}
                                                             />
@@ -775,7 +775,7 @@ export default function Leads() {
                                                                     s.confidence === 'high'
                                                                         ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
                                                                         : s.confidence === 'medium'
-                                                                            ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400'
+                                                                            ? 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400'
                                                                             : 'bg-surface-100 text-surface-500 dark:bg-surface-800 dark:text-surface-400'
                                                                 )}>{s.confidence}</span>
                                                                 <span className="text-[10px] text-surface-400 dark:text-surface-500 ml-auto">{s.score_before} → {s.score_after}</span>
@@ -794,7 +794,7 @@ export default function Leads() {
                                             <div className="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 space-y-2">
                                                 <div className="flex items-center justify-between">
                                                     <span className="text-[12px] font-medium text-surface-600 dark:text-surface-400">Engagement Score</span>
-                                                    <span className="text-[12px] font-bold text-surface-900 dark:text-surface-100">{leadDetail.behavioral_score || 0}/20</span>
+                                                    <span className="text-[12px] font-bold text-surface-900 dark:text-surface-100 tabular-nums">{leadDetail.behavioral_score || 0}/20</span>
                                                 </div>
                                                 <div className="w-full bg-surface-200 dark:bg-surface-700 rounded-full h-1.5">
                                                     <div
@@ -803,7 +803,7 @@ export default function Leads() {
                                                             (leadDetail.behavioral_score || 0) >= 15
                                                                 ? 'bg-emerald-500'
                                                                 : (leadDetail.behavioral_score || 0) >= 8
-                                                                    ? 'bg-sky-500'
+                                                                    ? 'bg-primary-500'
                                                                     : 'bg-amber-400'
                                                         )}
                                                         style={{ width: `${Math.min(((leadDetail.behavioral_score || 0) / 20) * 100, 100)}%` }}

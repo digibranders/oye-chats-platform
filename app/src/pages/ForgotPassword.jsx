@@ -80,7 +80,7 @@ export default function ForgotPassword() {
         <div className="absolute inset-0 noise-overlay" />
 
         <div className="absolute top-20 -left-20 w-96 h-96 bg-primary-500/20 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
-        <div className="absolute bottom-20 right-10 w-80 h-80 bg-violet-500/15 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
+        <div className="absolute bottom-20 right-10 w-80 h-80 bg-primary-400/15 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
 
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -101,7 +101,7 @@ export default function ForgotPassword() {
           >
             Get back to
             <br />
-            <span className="bg-gradient-to-r from-primary-400 via-violet-400 to-sky-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
               building
             </span>
           </motion.h2>

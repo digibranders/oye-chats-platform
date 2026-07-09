@@ -41,8 +41,8 @@ const TYPE_META = {
     },
     bot_created: {
         icon: BotIcon,
-        ring: 'ring-indigo-500/30 dark:ring-indigo-400/30',
-        wrap: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400',
+        ring: 'ring-primary-500/30 dark:ring-primary-400/30',
+        wrap: 'bg-primary-100 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400',
         label: 'Bot',
     },
     offline_message_received: {
@@ -65,8 +65,8 @@ const TYPE_META = {
     },
     crawl_completed: {
         icon: Globe,
-        ring: 'ring-sky-500/30 dark:ring-sky-400/30',
-        wrap: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400',
+        ring: 'ring-primary-500/30 dark:ring-primary-400/30',
+        wrap: 'bg-primary-100 text-primary-600 dark:bg-primary-500/15 dark:text-primary-400',
         label: 'Crawl',
     },
 };
@@ -113,7 +113,7 @@ function NotificationRow({ item, onClick, onDismiss }) {
         <button
             type="button"
             onClick={onClick}
-            className={`group relative w-full text-left flex gap-3 px-3 py-3 rounded-lg transition-colors hover:bg-slate-50 dark:hover:bg-[#15203E]/50 ${
+            className={`group relative w-full text-left flex gap-3 px-3 py-3 rounded-lg transition-colors hover:bg-surface-50 dark:hover:bg-surface-800/50 ${
                 item.is_read ? '' : 'bg-primary-500/[0.04] dark:bg-primary-500/[0.08]'
             }`}
         >
@@ -231,13 +231,13 @@ export default function NotificationBell() {
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.97, y: 4 }}
                         transition={{ duration: 0.12 }}
-                        className="absolute right-0 mt-2.5 w-[360px] max-w-[calc(100vw-1.5rem)] bg-white dark:bg-[#0B1329] border border-slate-200 dark:border-[#1F2C47]/50 rounded-2xl shadow-2xl z-50"
+                        className="absolute right-0 mt-2.5 w-[360px] max-w-[calc(100vw-1.5rem)] bg-[var(--bg-card)] dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-2xl shadow-2xl z-50"
                         role="dialog"
                         aria-label="Notifications"
                     >
                         {/* Top Indicator Arrow */}
                         <div 
-                            className="absolute right-[11px] -top-1.5 w-0 h-0 text-white dark:text-[#0B1329] z-50 pointer-events-none"
+                            className="absolute right-[11px] -top-1.5 w-0 h-0 text-[var(--bg-card)] dark:text-surface-900 z-50 pointer-events-none"
                             style={{
                                 borderLeft: '6px solid transparent',
                                 borderRight: '6px solid transparent',
@@ -246,16 +246,16 @@ export default function NotificationBell() {
                         />
 
                         <div className="flex flex-col overflow-hidden rounded-2xl">
-                            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
+                            <div className="px-5 py-4 border-b border-surface-100 dark:border-surface-800/60 flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center shrink-0 border border-indigo-100/10 dark:border-indigo-500/20">
-                                        <Bell size={18} className="text-indigo-600 dark:text-[#818CF8]" />
+                                    <div className="w-10 h-10 rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center shrink-0 border border-primary-100/10 dark:border-primary-500/20">
+                                        <Bell size={18} className="text-primary-600 dark:text-primary-400" />
                                     </div>
                                     <div className="flex flex-col justify-center">
                                         <p className="text-[15px] font-bold text-surface-900 dark:text-white leading-tight">
                                             Notifications
                                         </p>
-                                        <p className="text-[12px] text-surface-400 dark:text-[#8F9BB3] mt-0.5 leading-none">
+                                        <p className="text-[12px] text-surface-400 dark:text-surface-400 mt-0.5 leading-none">
                                             {unreadCount > 0 ? `${unreadCount} unread` : "You're all caught up"}
                                         </p>
                                     </div>
@@ -273,7 +273,7 @@ export default function NotificationBell() {
                                 )}
                             </div>
 
-                            <div className="max-h-[420px] overflow-y-auto p-1.5 bg-white dark:bg-[#0B1329]">
+                            <div className="max-h-[420px] overflow-y-auto p-1.5 bg-[var(--bg-card)] dark:bg-surface-900">
                                 {items.length === 0 ? (
                                     <div className="px-6 py-12 flex flex-col justify-center">
                                         {/* Custom Open Box & Paper Airplane SVG */}
@@ -288,10 +288,10 @@ export default function NotificationBell() {
                                             <ellipse cx="80" cy="98" rx="28" ry="8" fill="#000000" fillOpacity="0.3" filter="url(#shadow-blur)" />
                                             
                                             {/* Sparkles / Stars */}
-                                            <path d="M55,46 Q55,52 49,52 Q55,52 55,58 Q55,52 61,52 Q55,52 55,46 Z" fill="#6366F1" />
-                                            <circle cx="68" cy="42" r="1.5" fill="#818CF8" />
-                                            <circle cx="81" cy="48" r="1.5" fill="#818CF8" opacity="0.8" />
-                                            <circle cx="106" cy="35" r="1.5" fill="#818CF8" opacity="0.6" />
+                                            <path d="M55,46 Q55,52 49,52 Q55,52 55,58 Q55,52 61,52 Q55,52 55,46 Z" fill="#3d66ff" />
+                                            <circle cx="68" cy="42" r="1.5" fill="#6084ff" />
+                                            <circle cx="81" cy="48" r="1.5" fill="#6084ff" opacity="0.8" />
+                                            <circle cx="106" cy="35" r="1.5" fill="#6084ff" opacity="0.6" />
 
                                             {/* Inside Back Left Wall */}
                                             <polygon points="50,68 80,53 80,75 50,90" fill="#0F162B" />
@@ -304,7 +304,7 @@ export default function NotificationBell() {
                                             <polygon points="80,53 110,68 125,60 95,45" fill="#283568" />
 
                                             {/* Curved dotted flight path */}
-                                            <path d="M80,72 C88,77 101,70 102,56 C103,46 95,43 100,31" stroke="#6366F1" strokeWidth="1.5" strokeDasharray="3 3" strokeLinecap="round" opacity="0.8" />
+                                            <path d="M80,72 C88,77 101,70 102,56 C103,46 95,43 100,31" stroke="#3d66ff" strokeWidth="1.5" strokeDasharray="3 3" strokeLinecap="round" opacity="0.8" />
 
                                             {/* Box Left Side Outer */}
                                             <polygon points="50,68 80,83 80,105 50,90" fill="#1B2544" />
@@ -318,14 +318,14 @@ export default function NotificationBell() {
 
                                             {/* Paper Airplane (Launching) */}
                                             <g transform="translate(96, 20) rotate(-10)">
-                                                <path d="M0,8 L16,0 L11,14 L8,9 Z" fill="#6366F1" />
-                                                <path d="M8,9 L11,14 L11,9 Z" fill="#4F46E5" />
+                                                <path d="M0,8 L16,0 L11,14 L8,9 Z" fill="#3d66ff" />
+                                                <path d="M8,9 L11,14 L11,9 Z" fill="#2348d6" />
                                             </g>
                                         </svg>
                                         <p className="text-[16px] font-bold text-surface-900 dark:text-white mb-2 text-center">
                                             Nothing new yet
                                         </p>
-                                        <p className="text-[13px] text-slate-500 dark:text-[#8F9BB3] text-center leading-relaxed max-w-[240px] mx-auto">
+                                        <p className="text-[13px] text-surface-500 dark:text-surface-400 text-center leading-relaxed max-w-[240px] mx-auto">
                                             Plan, bot, and live-chat events<br />will land here.
                                         </p>
                                     </div>
@@ -362,7 +362,7 @@ export default function NotificationBell() {
                             </div>
 
                             {items.length > 0 && (
-                                <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end bg-white dark:bg-[#0B1329]">
+                                <div className="px-3 py-2 border-t border-surface-100 dark:border-surface-800 flex items-center justify-end bg-[var(--bg-card)] dark:bg-surface-900">
                                     <button
                                         type="button"
                                         onClick={clearAll}

@@ -439,9 +439,9 @@ function MoneyCard({ icon, label, currency, cents, tint = 'slate' }) {
 /** Plan badge inline with the customer name in the referrals list. */
 const PLAN_CHIP_TINTS = {
     free:       'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400',
-    starter:    'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300',
-    standard:   'bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300',
-    enterprise: 'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-300',
+    starter:    'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400',
+    standard:   'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300',
+    enterprise: 'bg-gradient-to-r from-primary-600 to-primary-500 text-white dark:from-primary-500 dark:to-primary-400',
 };
 
 function PlanChip({ slug }) {

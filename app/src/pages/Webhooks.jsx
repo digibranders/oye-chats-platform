@@ -341,7 +341,7 @@ export default function Webhooks({ embedded = false }) {
                                             </button>
                                             <button
                                                 onClick={() => handleTest(webhook.id)}
-                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-sky-200 dark:border-sky-700 text-sky-700 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20"
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-primary-200 dark:border-primary-700 text-primary-700 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20"
                                             >
                                                 <Send className="w-3.5 h-3.5" />
                                                 Test

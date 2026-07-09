@@ -84,7 +84,7 @@ export default function AppearanceTab({ draft, set, isUploading, onFile, onRemov
                                                 >Brand</button>
                                                 <button
                                                     onClick={() => set('user_bubble_color', color)}
-                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded hover:bg-blue-500 hover:text-white transition-all uppercase tracking-wider leading-none"
+                                                    className="px-2 py-1 text-[8px] font-bold bg-surface-100 dark:bg-surface-800 text-surface-500 dark:text-surface-400 rounded hover:bg-primary-500 hover:text-white transition-all uppercase tracking-wider leading-none"
                                                 >Bubble</button>
                                             </div>
                                         </div>

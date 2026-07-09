@@ -131,7 +131,7 @@ export default function OfflineMessages({ embedded = false }) {
 
     const statusBadge = (status) => {
         const styles = {
-            new: 'bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400',
+            new: 'bg-primary-100 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400',
             read: 'bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-400',
             replied: 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
         };
@@ -158,7 +158,7 @@ export default function OfflineMessages({ embedded = false }) {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
                 {[
                     { label: 'Total', value: stats.total, icon: MessageSquare, color: 'text-surface-900 dark:text-white', iconColor: 'text-surface-400 dark:text-surface-500' },
-                    { label: 'Unread', value: stats.unread, icon: Inbox, color: 'text-blue-600 dark:text-blue-400', iconColor: 'text-blue-600 dark:text-blue-400' },
+                    { label: 'Unread', value: stats.unread, icon: Inbox, color: 'text-primary-600 dark:text-primary-400', iconColor: 'text-primary-600 dark:text-primary-400' },
                     { label: 'Replied', value: stats.replied, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400', iconColor: 'text-emerald-600 dark:text-emerald-400' },
                     { label: 'Reply Rate', value: `${stats.replyRate}%`, icon: TrendingUp, color: 'text-primary-600 dark:text-primary-400', iconColor: 'text-primary-600 dark:text-primary-400' },
                 ].map(s => (
@@ -166,7 +166,7 @@ export default function OfflineMessages({ embedded = false }) {
                         <s.icon size={20} className={cn('shrink-0', s.iconColor)} />
                         <div className="flex flex-col justify-center min-w-0">
                             <p className="text-[11px] font-medium text-surface-400 dark:text-surface-500 leading-none mb-1.5">{s.label}</p>
-                            <p className={cn('text-[22px] font-extrabold leading-none tracking-tight', s.color)}>{s.value}</p>
+                            <p className={cn('text-[22px] font-extrabold leading-none tracking-tight tabular-nums', s.color)}>{s.value}</p>
                         </div>
                     </div>
                 ))}
@@ -278,7 +278,7 @@ export default function OfflineMessages({ embedded = false }) {
                                         className={cn(
                                             'p-4 cursor-pointer transition-colors hover:bg-surface-50 dark:hover:bg-surface-800/50 flex gap-3',
                                             selectedMessage?.id === msg.id && 'bg-primary-50/50 dark:bg-primary-500/10',
-                                            msg.status === 'new' && 'border-l-2 border-l-blue-500'
+                                            msg.status === 'new' && 'border-l-2 border-l-primary-500'
                                         )}
                                     >
                                         <button

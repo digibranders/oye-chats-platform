@@ -176,7 +176,7 @@ export default function CannedResponses({ embedded = false }) {
                     {filteredResponses.map(response => (
                         <div
                             key={response.id}
-                            className="border border-surface-200 dark:border-surface-700 rounded-lg p-4 hover:border-surface-300 dark:hover:border-surface-600 transition-colors bg-[var(--bg-card)] dark:bg-surface-900"
+                            className="border border-surface-200 dark:border-surface-800 rounded-xl p-4 shadow-sm hover:border-surface-300 dark:hover:border-surface-700 transition-colors bg-[var(--bg-card)] dark:bg-surface-900"
                         >
                             <div className="flex items-start justify-between gap-3">
                                 <div className="flex-1 min-w-0">
@@ -221,7 +221,7 @@ export default function CannedResponses({ embedded = false }) {
             {/* Create/Edit Modal */}
             {showModal && (
                 <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-xl shadow-xl w-full max-w-lg border border-surface-200 dark:border-surface-700">
+                    <div className="bg-[var(--bg-card)] dark:bg-surface-900 rounded-2xl shadow-xl w-full max-w-lg border border-surface-200 dark:border-surface-800">
                         <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100 dark:border-surface-800">
                             <h2 className="font-semibold text-surface-900 dark:text-surface-100">
                                 {editingResponse ? 'Edit Response' : 'New Canned Response'}

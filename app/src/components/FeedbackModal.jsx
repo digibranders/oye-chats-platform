@@ -57,16 +57,16 @@ const SEVERITY_LABELS = Object.fromEntries(SEVERITIES.map((s) => [s.id, s.label]
 
 const STATUS_META = {
   open: { label: 'Open', icon: Clock, className: 'bg-amber-500/10 border-amber-500/30 text-amber-300' },
-  in_progress: { label: 'In progress', icon: Loader2, className: 'bg-sky-500/10 border-sky-500/30 text-sky-300' },
+  in_progress: { label: 'In progress', icon: Loader2, className: 'bg-primary-500/10 border-primary-500/30 text-primary-300' },
   resolved: { label: 'Resolved', icon: CheckCircle2, className: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' },
   closed: { label: 'Closed', icon: Archive, className: 'bg-zinc-500/10 border-zinc-500/30 text-zinc-400' },
 };
 
 const SEVERITY_TONE = {
   low: 'bg-zinc-500/10 border-zinc-500/30 text-zinc-300',
-  medium: 'bg-sky-500/10 border-sky-500/30 text-sky-300',
+  medium: 'bg-primary-500/10 border-primary-500/30 text-primary-300',
   high: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
-  critical: 'bg-red-500/10 border-red-500/30 text-red-300',
+  critical: 'bg-rose-500/10 border-rose-500/30 text-rose-300',
 };
 
 function formatDate(iso) {
@@ -144,7 +144,7 @@ function MyFeedbackList({ highlightId }) {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-[#8f8f9e]">
-        <Loader2 size={22} className="animate-spin text-[#817bfb]" />
+        <Loader2 size={22} className="animate-spin text-[#6084ff]" />
         <p className="mt-3 text-sm">Loading your feedback…</p>
       </div>
     );
@@ -153,7 +153,7 @@ function MyFeedbackList({ highlightId }) {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-14 text-center">
-        <AlertCircle size={22} className="text-red-400" />
+        <AlertCircle size={22} className="text-rose-400" />
         <p className="mt-3 text-sm text-[#c0c0cc]">{error}</p>
         <button
           type="button"
@@ -187,7 +187,7 @@ function MyFeedbackList({ highlightId }) {
           key={item.id}
           className={cn(
             'rounded-xl border bg-[#13131c] p-4 transition-colors',
-            highlightId === item.id ? 'border-[#6366f1] ring-1 ring-[#6366f1]/30' : 'border-[#232335]'
+            highlightId === item.id ? 'border-[#3d66ff] ring-1 ring-[#3d66ff]/30' : 'border-[#232335]'
           )}
         >
           <div className="flex items-start justify-between gap-3">
@@ -214,8 +214,8 @@ function MyFeedbackList({ highlightId }) {
           <AttachmentThumbs attachments={item.attachments} />
 
           {item.admin_response && (
-            <div className="mt-3 rounded-lg border border-[#6366f1]/25 bg-[#6366f1]/[0.07] p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#817bfb] mb-1.5 flex items-center gap-1.5">
+            <div className="mt-3 rounded-lg border border-[#3d66ff]/25 bg-[#3d66ff]/[0.07] p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#6084ff] mb-1.5 flex items-center gap-1.5">
                 <MessageSquare size={11} /> Response from OyeChats
               </p>
               <p className="text-[13px] text-[#d6d6de] whitespace-pre-wrap leading-relaxed">{item.admin_response}</p>
@@ -263,7 +263,7 @@ function SelectMenu({ id, value, onChange, options, placeholder = 'Select…' })
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="w-full h-10 flex items-center justify-between gap-2 rounded-xl bg-[#13131c] border border-[#232335] px-3 text-[13px] text-left outline-none hover:border-[#2f2f47] focus:border-[#6366f1] focus:ring-1 focus:ring-[#6366f1]/20 transition-colors cursor-pointer"
+        className="w-full h-10 flex items-center justify-between gap-2 rounded-xl bg-[#13131c] border border-[#232335] px-3 text-[13px] text-left outline-none hover:border-[#2f2f47] focus:border-[#3d66ff] focus:ring-1 focus:ring-[#3d66ff]/20 transition-colors cursor-pointer"
       >
         <span className={cn('truncate', selected && selected.id ? 'text-white' : 'text-[#8f8f9e]')}>
           {selected ? selected.label : placeholder}
@@ -293,11 +293,11 @@ function SelectMenu({ id, value, onChange, options, placeholder = 'Select…' })
                   }}
                   className={cn(
                     'w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] text-left transition-colors cursor-pointer',
-                    active ? 'bg-[#6366f1]/15 text-white' : 'text-[#c0c0cc] hover:bg-[#1b1b29]'
+                    active ? 'bg-[#3d66ff]/15 text-white' : 'text-[#c0c0cc] hover:bg-[#1b1b29]'
                   )}
                 >
                   <span className="truncate">{o.label}</span>
-                  {active && <Check size={14} className="shrink-0 text-[#817bfb]" />}
+                  {active && <Check size={14} className="shrink-0 text-[#6084ff]" />}
                 </button>
               </li>
             );
@@ -471,7 +471,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
         <div className="flex items-start justify-between px-6 pt-6 pb-4">
           <div className="flex gap-4">
             <div className="flex items-center justify-center w-11 h-11 rounded-full bg-[#1b1b2d] border border-[#2b2b42] shrink-0">
-              <MessageSquare size={20} className="text-[#817bfb]" />
+              <MessageSquare size={20} className="text-[#6084ff]" />
             </div>
             <div>
               <h2 className="text-[17px] font-semibold text-white leading-tight">Feedback</h2>
@@ -531,11 +531,11 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                         className={cn(
                           'flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-medium border transition-all cursor-pointer',
                           selected
-                            ? 'bg-[#6366f1]/10 border-[#6366f1] text-white ring-1 ring-[#6366f1]/30'
+                            ? 'bg-[#3d66ff]/10 border-[#3d66ff] text-white ring-1 ring-[#3d66ff]/30'
                             : 'bg-[#13131c]/50 hover:bg-[#181826] border-[#232335] text-[#a0a0b0]'
                         )}
                       >
-                        <Icon size={14} className={selected ? 'text-[#817bfb]' : 'text-[#707080]'} />
+                        <Icon size={14} className={selected ? 'text-[#6084ff]' : 'text-[#707080]'} />
                         {t.label}
                       </button>
                     );
@@ -574,7 +574,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                           className={cn(
                             'h-9 rounded-lg text-[12px] font-medium border transition-all cursor-pointer text-center',
                             selected
-                              ? 'bg-[#6366f1]/10 border-[#6366f1] text-white ring-1 ring-[#6366f1]/30'
+                              ? 'bg-[#3d66ff]/10 border-[#3d66ff] text-white ring-1 ring-[#3d66ff]/30'
                               : 'bg-[#13131c]/50 hover:bg-[#181826] border-[#232335] text-[#a0a0b0]'
                           )}
                         >
@@ -591,7 +591,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                 <label className="block text-[13px] font-semibold text-[#efeff1]">
                   Describe your feedback <span className="text-[#8f8f9e] font-normal">(required)</span>
                 </label>
-                <div className="group bg-[#13131c] border border-[#232335] rounded-xl focus-within:border-[#6366f1] focus-within:ring-1 focus-within:ring-[#6366f1]/20 transition-all duration-200 flex flex-col overflow-hidden">
+                <div className="group bg-[#13131c] border border-[#232335] rounded-xl focus-within:border-[#3d66ff] focus-within:ring-1 focus-within:ring-[#3d66ff]/20 transition-all duration-200 flex flex-col overflow-hidden">
                   <textarea
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
@@ -637,14 +637,14 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
                               </div>
                             )}
                             {att.status === 'error' && (
-                              <div className="absolute inset-0 flex items-center justify-center bg-red-950/60" title="Upload failed">
-                                <AlertCircle size={16} className="text-red-300" />
+                              <div className="absolute inset-0 flex items-center justify-center bg-rose-950/60" title="Upload failed">
+                                <AlertCircle size={16} className="text-rose-300" />
                               </div>
                             )}
                             <button
                               type="button"
                               onClick={() => removeAttachment(att.id)}
-                              className="absolute top-0.5 right-0.5 p-0.5 rounded-full bg-black/60 text-white opacity-0 group-hover/att:opacity-100 transition-opacity hover:bg-red-600"
+                              className="absolute top-0.5 right-0.5 p-0.5 rounded-full bg-black/60 text-white opacity-0 group-hover/att:opacity-100 transition-opacity hover:bg-rose-600"
                               title="Remove"
                             >
                               <X size={11} />
@@ -658,7 +658,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
               </div>
 
               {attachmentError && (
-                <div className="flex items-center gap-2 text-xs text-red-400 bg-red-950/10 border border-red-900/30 p-3 rounded-xl">
+                <div className="flex items-center gap-2 text-xs text-rose-400 bg-rose-950/10 border border-rose-900/30 p-3 rounded-xl">
                   <AlertCircle size={14} className="flex-shrink-0" />
                   <span>{attachmentError}</span>
                 </div>
@@ -690,7 +690,7 @@ const FeedbackModal = ({ isOpen, onClose, onSubmit, defaultTab = 'send', highlig
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#594fe2] to-[#4036cb] hover:from-[#6b62eb] hover:to-[#4e43dc] disabled:from-[#1b1b26] disabled:to-[#1b1b26] disabled:text-[#585868] text-white text-sm font-semibold shadow-lg hover:shadow-[#4f46e5]/10 disabled:shadow-none transition-all flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#3d66ff] to-[#2348d6] hover:from-[#6084ff] hover:to-[#2f5cff] disabled:from-[#1b1b26] disabled:to-[#1b1b26] disabled:text-[#585868] text-white text-sm font-semibold shadow-lg hover:shadow-[#2348d6]/10 disabled:shadow-none transition-all flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <>

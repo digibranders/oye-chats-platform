@@ -70,7 +70,7 @@ export default function LiveChatRequestBanner() {
                     {/* Outer glow */}
                     <motion.div
                         className="absolute -inset-1 rounded-2xl opacity-40 blur-xl pointer-events-none"
-                        style={{ background: 'linear-gradient(135deg, #6366f1, #818cf8, #6366f1)' }}
+                        style={{ background: 'linear-gradient(135deg, #3d66ff, #6084ff, #3d66ff)' }}
                         animate={{ opacity: hovered ? 0.55 : 0.3 }}
                         transition={{ duration: 0.3 }}
                     />
@@ -80,7 +80,7 @@ export default function LiveChatRequestBanner() {
                         className="relative rounded-2xl overflow-hidden backdrop-blur-xl"
                         style={{
                             background: 'linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(15, 20, 50, 0.97))',
-                            border: '1px solid rgba(99, 102, 241, 0.2)',
+                            border: '1px solid rgba(61, 102, 255, 0.2)',
                             boxShadow: '0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
                         }}
                     >
@@ -88,7 +88,7 @@ export default function LiveChatRequestBanner() {
                         <motion.div
                             className="h-[2px] rounded-full"
                             style={{
-                                background: 'linear-gradient(90deg, #6366f1, #a78bfa)',
+                                background: 'linear-gradient(90deg, #3d66ff, #6084ff)',
                                 transformOrigin: 'left',
                             }}
                             initial={{ scaleX: 1 }}
@@ -137,8 +137,8 @@ export default function LiveChatRequestBanner() {
                                     whileTap={{ scale: 0.97 }}
                                     className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-[7px] rounded-lg text-[12px] font-semibold text-white transition-all focus:outline-none focus:ring-2 focus:ring-primary-400/50"
                                     style={{
-                                        background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                                        boxShadow: '0 2px 12px rgba(99, 102, 241, 0.35)',
+                                        background: 'linear-gradient(135deg, #3d66ff, #2348d6)',
+                                        boxShadow: '0 2px 12px rgba(61, 102, 255, 0.35)',
                                     }}
                                 >
                                     <MessageSquareText size={13} />

@@ -156,9 +156,9 @@ export default function Login() {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(37,99,235,0.18) 0%, rgba(37,99,235,0.08) 40%, transparent 70%)', filter: 'blur(40px)' }} />
 
         {/* Floating orbs — website blue palette */}
-        <div className="absolute top-20 -left-20 w-96 h-96 bg-blue-600/15 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
-        <div className="absolute bottom-20 right-10 w-80 h-80 bg-blue-400/10 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
-        <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-cyan-500/8 rounded-full blur-[60px] animate-[float_10s_ease-in-out_infinite]" />
+        <div className="absolute top-20 -left-20 w-96 h-96 bg-primary-600/15 rounded-full blur-[100px] animate-[float_8s_ease-in-out_infinite]" />
+        <div className="absolute bottom-20 right-10 w-80 h-80 bg-primary-400/10 rounded-full blur-[80px] animate-[float_6s_ease-in-out_infinite_reverse]" />
+        <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-primary-500/8 rounded-full blur-[60px] animate-[float_10s_ease-in-out_infinite]" />
 
         {/* Logo */}
         <motion.div
@@ -181,7 +181,7 @@ export default function Login() {
           >
             AI chatbots that
             <br />
-            <span className="bg-gradient-to-r from-blue-400 via-blue-300 to-cyan-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-primary-400 via-primary-300 to-primary-200 bg-clip-text text-transparent">
               know your business
             </span>
           </motion.h2>
@@ -203,8 +203,8 @@ export default function Login() {
                 transition={{ duration: 0.4, delay: 0.3 + i * 0.08 }}
                 className="flex items-start gap-3 p-3.5 rounded-xl glass-card hover:bg-white/[0.06] transition-colors"
               >
-                <div className="w-8 h-8 rounded-lg bg-blue-500/15 border border-blue-400/20 flex items-center justify-center flex-shrink-0">
-                  <f.icon size={15} className="text-blue-400" />
+                <div className="w-8 h-8 rounded-lg bg-primary-500/15 border border-primary-400/20 flex items-center justify-center flex-shrink-0">
+                  <f.icon size={15} className="text-primary-400" />
                 </div>
                 <div>
                   <p className="text-[13px] font-semibold text-white">{f.title}</p>
@@ -293,7 +293,7 @@ export default function Login() {
                 Email address
               </label>
               <div className="relative group">
-                <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-blue-400 transition-colors" />
+                <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-primary-400 transition-colors" />
                 <input
                   type="email"
                   value={email}
@@ -301,7 +301,7 @@ export default function Login() {
                   className={cn(
                     'w-full pl-10 pr-4 py-2.5 rounded-xl border bg-white/[.04] text-white',
                     'border-white/[.08]',
-                    'focus:ring-2 focus:ring-blue-500/25 focus:border-blue-500/60',
+                    'focus:ring-2 focus:ring-primary-500/25 focus:border-primary-500/60',
                     'outline-none transition-all text-sm placeholder:text-white/25'
                   )}
                   placeholder="you@company.com"
@@ -315,12 +315,12 @@ export default function Login() {
                 <label className="block text-[13px] font-medium text-white/70">
                   Password
                 </label>
-                <Link to="/forgot-password" tabIndex={5} className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors">
+                <Link to="/forgot-password" tabIndex={5} className="text-xs font-medium text-primary-400 hover:text-primary-300 transition-colors">
                   Forgot password?
                 </Link>
               </div>
               <div className="relative group">
-                <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-blue-400 transition-colors" />
+                <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-primary-400 transition-colors" />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
@@ -328,7 +328,7 @@ export default function Login() {
                   className={cn(
                     'w-full pl-10 pr-11 py-2.5 rounded-xl border bg-white/[.04] text-white',
                     'border-white/[.08]',
-                    'focus:ring-2 focus:ring-blue-500/25 focus:border-blue-500/60',
+                    'focus:ring-2 focus:ring-primary-500/25 focus:border-primary-500/60',
                     'outline-none transition-all text-sm placeholder:text-white/25'
                   )}
                   placeholder="Enter your password"
@@ -352,7 +352,7 @@ export default function Login() {
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
-                  className="peer appearance-none w-4 h-4 border border-white/20 rounded bg-white/[.04] checked:bg-blue-600 checked:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/25 transition-all cursor-pointer"
+                  className="peer appearance-none w-4 h-4 border border-white/20 rounded bg-white/[.04] checked:bg-primary-600 checked:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/25 transition-all cursor-pointer"
                   tabIndex={3}
                 />
                 <svg className="absolute w-3 h-3 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
@@ -366,8 +366,8 @@ export default function Login() {
               type="submit"
               disabled={isLoading}
               className={cn(
-                'w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl',
-                'shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]',
+                'w-full py-2.5 bg-primary-600 hover:bg-primary-500 text-white font-semibold rounded-xl',
+                'shadow-lg shadow-primary-500/30 transition-all active:scale-[0.98]',
                 'flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm'
               )}
               tabIndex={4}
@@ -385,7 +385,7 @@ export default function Login() {
 
           <p className="text-center text-sm text-white/40 mt-8">
             Don&apos;t have an account?{' '}
-            <Link to="/register" tabIndex={6} className="font-semibold text-blue-400 hover:text-blue-300 transition-colors">
+            <Link to="/register" tabIndex={6} className="font-semibold text-primary-400 hover:text-primary-300 transition-colors">
               Sign up free
             </Link>
           </p>

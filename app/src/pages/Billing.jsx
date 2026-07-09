@@ -159,14 +159,14 @@ const COST_ROWS = [
     icon: FileText,
     label: 'Document upload (per file)',
     detail: 'Charged per file added to your knowledge base. Refunded if a file fails to save.',
-    iconColor: 'text-violet-500',
+    iconColor: 'text-primary-500',
   },
   {
     key: 'url_scan',
     icon: Globe,
     label: 'URL crawl (per page)',
     detail: 'Charged per page actually ingested into your knowledge base.',
-    iconColor: 'text-sky-500',
+    iconColor: 'text-primary-500',
   },
   
   // {
