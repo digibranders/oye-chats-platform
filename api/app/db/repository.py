@@ -183,10 +183,24 @@ def add_chat_message(
     location: str = None,
     device: str = None,
     bot_id: int = None,
+    media_card: dict | None = None,
+    media_secondary: list | None = None,
 ):
-    """Save a message to chat history. Supports both client_id (legacy) and bot_id (new)."""
+    """Save a message to chat history. Supports both client_id (legacy) and bot_id (new).
+
+    ``media_card`` / ``media_secondary`` persist the parsed media-card payload
+    so the widget can re-render video/document cards on refresh — see
+    ``ChatMessage.media_card`` for the shape. Both stay ``None`` for user
+    turns and for bot answers that don't emit a card.
+    """
     ensure_chat_session(session, session_id, client_id=client_id, bot_id=bot_id, location=location, device=device)
-    new_message = ChatMessage(session_id=session_id, role=role, content=content)
+    new_message = ChatMessage(
+        session_id=session_id,
+        role=role,
+        content=content,
+        media_card=media_card,
+        media_secondary=media_secondary,
+    )
     session.add(new_message)
     session.flush()
     return new_message

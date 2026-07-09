@@ -707,6 +707,18 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     feedback = Column(Integer, nullable=True)
     trace_id = Column(String(255), nullable=True)  # Langfuse trace ID for feedback linking
+    # Media-card payloads emitted alongside a bot answer. The sentinels
+    # ([YOUTUBE_CARD:…] / [DOWNLOAD_CARD:…]) are stripped from ``content`` at
+    # save time by ``_extract_media_card``; persisting the parsed card here
+    # is what lets the widget re-render the video/document card after a
+    # refresh, instead of showing only the text answer.
+    # Shape (media_card): {"type": "youtube", "video_id": "..."} |
+    #                     {"type": "download", "url": "...", "name": "..."}
+    # Shape (media_secondary): list of ≤1 same-shaped payloads (the
+    # opposite-type "Also available" chip). Nullable so historical rows
+    # and card-less answers stay valid.
+    media_card = Column(JSONB, nullable=True)
+    media_secondary = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")

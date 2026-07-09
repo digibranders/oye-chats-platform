@@ -879,6 +879,12 @@ def get_history_endpoint(
                     "content": m.content,
                     "timestamp": m.created_at.isoformat(),
                     "feedback": m.feedback if hasattr(m, "feedback") else None,
+                    # Media-card payloads are the whole reason a bot answer
+                    # renders as a video/document card after a refresh. Return
+                    # them alongside content so the widget hydrates cards
+                    # from history the same way it does from a live stream.
+                    "media_card": getattr(m, "media_card", None),
+                    "media_secondary": getattr(m, "media_secondary", None),
                 }
                 for m in all_history
             ]

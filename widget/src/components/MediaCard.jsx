@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Play } from 'lucide-react';
+import { FileText, Play } from 'lucide-react';
 
 /**
  * MediaCard — inline chat card for a single YouTube video OR a downloadable
@@ -121,7 +121,7 @@ const YouTubeCard = ({ videoId, durationSeconds, title: initialTitle }) => {
             href={watchUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="oyechats-media-card oyechats-media-card--youtube mt-2 flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
+            className="oyechats-media-card oyechats-media-card--youtube flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
             aria-label={loading ? 'Loading YouTube video' : `Watch on YouTube: ${displayTitle}`}
         >
             <div className="relative aspect-video w-full bg-gray-100">
@@ -316,7 +316,7 @@ const DownloadCard = ({ url, name }) => {
             // the browser falls back to native handling. We only set it for
             // non-viewable types; viewable ones (PDF, images) open in a tab.
             download={openable ? undefined : rawName}
-            className="oyechats-media-card oyechats-media-card--download group mt-2 flex max-w-full items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 pl-2 pr-2 shadow-sm transition-all hover:border-gray-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
+            className="oyechats-media-card oyechats-media-card--download group flex max-w-full items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 pl-2 pr-2 shadow-sm transition-all hover:border-gray-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1"
             aria-label={`${action} ${rawName}${sizeLabel ? `, ${sizeLabel}` : ''}`}
         >
             <span
@@ -391,6 +391,45 @@ const _SecondaryChip = ({ item }) => {
     return null;
 };
 
+// Small overline hint sitting above the media card. Names the medium the
+// visitor is about to interact with ("watch the video" / "open the document")
+// so the card never lands without a cue — a deterministic fallback for the
+// LLM's bridge sentence, which is mandated in the system prompt but not 100%
+// reliable in practice. Intentionally muted (11px, gray-500, subtle icon) so
+// on well-bridged answers it reads as a card label rather than a duplicate
+// sentence competing with the prose above.
+const _MediaHint = ({ card }) => {
+    if (!card || typeof card !== 'object') return null;
+    if (card.type === 'youtube') {
+        return (
+            <div
+                className="oyechats-media-hint mb-1.5 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-gray-500"
+                aria-hidden="true"
+            >
+                <Play className="h-3 w-3 fill-current text-red-500" strokeWidth={0} />
+                <span>Watch the video for the full picture</span>
+            </div>
+        );
+    }
+    if (card.type === 'download') {
+        const rawName = typeof card.name === 'string' ? card.name : '';
+        const dotIndex = rawName.lastIndexOf('.');
+        const ext = dotIndex > 0 ? rawName.slice(dotIndex + 1).toUpperCase() : '';
+        const openable = _OPENABLE_EXTS.has(ext);
+        const label = openable ? 'Open the document to learn more' : 'Download the file to learn more';
+        return (
+            <div
+                className="oyechats-media-hint mb-1.5 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-gray-500"
+                aria-hidden="true"
+            >
+                <FileText className="h-3 w-3 text-gray-400" strokeWidth={2} />
+                <span>{label}</span>
+            </div>
+        );
+    }
+    return null;
+};
+
 const MediaCard = ({ card, secondary }) => {
     if (!card || typeof card !== 'object') return null;
     let primary = null;
@@ -415,9 +454,9 @@ const MediaCard = ({ card, secondary }) => {
     // Keeping it as a list means the server can later relax the one-chip cap
     // without another metadata migration on the wire.
     const chips = Array.isArray(secondary) ? secondary.filter(Boolean) : [];
-    if (chips.length === 0) return primary;
     return (
-        <div className="flex flex-col">
+        <div className="oyechats-media-block mt-2 flex flex-col">
+            <_MediaHint card={card} />
             {primary}
             {chips.map((item, i) => (
                 <_SecondaryChip
