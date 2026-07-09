@@ -140,6 +140,28 @@ const DateSeparator = ({ date }) => {
     );
 };
 
+// Shared shell that pins any transient card (handoff, offline-message form,
+// post-chat rating, connecting/waiting states, leave-a-message prompt) to one
+// fixed, prominent position — vertically centered within the messages area —
+// so every dynamic card surfaces in the same clearly-visible spot instead of
+// scrolling away with the conversation or landing clipped below the fold. It
+// sits ``absolute inset-0`` over the (positioned) messages area, lifts the card
+// off the conversation behind it with a light scrim, and becomes internally
+// scrollable when a tall card (e.g. the full offline form) exceeds the
+// viewport. ``overscroll-contain`` keeps that inner scroll from chaining to the
+// host page. Only one overlay is shown at a time — the render conditions below
+// are mutually exclusive by chat mode.
+const CardOverlay = ({ children }) => (
+    <div
+        className="absolute inset-0 z-20 flex items-center justify-center overflow-y-auto overscroll-contain px-2 py-4 bg-black/5"
+        style={{ animation: 'fadeIn 0.2s ease-out' }}
+    >
+        <div className="w-full max-w-[320px] my-auto flex justify-center">
+            {children}
+        </div>
+    </div>
+);
+
 const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating = true, isOnline = true, initialMessage }) => {
     const containerRef = useRef(null);
     const [messages, setMessages] = useState([
@@ -297,9 +319,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
     const currentTheme = themeConfigs[theme] || themeConfigs.classic;
     const isLiveMode = ['waiting', 'live', 'unavailable'].includes(chatMode);
-    const hasActiveHandoffForm = messages.some(
+    const activeHandoffForm = messages.find(
         (m) => m.type === 'handoff_form' && m.status !== 'submitted'
     );
+    const hasActiveHandoffForm = !!activeHandoffForm;
 
     // ── Mobile viewport sizing (keyboard + iOS safe area) ──────────────────────
     // Exposed imperatively so ChatInput's onBlur can force a re-sync when iOS
@@ -449,6 +472,29 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
             container.removeEventListener('touchstart', trackTouchStart);
             container.removeEventListener('touchmove', preventHostScroll);
         };
+    }, []);
+
+    // ── Prevent host page scroll hijack on desktop (wheel/trackpad) ───────────────
+    // Smooth-scroll libraries (Lenis, GSAP ScrollSmoother, fullPage.js, and
+    // hand-rolled scrolljacking) attach a global ``wheel`` listener on ``window``
+    // and call ``preventDefault()`` to drive the page programmatically. Because
+    // ``wheel`` is a *composed* event it crosses our Shadow DOM boundary and
+    // bubbles up to ``window`` — so the host library consumes it and the widget's
+    // own scroll container never moves (the visitor scrolls the page instead of
+    // the chat). Stopping propagation at the widget root keeps wheel events from
+    // ever reaching those window-level listeners, while the browser's native
+    // scroll (the default action, left untouched) still scrolls the messages
+    // area. ``overscroll-contain`` on the messages area stops native chaining at
+    // the top/bottom edges, so the host never scrolls while the cursor is over
+    // the widget — matching Intercom/Crisp behaviour.
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return undefined;
+        const stopWheelBubble = (e) => e.stopPropagation();
+        // passive: we never call preventDefault here — native scrolling of the
+        // messages area is preserved; we only sever propagation to the host.
+        container.addEventListener('wheel', stopWheelBubble, { passive: true });
+        return () => container.removeEventListener('wheel', stopWheelBubble);
     }, []);
 
     const scrollToBottom = useCallback(() => {
@@ -1183,33 +1229,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                 timestamp: new Date().toISOString(),
             }];
         });
-        // Targeted late-mount re-scroll: HandoffForm is lazy-imported via
-        // ``React.lazy`` and sits inside ``<Suspense fallback={null}>`` — so
-        // the auto-scroll triggered by the ``messages.length`` change above
-        // lands on the bottom that doesn't yet include the form (Suspense
-        // shows nothing while the chunk loads). Once the lazy chunk resolves
-        // and the form (~250px) mounts, scrollHeight jumps but no further
-        // state change re-runs the scroll effect — leaving the form clipped
-        // and the submit button cut off below the fold (the bug you saw).
-        //
-        // The ResizeObserver above catches the late mount in normal browser
-        // tabs. These extra scrolls cover the case where RO delivery is
-        // throttled (background tab, low-end mobile) AND give the visitor a
-        // visible "the form slides up into view" cue that the lazy module
-        // has finished loading.
-        const messagesArea = containerRef.current?.querySelector('[data-messages-area]');
-        if (messagesArea) {
-            // 60ms: covers the Suspense flush on a warm chunk cache.
-            // 280ms: covers a cold lazy import + initial render.
-            // 600ms: safety net for slow networks / sluggish renderers.
-            const stops = [60, 280, 600];
-            stops.forEach((delay) => {
-                setTimeout(() => {
-                    const area = containerRef.current?.querySelector('[data-messages-area]');
-                    area?.scrollTo({ top: area.scrollHeight, behavior: 'smooth' });
-                }, delay);
-            });
-        }
+        // No scroll choreography needed: the handoff card renders as a pinned,
+        // centered overlay (see the main render), so its position is fixed and
+        // fully visible regardless of where the conversation is scrolled or
+        // when the lazy chunk finishes mounting.
     }, []);
 
     const triggerHandoff = useCallback(() => {
@@ -2087,6 +2110,30 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     </div>
                 )}
 
+                {/* Handoff (Connect-with-team) card — pinned as a centered
+                    overlay rather than an inline message. Anchoring it here
+                    (absolute within the scroll container) puts it in a fixed,
+                    prominent position, fully visible, every time — instead of
+                    depending on a lazy-mount scroll that could leave it clipped
+                    below the fold. The conversation stays readable behind a
+                    light scrim; the input is already hidden while it is active,
+                    and "Continue with AI instead" is the only dismissal. */}
+                {hasActiveHandoffForm && !showLeadForm && (
+                    <CardOverlay>
+                        <ErrorBoundary label="HandoffForm" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the connect form." />}>
+                            <Suspense fallback={null}>
+                                <HandoffForm
+                                    settings={settings}
+                                    onSubmit={handleHandoffSubmit}
+                                    onCancel={handleHandoffCancel}
+                                    existingLeadInfo={existingLeadInfo}
+                                    status={activeHandoffForm?.status || 'pending'}
+                                />
+                            </Suspense>
+                        </ErrorBoundary>
+                    </CardOverlay>
+                )}
+
 
 
                 {/* Bottom-anchor spacer — flex-grow absorbs leftover height so a
@@ -2150,24 +2197,12 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                                     settings={settings}
                                 />
                             );
-                        } else if (msg.type === 'handoff_form' && msg.status !== 'submitted') {
-                            items.push(
-                                <div key={msg.id} className="mx-3 my-2" style={{ animation: 'fadeUp 0.3s ease-out' }}>
-                                    <ErrorBoundary label="HandoffForm" fallback={(retry) => <ChunkLoadNotice onRetry={retry} message="Couldn't load the connect form." />}>
-                                        <Suspense fallback={null}>
-                                            <HandoffForm
-                                                settings={settings}
-                                                onSubmit={handleHandoffSubmit}
-                                                onCancel={handleHandoffCancel}
-                                                existingLeadInfo={existingLeadInfo}
-                                                status={msg.status}
-                                            />
-                                        </Suspense>
-                                    </ErrorBoundary>
-                                </div>
-                            );
                         } else if (msg.type === 'handoff_form') {
-                            // Already submitted — skip
+                            // Rendered as a pinned, centered overlay (see below),
+                            // not inline in the scroll flow — this guarantees the
+                            // whole card is visible in a prominent position instead
+                            // of racing a lazy-mount scroll and landing clipped
+                            // below the fold. Submitted forms are simply dropped.
                         } else {
                             items.push(
                                 <MessageBubble
@@ -2192,9 +2227,10 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     pipeline when the visitor asks to email/write to the team.
                     Only shown while in bot mode; transitioning to 'unavailable'
                     (on click) reveals the existing offline form below. */}
-                {showLeaveMessageCard && chatMode === 'bot' && !offlineSubmitted && (
+                {showLeaveMessageCard && chatMode === 'bot' && !offlineSubmitted && !showRating && (
+                    <CardOverlay>
                     <div
-                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
+                        className="w-full rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
                         style={{ animation: 'fadeUp 0.3s ease-out' }}
                     >
                         <div className="flex items-center gap-2 mb-2">
@@ -2231,6 +2267,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </button>
                         </div>
                     </div>
+                    </CardOverlay>
                 )}
 
                 {/* BANT qualification quick-reply chips */}
@@ -2277,7 +2314,8 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
 
                 {/* Waiting state — inline spinner below the handoff system message */}
                 {chatMode === 'waiting' && !isInitializing && (
-                    <div className="flex flex-col items-center py-4 px-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
+                    <CardOverlay>
+                    <div className="w-full rounded-2xl border border-gray-100 shadow-sm bg-white flex flex-col items-center py-5 px-4" style={{ animation: 'fadeUp 0.4s ease-out' }}>
                         <div
                             className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin mb-2"
                             style={{ borderColor: `${sanitizeColor(settings.primary_color, '#3A0CA3')}40`, borderTopColor: sanitizeColor(settings.primary_color, '#3A0CA3') }}
@@ -2314,6 +2352,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             Cancel and return to AI chat
                         </button>
                     </div>
+                    </CardOverlay>
                 )}
 
                 {/* Offline message form — inline in stream */}
@@ -2322,8 +2361,9 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                     came online during the 5s re-check) or transitions to
                     the compact offline form below. */}
                 {chatMode === 'connecting' && !isInitializing && (
+                    <CardOverlay>
                     <div
-                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 max-w-xs"
+                        className="w-full rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
                         style={{ animation: 'fadeUp 0.3s ease-out' }}
                     >
                         <div className="flex items-center gap-3">
@@ -2355,20 +2395,22 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </div>
                         </div>
                     </div>
-                )}
-
-                {chatMode === 'unavailable' && !isInitializing && incomingOperator && !offlineSubmitted && (
-                    <OperatorJoinedToast
-                        operatorName={incomingOperator}
-                        primaryColor={settings.primary_color}
-                        onSwitchToChat={handleSwitchToLiveChat}
-                        onDismiss={handleDismissOperatorToast}
-                    />
+                    </CardOverlay>
                 )}
 
                 {chatMode === 'unavailable' && !isInitializing && (
+                    <CardOverlay>
+                    <div className="w-full flex flex-col gap-2">
+                        {incomingOperator && !offlineSubmitted && (
+                            <OperatorJoinedToast
+                                operatorName={incomingOperator}
+                                primaryColor={settings.primary_color}
+                                onSwitchToChat={handleSwitchToLiveChat}
+                                onDismiss={handleDismissOperatorToast}
+                            />
+                        )}
                     <div
-                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
+                        className="w-full rounded-2xl border border-gray-100 shadow-sm bg-white p-4"
                         style={{ animation: 'fadeUp 0.3s ease-out' }}
                     >
                         {offlineError ? (
@@ -2563,12 +2605,15 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             );
                         })()}
                     </div>
+                    </div>
+                    </CardOverlay>
                 )}
 
                 {/* 2-step post-chat survey — inline in stream after live chat ends */}
                 {showRating && settings?.feature_flags?.post_chat_rating !== false && (
+                    <CardOverlay>
                     <div
-                        className="mx-3 my-2 rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center"
+                        className="w-full rounded-2xl border border-gray-100 shadow-sm bg-white p-4 text-center"
                         style={{ animation: 'fadeUp 0.4s ease-out' }}
                     >
                         <CheckCircle2 className="w-7 h-7 mx-auto mb-2" style={{ color: sanitizeColor(settings.primary_color, '#3A0CA3') }} />
@@ -2647,6 +2692,7 @@ const ChatWindow = ({ onClose, theme = 'classic', initialSettings, isAnimating =
                             </button>
                         </div>
                     </div>
+                    </CardOverlay>
                 )}
 
                 {/* End-chat confirmation modal moved out of the messages area to
