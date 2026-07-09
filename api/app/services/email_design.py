@@ -21,7 +21,7 @@ import html
 import re
 from datetime import UTC, datetime
 
-from app.config import APP_URL, BRAND_NAME, MARKETING_URL, SUPPORT_EMAIL
+from app.config import APP_URL, BRAND_NAME, MARKETING_URL
 
 # ── Design tokens ────────────────────────────────────────────────────────────
 FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
@@ -177,9 +177,9 @@ def _footer(*, visitor: bool) -> str:
         links = (
             f'<a class="oc-link" href="{APP_URL}" style="color:{INK400};text-decoration:none;'
             f'font-weight:600;">Dashboard</a>{dot}'
-            f'<a class="oc-link" href="{MARKETING_URL}/help" style="color:{INK400};'
+            f'<a class="oc-link" href="{MARKETING_URL}/docs" style="color:{INK400};'
             f'text-decoration:none;font-weight:600;">Help Center</a>{dot}'
-            f'<a class="oc-link" href="mailto:{html.escape(SUPPORT_EMAIL)}" style="color:{INK400};'
+            f'<a class="oc-link" href="{MARKETING_URL}/contact" style="color:{INK400};'
             f'text-decoration:none;font-weight:600;">Contact</a>'
         )
     return (
