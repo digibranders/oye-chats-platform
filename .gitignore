@@ -61,3 +61,6 @@ api/uv.toml
 
 # Git worktrees (local isolated workspaces)
 .worktrees/
+
+# Visual-companion / brainstorm scratch
+.superpowers/
