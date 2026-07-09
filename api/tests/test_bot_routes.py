@@ -254,6 +254,7 @@ class TestUpdateBot:
             widget_messages={},
             widget_config={},
             bant_config=None,
+            manual_field_overrides=[],
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -279,6 +280,7 @@ class TestUpdateBot:
             widget_messages={},
             widget_config={},
             bant_config=None,
+            manual_field_overrides=[],
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -306,6 +308,7 @@ class TestUpdateBot:
             widget_messages={},
             widget_config={},
             bant_config=None,
+            manual_field_overrides=[],
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)
@@ -340,6 +343,7 @@ class TestUpdateBot:
             widget_messages={},
             widget_config={},
             bant_config=None,
+            manual_field_overrides=[],
         )
         session = MagicMock()
         session.execute.return_value = _ExecuteResult(bot)

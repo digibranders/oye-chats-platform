@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.services import spider_service
-from app.services.crawler_service import CrawlerError
+from app.services.crawler_service import CrawlCancelled, CrawlerError
 
 
 def _mock_client(handler):
@@ -96,7 +96,9 @@ async def test_missing_api_key_raises(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_precancelled_crawl_returns_empty(monkeypatch):
+async def test_precancelled_crawl_raises(monkeypatch):
+    """A cancel requested before start raises CrawlCancelled (clean ``cancelled``
+    terminal state) without hitting Spider."""
     monkeypatch.setattr(spider_service, "SPIDER_API_KEY", "sk-test")
     monkeypatch.setattr(spider_service, "is_cancellation_requested", lambda cid: True)
 
@@ -106,14 +108,14 @@ async def test_precancelled_crawl_returns_empty(monkeypatch):
         called["http"] = True
         return httpx.Response(200, json=[])
 
-    data = await spider_service.crawl_website(
-        "https://acme.test",
-        max_pages=10,
-        use_js=False,
-        client_id=7,
-        _client=_mock_client(handler),
-    )
-    assert data["results"] == []
+    with pytest.raises(CrawlCancelled):
+        await spider_service.crawl_website(
+            "https://acme.test",
+            max_pages=10,
+            use_js=False,
+            client_id=7,
+            _client=_mock_client(handler),
+        )
     assert called["http"] is False  # we never hit Spider once cancel is set
 
 

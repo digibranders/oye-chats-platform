@@ -410,6 +410,32 @@ def get_all_documents_for_bot(session, bot_id: int = None, client_id: int = None
     return list(session.execute(stmt).scalars())
 
 
+def get_content_sample_for_bot(session, bot_id: int = None, client_id: int = None, max_chars: int = 4000) -> str:
+    """Return a text sample from a bot's already-ingested documents.
+
+    Concatenates the first document chunks (ordered by name/id) up to
+    ``max_chars`` — enough context for on-demand brand-tone classification
+    without loading the whole knowledge base. Returns ``""`` when the bot has no
+    documents (caller treats that as "nothing crawled yet").
+    """
+    stmt = (
+        select(Document.content)
+        .where(_owner_filter(Document, bot_id, client_id))
+        .order_by(Document.document_name, Document.id)
+        .limit(20)
+    )
+    parts: list[str] = []
+    total = 0
+    for (content,) in session.execute(stmt):
+        if not content:
+            continue
+        parts.append(content)
+        total += len(content)
+        if total >= max_chars:
+            break
+    return "\n\n".join(parts)[:max_chars]
+
+
 def get_bot_media_urls(
     session,
     bot_id: int | None = None,

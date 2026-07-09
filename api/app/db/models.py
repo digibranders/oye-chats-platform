@@ -221,8 +221,20 @@ class Bot(Base):
     name = Column(String, default="AI Assistant", server_default="AI Assistant")
     system_prompt = Column(Text, nullable=True)
     brand_tone = Column(Text, nullable=True)  # Auto-extracted or manually set brand voice/tone description
+    # Which brand-tone preset chip is active: a key from brand_tone.PRESET_KEYS,
+    # "custom" (text hand-edited away from any preset), or NULL (empty/never set).
+    # Descriptive metadata for the UI only — never fed to the prompt; rides along
+    # with brand_tone on crawl/detect writes. See app/services/brand_tone.py.
+    brand_tone_preset = Column(String, nullable=True)
     company_name = Column(String, nullable=True)  # Auto-extracted or manually set company/brand name
     company_description = Column(Text, nullable=True)  # Auto-extracted or manually set company description
+    # Names of auto-fillable fields the customer has edited by hand
+    # (subset of {"company_name", "company_description", "brand_tone"}). A field
+    # listed here is "locked" and the website crawl leaves it untouched; fields
+    # not listed are refreshed from the crawl. Clearing a field and saving
+    # removes it from this list, re-enabling auto-fill on the next crawl.
+    # Reconciled in ``bot_routes.update_bot`` and honored in ``crawl_orchestrator``.
+    manual_field_overrides = Column(JSONB, nullable=False, default=list, server_default=sqlalchemy.text("'[]'::jsonb"))
     website = Column(String, nullable=True)
     bot_logo = Column(Text, nullable=True)
     launcher_name = Column(String, default="Have Questions?", server_default="Have Questions?")

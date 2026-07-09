@@ -23,6 +23,7 @@ from app.core.rate_limit import limiter
 from app.core.ssrf import SSRFError, validate_public_url
 from app.db.models import Bot, BotGrowthEvent
 from app.db.session import get_session
+from app.services.brand_tone import BRAND_TONE_PRESETS, CUSTOM_PRESET, is_valid_preset_value, preset_text
 
 # Upper bound on per-bot domain list size. 50 covers every realistic case
 # (apex + wildcard + a handful of staging/sandbox subdomains) while preventing
@@ -156,6 +157,8 @@ class UpdateBotRequest(BaseModel):
     # max_length matches _MAX_CUSTOM_PROMPT_CHARS in rag_service — enforced at API boundary
     system_prompt: str | None = Field(None, max_length=2000)
     brand_tone: str | None = Field(None, max_length=500)
+    # A preset key, "custom", or None — the active chip in the AI & Personality tab.
+    brand_tone_preset: str | None = None
     company_name: str | None = Field(None, max_length=100)
     company_description: str | None = Field(None, max_length=1000)
     website: str | None = None
@@ -230,6 +233,13 @@ class UpdateBotRequest(BaseModel):
             return None
         return _normalize_allowed_domains(value)
 
+    @field_validator("brand_tone_preset")
+    @classmethod
+    def _validate_brand_tone_preset(cls, value: str | None) -> str | None:
+        if not is_valid_preset_value(value):
+            raise ValueError(f"brand_tone_preset must be a known preset key, '{CUSTOM_PRESET}', or null")
+        return value
+
     @model_validator(mode="after")
     def _validate_meeting_urls(self):
         """Ensure meeting URLs are HTTPS and point to the expected domain."""
@@ -258,8 +268,13 @@ class BotResponse(BaseModel):
     website: str | None
     system_prompt: str | None
     brand_tone: str | None = None
+    brand_tone_preset: str | None = None
     company_name: str | None = None
     company_description: str | None = None
+    # Auto-fillable fields the customer has locked by hand-editing them; the
+    # crawl won't overwrite these. Drives the "auto-filled vs manual" hint in
+    # the AI & Personality tab.
+    manual_field_overrides: list[str] = []
     bot_logo: str | None
     launcher_name: str
     launcher_logo: str | None
@@ -1023,8 +1038,10 @@ def list_bots(request: Request, auth=Depends(get_current_client_or_operator)):
                     website=b.website,
                     system_prompt=b.system_prompt,
                     brand_tone=b.brand_tone,
+                    brand_tone_preset=b.brand_tone_preset,
                     company_name=b.company_name,
                     company_description=b.company_description,
+                    manual_field_overrides=b.manual_field_overrides or [],
                     bot_logo=bl,
                     launcher_name=b.launcher_name or "Have Questions?",
                     launcher_logo=ll,
@@ -1369,6 +1386,78 @@ def get_framework_presets(bot_id: int, auth=Depends(get_current_client_or_operat
         return get_preset_frameworks()
 
 
+# ── Brand tone: presets catalog, on-demand detect, and voice preview ──
+# NOTE: the presets route is a LITERAL path and MUST be declared before the
+# ``/{bot_id}`` route below — otherwise FastAPI matches it against the int path
+# param and 422s. Route registration order (module top-to-bottom) wins.
+
+
+@router.get("/brand-tone-presets")
+def list_brand_tone_presets(auth=Depends(get_current_client_or_operator)):
+    """Return the curated brand-tone preset catalog for the AI & Personality tab."""
+    return {"presets": BRAND_TONE_PRESETS}
+
+
+class BrandTonePreviewRequest(BaseModel):
+    brand_tone: str = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/{bot_id}/brand-tone/detect")
+@limiter.limit("10/minute")
+def detect_brand_tone(bot_id: int, request: Request, auth=Depends(get_current_client_or_operator)):
+    """Re-classify the bot's tone from its already-crawled content (no re-crawl).
+
+    Writes the detected preset's canonical text + key and *unlocks* ``brand_tone``
+    (an explicit "make it auto" request), so future crawls keep it fresh until the
+    customer edits again.
+    """
+    from app.db.repository import get_content_sample_for_bot
+    from app.services.llm_service import classify_brand_tone
+
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        bot = _get_workspace_bot(session, bot_id, auth["client_id"])
+        sample = get_content_sample_for_bot(session, bot_id=bot.id)
+        if not sample.strip():
+            raise HTTPException(status_code=400, detail="Crawl your website first to detect its tone.")
+
+        key = classify_brand_tone(sample)
+        if key is None:
+            raise HTTPException(status_code=422, detail="Couldn't detect a tone; pick one manually.")
+
+        bot.brand_tone = preset_text(key)
+        bot.brand_tone_preset = key
+        # Unlock brand_tone so the value stays auto (see _reconcile_manual_overrides).
+        overrides = [f for f in (bot.manual_field_overrides or []) if f != "brand_tone"]
+        bot.manual_field_overrides = overrides
+
+        session.commit()
+        cache_delete(bot_config_key(bot.bot_key))
+        return {"brand_tone": bot.brand_tone, "brand_tone_preset": key}
+
+
+@router.post("/{bot_id}/brand-tone/preview")
+@limiter.limit("15/minute")
+def preview_brand_tone(
+    bot_id: int,
+    body: BrandTonePreviewRequest,
+    request: Request,
+    auth=Depends(get_current_client_or_operator),
+):
+    """Generate a 1-2 sentence sample bot reply in the given (unsaved) tone."""
+    from app.services.llm_service import generate_tone_sample
+
+    _require_bot_management_access(auth)
+    with get_session() as session:
+        # Ownership check only — preview never reads or writes tone from the DB.
+        _get_workspace_bot(session, bot_id, auth["client_id"])
+
+    sample = generate_tone_sample(body.brand_tone, "Can you tell me about your services?")
+    if not sample:
+        raise HTTPException(status_code=503, detail="Preview unavailable, please try again.")
+    return {"sample": sample}
+
+
 @router.get("/{bot_id}")
 def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_operator)):
     """Get details of a specific bot owned by the authenticated workspace."""
@@ -1388,8 +1477,10 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             website=bot.website,
             system_prompt=bot.system_prompt,
             brand_tone=bot.brand_tone,
+            brand_tone_preset=bot.brand_tone_preset,
             company_name=bot.company_name,
             company_description=bot.company_description,
+            manual_field_overrides=bot.manual_field_overrides or [],
             bot_logo=bl,
             launcher_name=bot.launcher_name or "Have Questions?",
             launcher_logo=ll,
@@ -1439,6 +1530,40 @@ def get_bot(bot_id: int, request: Request, auth=Depends(get_current_client_or_op
             is_active=bot.is_active,
             created_at=bot.created_at.isoformat() if bot.created_at else "",
         )
+
+
+# Auto-fillable fields the website crawl may populate. Edits to these are
+# tracked in ``Bot.manual_field_overrides`` so a re-crawl leaves a hand-edited
+# value alone while still refreshing untouched ones.
+_AUTO_FILL_FIELDS = ("company_name", "company_description", "brand_tone")
+
+
+def _reconcile_manual_overrides(bot: Bot, update_data: dict) -> None:
+    """Update ``bot.manual_field_overrides`` from an incoming settings patch.
+
+    Must run BEFORE the patch values are written onto ``bot`` (it compares the
+    submitted value against the currently stored one). For each auto-fillable
+    field present in the patch:
+      * changed to a non-empty value -> lock   (crawl won't overwrite it)
+      * cleared to empty/None        -> unlock (crawl re-fills on next crawl)
+      * unchanged                    -> leave the flag untouched
+    Fields absent from the patch are left as-is.
+    """
+    overrides = set(bot.manual_field_overrides or [])
+    original = set(overrides)
+    for field in _AUTO_FILL_FIELDS:
+        if field not in update_data:
+            continue
+        incoming = (update_data.get(field) or "").strip()
+        stored = (getattr(bot, field) or "").strip()
+        if incoming == stored:
+            continue
+        if incoming:
+            overrides.add(field)
+        else:
+            overrides.discard(field)
+    if overrides != original:
+        bot.manual_field_overrides = sorted(overrides)
 
 
 @router.patch("/{bot_id}")
@@ -1495,6 +1620,10 @@ def update_bot(bot_id: int, request: UpdateBotRequest, auth=Depends(get_current_
             # rows so the prompt never sees empty service names.
             if "services" in update_data:
                 update_data["services"] = _normalize_services(update_data["services"])
+
+            # Lock/unlock crawl auto-fill based on what the customer submitted.
+            # Runs before the setattr loop so it can diff against stored values.
+            _reconcile_manual_overrides(bot, update_data)
 
             for key, value in update_data.items():
                 setattr(bot, key, value)

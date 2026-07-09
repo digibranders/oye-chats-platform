@@ -7,7 +7,7 @@ import {
     CheckCircle, RefreshCw, Sparkles, Check, AlertCircle, X,
     ZoomIn, ZoomOut, RotateCw, Bot, MoreHorizontal, Headphones, Lock,
 } from 'lucide-react';
-import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin } from '../services/api';
+import { getClientSettings, updateClientSettings, uploadLogo, getBotPreviewUrl, getBotDemoOrigin, getBrandTonePresets, detectBrandTone, previewBrandTone } from '../services/api';
 import { useBotContext } from '../context/BotContext';
 import { useToast } from '../context/ToastContext';
 import { useUpgradeModal } from '../context/UpgradeModalContext';
@@ -61,8 +61,12 @@ const DEFAULT_DRAFT = {
     // ── Absorbed from old Settings (sub-project 1 gap closure) ──
     system_prompt: '',
     brand_tone: '',
+    brand_tone_preset: null,
     company_name: '',
     company_description: '',
+    // Server-managed: names of auto-fillable fields the user locked by editing
+    // them (see PersonalityTab hints). Read-only in the draft — never sent on save.
+    manual_field_overrides: [],
     feature_flags: {},
     live_chat_queue_timeout_seconds: 20,
     live_chat_max_queue_size: 10,
@@ -104,6 +108,12 @@ export default function BotSettings({ embedded = false }) {
     const [saved, setSaved] = useState(false);
     const [saveError, setSaveError] = useState(null);
 
+    // ── Brand-tone presets + detect/preview state (AI & Personality tab) ──
+    const [brandTonePresets, setBrandTonePresets] = useState([]);
+    const [detectingTone, setDetectingTone] = useState(false);
+    const [previewingTone, setPreviewingTone] = useState(false);
+    const [tonePreviewSample, setTonePreviewSample] = useState('');
+
     // ── Inner active-tab + preview state ──
     // A valid ``?section=`` deep-links to a sub-tab (e.g. Settings → Live Chat
     // links here with ``section=live_chat``); the gate effect below still
@@ -137,8 +147,7 @@ export default function BotSettings({ embedded = false }) {
     }, []);
 
     // ── Load bot settings into the draft ──
-    useEffect(() => {
-        const fetchSettings = async () => {
+    const fetchSettings = useCallback(async () => {
             try {
                 const settings = await getClientSettings(selectedBot?.id);
                 // Load emails: prefer notification_emails.default (multi), fallback to legacy notification_email
@@ -178,13 +187,17 @@ export default function BotSettings({ embedded = false }) {
                     branding_url: settings.branding_url || 'https://oyechats.com',
                     services: Array.isArray(settings.services) ? settings.services : [],
                     services_url: settings.services_url || '',
-                    // Absorbed configs — `company_name` / `company_description`
-                    // are write-supported by the bot PATCH but not yet returned
-                    // by the bot GET, so they fall back to '' on reload.
+                    // Absorbed configs — the bot GET returns these; company info
+                    // + brand tone auto-fill from the website crawl unless locked
+                    // (see manual_field_overrides).
                     system_prompt: settings.system_prompt || '',
                     brand_tone: settings.brand_tone || '',
+                    brand_tone_preset: settings.brand_tone_preset ?? null,
                     company_name: settings.company_name || '',
                     company_description: settings.company_description || '',
+                    manual_field_overrides: Array.isArray(settings.manual_field_overrides)
+                        ? settings.manual_field_overrides
+                        : [],
                     feature_flags: settings.feature_flags || {},
                     live_chat_queue_timeout_seconds: settings.live_chat_queue_timeout_seconds ?? 20,
                     live_chat_max_queue_size: settings.live_chat_max_queue_size ?? 10,
@@ -193,9 +206,73 @@ export default function BotSettings({ embedded = false }) {
                 console.error('Error fetching settings:', error);
                 showToast('error', error.message || 'Failed to load widget settings');
             }
-        };
-        fetchSettings();
     }, [selectedBot?.id, showToast]);
+
+    useEffect(() => {
+        fetchSettings();
+    }, [fetchSettings]);
+
+    // Load the brand-tone preset catalog once (tolerate failure → no chips).
+    useEffect(() => {
+        let cancelled = false;
+        getBrandTonePresets()
+            .then((presets) => {
+                if (!cancelled) setBrandTonePresets(presets);
+            })
+            .catch(() => {
+                /* non-fatal: the tab still works as free text without chips */
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // Reset any stale tone preview when switching bots.
+    useEffect(() => {
+        setTonePreviewSample('');
+    }, [selectedBot?.id]);
+
+    // Re-detect brand tone from the bot's crawled content (no re-crawl). Writes
+    // on the server + unlocks the field; mirror that into the local draft.
+    const handleDetectTone = useCallback(async () => {
+        if (!isBotManager || !selectedBot?.id) return;
+        setDetectingTone(true);
+        try {
+            const result = await detectBrandTone(selectedBot.id);
+            setDraft((prev) => ({
+                ...prev,
+                brand_tone: result.brand_tone || '',
+                brand_tone_preset: result.brand_tone_preset ?? null,
+                manual_field_overrides: (prev.manual_field_overrides || []).filter((f) => f !== 'brand_tone'),
+            }));
+            setTonePreviewSample('');
+            showToast('success', 'Brand tone detected from your website.');
+        } catch (error) {
+            const msg = error?.detail || error?.message || 'Failed to detect brand tone';
+            showToast(error?.status === 400 ? 'info' : 'error', msg);
+        } finally {
+            setDetectingTone(false);
+        }
+    }, [isBotManager, selectedBot?.id, showToast]);
+
+    // Generate a sample bot reply in the current (unsaved) draft tone.
+    const handleTonePreview = useCallback(async () => {
+        if (!selectedBot?.id) return;
+        const tone = (draft.brand_tone || '').trim();
+        if (!tone) {
+            showToast('info', 'Add some brand tone text first.');
+            return;
+        }
+        setPreviewingTone(true);
+        try {
+            const result = await previewBrandTone(selectedBot.id, tone);
+            setTonePreviewSample(result.sample || '');
+        } catch (error) {
+            showToast('error', error?.detail || error?.message || 'Preview unavailable, try again.');
+        } finally {
+            setPreviewingTone(false);
+        }
+    }, [selectedBot?.id, draft.brand_tone, showToast]);
 
     // Prefill the preview URL with the bot's configured website.
     useEffect(() => {
@@ -397,6 +474,7 @@ export default function BotSettings({ embedded = false }) {
                 // ── Absorbed configs (sub-project 1 gap closure) ──
                 system_prompt: draft.system_prompt || null,
                 brand_tone: draft.brand_tone || null,
+                brand_tone_preset: draft.brand_tone_preset || null,
                 company_name: draft.company_name || null,
                 company_description: draft.company_description || null,
                 feature_flags: draft.feature_flags,
@@ -404,6 +482,9 @@ export default function BotSettings({ embedded = false }) {
                 live_chat_max_queue_size: draft.live_chat_max_queue_size,
             };
             await updateClientSettings(payload, selectedBot?.id);
+            // Re-pull so the crawl auto-fill lock state (manual_field_overrides)
+            // and any crawl-written values reflect the just-saved reality.
+            await fetchSettings();
             setSaved(true);
             setTimeout(() => setSaved(false), 3000);
         } catch (error) {
@@ -565,7 +646,19 @@ export default function BotSettings({ embedded = false }) {
                 {/* Left Side: 60% Configuration Column */}
                 <div className="w-full lg:w-[60%] flex flex-col gap-10 lg:pr-6">
                     {activeTab === 'general' && <GeneralTab {...tabProps} />}
-                    {activeTab === 'personality' && <PersonalityTab {...tabProps} />}
+                    {activeTab === 'personality' && (
+                        <PersonalityTab
+                            {...tabProps}
+                            brandTonePresets={brandTonePresets}
+                            onDetectTone={handleDetectTone}
+                            detectingTone={detectingTone}
+                            onPreviewTone={handleTonePreview}
+                            previewingTone={previewingTone}
+                            tonePreviewSample={tonePreviewSample}
+                            canDetectTone={Boolean(selectedBot?.website)}
+                            isBotManager={isBotManager}
+                        />
+                    )}
                     {activeTab === 'appearance' && (
                         <AppearanceTab
                             {...tabProps}

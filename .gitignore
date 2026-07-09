@@ -58,3 +58,6 @@ api/dev.sh
 
 # Machine-specific uv config (points to local conda env path)
 api/uv.toml
+
+# Git worktrees (local isolated workspaces)
+.worktrees/

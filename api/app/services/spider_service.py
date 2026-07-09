@@ -26,7 +26,7 @@ from app.config import (
     SPIDER_REQUEST_MODE,
     SPIDER_TIMEOUT,
 )
-from app.services.crawler_service import CrawlerError, is_cancellation_requested
+from app.services.crawler_service import CrawlCancelled, CrawlerError, is_cancellation_requested
 
 # Called once per page as it finishes fetching: ``(url, ok)`` where ``ok`` is
 # True if the page yielded content. Lets the orchestrator emit live progress.
@@ -73,7 +73,7 @@ async def crawl_website(
 
     if client_id is not None and is_cancellation_requested(client_id):
         logger.info("Spider crawl aborted before start (cancel requested) client=%s", client_id)
-        return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
+        raise CrawlCancelled({"results": [], "recommended_colors": []})
 
     payload: dict = {
         "url": url,
@@ -131,6 +131,10 @@ async def crawl_website(
         len(results),
         len(pages),
     )
+    # The recursive POST is one blocking call, so cancel can only land after it
+    # returns — but honour it here so we don't proceed to embed a cancelled crawl.
+    if client_id is not None and is_cancellation_requested(client_id):
+        raise CrawlCancelled({"results": results, "recommended_colors": []})
     return {
         "results": results,
         "recommended_colors": [],  # Spider does not extract colors
@@ -241,7 +245,7 @@ async def fetch_urls(
     # Honor a cancel requested before we start spending (mirrors crawl_website).
     if client_id is not None and is_cancellation_requested(client_id):
         logger.info("Spider fetch_urls aborted before start (cancel requested) client=%s", client_id)
-        return {"results": [], "recommended_colors": [], "discovered_total": 0, "queue_remaining": 0}
+        raise CrawlCancelled({"results": [], "recommended_colors": []})
 
     owns_client = _client is None
     client = _client or httpx.AsyncClient(timeout=SPIDER_TIMEOUT)
@@ -252,6 +256,12 @@ async def fetch_urls(
     sem = asyncio.Semaphore(runtime_config.get_spider_fetch_concurrency())
 
     async def _scrape_and_report(url: str) -> dict | None:
+        # Stop starting new fetches the moment a cancel lands: in-flight pages
+        # (bounded by the semaphore) finish, everything else short-circuits so
+        # the gather drains within one page instead of the whole batch. We then
+        # raise CrawlCancelled below to hand the partial result to the caller.
+        if client_id is not None and is_cancellation_requested(client_id):
+            return None
         page = await _scrape_one(client, url, use_js, sem)
         if on_page is not None:
             # asyncio is single-threaded, so this runs serially as each task
@@ -277,6 +287,14 @@ async def fetch_urls(
         len(results),
         len(urls),
     )
+    # Cancelled mid-flight: hand back whatever we scraped (already streamed to
+    # ingestion) as a CrawlCancelled so the orchestrator writes a clean
+    # ``cancelled`` state instead of continuing to embed the rest.
+    if client_id is not None and is_cancellation_requested(client_id):
+        logger.info(
+            "Spider fetch_urls cancelled mid-flight: kept %d scraped pages (client=%s)", len(results), client_id
+        )
+        raise CrawlCancelled({"results": results, "recommended_colors": []})
     return {
         "results": results,
         "recommended_colors": [],

@@ -35,15 +35,17 @@ from app.config import CRAWL_INGEST_WAVE_PAGES, CRAWL_STREAM_INGEST_ENABLED
 from app.db.models import Bot, Client, Document
 from app.db.session import get_session
 from app.ingestion.pipeline import batch_web_ingestion
+from app.services.brand_tone import preset_text
 from app.services.crawl_provider import crawl_website, fetch_urls
 from app.services.crawler_service import (
     CrawlCancelled,
     CrawlerError,
     crawl_heartbeat,
+    is_cancellation_requested,
     release_crawl_lock,
     set_crawl_progress,
 )
-from app.services.llm_service import extract_brand_tone, extract_company_context
+from app.services.llm_service import classify_brand_tone, extract_company_context
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,50 @@ def _pick_services_url(valid_pages: list[dict]) -> str | None:
                     best = candidate
                 break
     return best[2] if best else None
+
+
+def _apply_crawl_metadata_to_bot(
+    bot_db: Bot,
+    *,
+    recommended_colors: list | None,
+    brand_tone: str | None,
+    company_context: dict | None,
+    services_url_suggestion: str | None,
+    brand_tone_preset: str | None = None,
+) -> list[str]:
+    """Write crawl-extracted metadata onto a loaded ``Bot``, honoring locks.
+
+    Fields the customer edited by hand are recorded in
+    ``bot_db.manual_field_overrides`` (see
+    ``bot_routes._reconcile_manual_overrides``); the crawl must refresh only the
+    fields they haven't claimed. When ``brand_tone`` is written its matching
+    ``brand_tone_preset`` key is written alongside it. ``recommended_colors`` is
+    always refreshed and ``services_url`` is only ever auto-filled when empty (an
+    explicit choice is never overwritten). Mutates ``bot_db`` in place; the
+    caller owns the commit.
+
+    Returns the list of field names actually written (for logging / assertions).
+    """
+    overrides = set(bot_db.manual_field_overrides or [])
+    written: list[str] = []
+    if recommended_colors:
+        bot_db.recommended_colors = recommended_colors
+        written.append("recommended_colors")
+    if brand_tone and "brand_tone" not in overrides:
+        bot_db.brand_tone = brand_tone
+        bot_db.brand_tone_preset = brand_tone_preset
+        written.append("brand_tone")
+    if company_context:
+        if company_context.get("name") and "company_name" not in overrides:
+            bot_db.company_name = company_context["name"]
+            written.append("company_name")
+        if company_context.get("description") and "company_description" not in overrides:
+            bot_db.company_description = company_context["description"]
+            written.append("company_description")
+    if services_url_suggestion and not bot_db.services_url:
+        bot_db.services_url = services_url_suggestion
+        written.append("services_url")
+    return written
 
 
 async def run_full_crawl(
@@ -224,6 +270,12 @@ async def run_full_crawl(
             done = page is None
             if not done:
                 buffer.append(page)
+            # Stop embedding further waves the moment a cancel lands — the main
+            # flow raises CrawlCancelled at its next checkpoint; here we just
+            # avoid spending the embed budget on a crawl that's being cancelled.
+            if not billing_aborted and not done and is_cancellation_requested(client_id):
+                logger.info("Ingest consumer halting embeds (cancel requested) client=%s", client_id)
+                billing_aborted = True
             if billing_aborted:
                 # Set either by a wave that couldn't bill or by the cancel
                 # path — drop everything buffered, including pages that were
@@ -298,6 +350,12 @@ async def run_full_crawl(
 
         results = crawl_data.get("results")
         recommended_colors = crawl_data.get("recommended_colors", [])
+
+        # A cancel that landed just as the scrape finished (so the provider
+        # returned normally instead of raising) still stops here — before we
+        # spend the embed budget on the final sweep.
+        if is_cancellation_requested(client_id):
+            raise CrawlCancelled({"results": results or [], "recommended_colors": recommended_colors})
         # Coverage diagnostics from the crawler subprocess. ``discovered_total``
         # is every URL the crawler ever enqueued (visited + still-queued +
         # robots-blocked); ``queue_remaining`` is what was still pending when
@@ -334,6 +392,11 @@ async def run_full_crawl(
             async with crawl_heartbeat(client_id):
                 await _finish_consumer(consumer_task)
             consumer_task = None
+
+        # A cancel that landed during the streamed embed above stops here rather
+        # than running the (potentially multi-minute) final sweep.
+        if is_cancellation_requested(client_id):
+            raise CrawlCancelled({"results": valid_pages, "recommended_colors": recommended_colors})
 
         sweep_offset = ingest_totals["chunks"]
 
@@ -454,14 +517,15 @@ async def run_full_crawl(
                 len(candidate_urls) - len(dead_urls),
             )
 
-        # Brand tone + company context (best-effort, non-fatal on error).
-        brand_tone = None
+        # Brand tone (classified into a preset) + company context
+        # (best-effort, non-fatal on error).
+        brand_tone_key = None
         company_context: dict | None = None
         if valid_pages and bot_id:
             content_sample = "\n\n".join(p["content"][:1000] for p in valid_pages[:3])
             try:
-                brand_tone, company_context = await asyncio.gather(
-                    loop.run_in_executor(None, lambda: extract_brand_tone(content_sample)),
+                brand_tone_key, company_context = await asyncio.gather(
+                    loop.run_in_executor(None, lambda: classify_brand_tone(content_sample)),
                     loop.run_in_executor(None, lambda: extract_company_context(content_sample)),
                 )
             except Exception:
@@ -472,31 +536,24 @@ async def run_full_crawl(
         # yet, so re-crawls never overwrite an explicit choice.
         services_url_suggestion = _pick_services_url(valid_pages)
 
-        if recommended_colors or brand_tone or company_context or services_url_suggestion:
+        # Resolve the classified preset key to its canonical, prompt-ready text.
+        brand_tone_text = preset_text(brand_tone_key)
+
+        if recommended_colors or brand_tone_text or company_context or services_url_suggestion:
             with get_session() as session:
                 if bot_id:
                     bot_db = session.get(Bot, bot_id)
                     if bot_db and bot_db.client_id == client_id:
-                        if recommended_colors:
-                            bot_db.recommended_colors = recommended_colors
-                        if brand_tone:
-                            bot_db.brand_tone = brand_tone
-                        if company_context:
-                            if company_context.get("name"):
-                                bot_db.company_name = company_context["name"]
-                            if company_context.get("description"):
-                                bot_db.company_description = company_context["description"]
-                        if services_url_suggestion and not bot_db.services_url:
-                            bot_db.services_url = services_url_suggestion
-                            logger.info("Auto-suggested services_url for bot %s: %s", bot_id, services_url_suggestion)
-                        session.commit()
-                        logger.info(
-                            "Saved crawl metadata for bot %s: colors=%d, tone=%s, company_name=%s",
-                            bot_id,
-                            len(recommended_colors) if recommended_colors else 0,
-                            "yes" if brand_tone else "no",
-                            company_context.get("name") if company_context else "no",
+                        written = _apply_crawl_metadata_to_bot(
+                            bot_db,
+                            recommended_colors=recommended_colors,
+                            brand_tone=brand_tone_text,
+                            brand_tone_preset=brand_tone_key,
+                            company_context=company_context,
+                            services_url_suggestion=services_url_suggestion,
                         )
+                        session.commit()
+                        logger.info("Saved crawl metadata for bot %s: wrote %s", bot_id, written or "nothing")
                 elif recommended_colors:
                     client_db = session.get(Client, client_id)
                     if client_db:
@@ -523,7 +580,8 @@ async def run_full_crawl(
             "credits_deducted": credits_deducted,
             "pages_crawled": [p["url"] for p in valid_pages],
             "recommended_colors": recommended_colors,
-            "brand_tone": brand_tone,
+            "brand_tone": brand_tone_text,
+            "brand_tone_preset": brand_tone_key,
             # Coverage visibility — UI uses these to render
             # "Ingested 200 pages. 347 more were discovered but didn't fit
             #  your plan's cap. Upgrade or split the crawl by section."
