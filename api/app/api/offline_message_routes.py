@@ -122,7 +122,7 @@ async def submit_offline_message(request: SubmitOfflineMessageRequest):
         if getattr(bot, "email_visitor_confirmation", True):
             send_visitor_confirmation_email(
                 to_email=request.email.strip(),
-                bot_name=bot.name,
+                company_name=(bot.company_name or bot.name),
                 visitor_name=request.name.strip(),
                 reply_to=reply_to,
             )
